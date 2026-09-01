@@ -179,7 +179,7 @@ def run(
         node_precision_info=True,
         prefill_only=True,
         enable_chunking=True,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         use_onnx_subfunctions=True,
         skip_vision=True,
         mdp_num_partitions=stages,

@@ -32,7 +32,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_configs
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     assert_three_way_tokens_match as _assert_three_way_tokens_match,
 )
@@ -606,11 +606,12 @@ def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("gpt_oss_reduced"))
+def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
     torch.manual_seed(42)
 
-    dma_config = disagg_dma_config("gpt_oss", "reduced_layers_prefill2_decode1_stages2")
     model_id = dma_config["model_id"]
+    use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
 
     config = _build_config(dtype="float32", model_name=model_id)
     hf_model = _load_hf_model(config, model_name=model_id)
@@ -639,7 +640,7 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
             offload_pt_weights=False,
             split_retained_state_io=True,
             retain_full_kv=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.onnx_path, "decode")
 
@@ -660,7 +661,7 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
             prefill_only=True,
             enable_chunking=True,
             retain_full_kv=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.onnx_path, "prefill")
         print(f"Disagg CB ONNX paths: {compiled_onnx_paths}")

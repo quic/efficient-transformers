@@ -23,7 +23,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_configs
 
 MODEL_NAME = "tiny-random/qwen3-vl-moe"
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3-vl-moe"}
@@ -326,12 +326,13 @@ def _run_disagg_kv_share_qaic_generation(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3_vl_moe_tiny"))
+def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
-    dma_config = disagg_dma_config("qwen3_vl_moe_tiny")
     model_id = dma_config["model_id"]
+    use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -364,7 +365,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             skip_vision=False,
             split_model_io=True,
             skip_lang=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             layerwise=False,
             offload_pt_weights=False,
         )
@@ -386,7 +387,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             aic_enable_depth_first=True,
             prefill_only=False,
             skip_vision=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             layerwise=False,
             offload_pt_weights=False,
         )
@@ -410,7 +411,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             layerwise=False,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")

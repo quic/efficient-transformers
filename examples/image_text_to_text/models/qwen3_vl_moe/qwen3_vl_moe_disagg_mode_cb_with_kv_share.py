@@ -90,20 +90,9 @@ def run(
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
 ):
-    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff.
-
-    ``skip_vision=False`` (default) pairs each prompt with the image at the same index of
-    ``image_urls`` (cycled if shorter) and runs it as an image+text turn through the vision
-    QPC; ``skip_vision=True`` runs text-only prompts. Returns a dict with, per prompt, the
-    ``first_tokens`` (prefill argmax) and the full decoded ``tokens`` list, for parity
-    comparison against the single-request driver.
-    """
+    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff."""
     prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
     image_urls = list(image_urls) if image_urls else list(DEFAULT_IMAGE_URLS)
-    # Repeat a single prompt/image across all full_batch_size slots (the CB analog of
-    # replicating one turn to fill the batch): pass exactly one prompt (and, with vision,
-    # one image) to run every slot with the same turn. A multi-element list is used as-is
-    # (distinct prompts per slot).
     if len(prompts) == 1:
         prompts = prompts * full_batch_size
     if len(image_urls) == 1:
@@ -213,14 +202,7 @@ def run(
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
 
     def _prepare_prompt(prompt: str, image_url: str):
-        """Tokenise + (optionally) run the vision QPC for one prompt.
-
-        ``image_url`` is used only when ``skip_vision=False``. Returns
-        ``(lang_inputs, vision_outputs, num_chunks, num_pos_sections)`` where ``lang_inputs``
-        is padded to a multiple of ``prefill_seq_len`` and carries ``position_ids`` /
-        ``image_idx``, and ``vision_outputs`` is a dict with ``vision_embeds`` /
-        ``deepstack_features`` (empty when ``skip_vision``).
-        """
+        """Tokenise + (optionally) run the vision QPC for one prompt"""
         if skip_vision:
             content = [{"type": "text", "text": prompt}]
         else:

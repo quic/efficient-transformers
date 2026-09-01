@@ -19,12 +19,25 @@
         "prefill_num_devices": 8,
         "decode_num_devices": 4,
         "stages": 4
-      },
+      }
+    ]
+  },
+  "gpt_oss_reduced": {
+    "model_id": "openai/gpt-oss-20b",
+    "test_configs": [
       {
         "id": "reduced_layers_prefill2_decode1_stages2",
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
-        "stages": 2
+        "stages": 2,
+        "use_onnx_subfunctions": true
+      },
+      {
+        "id": "reduced_layers_prefill2_decode1_stages2_no_subfunctions",
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2,
+        "use_onnx_subfunctions": false
       }
     ]
   },
@@ -52,14 +65,15 @@
       }
     ]
   },
-  "qwen3moe": {
+  "qwen3moe_tiny": {
     "model_id": "yujiepan/qwen3-moe-tiny-random",
     "test_configs": [
       {
-        "id": "full_model_prefill2_decode1_stages2",
+        "id": "tiny_model_prefill2_decode1_stages2",
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
-        "stages": 2
+        "stages": 2,
+        "use_onnx_subfunctions": true
       }
     ]
   },
@@ -71,7 +85,16 @@
         "vision_num_devices": 1,
         "prefill_num_devices": 2,
         "decode_num_devices": 2,
-        "stages": 2
+        "stages": 2,
+        "use_onnx_subfunctions" :true
+      },
+      {
+        "id": "tiny_model_vision1_prefill2_decode2_stages2_no_subfunctions",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 2,
+        "stages": 2,
+        "use_onnx_subfunctions": false
       }
     ]
   },
@@ -83,7 +106,16 @@
         "vision_num_devices": 1,
         "prefill_num_devices": 2,
         "decode_num_devices": 2,
-        "stages": 2
+        "stages": 2,
+        "use_onnx_subfunctions": true
+      },
+      {
+        "id": "tiny_model_vision1_prefill2_decode2_stages2_no_subfunctions",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 2,
+        "stages": 2,
+        "use_onnx_subfunctions": false
       }
     ]
   },
@@ -95,7 +127,16 @@
         "vision_num_devices": 1,
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
-        "stages": 2
+        "stages": 2,
+        "use_onnx_subfunctions": true
+      },
+      {
+        "id": "tiny_model_vision1_prefill2_decode1_stages2_no_subfunctions",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2,
+        "use_onnx_subfunctions": false
       }
     ]
   }

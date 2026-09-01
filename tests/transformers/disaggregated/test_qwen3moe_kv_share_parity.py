@@ -290,7 +290,7 @@ def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
 def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup):
     compare_tokens = HF_COMPARE_TOKENS
 
-    dma_config = disagg_dma_config("qwen3moe")
+    dma_config = disagg_dma_config("qwen3moe_tiny")
     model_id = dma_config["model_id"]
 
     hf_tokens = _run_hf_greedy_reference(compare_tokens)
