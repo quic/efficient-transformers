@@ -297,6 +297,7 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     supported_moe_flavours = (
         MoEFlavour.SIMPLE_LOOP,
         MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
     )
 
     def __qeff_init__(self):
