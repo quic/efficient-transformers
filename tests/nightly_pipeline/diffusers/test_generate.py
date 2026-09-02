@@ -57,17 +57,24 @@ def _frames_to_float32(frames):
 
 
 # Flux image generation and golden MAD validation
-def _generate_flux(model_id, diffuser_model_artifacts, get_pipeline_config, enable_first_block_cache=False, pipeline_call_overrides=None):
+def _generate_flux(
+    model_id,
+    diffuser_model_artifacts,
+    get_pipeline_config,
+    enable_first_block_cache=False,
+    pipeline_call_overrides=None,
+):
     """Generate Flux image and compare against golden PyTorch output."""
     dtype_key = "fp32_fbc" if enable_first_block_cache else "fp32"
-    entry = _skip_if_no_artifacts(diffuser_model_artifacts, model_id, dtype_key)
     cfg = get_pipeline_config["diffuser_flux_configs"]
     pipeline_params = cfg["pipeline_params"]
     model_setup = cfg["model_setup"]
     compile_config = cfg["compile_config"]
 
     pytorch_pipeline = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.float32, device_map="cpu")
-    pipeline = QEffFluxPipeline(model=copy.deepcopy(pytorch_pipeline), enable_first_block_cache=enable_first_block_cache)
+    pipeline = QEffFluxPipeline(
+        model=copy.deepcopy(pytorch_pipeline), enable_first_block_cache=enable_first_block_cache
+    )
 
     pipeline_call_overrides = pipeline_call_overrides or {}
     generator = torch.Generator(device="cpu").manual_seed(TEST_SEED)
@@ -130,13 +137,15 @@ def _generate_flux(model_id, diffuser_model_artifacts, get_pipeline_config, enab
     )
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
-    diffuser_model_artifacts[model_id][dtype_key].update({
-        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
-        "golden_comparison": comparison,
-        "image_shape": list(qaic_arr.shape),
-        "image_mean": round(float(qaic_arr.mean()), 6),
-        "image_max": round(float(qaic_arr.max()), 6),
-    })
+    diffuser_model_artifacts[model_id][dtype_key].update(
+        {
+            "generate_peak_ram_mb": round(ram["peak_mb"], 2),
+            "golden_comparison": comparison,
+            "image_shape": list(qaic_arr.shape),
+            "image_mean": round(float(qaic_arr.mean()), 6),
+            "image_max": round(float(qaic_arr.max()), 6),
+        }
+    )
 
     assert comparison["passed"], f"QPC image differs from golden PyTorch: {comparison['per_key']}"
 
@@ -156,17 +165,27 @@ def test_generate_flux(model_id, diffuser_model_artifacts, get_pipeline_config):
 @pytest.mark.parametrize("model_id", flux_models)
 def test_generate_flux_first_block_cache(model_id, diffuser_model_artifacts, get_pipeline_config):
     """FP32 Flux image generation with first_block_cache and golden MAD validation."""
-    _generate_flux(model_id, diffuser_model_artifacts, get_pipeline_config, enable_first_block_cache=True,
-                   pipeline_call_overrides={"cache_threshold": 0.0})
+    _generate_flux(
+        model_id,
+        diffuser_model_artifacts,
+        get_pipeline_config,
+        enable_first_block_cache=True,
+        pipeline_call_overrides={"cache_threshold": 0.0},
+    )
 
 
 # WAN T2V video generation and golden MAD validation
-def _generate_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=False, enable_first_block_cache=False,
-                  pipeline_call_overrides=None):
+def _generate_wan(
+    model_id,
+    diffuser_model_artifacts,
+    get_pipeline_config,
+    use_unified=False,
+    enable_first_block_cache=False,
+    pipeline_call_overrides=None,
+):
     """Generate WAN T2V video and compare against golden PyTorch output."""
     dtype_key = "fp32" + ("_unified" if use_unified else "_non_unified") + ("_fbc" if enable_first_block_cache else "")
     cfg_key = "diffuser_wan_configs" if use_unified else "diffuser_wan_non_unified_configs"
-    entry = _skip_if_no_artifacts(diffuser_model_artifacts, model_id, dtype_key)
     cfg = get_pipeline_config[cfg_key]
     pipeline_params = cfg["pipeline_params"]
     model_setup = cfg["model_setup"]
@@ -245,13 +264,15 @@ def _generate_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_u
     )
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
-    diffuser_model_artifacts[model_id][dtype_key].update({
-        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
-        "golden_comparison": comparison,
-        "image_shape": list(qaic_frames.shape),
-        "image_mean": round(float(qaic_frames.mean()), 6),
-        "image_max": round(float(qaic_frames.max()), 6),
-    })
+    diffuser_model_artifacts[model_id][dtype_key].update(
+        {
+            "generate_peak_ram_mb": round(ram["peak_mb"], 2),
+            "golden_comparison": comparison,
+            "image_shape": list(qaic_frames.shape),
+            "image_mean": round(float(qaic_frames.mean()), 6),
+            "image_max": round(float(qaic_frames.max()), 6),
+        }
+    )
 
     assert comparison["passed"], f"QPC video differs from golden PyTorch: {comparison['per_key']}"
 
@@ -271,8 +292,14 @@ def test_generate_wan_non_unified(model_id, diffuser_model_artifacts, get_pipeli
 @pytest.mark.parametrize("model_id", wan_models)
 def test_generate_wan_non_unified_first_block_cache(model_id, diffuser_model_artifacts, get_pipeline_config):
     """FP32 WAN T2V non-unified with first_block_cache generate and golden MAD validation."""
-    _generate_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=False, enable_first_block_cache=True,
-                  pipeline_call_overrides={"cache_threshold_high": 0.0, "cache_threshold_low": 0.0})
+    _generate_wan(
+        model_id,
+        diffuser_model_artifacts,
+        get_pipeline_config,
+        use_unified=False,
+        enable_first_block_cache=True,
+        pipeline_call_overrides={"cache_threshold_high": 0.0, "cache_threshold_low": 0.0},
+    )
 
 
 # WAN I2V video generation and golden MAD validation
@@ -293,7 +320,7 @@ def _generate_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_config):
 
     # Reuse height/width saved by export+compile
     height = entry.get("height")
-    width  = entry.get("width")
+    width = entry.get("width")
     if height is None or width is None:
         # Recalculate if export+compile was not run first
         image = load_image(pipeline_params["test_image_url"])
@@ -301,8 +328,8 @@ def _generate_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_config):
         aspect_ratio = image.height / image.width
         mod_value = pipeline.model.vae.config.scale_factor_spatial * pipeline.model.transformer.config.patch_size[1]
         height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
-        width  = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
-        image  = image.resize((width, height))
+        width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
+        image = image.resize((width, height))
     else:
         image = load_image(pipeline_params["test_image_url"]).resize((width, height))
 
@@ -372,13 +399,15 @@ def _generate_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_config):
     )
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
-    diffuser_model_artifacts[model_id][dtype_key].update({
-        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
-        "golden_comparison": comparison,
-        "image_shape": list(qaic_frames.shape),
-        "image_mean": round(float(qaic_frames.mean()), 6),
-        "image_max": round(float(qaic_frames.max()), 6),
-    })
+    diffuser_model_artifacts[model_id][dtype_key].update(
+        {
+            "generate_peak_ram_mb": round(ram["peak_mb"], 2),
+            "golden_comparison": comparison,
+            "image_shape": list(qaic_frames.shape),
+            "image_mean": round(float(qaic_frames.mean()), 6),
+            "image_max": round(float(qaic_frames.max()), 6),
+        }
+    )
 
     assert comparison["passed"], f"QPC video differs from golden PyTorch: {comparison['per_key']}"
 

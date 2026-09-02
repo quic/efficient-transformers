@@ -172,8 +172,7 @@ def validate_artifact_file(
     previous_artifacts = load_json(previous_artifact_file) if previous_artifact_file is not None else {}
     rows = validate_artifacts(load_json(current_artifact_file), previous_artifacts, model_class, tolerances)
     failure_rows = {
-        row.get("model_name"): row
-        for row in load_recorded_test_failure_rows(current_artifact_file.parent, model_class)
+        row.get("model_name"): row for row in load_recorded_test_failure_rows(current_artifact_file.parent, model_class)
     }
     for row in rows:
         failure = failure_rows.get(row.get("model_name"))
@@ -585,6 +584,7 @@ def _is_artifact_size_key(key: str) -> bool:
         or "onnx_and_qpc_dir size" in key_lower
         or ("size" in key_lower and ("onnx" in key_lower or "qpc" in key_lower))
     )
+
 
 def _parse_size_bytes(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import torch
 from datasets import load_dataset
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 
@@ -42,7 +42,6 @@ def _generate_audio_model(model_name, get_pipeline_config, audio_model_artifacts
 
     qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name, torch_dtype=torch_dtype)
     processor = AutoProcessor.from_pretrained(model_name)
-    onnx_path = audio_model_artifacts[model_name][dtype_key]["onnx_path"]
     qeff_model.qpc_path = Path(audio_model_artifacts[model_name][dtype_key]["qpc_path"])
 
     print("Loading audio sample from dataset...")
@@ -72,7 +71,7 @@ def _generate_audio_model(model_name, get_pipeline_config, audio_model_artifacts
             model_name, attn_implementation="eager", low_cpu_mem_usage=False
         )
         hf_model.eval()
-        
+
         model_weight_dtype = next(hf_model.parameters()).dtype
         hf_tokens = hf_model.generate(
             processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.to(model_weight_dtype),
