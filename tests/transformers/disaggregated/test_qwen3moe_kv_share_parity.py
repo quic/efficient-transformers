@@ -208,7 +208,7 @@ def _run_disagg_kv_share_qaic_generation(
     return tokens
 
 
-@pytest.mark.skip()
+@pytest.mark.skip("local test")
 @pytest.mark.on_qaic
 def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
     """KV-handoff correctness for the qwen3moe DMA path: the shared host ``kv_caches``

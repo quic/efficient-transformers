@@ -49,9 +49,6 @@ DEFAULT_FULL_BATCH_SIZE = 32
 STAGES = 4
 PREFILL_NUM_DEVICES = 8
 DECODE_NUM_DEVICES = 4
-# NOTE: the prefill-exec (input_ids) batch is always 1 under CB — each prompt is prefilled
-# individually into its own KV slot; the batch dimension is `full_batch_size` (KV slots).
-
 VISION_INPUT_KEYS = {
     "pixel_values",
     "image_masks",
@@ -132,9 +129,6 @@ def run(
         )
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
-    # full_batch_size pins the KV/RetainedState batch axis to N on BOTH QPCs. Decode is
-    # compiled before prefill with offload_pt_weights=False so the PyTorch weights stay
-    # resident for the prefill export/compile below.
     decode_qpc_path = qeff_model.compile(
         batch_size=1,
         full_batch_size=full_batch_size,
@@ -156,7 +150,6 @@ def run(
         offload_pt_weights=False,
     )
 
-    # enable_chunking is mandatory for a CB prefill-only compile.
     prefill_qpc_path = qeff_model.compile(
         batch_size=1,
         full_batch_size=full_batch_size,
@@ -186,8 +179,6 @@ def run(
         decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True, full_batch_size=full_batch_size
     )
 
-    # image_idx / batch_index must be compiled input bindings; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert the ones we always rely on up front.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
@@ -314,8 +305,6 @@ def run(
         mrope_pos[slot] = mrope
         ongoing[slot] = True
 
-    # Prompt queue: each entry is (prompt_idx, prompt, image_url). Everything beyond the
-    # first N slots waits here and refills on completion. image_urls is cycled if shorter.
     prompt_queue = deque((idx, prompt, image_urls[idx % len(image_urls)]) for idx, prompt in enumerate(prompts))
 
     prefill_start = perf_counter()
@@ -329,10 +318,6 @@ def run(
         _seed_slot(slot, prompt_idx, ft, phys, mrope)
     print(f"Initial prefill time : {perf_counter() - prefill_start:.2f} secs")
 
-    # Decode does not re-gather image tokens (image_idx has advanced past them), but the
-    # vision_embeds / deepstack_features bindings must still be satisfied every step. Bind
-    # constant zeros buffers of the compiled shapes; their values are never used by the
-    # text-token decode path. Only wire keys that are actual decode bindings.
     if not skip_vision and vision_outputs_ref:
         decode_session.set_persistent_inputs(
             {k: np.zeros_like(v) for k, v in vision_outputs_ref.items() if k in decode_session.binding_index_map}
@@ -355,9 +340,6 @@ def run(
             "batch_index": batch_index,
         }
         if decode_has_image_idx:
-            # image_idx is a fixed (1,1) binding, NOT widened to full_batch_size: decode does
-            # not re-gather image tokens (they were merged into KV during prefill), so it is
-            # inert here. A static [[0]] satisfies the binding.
             decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
         return decode_inputs
 
@@ -387,7 +369,6 @@ def run(
                 continue
             tok = int(next_tokens[slot])
             if tok == tokenizer.eos_token_id or gen_count[slot] >= generation_len:
-                # Slot finished: record its output, then refill from the queue or retire.
                 results[slot_prompt_idx[slot]] = slot_tokens[slot]
                 if prompt_queue:
                     prompt_idx, prompt, prompt_image_url = prompt_queue.popleft()

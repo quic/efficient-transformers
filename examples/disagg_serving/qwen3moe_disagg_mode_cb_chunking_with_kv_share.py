@@ -114,8 +114,6 @@ def run(
         qeff_model, prefill_seq_len, ctx_len, full_batch_size, stages, prefill_num_devices, decode_num_devices
     )
 
-    # batch_index must be a compiled decode input binding; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert it up front.
     assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"
 
     # Shared host KV arrays, allocated once in decode-map order. Under CB the leading batch
@@ -160,7 +158,6 @@ def run(
         next_pos = int(np.max(lang_inputs["position_ids"])) + 1
         return first_token, next_pos
 
-    # Per-slot decode state (single-section positions: one counter per slot).
     ongoing = [False] * full_batch_size
     last_token = [0] * full_batch_size
     pos = [0] * full_batch_size

@@ -34,7 +34,6 @@ DEFAULT_FULL_BATCH_SIZE = 4
 
 NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
-# Prefill pipeline depth: >1 chunk can be in flight on the device at once.
 STAGES = 4
 PREFILL_NUM_DEVICES = 8
 DECODE_NUM_DEVICES = 4
@@ -60,14 +59,7 @@ def _compile_sessions(
     subfunc_npi,
     non_subfunc_npi,
 ):
-    """Compile decode/prefill QPCs (CB flags) and open kv_dma_share sessions.
-
-    full_batch_size pins the KV/RetainedState batch axis to N on BOTH QPCs. Decode is
-    compiled first with offload_pt_weights=False so the PyTorch weights stay resident for
-    the prefill export/compile below; enable_chunking is mandatory for a CB prefill-only
-    compile, and retain_full_kv promotes gpt-oss's sliding layers to full ctx_len so the
-    prefill KV lines up with the decode buffers.
-    """
+    """Compile decode/prefill QPCs (CB flags) and open kv_dma_share sessions."""
     decode_qpc_path = qeff_model.compile(
         prefill_seq_len=1,
         ctx_len=ctx_len,
@@ -96,7 +88,7 @@ def _compile_sessions(
         num_speculative_tokens=None,
         prefill_only=True,
         enable_chunking=True,
-        retain_full_kv=True,  # promote sliding layers to full ctx_len so KV lines up with decode
+        retain_full_kv=True,
         use_onnx_subfunctions=True,
     )
     prefill_session = QAICInferenceSession(
@@ -120,13 +112,7 @@ def run(
     subfunc_npi: str = DEFAULT_SUBFUNC_NPI,
     non_subfunc_npi: str = DEFAULT_NON_SUBFUNC_NPI,
 ):
-    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff.
-
-    ``num_hidden_layers`` (testing only) reduces the model depth for a fast compile; leave it
-    ``None`` to use the full model. Returns a dict with, per prompt, the ``first_tokens``
-    (prefill argmax) and the full decoded ``tokens`` list, for parity comparison against the
-    single-request driver.
-    """
+    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff."""
     prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
@@ -145,8 +131,6 @@ def run(
         non_subfunc_npi,
     )
 
-    # batch_index must be a compiled decode input binding; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert it up front.
     assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"
 
     # Shared host KV arrays, allocated once in decode-map order. Under CB the leading batch
@@ -202,7 +186,6 @@ def run(
         next_pos = int(np.max(lang_inputs["position_ids"])) + 1
         return first_token, next_pos
 
-    # Per-slot decode state (single-section positions: one counter per slot).
     ongoing = [False] * full_batch_size
     last_token = [0] * full_batch_size
     pos = [0] * full_batch_size
