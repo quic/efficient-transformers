@@ -162,7 +162,7 @@ class CheckpointTransformPipeline:
         source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
         if not has_safetensors and list(src.glob("*.bin")):
-            # TODO(wf): rewriting bin into safetensors is not good idea, 
+            # TODO(wf): rewriting bin into safetensors is not good idea,
             # we better error out saying we don't support bin format or handle without the rewrite.
             source_dir = out.with_name(out.name + "-source-safetensors")
             convert_bin_to_safetensors(src, source_dir)

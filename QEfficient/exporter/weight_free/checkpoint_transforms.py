@@ -219,7 +219,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        # TODO(wf): Move sidecar copying out of dtype conversion into a separate preparation step. 
+        # TODO(wf): Move sidecar copying out of dtype conversion into a separate preparation step.
         # This is not a transform
         copy_checkpoint_aux_files(src, out)
 
