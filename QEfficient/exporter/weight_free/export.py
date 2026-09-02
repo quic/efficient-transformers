@@ -18,8 +18,10 @@ from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_init
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
 from QEfficient.utils import load_json
 from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.torch_patches import dynamo_invoke_subgraph_fallback_env, preserve_subfunction_source_lines
+
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def _to_meta(value: Any) -> Any:

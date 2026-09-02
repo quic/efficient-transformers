@@ -102,9 +102,6 @@ from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA")
-
-
 if TYPE_CHECKING:
     from QEfficient.base.modeling_qeff import QEFFBaseModel
 
@@ -182,6 +179,8 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+
+logger = QEFFLogger.get_logger("INFRA")
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool

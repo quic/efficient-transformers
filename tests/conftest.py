@@ -27,7 +27,7 @@ from QEfficient.utils.device_utils import (  # noqa: E402
     get_qaic_mdp_device_groups,
     parse_qaic_device_groups,
 )
-from QEfficient.utils.logging_utils import QEFFLogger
+from QEfficient.utils.logging_utils import QEFFLogger  # noqa: E402
 from tests.two_phase import is_compile_warm_phase, is_two_phase_session  # noqa: E402
 
 logger = QEFFLogger.get_logger("INFRA")
