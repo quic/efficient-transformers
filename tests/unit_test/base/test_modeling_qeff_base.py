@@ -318,6 +318,60 @@ class TestQEFFBaseModelTransformBlocking:
         if "h" in decided_mode:
             assert cfg.head_block_size is not None and cfg.head_block_size > 1
 
+    @pytest.mark.parametrize(
+        ("compiler_options", "expected_moe_num_devices"),
+        [
+            pytest.param({}, 8, id="no_mdp_partitions"),
+            pytest.param({"mdp_num_partitions": 1}, 8, id="single_partition"),
+            pytest.param({"mdp_num_partitions": 4}, 2, id="pp4_ts2"),
+        ],
+    )
+    def test_transform_passes_partition_ts_devices_to_moe_transform(
+        self, monkeypatch, compiler_options, expected_moe_num_devices
+    ):
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        captured_kwargs = {}
+
+        def fake_moe_apply(model, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model, False
+
+        monkeypatch.setattr(modeling_qeff.OptimizedMoETransform, "apply", staticmethod(fake_moe_apply))
+
+        qeff.transform(
+            ctx_len=32,
+            seq_len=8,
+            bs=1,
+            num_devices=8,
+            qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+            aic_num_cores=16,
+            prefill_only=True,
+            prefill_seq_len=8,
+            **compiler_options,
+        )
+
+        assert captured_kwargs["num_devices"] == expected_moe_num_devices
+
+    def test_transform_rejects_invalid_mdp_num_partitions_for_moe_transform(self):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with pytest.raises(ValueError, match="mdp_num_partitions must be greater than zero"):
+            qeff.transform(
+                ctx_len=32,
+                seq_len=8,
+                bs=1,
+                num_devices=8,
+                qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+                aic_num_cores=16,
+                prefill_only=True,
+                prefill_seq_len=8,
+                mdp_num_partitions=0,
+            )
+
 
 @pytest.mark.cpu_only
 @pytest.mark.onnx

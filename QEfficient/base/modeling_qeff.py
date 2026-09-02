@@ -1050,11 +1050,20 @@ class QEFFBaseModel(ABC):
         if num_cores is None:
             num_cores = constants.DEFAULT_AIC_NUM_CORES
         prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
+        mdp_num_partitions = compiler_options.get("mdp_num_partitions", 1)
+        if mdp_num_partitions is None:
+            mdp_num_partitions = 1
+        mdp_num_partitions = int(mdp_num_partitions)
+        if mdp_num_partitions <= 0:
+            raise ValueError("mdp_num_partitions must be greater than zero")
+        moe_num_devices = int(num_devices)
+        if mdp_num_partitions > 1:
+            moe_num_devices = moe_num_devices // mdp_num_partitions
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
-            num_devices=num_devices,
+            num_devices=moe_num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
             prefill_seq_len=prefill_seq_len,
@@ -1150,6 +1159,7 @@ class QEFFBaseModel(ABC):
                     dynamo,
                     retain_full_kv,
                     mdp_ts_num_devices=mdp_ts_num_devices,
+                    mdp_num_partitions=mdp_num_partitions,
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,

@@ -2048,6 +2048,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             num_devices=num_devices,
             qaic_config=qaic_config,
             aic_num_cores=num_cores,
+            mdp_num_partitions=compiler_options.get("mdp_num_partitions", 1),
             prefill_only=prefill_only,
             prefill_seq_len=prefill_seq_len,
         )
