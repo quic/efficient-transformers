@@ -30,6 +30,7 @@ from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("MODEL")
 
+
 class MoEFlavour(str, Enum):
     EXPERT_PARALLEL = "expert_parallel"
     # Backward-compatible alias for one transition period.

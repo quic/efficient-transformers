@@ -15,6 +15,7 @@ from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("INFRA")
 
+
 def validate_sampler_inputs(
     session_inputs: Set[str], include_sampler: Optional[bool] = None, include_guided_decoding: Optional[bool] = None
 ) -> bool:
