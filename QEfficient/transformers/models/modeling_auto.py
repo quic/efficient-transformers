@@ -4465,10 +4465,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Normalize batch_size. A list requests dynamic batching: one decode specialization per
         # batch size in a single QPC. A plain int N behaves exactly as before (single-element list).
         _is_dynamic_batch = isinstance(batch_size, (list, tuple))
-        _decode_bs = sorted(set(batch_size)) if _is_dynamic_batch else [batch_size]
         if _is_dynamic_batch:
-            if any((not isinstance(b, int)) or b < 1 for b in _decode_bs):
+            if any((not isinstance(b, int)) or b < 1 for b in batch_size):
                 raise ValueError(f"All `batch_size` values must be integers >= 1, got {batch_size}.")
+            _decode_bs = sorted(set(batch_size))
             # Dynamic batching only works on the continuous-batching export path: there the input
             # batch axis (`input_ids`/`position_ids`/`batch_index`) is a distinct ONNX symbol from the
             # retained KV-cache batch axis (`full_batch_size`), so decode specializations can vary the
@@ -4490,6 +4490,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     f"Every `batch_size` value must be <= `full_batch_size` (B_max={full_batch_size}); "
                     f"got {batch_size}."
                 )
+        else:
+            _decode_bs = [batch_size]
 
         # Infer kv_cache_batch_size if not provided. Under continuous batching the retained KV cache
         # is always sized at full_batch_size (B_max) regardless of the decode input batch(es).

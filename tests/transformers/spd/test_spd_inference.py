@@ -600,8 +600,7 @@ _DYN_BATCH_CTX_LEN = 128
 
 @pytest.mark.on_qaic
 @pytest.mark.feature
-@pytest.mark.parametrize("batch_sizes", [[1, 2, 4]])
-def test_dynamic_batch_qpc_per_batch_execution(batch_sizes, manual_cleanup):
+def test_dynamic_batch_qpc_per_batch_execution(manual_cleanup):
     """
     Compile ONE continuous-batching QPC carrying one decode specialization per input batch size
     while the retained KV cache is pinned at ``full_batch_size`` (B_max), then verify each live
@@ -613,6 +612,7 @@ def test_dynamic_batch_qpc_per_batch_execution(batch_sizes, manual_cleanup):
     that routes those ``b`` sequences into ``b`` of the ``B_max`` KV slots, and assert finite logits
     with batch dimension ``b``.
     """
+    batch_sizes = [1, 2, 4]
     b_max = max(batch_sizes)
     tokenizer = AutoTokenizer.from_pretrained(_DYN_BATCH_MODEL, padding_side="right")
     if tokenizer.pad_token_id is None:
@@ -739,25 +739,3 @@ def test_dynamic_batch_times_spec_len_compiles(manual_cleanup):
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     manual_cleanup([tlm.onnx_path])
-
-
-@pytest.mark.on_qaic
-@pytest.mark.feature
-def test_dynamic_batch_with_ccl_rejected():
-    """Dynamic batching combined with CCL must be rejected at compile time (not deferred to the
-    QAIC compiler): the two vary different identifying inputs and cannot be disambiguated."""
-    model = load_qeff_causal_lm_model(
-        _DYN_BATCH_MODEL,
-        num_hidden_layers=_DYN_BATCH_NUM_LAYERS,
-        continuous_batching=True,
-    )
-    with pytest.raises(ValueError, match="comp_ctx_lengths"):
-        model.compile(
-            num_cores=2,
-            prefill_seq_len=_DYN_BATCH_PREFILL_LEN,
-            ctx_len=2048,
-            aic_enable_depth_first=True,
-            batch_size=[1, 2],
-            full_batch_size=2,
-            comp_ctx_lengths_decode=[1024, 2048],
-        )

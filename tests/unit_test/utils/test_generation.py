@@ -581,6 +581,18 @@ class TestPrepareDecodeInputs:
         decode_inputs = obj.prepare_decode_inputs()
         assert "batch_index" not in decode_inputs
 
+    def test_lora_ids_use_live_decode_batch_under_dynamic_batching(self):
+        obj, _, _ = _make_base_instance(full_batch_size=4)
+        obj.initialize_decode_inputs(num_prompts=4, execution_batch_size=2, max_gen_length=10)
+        obj.decode_batch_size = 2
+        obj.batch_index = np.arange(2).reshape(-1, 1)
+        obj._prompt_to_lora_id_mapping_decode = [17, 23, 31, 47]
+
+        decode_inputs = obj.prepare_decode_inputs()
+
+        assert decode_inputs["lora_ids"].shape == (2, 1)
+        np.testing.assert_array_equal(decode_inputs["lora_ids"], np.array([[17], [23]], dtype=np.int64))
+
 
 # ---------------------------------------------------------------------------
 # Tests: update_decode_input
@@ -1068,7 +1080,8 @@ class TestDynamicBatchRuntime:
 
     def test_resolve_batch_exceeding_bmax_rejected(self):
         _, gen = self._make_dynamic_batch_instance(decode_batches=[2, 4], full_batch_size=4)
-        with pytest.raises(ValueError, match="not a compiled decode batch size"):
+        gen._qaic_model._compiled_batch_sizes = [2, 4, 8]
+        with pytest.raises(ValueError, match="exceeds full_batch_size"):
             gen._resolve_execution_batch_size(8)
 
 

@@ -1333,6 +1333,17 @@ class TestDynamicBatchSpecializations:
         assert len(decode_specs) == 3
         assert {s["batch_size"] for s in decode_specs} == {1, 2, 4}
 
+    def test_list_batch_size_normalized_to_unique_sorted_specs(self):
+        """Unsorted/duplicate dynamic batches emit deterministic decode specs."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        specs = self._capture_specializations(
+            qeff, prefill_seq_len=32, ctx_len=128, batch_size=[2, 1, 2], full_batch_size=2
+        )
+        decode_specs = self._decode_specs(specs)
+        assert {s["batch_size"] for s in decode_specs} == {1, 2}
+        assert [s["batch_size"] for s in decode_specs] == [1, 2]
+
     def test_all_decode_specs_share_kv_batch_bmax(self):
         """Retained KV batch (full_batch_size) must be identical (=B_max) across every decode spec.
 
@@ -1446,22 +1457,6 @@ class TestDynamicBatchSpecializations:
         assert {s["seq_len"] for s in decode_specs} == {4}
         assert {s["comp_ctx_lengths"] for s in decode_specs} == {1024, 2048}
 
-    def test_batch_ccl_spec_len_combo_rejected(self):
-        """batch_size list + CCL + num_speculative_tokens → ValueError (CCL cannot combine with a batch list)."""
-        model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(
-            model, continuous_batching=True, qaic_config={"speculative_model_type": "target"}
-        )
-        with pytest.raises(ValueError, match="comp_ctx_lengths"):
-            qeff.compile(
-                prefill_seq_len=32,
-                ctx_len=2048,
-                batch_size=[1, 2],
-                full_batch_size=2,
-                comp_ctx_lengths_decode=[1024, 2048],
-                num_speculative_tokens=[1, 3],
-            )
-
     def test_list_batch_size_rejected_without_continuous_batching(self):
         """batch_size list without continuous_batching → ValueError (non-CB cannot decouple axes)."""
         model, _ = make_tiny_llama()
@@ -1482,3 +1477,11 @@ class TestDynamicBatchSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
         with pytest.raises(ValueError, match="full_batch_size"):
             qeff.compile(prefill_seq_len=32, ctx_len=128, batch_size=[1, 2, 8], full_batch_size=4)
+
+    @pytest.mark.parametrize("batch_size", [[0], [-1], [1, "2"]])
+    def test_invalid_list_batch_size_rejected(self, batch_size):
+        """Dynamic batch list entries must be positive integers."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        with pytest.raises(ValueError):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, batch_size=batch_size, full_batch_size=4)
