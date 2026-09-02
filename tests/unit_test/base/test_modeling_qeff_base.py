@@ -23,6 +23,7 @@ import torch
 from onnx import TensorProto, helper
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
+from QEfficient.base.modeling_qeff import generate_mdp_compiler_dump
 from QEfficient.compile.mdp_generator import _layer_partition_bounds
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -317,6 +318,60 @@ class TestQEFFBaseModelTransformBlocking:
         if "h" in decided_mode:
             assert cfg.head_block_size is not None and cfg.head_block_size > 1
 
+    @pytest.mark.parametrize(
+        ("compiler_options", "expected_moe_num_devices"),
+        [
+            pytest.param({}, 8, id="no_mdp_partitions"),
+            pytest.param({"mdp_num_partitions": 1}, 8, id="single_partition"),
+            pytest.param({"mdp_num_partitions": 4}, 2, id="pp4_ts2"),
+        ],
+    )
+    def test_transform_passes_partition_ts_devices_to_moe_transform(
+        self, monkeypatch, compiler_options, expected_moe_num_devices
+    ):
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        captured_kwargs = {}
+
+        def fake_moe_apply(model, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model, False
+
+        monkeypatch.setattr(modeling_qeff.OptimizedMoETransform, "apply", staticmethod(fake_moe_apply))
+
+        qeff.transform(
+            ctx_len=32,
+            seq_len=8,
+            bs=1,
+            num_devices=8,
+            qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+            aic_num_cores=16,
+            prefill_only=True,
+            prefill_seq_len=8,
+            **compiler_options,
+        )
+
+        assert captured_kwargs["num_devices"] == expected_moe_num_devices
+
+    def test_transform_rejects_invalid_mdp_num_partitions_for_moe_transform(self):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with pytest.raises(ValueError, match="mdp_num_partitions must be greater than zero"):
+            qeff.transform(
+                ctx_len=32,
+                seq_len=8,
+                bs=1,
+                num_devices=8,
+                qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+                aic_num_cores=16,
+                prefill_only=True,
+                prefill_seq_len=8,
+                mdp_num_partitions=0,
+            )
+
 
 @pytest.mark.cpu_only
 @pytest.mark.onnx
@@ -389,15 +444,27 @@ def _build_synthetic_gpt2_onnx(num_layers: int, out_path: Path) -> None:
 
 
 def _fake_subprocess_run(command: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
-    """Monkeypatch for subprocess.run: create programqpc.bin at the -aic-binary-dir path."""
+    """Monkeypatch for subprocess.run: create compile artifacts requested by the command."""
     binary_dir: Optional[Path] = None
+    dump_path: Optional[Path] = None
+    onnx_path: Optional[Path] = None
     for arg in command:
         if arg.startswith("-aic-binary-dir="):
             binary_dir = Path(arg.split("=", 1)[1])
-            break
+        elif arg.startswith("-mdp-dump-partition-config="):
+            dump_path = Path(arg.split("=", 1)[1])
+        elif arg.startswith("-m="):
+            onnx_path = Path(arg.split("=", 1)[1])
     if binary_dir is not None:
         binary_dir.mkdir(parents=True, exist_ok=True)
         (binary_dir / "programqpc.bin").write_bytes(b"FAKE_QPC")
+    if dump_path is not None:
+        node_names: List[str] = []
+        if onnx_path is not None:
+            model = onnx.load(onnx_path, load_external_data=False)
+            node_names = [node.name for node in model.graph.node if node.name]
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        dump_path.write_text(json.dumps({"partitions": [{"nodeList": node_names}]}))
     return subprocess.CompletedProcess(args=command, returncode=0, stdout=b"", stderr=b"")
 
 
@@ -619,3 +686,224 @@ class TestMdpCompileIntegration:
         assert compiler_cfg.get("mdp_strategy") == "onnx", (
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
+
+    def test_user_mdp_compiler_dump_path_is_deprecated(self, compile_workspace):
+        """User-provided compiler dumps are deprecated and ignored in favor of auto-generation."""
+        _, onnx_path, compile_dir = compile_workspace
+        model_hf, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model_hf)
+        user_dump_path = compile_dir / "compiler_dump.json"
+
+        with (
+            patch("QEfficient.base.modeling_qeff.logger.warning") as warning_mock,
+            patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run) as run_mock,
+        ):
+            qeff._compile(
+                onnx_path=str(onnx_path),
+                compile_dir=str(compile_dir),
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                mdp_strategy="intersection",
+                mdp_compiler_dump_path=str(user_dump_path),
+            )
+
+        command_strs = [" ".join(str(arg) for arg in call.args[0]) for call in run_mock.call_args_list]
+        warning_mock.assert_called_once()
+        assert "mdp_compiler_dump_path is deprecated and no longer used" in warning_mock.call_args.args[0]
+        assert str(user_dump_path) not in " ".join(command_strs)
+        assert any("/mdp_" in command_str for command_str in command_strs)
+        assert any("tmp_mdp_compiler_dump_4d_2p.json" in command_str for command_str in command_strs)
+
+    def test_intersection_mdp_dump_reuses_compile_command(self, compile_workspace):
+        """Auto-generated compiler dumps are derived from the final compiler-facing command."""
+        _, onnx_path, compile_dir = compile_workspace
+        model_hf, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model_hf)
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run) as run_mock:
+            qeff._compile(
+                onnx_path=str(onnx_path),
+                compile_dir=str(compile_dir),
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                mdp_strategy="intersection",
+                use_onnx_subfunctions=True,
+                specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                custom_io={"input_ids": "float16"},
+                aic_hw_version="ai100",
+                retained_state=True,
+                convert_to_fp16=True,
+                mxfp6_matmul=True,
+                aic_num_cores=16,
+                split_model_io=True,
+                mos=1,
+                aic_enable_depth_first=True,
+            )
+
+        dump_commands = [
+            call.args[0]
+            for call in run_mock.call_args_list
+            if any(str(arg).startswith("-mdp-dump-partition-config=") for arg in call.args[0])
+        ]
+        final_commands = [
+            call.args[0]
+            for call in run_mock.call_args_list
+            if any(str(arg).startswith("-aic-binary-dir=") for arg in call.args[0])
+        ]
+        assert len(dump_commands) == 1
+        assert len(final_commands) == 1
+
+        dump_command = dump_commands[0]
+        final_command = final_commands[0]
+        dump_command_str = " ".join(str(arg) for arg in dump_command)
+        final_command_str = " ".join(str(arg) for arg in final_command)
+
+        for expected in [
+            "/opt/qti-aic/exec/qaic-compile",
+            "-aic-hw",
+            "-aic-hw-version=ai100",
+            f"-m={onnx_path}",
+            "-retained-state",
+            "-convert-to-fp16",
+            "-mxfp6-matmul",
+            "-aic-num-cores=16",
+            "-split-model-io",
+            "-mos=1",
+            "-aic-enable-depth-first",
+            "-sub-functions",
+        ]:
+            assert expected in dump_command_str
+            assert expected in final_command_str
+
+        dump_mdp_flags = [arg for arg in dump_command if str(arg).startswith("-mdp-dump-partition-config=")]
+        assert len(dump_mdp_flags) == 1
+        dump_path = Path(str(dump_mdp_flags[0]).split("=", 1)[1])
+        mdp_dir = dump_path.parent
+        assert mdp_dir.parent == compile_dir
+        assert mdp_dir.name.startswith("mdp_")
+        assert dump_path.is_file()
+        assert (mdp_dir / "specializations.json").is_file()
+        assert (mdp_dir / "custom_io.yaml").is_file()
+        assert (mdp_dir / "mdp_disagg_4d_2p.json").is_file()
+
+        assert f"-network-specialization-config={mdp_dir / 'specializations.json'}" in dump_command_str
+        assert f"-custom-IO-list-file={mdp_dir / 'custom_io.yaml'}" in dump_command_str
+
+        final_specialization_flags = [
+            arg for arg in final_command if str(arg).startswith("-network-specialization-config=")
+        ]
+        final_custom_io_flags = [arg for arg in final_command if str(arg).startswith("-custom-IO-list-file=")]
+        assert len(final_specialization_flags) == 1
+        assert len(final_custom_io_flags) == 1
+        assert str(compile_dir / "qpc-") in final_specialization_flags[0]
+        assert final_specialization_flags[0].endswith("/specializations.json")
+        assert str(compile_dir / "qpc-") in final_custom_io_flags[0]
+        assert final_custom_io_flags[0].endswith("/custom_io.yaml")
+
+        assert f"-mdp-dump-partition-config={mdp_dir / 'tmp_mdp_compiler_dump_4d_2p.json'}" in dump_command_str
+        assert "-mdp-load-partition-config=" not in dump_command_str
+        assert "-aic-binary-dir=" not in dump_command_str
+        assert "-mdp-dump-partition-config=" not in final_command_str
+        assert f"-mdp-load-partition-config={mdp_dir / 'mdp_disagg_4d_2p.json'}" in final_command_str
+        assert "-aic-binary-dir=" in final_command_str
+
+    def test_mdp_compiler_dump_hash_changes_with_custom_io(self, compile_workspace):
+        """Different custom_io creates a different mdp_<hash> dump directory."""
+        _, onnx_path, compile_dir = compile_workspace
+        command = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw", f"-m={onnx_path}"]
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run):
+            fp16_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                custom_io={"input_ids": "float16"},
+            )
+            int8_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                custom_io={"input_ids": "int8"},
+            )
+
+        assert Path(fp16_dump).parent != Path(int8_dump).parent
+        assert Path(fp16_dump).parent.name.startswith("mdp_")
+        assert Path(int8_dump).parent.name.startswith("mdp_")
+
+    def test_mdp_compiler_dump_hash_changes_with_specializations(self, compile_workspace):
+        """Different specializations creates a different mdp_<hash> dump directory."""
+        _, onnx_path, compile_dir = compile_workspace
+        command = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw", f"-m={onnx_path}"]
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run):
+            seq8_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+            )
+            seq16_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                specializations=[{"batch_size": 1, "seq_len": 16, "ctx_len": 32}],
+            )
+
+        assert Path(seq8_dump).parent != Path(seq16_dump).parent
+        assert Path(seq8_dump).parent.name.startswith("mdp_")
+        assert Path(seq16_dump).parent.name.startswith("mdp_")
+
+    def test_mdp_compiler_dump_hash_changes_with_compile_command(self, compile_workspace):
+        """Different compiler command inputs create different mdp_<hash> dump directories."""
+        _, onnx_path, compile_dir = compile_workspace
+        base_command = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw", f"-m={onnx_path}"]
+        fp16_command = base_command + ["-convert-to-fp16"]
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run):
+            base_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=base_command,
+            )
+            fp16_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=fp16_command,
+            )
+
+        assert Path(base_dump).parent != Path(fp16_dump).parent
+        assert Path(base_dump).parent.name.startswith("mdp_")
+        assert Path(fp16_dump).parent.name.startswith("mdp_")
+
+    def test_mdp_compiler_dump_reuses_same_hash_dir_for_same_inputs(self, compile_workspace):
+        """Same dump inputs reuse the same mdp_<hash> dump and skip subprocess rerun."""
+        _, onnx_path, compile_dir = compile_workspace
+        command = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw", f"-m={onnx_path}"]
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run) as run_mock:
+            first_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                custom_io={"input_ids": "float16"},
+            )
+            second_dump = generate_mdp_compiler_dump(
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                compile_command=command,
+                specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                custom_io={"input_ids": "float16"},
+            )
+
+        assert first_dump == second_dump
+        assert Path(first_dump).parent.name.startswith("mdp_")
+        assert run_mock.call_count == 1
