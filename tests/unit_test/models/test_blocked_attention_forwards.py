@@ -418,3 +418,46 @@ class TestSkipKvBreakPreserved:
             f"Expected skip_kv to stop gathering after {expected_calls} KV blocks once a block "
             f"lies entirely in the future, got {mocked.call_count} calls."
         )
+
+    def test_hqkv_skip_kv_matches_manual_causal_attention(self):
+        """The call-count test above only proves the pre-pass gathers the right
+        *number* of blocks once skip_kv breaks early -- it never checks that the
+        surviving kv_blocks still produce numerically correct output. Verify
+        that separately here: with skip_kv=True the blocks lying entirely in
+        the future are never gathered at all (rather than gathered and then
+        masked to -inf), so this must still match plain causal attention over
+        the full cache."""
+        heads = 4
+        cache = _make_paged_cache(heads=heads)
+        module = _DummyModule()
+        k_full, v_full = _full_kv(cache)
+
+        query = torch.randn(1, heads, 1, HEAD_DIM)
+        position_ids = torch.tensor([[3]])
+        cache_kwargs = _cache_kwargs(position_ids, _identity_block_table(1, NUM_PHYS_BLOCKS))
+
+        attn_output, _ = blocked_hqkv_attention_forward(
+            module=module,
+            query=query,
+            key=None,
+            value=torch.zeros(1, heads, 1, HEAD_DIM),
+            attention_mask=None,
+            scaling=SCALING,
+            num_kv_blocks=NUM_PHYS_BLOCKS,
+            num_q_blocks=1,
+            head_block_size=2,
+            cache_kwargs=cache_kwargs,
+            layer_idx=0,
+            past_key_value=cache,
+            paged_attention=True,
+            use_causal_mask=True,
+            skip_kv=True,
+        )
+
+        expected = _manual_causal_attention(query, k_full, v_full, position_ids, SCALING)
+        expected = expected.transpose(1, 2).contiguous()
+
+        assert torch.allclose(attn_output, expected, atol=1e-4, rtol=1e-4), (
+            "Hoisted-gather hqkv output with skip_kv=True diverged from manual causal attention "
+            f"(max abs diff={(attn_output - expected).abs().max().item()})"
+        )
