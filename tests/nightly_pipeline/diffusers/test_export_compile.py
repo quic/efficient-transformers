@@ -17,7 +17,7 @@ from diffusers import FluxPipeline, WanImageToVideoPipeline, WanPipeline
 
 from QEfficient import QEffFluxPipeline, QEffWanImageToVideoPipeline, QEffWanPipeline
 
-from ..nightly_utils import get_file_or_dir_size, measure_peak_ram
+from ..nightly_utils import get_file_or_dir_size, get_onnx_dir_size, measure_peak_ram
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -73,8 +73,8 @@ def _export_compile_flux(model_id, diffuser_model_artifacts, get_pipeline_config
         "onnx_and_qpc_dir": onnx_dirs,
         "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
         "onnx_paths": onnx_paths,
+        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
         "qpc_paths": qpc_paths,
-        "onnx_size": {name: get_file_or_dir_size(p) for name, p in onnx_paths.items()},
         "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
     })
 
@@ -148,8 +148,8 @@ def _export_compile_wan(model_id, diffuser_model_artifacts, get_pipeline_config,
         "onnx_and_qpc_dir": onnx_dirs,
         "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
         "onnx_paths": onnx_paths,
+        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
         "qpc_paths": qpc_paths,
-        "onnx_size": {name: get_file_or_dir_size(p) for name, p in onnx_paths.items()},
         "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
     })
 
@@ -232,8 +232,8 @@ def _export_compile_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_con
         "onnx_and_qpc_dir": onnx_dirs,
         "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
         "onnx_paths": onnx_paths,
+        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
         "qpc_paths": qpc_paths,
-        "onnx_size": {name: get_file_or_dir_size(p) for name, p in onnx_paths.items()},
         "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
     })
 

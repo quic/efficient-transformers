@@ -19,7 +19,6 @@ from QEfficient import QEFFAutoModel
 from ..model_age_utils import filter_models_for_nightly
 from ..nightly_utils import (
     compare_with_golden,
-    get_file_or_dir_size,
     make_golden_key,
     measure_peak_ram,
     run_or_load_golden,
@@ -137,11 +136,11 @@ def _generate_embedding_model(model_name, pooling, get_pipeline_config, embeddin
     onnx_and_qpc_dir = os.path.dirname(onnx_path)
     embedding_model_artifacts[model_name][dtype_key][pooling_key].update(
         {
-            "embedding": sentence_embeddings["output"],
-            "onnx_and_qpc_dir": onnx_and_qpc_dir,
-            "onnx_size": get_file_or_dir_size(onnx_path),
-            "qpc_size": get_file_or_dir_size(embedding_model_artifacts[model_name][dtype_key][pooling_key]["qpc_path"]),
-            "peak_ram_mb": round(ram["peak_mb"], 2),
+            "embedding_shape": list(sentence_embeddings["output"].shape),
+            "embedding_mean": round(float(sentence_embeddings["output"].mean()), 6),
+            "embedding_max": round(float(sentence_embeddings["output"].max()), 6),
+            "seq_len": seq_len,
+            "generate_peak_ram_mb": round(ram["peak_mb"], 2),
             "golden_comparison": comparison,
         }
     )

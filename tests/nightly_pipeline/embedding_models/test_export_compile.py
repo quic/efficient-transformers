@@ -16,7 +16,7 @@ import torch
 from QEfficient import QEFFAutoModel
 
 from ..model_age_utils import filter_models_for_nightly
-from ..nightly_utils import get_file_or_dir_size, measure_peak_ram, pre_export_compile_utils
+from ..nightly_utils import get_file_or_dir_size, get_onnx_dir_size, measure_peak_ram, pre_export_compile_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -63,16 +63,20 @@ def _export_compile_embedding_model(model_name, pooling, get_pipeline_config, em
         compile_time = time.time() - compile_start
         print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path} in {compile_time:.2f} seconds.")
 
+    onnx_and_qpc_dir = os.path.dirname(onnx_path)
     embedding_model_artifacts[model_name][dtype_key][pooling_key].update(
         {
-            "export_loading_time": export_loading_time,
-            "onnx_path": onnx_path,
-            "onnx_size": get_file_or_dir_size(onnx_path),
+            "load_time": export_loading_time,
             "export_time": export_time,
-            "qpc_path": qpc_path,
-            "qpc_size": get_file_or_dir_size(qpc_path),
             "compile_time": compile_time,
             "peak_ram_mb": round(ram["peak_mb"], 2),
+            "onnx_and_qpc_dir": onnx_and_qpc_dir,
+            "size": get_file_or_dir_size(onnx_and_qpc_dir),
+            "onnx_path": onnx_path,
+            "onnx_size": get_onnx_dir_size(onnx_and_qpc_dir),
+            "qpc_path": qpc_path,
+            "qpc_size": get_file_or_dir_size(qpc_path),
+
         }
     )
 
