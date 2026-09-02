@@ -363,13 +363,6 @@ def main():
     parser.add_argument("--log_file", default="perplexity_results.log", help="Log file name")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(args.log_file), logging.StreamHandler()],
-    )
-    logger = logging.getLogger(__name__)
-
     start_time = time.time()
 
     # Load data
