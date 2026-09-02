@@ -48,24 +48,6 @@ from QEfficient.transformers.modeling_utils import (
     _configure_proxy_for_model,
 )
 from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import override_gptoss_prefill_chunking
-from QEfficient.transformers.models.pytorch_transforms import (
-    CustomOpsTransform,
-    KVCacheExternalModuleMapperTransform,
-    KVCacheTransform,
-    PoolingTransform,
-    PrefillOnlyChunkedTransform,
-    PrefillOnlyExternalModuleMapperTransform,
-    PrefillOnlyTransform,
-    RevertPrefillKeepAttentionTransform,
-    RevertPrefillOnlyExternalModuleMapperTransform,
-    RevertPrefillOnlyTransform,
-    SamplerTransform,
-    SimpleDecodeMoeTransform,
-    SpDTransform,
-    TextClassificationTransform,
-    VlmKVOffloadTransform,
-    VlmNoKVOffloadTransform,
-)
 from QEfficient.transformers.moe.flavours import MoEFlavour
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
@@ -427,7 +409,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -446,11 +428,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        self._pooling = pooling
         super().__init__(model, **kwargs)
-
-        # Make Embedding specific transforms like appending pooling
-        if pooling:
-            self.model, _ = PoolingTransform.apply(self.model, pooling)
 
         # Encoder-only models (e.g. BERT) should not be forced into cache mode.
         if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
@@ -553,6 +532,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform(seq_len=seq_len, bs=bs)
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -831,7 +812,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModelForSequenceClassification
-    _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
+    _pytorch_transforms = []
     _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
@@ -924,6 +905,8 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform(seq_len=seq_len, bs=bs)
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -1077,9 +1060,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = []
 
@@ -1096,8 +1076,15 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
-        self.model = model.get_qeff_vision_encoder()
+        if hasattr(model, "get_qeff_vision_encoder"):
+            self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    def _post_pytorch_transform(self) -> bool:
+        if hasattr(self.model, "get_qeff_vision_encoder"):
+            self.model = self.model.get_qeff_vision_encoder()
+            return True
+        return False
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
@@ -1123,6 +1110,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the vision encoder.
         """
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform()
         return self._export(
             inputs,
             output_names=output_names,
@@ -1214,10 +1203,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         PackQuantizedInt4ToMatMulNBitsTransform,
         FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         FP8BlockWiseDequantLinearToLinearTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        VlmKVOffloadTransform,
-        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -1236,33 +1221,28 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        self._qaic_config = qaic_config
         super().__init__(model, **kwargs)
-        self.model = model.get_qeff_language_decoder()
+        if hasattr(model, "get_qeff_language_decoder"):
+            self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
         if qaic_config:
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
-                setattr(self.model.language_model, "mla_absorption", mla_absorption)
+                if language_model := getattr(self.model, "language_model", None):
+                    setattr(language_model, "mla_absorption", mla_absorption)
 
-    def __update_prefill_transform(
-        self,
-        enable: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-    ):
-        if enable:
-            if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
-            else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
-        else:
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+    def _post_pytorch_transform(self) -> bool:
+        if hasattr(self.model, "get_qeff_language_decoder"):
+            self.model = self.model.get_qeff_language_decoder()
+            self.model.qaic_config = self._qaic_config
+            if self._qaic_config and (mla_absorption := self._qaic_config.get("mla_absorption", None)):
+                if language_model := getattr(self.model, "language_model", None):
+                    setattr(language_model, "mla_absorption", mla_absorption)
+            return True
+        return False
 
     def export(
         self,
@@ -1301,19 +1281,16 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
-        if prefill_only:
-            assert prefill_seq_len > 1
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.hash_params["prefill_only"] = True
-            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-        else:
-            self.hash_params["prefill_only"] = False
-            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-
+        skip_transform = kwargs.pop("_qeff_skip_transform", False)
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
+        if not skip_transform:
+            self.transform(
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+                retain_full_kv=kwargs.get("retain_full_kv", False),
+                qaic_config=qaic_config,
+            )
 
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
@@ -1457,11 +1434,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
-        # ---Sampling---
-        # Note: SamplerTransform should be applied after all other transforms
-        # are done. The role of the sampler is to just add nodes at the output of the
-        # previous transform function.
-        self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
@@ -1523,26 +1495,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
 
-    def __update_prefill_transform(
-        self,
-        enable: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-    ):
-        if enable:
-            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
-            else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
-        else:
-            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
-
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -1598,11 +1550,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         # TODO: move this to a DA Serving utility class
-        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            if prefill_only:
-                self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-            else:
-                self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform(
+                seq_len=prefill_seq_len,
+                num_devices=kwargs.get("num_devices", 1),
+                qaic_config=qaic_config,
+                num_cores=num_cores,
+                prefill_only=prefill_only,
+                prefill_seq_len=prefill_seq_len,
+                enable_chunking=enable_chunking,
+                retain_full_kv=kwargs.get("retain_full_kv", False),
+            )
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
         dynamic_axes_kwargs = {
             "kv_offload": True,
@@ -1662,6 +1620,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 export_dir=export_dir,
                 offload_pt_weights=False,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                _qeff_skip_transform=True,
             )
 
         # TODO: remove the current pt weight offload capability once CustomLoader is in place
@@ -1686,6 +1645,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
+                _qeff_skip_transform=True,
             )
         return self.onnx_path
 
@@ -2005,10 +1965,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
-        output_names = self.model.get_output_names(kv_offload=True)
-        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched) so the
-        # derived custom_io_lang keys match the prefixed names written into the exported graph.
-        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -2033,7 +1989,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             aic_num_cores=num_cores,
             prefill_only=prefill_only,
             prefill_seq_len=prefill_seq_len,
+            enable_chunking=enable_chunking,
+            retain_full_kv=compiler_options.get("retain_full_kv", False),
         )
+
+        output_names = self.model.get_output_names(kv_offload=True)
+        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched) so the
+        # derived custom_io_lang keys match the prefixed names written into the exported graph.
+        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -2085,6 +2048,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     offload_pt_weights=offload_pt_weights,
+                    _qeff_skip_transform=True,
                 )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -2624,11 +2588,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
-        VlmNoKVOffloadTransform,
-        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -2739,24 +2698,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **kwargs,
         )
 
-    def __update_prefill_transform(
-        self,
-        enable: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-    ):
-        if enable:
-            if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
-            else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
-        else:
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
-
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -2783,17 +2724,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             Path to the generated ONNX graph file.
         """
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
-        if prefill_only:
-            assert prefill_seq_len > 1
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.hash_params["prefill_only"] = True
-            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-        else:
-            self.hash_params["prefill_only"] = False
-            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+        skip_transform = kwargs.pop("_qeff_skip_transform", False)
+        if not skip_transform:
+            self.transform(
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+                retain_full_kv=kwargs.get("retain_full_kv", False),
+                qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+            )
 
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
@@ -3441,10 +3380,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         FP8DeQuantLinearToLinearTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
         Mxfp4GptOssExpertDequantizeTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
-        SimpleDecodeMoeTransform,
     ]
 
     _onnx_transforms = []
@@ -3455,39 +3390,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
     ):
-        if enable:
-            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
-            else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
-        else:
-            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
-
-    def __update_prefill_transform(
-        self,
-        enable: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-    ):
-        if enable:
-            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
-            else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
-        else:
-            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+        self._apply_prefill_transform_from_options(
+            prefill_only=enable,
+            enable_chunking=enable_chunking,
+            retain_full_kv=retain_full_kv,
+        )
 
     def __init__(
         self,
@@ -3551,8 +3458,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
-        self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
-        self.is_tlm = transformed
+        self.is_tlm = bool(qaic_config and qaic_config.get("speculative_model_type") is not None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
@@ -3563,16 +3469,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
-
-        # ---Sampling---
-        # Note: SamplerTransform should be applied after all other transforms
-        # are done. The role of the sampler is to just add nodes at the output of the
-        # previous transform function.
-        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
-        # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
-        # SpDTransforms to PytorchTransforms.
-        if self.is_tlm:
-            self.model.qaic_config["return_pdfs"] = True
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -3844,31 +3740,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ########################################
 
-        ####### HANDLE DA PREFILL And REVERT PREFILL Transform ################
-        # TODO: move this code inside self.transform in modeling_qeff.py
-        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            if prefill_only:
-                if not enable_chunking and self.continuous_batching:
-                    raise NotImplementedError(
-                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                    )
-                self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-                self.hash_params.pop("retain_full_kv", None)
-                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
-                    self.hash_params["prefill_only"] = True
-                    if enable_chunking:
-                        self.hash_params["chunking"] = True
-            else:
-                self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-                self.hash_params.pop("prefill_only", None)
-                self.hash_params.pop("NUM_Q_BLOCKS", None)
-                self.hash_params.pop("NUM_FFN_BLOCKS", None)
-                self.hash_params.pop("ENABLE_OPT_SWA", None)
-                self.hash_params.pop("chunking", None)
-                self.hash_params.pop("chunking_seq_len", None)
-                if kwargs.get("retain_full_kv", False):
-                    self.hash_params["retain_full_kv"] = True
-        #######################################################################
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform(
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+                retain_full_kv=kwargs.get("retain_full_kv", False),
+                qaic_config=qaic_config,
+                num_cores=num_cores,
+            )
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -4819,7 +4699,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
@@ -4880,6 +4760,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         str
             Path to the generated ONNX graph file.
         """
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform()
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
@@ -4971,6 +4853,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Path to the compiled QPC package.
 
         """
+        self.transform(seq_len=prefill_seq_len, bs=batch_size)
         specializations, compiler_options = self.model.get_specializations(
             batch_size,
             encoder_ctx_len,
@@ -5177,7 +5060,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModelForCTC
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
@@ -5264,6 +5147,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
+        if not kwargs.pop("_qeff_skip_transform", False):
+            self.transform(seq_len=seq_len, bs=bs)
 
         example_inputs = {
             "input_values": torch.zeros((bs, seq_len), dtype=self.model.config.torch_dtype),

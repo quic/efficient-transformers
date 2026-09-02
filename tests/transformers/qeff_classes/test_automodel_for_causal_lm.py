@@ -83,8 +83,9 @@ model_kwargs = {"attn_implementation": "eager"}
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 def test_causal_lm_unsupported(cb):
     model = AutoModelForCausalLM.from_config(AutoConfig.for_model("opt"))
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
     with pytest.warns():
-        QEFFAutoModelForCausalLM(model, cb)
+        qeff_model.transform()
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
@@ -94,6 +95,9 @@ def test_causal_lm_init(config, cb):
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     with pytest.raises(TypeError):
         QEFFAutoModelForCausalLM(AutoModel.from_config(config, **model_kwargs), cb)
+    assert not qeff_model.is_transformed
+    qeff_model.transform(seq_len=1, bs=1)
+    assert qeff_model.is_transformed
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
@@ -104,6 +108,9 @@ def test_causal_lm_pretrained(config, cb, tmp_path):
     model.save_pretrained(tmp_path)
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(tmp_path, cb)
+    assert not qeff_model.is_transformed
+    qeff_model.transform(seq_len=1, bs=1)
+    assert qeff_model.is_transformed
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
@@ -172,7 +179,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     qeff_model.export(tmp_path, use_onnx_subfunctions=subfunc, prefill_only=prefill_only)
-    hash_params = {}
+    hash_params = copy.deepcopy(qeff_model.hash_params)
     hash_params["config"] = qeff_model.model.config.to_diff_dict()
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()
