@@ -80,12 +80,12 @@ def measure_peak_ram():
         print(ram["peak_mb"])
     """
     process = psutil.Process(os.getpid())
-    result = {"peak_mb": process.memory_info().rss / (1024 ** 2)}
+    result = {"peak_mb": process.memory_info().rss / (1024**2)}
     stop = threading.Event()
 
     def _monitor():
         while not stop.is_set():
-            current_mb = process.memory_info().rss / (1024 ** 2)
+            current_mb = process.memory_info().rss / (1024**2)
             if current_mb > result["peak_mb"]:
                 result["peak_mb"] = current_mb
             stop.wait(0.1)
@@ -182,6 +182,7 @@ def _make_config_digest(params: dict) -> str:
     """Return an 8-char MD5 digest of the config dict for use in golden keys."""
     s = json.dumps(params, sort_keys=True)
     import hashlib
+
     return hashlib.md5(s.encode()).hexdigest()[:8]
 
 

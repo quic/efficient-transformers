@@ -25,7 +25,9 @@ with open(model_config_path, "r") as f:
 test_models = filter_models_for_nightly(config["audio_embedding_models"], "audio_embedding_models")
 
 
-def _export_compile_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch_dtype, dtype_key="fp32"):
+def _export_compile_audio_embedding_model(
+    model_name, get_pipeline_config, audio_embedding_model_artifacts, torch_dtype, dtype_key="fp32"
+):
     """Common export and compile logic for CTC audio embedding models."""
     export_params, compile_params = pre_export_compile_utils(
         model_name, "audio_embedding_model_configs", get_pipeline_config
@@ -74,11 +76,15 @@ def _export_compile_audio_embedding_model(model_name, get_pipeline_config, audio
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts):
     """FP32 export + compile."""
-    _export_compile_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float32)
+    _export_compile_audio_embedding_model(
+        model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float32
+    )
 
 
 # Config 2: FP16
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_audio_embedding_model_fp16(model_name, get_pipeline_config, audio_embedding_model_artifacts):
     """FP16 export + compile."""
-    _export_compile_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float16, dtype_key="fp16")
+    _export_compile_audio_embedding_model(
+        model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float16, dtype_key="fp16"
+    )

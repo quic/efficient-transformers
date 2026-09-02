@@ -27,7 +27,9 @@ test_models = filter_models_for_nightly(config["embedding_models"], "embedding_m
 poolings = ["mean", "max", "cls", "avg", None]
 
 
-def _export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch_dtype, seq_len=32, dtype_key="fp32"):
+def _export_compile_embedding_model(
+    model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch_dtype, seq_len=32, dtype_key="fp32"
+):
     """Common export and compile logic for embedding models.
 
     Artifacts are stored under a nested structure:
@@ -44,7 +46,9 @@ def _export_compile_embedding_model(model_name, pooling, get_pipeline_config, em
         # Export loading time
         print(f"\nLoading model for export: {model_name} pooling={pooling} dtype_key={dtype_key} seq_len={seq_len}")
         export_load_start = time.time()
-        qeff_model = QEFFAutoModel.from_pretrained(model_name, pooling=pooling, torch_dtype=torch_dtype, attn_implementation="eager", trust_remote_code=True)
+        qeff_model = QEFFAutoModel.from_pretrained(
+            model_name, pooling=pooling, torch_dtype=torch_dtype, attn_implementation="eager", trust_remote_code=True
+        )
 
         export_loading_time = time.time() - export_load_start
         print(f"\nModel loading is done for model: {model_name} in {export_loading_time:.2f} seconds.")
@@ -76,7 +80,6 @@ def _export_compile_embedding_model(model_name, pooling, get_pipeline_config, em
             "onnx_size": get_onnx_dir_size(onnx_and_qpc_dir),
             "qpc_path": qpc_path,
             "qpc_size": get_file_or_dir_size(qpc_path),
-
         }
     )
 
@@ -86,15 +89,27 @@ def _export_compile_embedding_model(model_name, pooling, get_pipeline_config, em
 @pytest.mark.parametrize("pooling", poolings)
 def test_export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
     """FP32 export + compile, all pooling variants."""
-    _export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float32, dtype_key="fp32")
+    _export_compile_embedding_model(
+        model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float32, dtype_key="fp32"
+    )
 
 
 # Config 2: FP32, all poolings, multi seq_len
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("pooling", poolings)
-def test_export_compile_embedding_model_multiseqlen(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
+def test_export_compile_embedding_model_multiseqlen(
+    model_name, pooling, get_pipeline_config, embedding_model_artifacts
+):
     """FP32 export + compile, multi seq_len."""
-    _export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float32, seq_len=[32, 20], dtype_key="fp32_multiseqlen")
+    _export_compile_embedding_model(
+        model_name,
+        pooling,
+        get_pipeline_config,
+        embedding_model_artifacts,
+        torch.float32,
+        seq_len=[32, 20],
+        dtype_key="fp32_multiseqlen",
+    )
 
 
 # Config 3: FP16, all poolings, single seq_len
@@ -102,12 +117,24 @@ def test_export_compile_embedding_model_multiseqlen(model_name, pooling, get_pip
 @pytest.mark.parametrize("pooling", poolings)
 def test_export_compile_embedding_model_fp16(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
     """FP16 export + compile, all pooling variants."""
-    _export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float16, dtype_key="fp16")
+    _export_compile_embedding_model(
+        model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float16, dtype_key="fp16"
+    )
 
 
 # Config 4: FP16, all poolings, multi seq_len
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("pooling", poolings)
-def test_export_compile_embedding_model_fp16_multiseqlen(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
+def test_export_compile_embedding_model_fp16_multiseqlen(
+    model_name, pooling, get_pipeline_config, embedding_model_artifacts
+):
     """FP16 export + compile, multi seq_len."""
-    _export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts, torch.float16, seq_len=[32, 20], dtype_key="fp16_multiseqlen")
+    _export_compile_embedding_model(
+        model_name,
+        pooling,
+        get_pipeline_config,
+        embedding_model_artifacts,
+        torch.float16,
+        seq_len=[32, 20],
+        dtype_key="fp16_multiseqlen",
+    )

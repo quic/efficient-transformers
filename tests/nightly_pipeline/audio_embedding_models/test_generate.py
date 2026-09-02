@@ -34,13 +34,17 @@ PIPELINE_CONFIG_FP = os.path.join(os.path.dirname(__file__), "../configs/pipelin
 test_models = filter_models_for_nightly(config["audio_embedding_models"], "audio_embedding_models")
 
 
-def _generate_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch_dtype, dtype_key="fp32"):
+def _generate_audio_embedding_model(
+    model_name, get_pipeline_config, audio_embedding_model_artifacts, torch_dtype, dtype_key="fp32"
+):
     """Common generate logic for CTC audio embedding models."""
     compile_params, generate_params = pre_generate_utils(
-        model_name, "audio_embedding_model_configs", get_pipeline_config, audio_embedding_model_artifacts, dtype_key=dtype_key
+        model_name,
+        "audio_embedding_model_configs",
+        get_pipeline_config,
+        audio_embedding_model_artifacts,
+        dtype_key=dtype_key,
     )
-
-    onnx_path = audio_embedding_model_artifacts[model_name][dtype_key]["onnx_path"]
 
     qeff_model = QEFFAutoModelForCTC.from_pretrained(model_name, torch_dtype=torch_dtype)
     qeff_model.qpc_path = Path(audio_embedding_model_artifacts[model_name][dtype_key]["qpc_path"])
@@ -65,18 +69,18 @@ def _generate_audio_embedding_model(model_name, get_pipeline_config, audio_embed
 
     def _run_pytorch():
         """Run HF PyTorch CTC inference and return golden output dict."""
-        hf_model = AutoModelForCTC.from_pretrained(
-            model_name, attn_implementation="eager", low_cpu_mem_usage=False
-        )
+        hf_model = AutoModelForCTC.from_pretrained(model_name, attn_implementation="eager", low_cpu_mem_usage=False)
         hf_model.eval()
         input_values = processor(
-            data, sampling_rate=sample_rate, return_tensors="pt",
-            max_length=compile_params.get("seq_len", 480000), truncating=True, padding="max_length"
+            data,
+            sampling_rate=sample_rate,
+            return_tensors="pt",
+            max_length=compile_params.get("seq_len", 480000),
+            truncating=True,
+            padding="max_length",
         ).input_values
 
-        model_dtype = (
-            getattr(hf_model.config, 'torch_dtype', next(hf_model.parameters()).dtype)
-        )
+        model_dtype = getattr(hf_model.config, "torch_dtype", next(hf_model.parameters()).dtype)
         input_values = input_values.to(dtype=model_dtype)
         with torch.no_grad():
             logits = hf_model(input_values).logits
@@ -117,14 +121,18 @@ def _generate_audio_embedding_model(model_name, get_pipeline_config, audio_embed
 
     assert comparison["passed"], f"QPC output differs from golden PyTorch: {comparison['per_key']}"
 
+
 # Config 1: FP32
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts):
     """FP32 generate with golden output comparison."""
     _generate_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float32)
 
+
 # Config 1: FP16
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_audio_embedding_model_fp16(model_name, get_pipeline_config, audio_embedding_model_artifacts):
     """FP16 generate with golden output comparison."""
-    _generate_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float16, dtype_key="fp16")
+    _generate_audio_embedding_model(
+        model_name, get_pipeline_config, audio_embedding_model_artifacts, torch.float16, dtype_key="fp16"
+    )

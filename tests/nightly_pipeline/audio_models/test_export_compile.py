@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from QEfficient import QEFFAutoModelForSpeechSeq2Seq
+
 from ..model_age_utils import filter_models_for_nightly
 from ..nightly_utils import get_file_or_dir_size, get_onnx_dir_size, measure_peak_ram, pre_export_compile_utils
 
@@ -21,6 +22,7 @@ with open(model_config_path, "r") as f:
     config = json.load(f)
 
 test_models = filter_models_for_nightly(config["audio_models"], "audio_models")
+
 
 def _export_compile_audio_model(model_name, get_pipeline_config, audio_model_artifacts, torch_dtype, dtype_key="fp32"):
     """Common export and compile logic for audio seq2seq models."""
@@ -61,7 +63,6 @@ def _export_compile_audio_model(model_name, get_pipeline_config, audio_model_art
             "onnx_size": get_onnx_dir_size(onnx_and_qpc_dir),
             "qpc_path": qpc_path,
             "qpc_size": get_file_or_dir_size(qpc_path),
-
         }
     )
 

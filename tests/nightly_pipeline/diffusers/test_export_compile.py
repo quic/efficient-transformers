@@ -59,24 +59,30 @@ def _export_compile_flux(model_id, diffuser_model_artifacts, get_pipeline_config
         )
         compile_time = time.time() - compile_start
 
-    modules = {"text_encoder": pipeline.text_encoder, "text_encoder_2": pipeline.text_encoder_2,
-               "transformer": pipeline.transformer, "vae_decode": pipeline.vae_decode}
+    modules = {
+        "text_encoder": pipeline.text_encoder,
+        "text_encoder_2": pipeline.text_encoder_2,
+        "transformer": pipeline.transformer,
+        "vae_decode": pipeline.vae_decode,
+    }
     onnx_paths = {name: str(m.onnx_path) for name, m in modules.items() if m.onnx_path}
-    qpc_paths  = {name: str(m.qpc_path)  for name, m in modules.items() if m.qpc_path}
-    onnx_dirs  = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
+    qpc_paths = {name: str(m.qpc_path) for name, m in modules.items() if m.qpc_path}
+    onnx_dirs = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
 
-    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update({
-        "load_time": load_time,
-        "export_time": export_time,
-        "compile_time": compile_time,
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "onnx_and_qpc_dir": onnx_dirs,
-        "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
-        "onnx_paths": onnx_paths,
-        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
-        "qpc_paths": qpc_paths,
-        "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
-    })
+    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update(
+        {
+            "load_time": load_time,
+            "export_time": export_time,
+            "compile_time": compile_time,
+            "peak_ram_mb": round(ram["peak_mb"], 2),
+            "onnx_and_qpc_dir": onnx_dirs,
+            "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
+            "onnx_paths": onnx_paths,
+            "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
+            "qpc_paths": qpc_paths,
+            "qpc_size": {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
+        }
+    )
 
 
 @pytest.mark.diffusion_models
@@ -98,7 +104,9 @@ def test_export_compile_flux_first_block_cache(model_id, diffuser_model_artifact
 
 
 #  WAN T2V
-def _export_compile_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=True, enable_first_block_cache=False):
+def _export_compile_wan(
+    model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=True, enable_first_block_cache=False
+):
     """Export + compile WAN T2V pipeline and store metrics."""
     dtype_key = "fp32" + ("_unified" if use_unified else "_non_unified") + ("_fbc" if enable_first_block_cache else "")
     cfg_key = "diffuser_wan_configs" if use_unified else "diffuser_wan_non_unified_configs"
@@ -134,24 +142,29 @@ def _export_compile_wan(model_id, diffuser_model_artifacts, get_pipeline_config,
     if use_unified:
         modules = {"transformer": pipeline.transformer, "vae_decoder": pipeline.vae_decoder}
     else:
-        modules = {"transformer_high": pipeline.transformer_high, "transformer_low": pipeline.transformer_low,
-                   "vae_decoder": pipeline.vae_decoder}
+        modules = {
+            "transformer_high": pipeline.transformer_high,
+            "transformer_low": pipeline.transformer_low,
+            "vae_decoder": pipeline.vae_decoder,
+        }
     onnx_paths = {name: str(m.onnx_path) for name, m in modules.items() if m.onnx_path}
-    qpc_paths  = {name: str(m.qpc_path)  for name, m in modules.items() if m.qpc_path}
-    onnx_dirs  = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
+    qpc_paths = {name: str(m.qpc_path) for name, m in modules.items() if m.qpc_path}
+    onnx_dirs = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
 
-    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update({
-        "load_time": load_time,
-        "export_time": export_time,
-        "compile_time": compile_time,
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "onnx_and_qpc_dir": onnx_dirs,
-        "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
-        "onnx_paths": onnx_paths,
-        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
-        "qpc_paths": qpc_paths,
-        "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
-    })
+    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update(
+        {
+            "load_time": load_time,
+            "export_time": export_time,
+            "compile_time": compile_time,
+            "peak_ram_mb": round(ram["peak_mb"], 2),
+            "onnx_and_qpc_dir": onnx_dirs,
+            "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
+            "onnx_paths": onnx_paths,
+            "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
+            "qpc_paths": qpc_paths,
+            "qpc_size": {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
+        }
+    )
 
 
 @pytest.mark.diffusion_models
@@ -169,7 +182,9 @@ def test_export_compile_wan_non_unified(model_id, diffuser_model_artifacts, get_
 @pytest.mark.parametrize("model_id", wan_models)
 def test_export_compile_wan_non_unified_first_block_cache(model_id, diffuser_model_artifacts, get_pipeline_config):
     """FP32 WAN T2V export + compile, non-unified with first_block_cache."""
-    _export_compile_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=False, enable_first_block_cache=True)
+    _export_compile_wan(
+        model_id, diffuser_model_artifacts, get_pipeline_config, use_unified=False, enable_first_block_cache=True
+    )
 
 
 # WAN I2V
@@ -194,12 +209,13 @@ def _export_compile_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_con
 
         # Dynamic sizing from config max_area
         from diffusers.utils import load_image
+
         image = load_image(pipeline_params["test_image_url"])
         max_area = model_setup["max_area"]
         aspect_ratio = image.height / image.width
         mod_value = pipeline.model.vae.config.scale_factor_spatial * pipeline.model.transformer.config.patch_size[1]
         height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
-        width  = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
+        width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
 
         export_start = time.time()
         pipeline.export(use_onnx_subfunctions=use_onnx_subfunctions)
@@ -216,26 +232,31 @@ def _export_compile_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_con
         )
         compile_time = time.time() - compile_start
 
-    modules = {"vae_encoder": pipeline.vae_encoder, "transformer": pipeline.transformer,
-               "vae_decoder": pipeline.vae_decoder}
+    modules = {
+        "vae_encoder": pipeline.vae_encoder,
+        "transformer": pipeline.transformer,
+        "vae_decoder": pipeline.vae_decoder,
+    }
     onnx_paths = {name: str(m.onnx_path) for name, m in modules.items() if m.onnx_path}
-    qpc_paths  = {name: str(m.qpc_path)  for name, m in modules.items() if m.qpc_path}
-    onnx_dirs  = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
+    qpc_paths = {name: str(m.qpc_path) for name, m in modules.items() if m.qpc_path}
+    onnx_dirs = {name: os.path.dirname(p) for name, p in onnx_paths.items()}
 
-    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update({
-        "load_time": load_time,
-        "export_time": export_time,
-        "compile_time": compile_time,
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "height": height,
-        "width": width,
-        "onnx_and_qpc_dir": onnx_dirs,
-        "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
-        "onnx_paths": onnx_paths,
-        "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
-        "qpc_paths": qpc_paths,
-        "qpc_size":  {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
-    })
+    diffuser_model_artifacts.setdefault(model_id, {}).setdefault(dtype_key, {}).update(
+        {
+            "load_time": load_time,
+            "export_time": export_time,
+            "compile_time": compile_time,
+            "peak_ram_mb": round(ram["peak_mb"], 2),
+            "height": height,
+            "width": width,
+            "onnx_and_qpc_dir": onnx_dirs,
+            "size": {name: get_file_or_dir_size(d) for name, d in onnx_dirs.items()},
+            "onnx_paths": onnx_paths,
+            "onnx_size": {name: get_onnx_dir_size(d) for name, d in onnx_dirs.items()},
+            "qpc_paths": qpc_paths,
+            "qpc_size": {name: get_file_or_dir_size(p) for name, p in qpc_paths.items()},
+        }
+    )
 
 
 @pytest.mark.diffusion_models
