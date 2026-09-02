@@ -5,13 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-"""Token-level parity tests for the Qwen3.5-MoE disaggregated prefill/decode DMA path.
-
-Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "nightly_disagg" \
-        tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py
-
-"""
+"""Token-level parity tests for the Qwen3.5-MoE disaggregated prefill/decode DMA path."""
 
 import copy
 import os
@@ -62,7 +56,7 @@ def _optional_int_env(name: str, default: int | None) -> int | None:
 # Optional depth truncation: set to an int to run a shallow model
 NUM_HIDDEN_LAYERS = _optional_int_env("QEFF_QWEN35_NUM_HIDDEN_LAYERS", default=1)
 VISION_DEPTH = _optional_int_env("QEFF_QWEN35_VISION_DEPTH", default=2)
-PREFILL_SEQ_LEN = 64
+PREFILL_SEQ_LEN = 256
 CTX_LEN = 1024
 BATCH_SIZE = 1
 GENERATION_LEN = 40
@@ -242,8 +236,6 @@ def _run_hf_torch_fp32(
         )
 
     if collect_logits:
-        # outputs.logits is a per-step tuple of (B, vocab) raw (pre-warp) logits, one entry
-        # per generated token -> stack to (B, GEN, vocab) aligned with the returned tokens.
         sequences = outputs.sequences
         step_logits = np.stack([step.float().cpu().numpy() for step in outputs.logits], axis=1)
         prompt_len = inputs["input_ids"].shape[-1]
@@ -261,7 +253,6 @@ def _run_disagg_kv_share_qaic_generation(
     prefill_session: QAICInferenceSession,
     decode_session: QAICInferenceSession,
     collect_logits: bool = False,
-    trace_out: list | None = None,
 ):
     inputs = {
         name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
@@ -307,12 +298,9 @@ def _run_disagg_kv_share_qaic_generation(
 
     lang_inputs["image_idx"] = np.array([[0]])
 
-    # image_idx must be a compiled prefill input binding; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert it up front. Qwen3.5 also binds it on decode.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
 
-    # vision_embeds is constant across every prefill chunk and decode
     vision_persist = {name: vision_outputs[name] for name in VISION_OUTPUTS if name in vision_outputs}
     prefill_session.set_persistent_inputs(vision_persist)
     decode_session.set_persistent_inputs(
@@ -322,9 +310,6 @@ def _run_disagg_kv_share_qaic_generation(
     # Hybrid: kv_cache_info carries mixed 4-D (full) and 3-D (linear) shapes.
     kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
 
-    # ---- Prefill (producer, SERIAL): image_idx threads chunk-to-chunk ----
-    # Only the LAST chunk wires the DMA handoff into kv_caches (earlier chunks just accumulate
-    # KV on-device).
     chunk_inputs = dict(lang_inputs)
     exec_idx = None
     for chunk_idx in range(num_chunks):

@@ -243,13 +243,7 @@ class QAICInferenceSession:
             self._init_kv_handoff()
 
     def _init_kv_handoff(self):
-        """Build ordered buffer maps and the compiled KV slicing spec.
-
-        Only invoked when `kv_dma_share=True`. All maps are `list[(name, index)]`
-        sorted by `(layer_index, name)` so a prefill write and a decode read that
-        share the same family iterate the caller's arrays in the same order.
-        """
-        # Decode KV *input* bindings (VLM-safe: KV names only).
+        """Build ordered buffer maps and the compiled KV slicing spec."""
         self.decode_buff_map = [
             (name, self.binding_index_map[name]) for name in self.input_names if is_retained_state_name(name)
         ]
@@ -263,8 +257,6 @@ class QAICInferenceSession:
         ]
         self.decode_rs_kv_only_buff_map.sort(key=_kv_layer_sort_key)
 
-        # Prefill RetainedState outputs: full-attention (4-D) families only for the
-        # uniform path; the *_full map additionally carries linear/recurrent families.
         prefill_rs = [
             (name.replace("_RetainedState", ""), self.binding_index_map[name])
             for name in self.output_names
@@ -291,14 +283,6 @@ class QAICInferenceSession:
             )
             self.kv_slicing_spec_handle = self._create_slicing_spec_handle(spec_json)
 
-        # Readable (plain, non-RetainedState) outputs — e.g. `logits`. On the
-        # pooled path `setData(tuple_list)` only wires the bindings we hand it, so
-        # unlike the scalar `run()` path these outputs get no device buffer unless
-        # we supply one. Pre-allocate a host array per slot and wire it into every
-        # enqueue so the runtime DMA-writes the output in place (mirrors the vLLM
-        # reference's `chunk_inputs["logits"] = logits[...]`); `get_outputs` then
-        # reads straight from these arrays. Per-slot copies keep in-flight prefill
-        # chunks from clobbering each other.
         self.readable_output_bindings = [
             (name, self.binding_index_map[name]) for name in self.output_names if not name.endswith("_RetainedState")
         ]
@@ -313,12 +297,6 @@ class QAICInferenceSession:
             for _ in range(self.queue_len)
         ]
 
-        # Persistent input bindings (e.g. `vision_embeds`): constant across every
-        # enqueue of a request. On the pooled path `setData(tuple_list)` wires only
-        # the bindings handed to it per call, so — like `readable_output_bindings` —
-        # these must be re-appended to every enqueue rather than living in `qbuffers`
-        # (which the pooled path never reads). Registered once via
-        # `set_persistent_inputs`; a per-call `inputs` entry of the same name wins.
         self.persistent_inputs: Dict[str, np.ndarray] = {}
 
     def _build_uniform_kv_slicing_json(self) -> str:
@@ -338,14 +316,6 @@ class QAICInferenceSession:
             base_name = name.replace("_RetainedState", "")
             elem_size = self.aic_to_np_dtype_mapping[binding.type].itemsize
             dim_spec = FULL_ATTN_DIMSPEC if len(binding.dims) == 4 else LINEAR_ATTN_DIMSPEC
-            # `Name` is matched as a regex. A bare `{base_name}.*` lets a lower index
-            # swallow a longer one that shares its prefix (e.g. "past_key.3.*" also
-            # matches "past_key.34_RetainedState"); in a hybrid cache layers 3 (sliding)
-            # and 34 (full) carry different ctx sizes, so that collision applies the wrong
-            # DimSpec and the runtime rejects the buffer. Bound the layer index exactly and
-            # allow an optional "_RetainedState" suffix: the decode handoff wires both the
-            # bare KV *input* binding ("past_key.34") and its *_RetainedState output against
-            # this same spec, so the pattern must match both — and only — those two names.
             buffer_specs.append({"Name": f"{base_name}(_.*)?", "ElemSize": elem_size, "DimSpecs": dim_spec})
         return json.dumps({"BufferSpecs": buffer_specs})
 
@@ -503,14 +473,6 @@ class QAICInferenceSession:
             inputs[name] = np.ascontiguousarray(buffer)
 
     def set_persistent_inputs(self, buffers: Dict[str, np.ndarray]) -> None:
-        """Register input buffers that stay constant across enqueues (pooled path).
-
-        Use for large, unchanging inputs — e.g. a VLM's ``vision_embeds`` — so the
-        caller supplies them once instead of in every ``np_run``/``np_run_pipeline``
-        input dict. The buffers are appended to each enqueue's tuple list (mirrors
-        ``readable_output_bindings``); a per-call ``inputs`` entry of the same name
-        overrides the persistent one for that call. Unknown names are skipped.
-        """
         for name, buffer in buffers.items():
             if name not in self.binding_index_map:
                 warn(f'Buffer: "{name}" not found')
@@ -518,12 +480,6 @@ class QAICInferenceSession:
             self.persistent_inputs[name] = np.ascontiguousarray(buffer)
 
     def _tuple_list_with_outputs(self, inputs: Dict[str, np.ndarray], exec_obj_idx: int) -> List[tuple]:
-        """Build the enqueue tuple list: caller inputs plus this slot's readable
-        output buffers, so the runtime DMA-writes outputs like ``logits`` in place
-        (``get_outputs`` reads them straight back from ``self.output_buffers``).
-        Persistent inputs registered via ``set_persistent_inputs`` are appended too,
-        unless overridden by a same-named entry in ``inputs``.
-        """
         tuple_list = self._tuple_list_from_dict(inputs)
         for name, buffer in self.persistent_inputs.items():
             if name in inputs:
@@ -537,7 +493,7 @@ class QAICInferenceSession:
         """Wire a sliced DMA descriptor so the runtime writes RetainedState
         outputs directly into ``kv_cache_buffers`` at the ``slicing_parameters``
         offsets. ``buff_map`` is a list of ``(name, binding_index)`` whose order
-        must match ``kv_cache_buffers``. Must be re-issued every decode step.
+        must match ``kv_cache_buffers``.
         """
         if buff_map is None:
             raise ValueError("set_data_for_kv_handoff requires a buff_map")
@@ -553,9 +509,6 @@ class QAICInferenceSession:
         return kv_cache_buffers
 
     def np_run(self, inputs: Dict[str, np.ndarray], slicing_parameters=None, is_prefill: bool = True) -> int:
-        """Enqueue one execution (non-blocking). Returns the execObj index; the
-        caller must later ``complete_inf`` and ``get_outputs`` on that index.
-        """
         if is_prefill:
             exec_obj_idx = self.prefill_available_exec_objs.get()
         else:
@@ -579,10 +532,6 @@ class QAICInferenceSession:
     def np_run_pipeline(
         self, inputs: Dict[str, np.ndarray], slicing_parameters=None, last_chunk: bool = False, kv_cache_buffers=None
     ) -> int:
-        """Enqueue one prefill chunk (non-blocking). On ``last_chunk`` the DMA
-        handoff into ``kv_cache_buffers`` is wired before enqueue. Returns the
-        prefill execObj index.
-        """
         exec_obj_idx = self.prefill_available_exec_objs.get()
         if last_chunk:
             if kv_cache_buffers is None:

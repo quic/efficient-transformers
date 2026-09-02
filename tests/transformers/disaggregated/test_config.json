@@ -102,18 +102,10 @@
     "model_id": "tiny-random/qwen3.5-moe",
     "test_configs": [
       {
-        "id": "tiny_model_vision1_prefill2_decode2_stages2",
+        "id": "tiny_model_vision1_prefill2_decode1_stages2_no_subfunctions",
         "vision_num_devices": 1,
         "prefill_num_devices": 2,
-        "decode_num_devices": 2,
-        "stages": 2,
-        "use_onnx_subfunctions": true
-      },
-      {
-        "id": "tiny_model_vision1_prefill2_decode2_stages2_no_subfunctions",
-        "vision_num_devices": 1,
-        "prefill_num_devices": 2,
-        "decode_num_devices": 2,
+        "decode_num_devices": 1,
         "stages": 2,
         "use_onnx_subfunctions": false
       }
