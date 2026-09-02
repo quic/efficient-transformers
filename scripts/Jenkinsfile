@@ -228,9 +228,15 @@ pipeline {
                             mkdir -p $PWD/Non_cli_qaic_multimodal &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
-                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                            deactivate"
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\$?;
+                            deactivate;
+                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
+                            exit \$test_status"
                             '''
                         }
                     } else {
@@ -291,9 +297,15 @@ pipeline {
                             export QEFF_PER_PR_SHARED_HOME=1 &&
                             export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
                             export QEFF_QAIC_CARDS_PER_WORKER=2 &&
-                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10 &&
-                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                            deactivate"
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\$?;
+                            deactivate;
+                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
+                            exit \$test_status"
                             '''
                         }
                     }

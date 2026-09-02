@@ -168,6 +168,19 @@ class QAICInferenceSession:
             self.program.deactivate()
             self.is_active = False
 
+    def _release_program_after_run_failure(self) -> None:
+        """Release device resources while preserving the original execution error."""
+        try:
+            self.deactivate()
+        except Exception as cleanup_error:
+            warn(f"Failed to deactivate QAIC program after execution error: {cleanup_error}", RuntimeWarning)
+
+        try:
+            if self.program.unload() != qaicrt.QStatus.QS_SUCCESS:
+                warn("Failed to unload QAIC program after execution error", RuntimeWarning)
+        except Exception as cleanup_error:
+            warn(f"Failed to unload QAIC program after execution error: {cleanup_error}", RuntimeWarning)
+
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
         """
         Provide buffer mapping for input and output
@@ -210,11 +223,13 @@ class QAICInferenceSession:
         # Set inputs
         self.set_buffers(inputs)
         if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
+            self._release_program_after_run_failure()
             raise MemoryError("Failed to setData")
         # # Run with sync API
         # if self.execObj.run(self.qbuffers) != qaicrt.QStatus.QS_SUCCESS:
         # Run with async API
         if self.queue.enqueue(self.execObj) != qaicrt.QStatus.QS_SUCCESS:
+            self._release_program_after_run_failure()
             raise MemoryError("Failed to enqueue")
         if self.execObj.waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
             error_message = "Failed to run"
@@ -238,10 +253,12 @@ class QAICInferenceSession:
                     if shape == [0]:
                         continue
                     error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
+            self._release_program_after_run_failure()
             raise ValueError(error_message)
         # Get output buffers
         status, output_qbuffers = self.execObj.getData()
         if status != qaicrt.QStatus.QS_SUCCESS:
+            self._release_program_after_run_failure()
             raise MemoryError("Failed to getData")
         # Build output
         outputs = {}
