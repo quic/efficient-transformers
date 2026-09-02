@@ -90,9 +90,9 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
     def get_model_config(self):
         return self.model.model.config.__dict__
 
-    def export(self, inputs, output_names, dynamic_axes, **kwargs):
+    def export(self, inputs, output_names, dynamic_axes,qaic_config, **kwargs):
         # breakpoint()
-        return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes)
+        return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes, qaic_config=qaic_config)
 
 
 class DiffusionGemmaSingleQPCGenerator:
@@ -371,6 +371,8 @@ class DiffusionGemmaSingleQPCGenerator:
         entropy_bound: float,
         t_min: float,
         t_max: float,
+        stability_threshold: int,
+        confidence_threshold: float,
         step_callback,
         debug_callback,
     ):
@@ -385,6 +387,7 @@ class DiffusionGemmaSingleQPCGenerator:
         accepted_mask = np.zeros((1, self.canvas_length), dtype=bool)
         self_conditioning_logits = np.zeros((1, self.canvas_length, self.vocab_size), dtype=np.float32)
         no_cache_write = np.full((1, self.canvas_length), -1, dtype=np.int64)
+        argmax_canvas_history = []
 
         start = time.perf_counter()
         for step in range(max_denoising_steps):
@@ -403,8 +406,9 @@ class DiffusionGemmaSingleQPCGenerator:
                 )
             )
             canvas_logits = outputs["canvas_logits"].astype(np.float32)
-            self_conditioning_logits = canvas_logits
             temperature_logits = canvas_logits / max(temperature, 1e-6)
+            self_conditioning_logits = temperature_logits# canvas_logits
+            argmax_canvas = temperature_logits.argmax(-1).astype(np.int64)
             uniform = self.rng.uniform(size=temperature_logits.shape).astype(np.float32)
             gumbel = -np.log(-np.log(uniform + 1e-20) + 1e-20)
             denoiser_canvas = (temperature_logits + gumbel).argmax(-1).astype(np.int64)
@@ -416,6 +420,14 @@ class DiffusionGemmaSingleQPCGenerator:
             selected = (np.cumsum(entropy[entropy_order]) - entropy[entropy_order]) <= entropy_bound
             newly_accepted = np.zeros(self.canvas_length, dtype=bool)
             newly_accepted[entropy_order[selected]] = True
+            stable = stability_threshold == 0 or (
+                len(argmax_canvas_history) == stability_threshold
+                and all(np.array_equal(previous_canvas, argmax_canvas) for previous_canvas in argmax_canvas_history)
+            )
+            confident = float(entropy.mean()) < confidence_threshold
+            argmax_canvas_history.append(argmax_canvas)
+            if len(argmax_canvas_history) > stability_threshold:
+                argmax_canvas_history.pop(0)
             new_canvas = np.where(newly_accepted[None, :], denoiser_canvas, canvas)
             accepted_mask = accepted_mask | newly_accepted[None, :] if sampler == "local" else newly_accepted[None, :]
             canvas = np.where(
@@ -434,6 +446,8 @@ class DiffusionGemmaSingleQPCGenerator:
                     "temperature": temperature,
                     "entropy_mean": float(entropy.mean()),
                     "accepted_count": accepted_count,
+                    "stable": stable,
+                    "confident": confident,
                 },
             )
             if step_callback is not None:
@@ -445,9 +459,11 @@ class DiffusionGemmaSingleQPCGenerator:
                         "accepted_count": accepted_count,
                         "canvas_length": self.canvas_length,
                         "tokens": new_canvas,
+                        "stable": stable,
+                        "confident": confident,
                     }
                 )
-            if accepted_count >= self.canvas_length:
+            if accepted_count >= self.canvas_length or (stable and confident):
                 break
         return new_canvas, step + 1, time.perf_counter() - start, int(accepted_mask.sum())
 
@@ -498,6 +514,8 @@ class DiffusionGemmaSingleQPCGenerator:
         entropy_bound: float = 0.1,
         t_min: float = 0.4,
         t_max: float = 0.8,
+        stability_threshold: int = 2,
+        confidence_threshold: float = 0.005,
         ctx_len: Optional[int] = None,
         pad_token_id: int = 0,
         eos_token_id=None,
@@ -513,6 +531,14 @@ class DiffusionGemmaSingleQPCGenerator:
             raise ValueError("`sampler` must be either 'local' or 'hf'.")
         if not 0 <= t_min <= t_max:
             raise ValueError("Temperature bounds must satisfy 0 <= t_min <= t_max.")
+        if isinstance(stability_threshold, bool) or not isinstance(stability_threshold, int) or stability_threshold < 0:
+            raise ValueError("`stability_threshold` must be a non-negative integer.")
+        if (
+            isinstance(confidence_threshold, bool)
+            or not isinstance(confidence_threshold, (int, float))
+            or confidence_threshold < 0
+        ):
+            raise ValueError("`confidence_threshold` must be a non-negative number.")
 
         total_start = perf_counter()
         try:
@@ -542,6 +568,8 @@ class DiffusionGemmaSingleQPCGenerator:
                     entropy_bound=entropy_bound,
                     t_min=t_min,
                     t_max=t_max,
+                    stability_threshold=stability_threshold,
+                    confidence_threshold=confidence_threshold,
                     step_callback=step_callback,
                     debug_callback=debug_callback,
                 )
@@ -717,10 +745,18 @@ def compile_unified_qpc(
     print(f"Compiling unified single-QPC ({num_devices} devices, {num_cores} cores)...")
     start = time.time()
     unified = UnifiedQPC(qeff_model)
+    qaic_config_moe = {
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "expert_parallel_chunk_size": 128,
+                    "tree_reduce":True,
+                }
+            } 
     unified.export(
         unified.model.get_dummy_inputs(),
         unified.model.get_output_names(),
         unified.model.get_onnx_dynamic_axes(),
+        qaic_config = qaic_config_moe
     )
     specializations, _ = unified.model.get_specializations(
         batch_size=1,
@@ -748,9 +784,11 @@ def compile_unified_qpc(
         aic_num_cores=num_cores,
         custom_io=custom_io,
         retained_state=True,
+        qaic_config=qaic_config_moe,
         # aic_enable_depth_first=True,
         user_tiled=True,
         node_precision_info=_write_unified_accum_npi(unified.onnx_path),
+        # node_precision_info=_write_unified_accum_npi("/home/jsaisaga/qeff_llama/DiffusionGemmaForBlockDiffusion_old/DiffusionGemmaUnifiedWrapper-4a99121a82e31174/DiffusionGemmaUnifiedWrapper.onnx"),
     )
     print(f"  unified QPC: {qpc_path} ({time.time() - start:.0f}s)")
     return qpc_path
