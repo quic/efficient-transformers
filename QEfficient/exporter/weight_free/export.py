@@ -133,6 +133,8 @@ def _prepare_checkpoint_for_weight_free_export(
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
+    # TODO(wf): For different flavours of the model that expect different checkpoint weight layouts, 
+    # we end up overriding old one. We need to add support of hashing/caching here.
     prepared_name = source_dir.name + f"-qeff-prepared-{dtype_suffix}"
     if QEFF_CHECKPOINT_HOME:
         prepared_out = QEFF_CHECKPOINT_HOME.expanduser() / prepared_name

@@ -219,7 +219,8 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        # TODO(follow-up): Move sidecar copying out of dtype conversion into a separate preparation step.
+        # TODO(wf): Move sidecar copying out of dtype conversion into a separate preparation step. 
+        # This is not a transform
         copy_checkpoint_aux_files(src, out)
 
         weight_map = read_weight_map(src)
@@ -791,7 +792,8 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         if index_path.exists():
             weight_map: Dict[str, str] = json.loads(index_path.read_text())["weight_map"]
         else:
-            # TODO(follow-up): Reuse read_weight_map() here instead of duplicating safetensors map resolution.
+            # TODO(wf): Reuse read_weight_map() here instead of duplicating safetensors map resolution
+            # It does not make sense to rebuild weight_map from shards, error out if its not present.
             shards = sorted(src.glob("*.safetensors"))
             if not shards:
                 return False

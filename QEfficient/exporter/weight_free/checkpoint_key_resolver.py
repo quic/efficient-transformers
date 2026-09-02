@@ -114,6 +114,7 @@ def find_checkpoint_key(
     Most weights match directly. The fallback rules cover wrapper prefixes,
     task-head/base-model checkpoint differences, and known HF/QEff MoE naming
     differences without putting those details in the export orchestration path.
+    TODO(wf): Make this explicit model/layout mapping we should always know what key to expect in what case.
     """
     candidates = [onnx_name]
     stripped = onnx_name.removeprefix("base_model.")

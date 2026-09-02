@@ -91,7 +91,7 @@ def read_weight_map(src: Path) -> Dict[str, str]:
     index_path = src / "model.safetensors.index.json"
     if index_path.exists():
         return json.loads(index_path.read_text())["weight_map"]
-    # TODO(follow-up): Require model.safetensors.index.json for weight-free export instead of scanning full files.
+    # TODO(wf): This is un-necessary and we should error out when index map is missing.
     shard_files = sorted(src.glob("*.safetensors"))
     if not shard_files:
         raise FileNotFoundError(f"No safetensors files found in {src}")

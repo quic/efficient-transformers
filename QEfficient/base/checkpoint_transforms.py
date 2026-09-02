@@ -130,8 +130,11 @@ class CheckpointTransformPipeline:
     returns True is executed and the pipeline stops. Each transform produces a
     complete prepared checkpoint — there is no chaining between transforms.
 
-    TODO(follow-up): Rename this selector and choose applicable transforms from
-    model/config metadata instead of checkpoint-key regex matching.
+    TODO(wf): Current implementation is a selector but is named as pipeline.
+    Correct design is to apply multiple transforms sequentially on the tensors that it applies to
+    and we parallelize this processing across all tensors.
+    Each transform should have single transformation responsibility.
+    Currently all transforms copy multiple responsibitlies from each-other. This is not scalable.
 
     Example::
 
@@ -159,7 +162,8 @@ class CheckpointTransformPipeline:
         source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
         if not has_safetensors and list(src.glob("*.bin")):
-            # TODO(follow-up): Avoid the extra full-weight rewrite for .bin checkpoints in this preparation flow.
+            # TODO(wf): rewriting bin into safetensors is not good idea, 
+            # we better error out saying we don't support bin format or handle without the rewrite.
             source_dir = out.with_name(out.name + "-source-safetensors")
             convert_bin_to_safetensors(src, source_dir)
 
