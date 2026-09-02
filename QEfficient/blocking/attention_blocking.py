@@ -136,7 +136,7 @@ class AttentionBlockingConfig:
     gdn_num_head_blocks: Optional[int] = None
     headpar_split: Optional[int] = None
     batch_fold: Optional[bool] = False
-    n_rep_chunk: Optional[int] = None
+    n_rep_chunk: Optional[int] = 1
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
     num_cores_per_device: Optional[int] = None
