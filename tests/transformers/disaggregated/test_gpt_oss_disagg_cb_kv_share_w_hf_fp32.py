@@ -18,9 +18,6 @@ Two checks, in one on-device session:
 
 pytest -m "on_qaic and disagg_dma" tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 
-Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "nightly_disagg" \
-        tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 """
 
 from pathlib import Path
@@ -694,8 +691,6 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
             first_tokens[slot] = ft
             next_pos[slot] = npos
 
-            # Post-condition: the DMA write landed in row `slot` (real prefix non-zero)
-            # and did NOT touch any other slot's row (no cross-slot contamination).
             written = [kv[slot, :, : prompt_len[slot], :] for kv in kv_caches]
             assert all(np.any(w != 0) for w in written), (
                 f"slot {slot} KV row is still zero after prefill -- DMA handoff did not write it"
@@ -707,7 +702,6 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
                     f"slot {other} KV row went to zero after prefilling slot {slot} -- cross-slot corruption"
                 )
 
-        # Snapshot the prefill-written region before decode touches anything.
         pre_decode_kv = [kv.copy() for kv in kv_caches]
 
         # -------------------- First decode step, both slots --------------------
@@ -727,8 +721,6 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
         decode_logits = decode_out["logits"].reshape(FULL_BATCH_SIZE, -1, decode_out["logits"].shape[-1])[:, -1, :]
         second_tokens = np.argmax(decode_logits, axis=-1)
 
-        # Post-condition: decode's write-back only appends the new position; the
-        # prefill-written prefix (input KV the decode step read from) is untouched.
         for slot in range(FULL_BATCH_SIZE):
             for kv_before, kv_after in zip(pre_decode_kv, kv_caches):
                 prefix_before = kv_before[slot, :, : prompt_len[slot], :]
@@ -771,6 +763,8 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
     finally:
         for session in sessions:
             session.deactivate()
+        cleanup_paths = list(compiled_onnx_paths.values()) or [getattr(qeff_model, "onnx_path", None)]
+        manual_cleanup([path for path in cleanup_paths if path is not None])
 
     for slot in range(FULL_BATCH_SIZE):
         qaic_tokens = np.array(gen_tokens[slot], dtype=np.int64)

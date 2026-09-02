@@ -246,14 +246,9 @@ def _run_disagg_kv_share_qaic_generation(
 
     lang_inputs["image_idx"] = np.array([[0]])
 
-    # image_idx must be a compiled prefill input binding; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert it up front. The decode QPC may not bind
-    # it, so treat it as optional there and only wire it when present.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
 
-    # vision_embeds and deepstack_features are constant across every prefill chunk and decode
-    # step, so register them once as persistent inputs instead of re-supplying them per step.
     vision_persist = {name: vision_outputs[name] for name in VISION_OUTPUTS if name in vision_outputs}
     prefill_session.set_persistent_inputs(vision_persist)
     decode_session.set_persistent_inputs(

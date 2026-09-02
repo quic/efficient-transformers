@@ -10,11 +10,6 @@
 Run the regular HF/QAIC parity test with:
     pytest -m "on_qaic and disagg_dma" \
         tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py
-
-Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "nightly_disagg" \
-        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py
-
 """
 
 import copy
