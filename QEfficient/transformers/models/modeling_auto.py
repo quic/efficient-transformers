@@ -3969,7 +3969,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 getattr(self.model.config, "architectures", None) or []
             ):
                 if enable_chunking:
-                    if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                    if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe", "mixtral"}:
                         seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
                 elif self.model.config.model_type == "gpt_oss":
