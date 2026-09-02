@@ -27,6 +27,15 @@ Language model inference.
 
 [See all text generation examples →](text_generation/)
 
+### Dynamo
+`torch.export` based export examples.
+
+| Example | Description | Script |
+|---------|-------------|--------|
+| CausalLM Dynamo | Dynamo export with optional weight-free mode | [dynamo/causal_lm/basic_dynamo_inference.py](dynamo/causal_lm/basic_dynamo_inference.py) |
+
+[See all dynamo examples →](dynamo/)
+
 ### Image-Text-to-Text
 Vision-language models.
 
