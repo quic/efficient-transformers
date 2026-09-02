@@ -9,6 +9,7 @@ import math
 import re
 import subprocess
 from collections import defaultdict
+from typing import Optional
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -47,6 +48,14 @@ def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) ->
         if len(device_ids) >= devices_per_group:
             device_groups.append(device_ids[:devices_per_group])
     return sorted(device_groups, key=lambda device_ids: device_ids[0])
+
+
+def get_available_device_id(min_nsp: int = 16) -> Optional[list[int]]:
+    """Return a single ready QAIC device id list, or None when no ready device is available."""
+    device_groups = get_qaic_mdp_device_groups(min_nsp=min_nsp, devices_per_group=1)
+    if not device_groups:
+        return None
+    return [device_groups[0][0]]
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:

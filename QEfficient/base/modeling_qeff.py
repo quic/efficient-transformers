@@ -11,20 +11,21 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import onnx
 import torch
 
+from QEfficient.base.checkpoint_transforms import BaseCheckpointTransform
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
-    PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
@@ -36,7 +37,7 @@ from QEfficient.compile.mdp_generator import (
     generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
-from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
+from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -128,6 +129,7 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
+    _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = []
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
@@ -171,13 +173,14 @@ class QEFFBaseModel(ABC):
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
+        self.weight_spec_path: Optional[str] = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-
+        self._weight_free: bool = kwargs.get("weight_free", False)
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -362,88 +365,6 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
-    def _export_via_legacy(
-        self,
-        onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_axes: Dict,
-        export_kwargs: Dict,
-    ) -> None:
-        """Export via TorchScript symbolic tracing (dynamo=False)."""
-        with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                dynamo=False,
-                opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
-                **export_kwargs,
-            )
-
-    def _export_via_dynamo(
-        self,
-        onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_shapes: Optional[Dict],
-        export_kwargs: Dict,
-    ) -> None:
-        """Export via torch.export (dynamo=True) with custom op translation."""
-        # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
-        # which torch.export requires for dynamic_shapes to bind correctly.
-        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
-        sig_key_set = set(sig_keys)
-        ordered_inputs, ordered_shapes = {}, {}
-        for k in sig_keys:
-            if k in example_inputs:
-                ordered_inputs[k] = example_inputs[k]
-            if dynamic_shapes is not None and k in dynamic_shapes:
-                ordered_shapes[k] = dynamic_shapes[k]
-        example_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
-        if dynamic_shapes is not None:
-            dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
-
-        export_kwargs = dict(export_kwargs)
-        export_kwargs.setdefault("report", False)
-        export_kwargs.setdefault("optimize", False)
-        export_kwargs["dynamo"] = True
-        export_kwargs["custom_translation_table"] = {
-            **(export_kwargs.pop("custom_translation_table", None) or {}),
-            **DYNAMO_CUSTOM_OP_TABLE,
-        }
-
-        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
-        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
-        try:
-            onnx_program = torch.onnx.export(
-                self.model,
-                args=(),
-                f=None,
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=None,
-                dynamic_shapes=dynamic_shapes,
-                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            if onnx_program is None:
-                raise RuntimeError("torch.onnx.export returned None for dynamo export")
-            PruneFakeInitializersTransform.apply(onnx_program)
-            onnx_program.save(str(onnx_path))
-        finally:
-            if prev_invoke_fallback is None:
-                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
-            else:
-                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
-
     @export_wrapper
     def _export(
         self,
@@ -453,13 +374,8 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -481,7 +397,6 @@ class QEFFBaseModel(ABC):
             :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
             after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
-            :prefill_only (bool): If True, export only the prefill (context) graph without decode. Defaults to False.
             :dynamo (bool): If True, export via torch.export (dynamo path) instead of the legacy torch.onnx.export TorchScript path. Defaults to False.
             :dynamic_shapes (dict): Dynamic shape constraints passed to torch.export when dynamo=True. Keys are input names; values are per-dimension constraint dicts. Ignored when dynamo=False.
             Note:
@@ -493,13 +408,16 @@ class QEFFBaseModel(ABC):
         export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
-        # Return early if ONNX already exists
+        # Resolve the weight spec path now — it is always co-located with the ONNX
+        # (same directory, named weight_spec.json). Must happen before the early-return
+        # so a cache hit restores the full export output state.
+        _weight_spec_path = onnx_path.with_name("weight_spec.json")
+
+        # Return early if ONNX already exists (restore complete export output state).
         if onnx_path.is_file():
             self.onnx_path = onnx_path
+            self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
-
-        # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -573,8 +491,25 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            if dynamo:
-                self._export_via_dynamo(
+            if self._weight_free:
+                from QEfficient.exporter.onnx_exporter import export_via_weightfree
+
+                export_result = export_via_weightfree(
+                    self,
+                    onnx_path,
+                    example_inputs,
+                    input_names,
+                    output_names,
+                    dynamic_shapes,
+                    export_kwargs,
+                    onnx_transform_kwargs,
+                )
+            elif dynamo:
+                from QEfficient.exporter.onnx_exporter import export_via_dynamo
+
+                self._model_offloaded_check()
+                export_result = export_via_dynamo(
+                    self,
                     onnx_path,
                     example_inputs,
                     input_names,
@@ -582,8 +517,13 @@ class QEFFBaseModel(ABC):
                     dynamic_shapes,
                     export_kwargs,
                 )
+                self._offload_model_weights(offload_pt_weights)
             else:
-                self._export_via_legacy(
+                from QEfficient.exporter.onnx_exporter import export_via_legacy
+
+                self._model_offloaded_check()
+                export_result = export_via_legacy(
+                    self,
                     onnx_path,
                     example_inputs,
                     input_names,
@@ -591,23 +531,29 @@ class QEFFBaseModel(ABC):
                     dynamic_axes,
                     export_kwargs,
                 )
+                self._offload_model_weights(offload_pt_weights)
             logger.info("PyTorch export successful")
-            self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(onnx_path, load_external_data=False)
+            self.weight_spec_path = str(export_result.weight_spec_path) if export_result.weight_spec_path else None
+            model = onnx.load(export_result.onnx_path, load_external_data=False)
 
+            excluded_transforms = set(export_result.excluded_onnx_transforms)
+            active_transforms = [
+                transform for transform in self._onnx_transforms if transform not in excluded_transforms
+            ]
             needs_external_tensor_data = any(
-                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+                transform in active_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
             )
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
-                "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
+                "dynamic_axes": None if dynamo else dynamic_axes,
                 "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
+            transform_kwargs.update(export_result.onnx_transform_kwargs)
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
@@ -615,10 +561,12 @@ class QEFFBaseModel(ABC):
             if QEFFBaseModel._layerwise_active:
                 _restore_retained_state_output_names(model, output_names)
 
-            # Add metadata to the model
+            transform_names = [transform.__name__ for transform in self._pytorch_transforms + active_transforms]
             model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(transform_names))
             )
+            if self._weight_free and export_result.weight_spec_path:
+                embed_weight_spec_as_metadata(model, export_result.weight_spec_path)
             logger.info("ONNX transforms applied")
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
@@ -627,6 +575,9 @@ class QEFFBaseModel(ABC):
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
+
+            if self._weight_free and export_result.weight_spec_path:
+                link_prepared_checkpoint_dir(onnx_path, export_result.weight_spec_path)
 
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
@@ -881,9 +832,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        import os
-        import time
-
         layerwise_dir = export_dir / "onnx_layerwise_tmp"
         start_time = time.time()
 
@@ -1062,7 +1010,7 @@ class QEFFBaseModel(ABC):
             # ONNX because re-exporting is no longer possible. Otherwise export for
             # the current compile mode, e.g. decode vs. disaggregated prefill.
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            if self.onnx_path is not None and weights_offloaded:
+            if self.onnx_path is not None and weights_offloaded and not self._weight_free:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(

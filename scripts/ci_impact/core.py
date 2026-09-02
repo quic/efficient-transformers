@@ -34,6 +34,7 @@ STAGES = (
     "qaic_diffusion",
     "cli",
     "dynamo_qaic",
+    "weight_free_qaic",
 )
 
 HARD_FULL_FILES = {
@@ -491,6 +492,8 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
         return set()
     if path.startswith("tests/dynamo/"):
         return {"dynamo_qaic"} if "on_qaic" in markers and "nightly" not in markers else set()
+    if path.startswith("tests/weight_free/"):
+        return {"weight_free_qaic"} if "on_qaic" in markers else set()
     if path == "tests/transformers/models/reranker/test_reranker_mad.py":
         return {"qaic_reranker"}
     stages = set()
