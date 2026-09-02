@@ -64,7 +64,10 @@ MODEL_CLASS_TO_REPORT_CLASS = {
     "audio_embedding_model_configs": "audio_embedding_model",
     "audio_model_configs": "audio_model",
     "causal_pipeline_configs": "causal_model",
-    "diffuser_model_configs": "diffuser_model",
+    "diffuser_flux_configs": "diffuser_model",
+    "diffuser_wan_configs": "diffuser_model",
+    "diffuser_wan_non_unified_configs": "diffuser_model",
+    "diffuser_wan_i2v_configs": "diffuser_model",
     "embedding_model_configs": "embedding_model",
     "image_text_to_text_model_configs": "image_text_to_text_model",
     "sequence_model_configs": "sequence_model",
@@ -96,12 +99,30 @@ FAMILY_SPECS = {
         "mad_key": "generated_ids",
         "include_perf": True,
     },
-    "diffuser_model_configs": {
+    "diffuser_flux_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_non_unified_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_i2v_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
     },
     "embedding_model_configs": {
-        "mad_column": "embedding",
-        "mad_key": "embedding",
-        "extra_info_columns": ["pooling", "seq_len"],
+        "mad_column": "embedding_mean",
+        "mad_key": "embedding_mean",
+        "extra_info_columns": ["pooling", "seq_len", "embedding_shape", "embedding_max"],
     },
     "sequence_model_configs": {
         "text_column": "prediction",
@@ -150,6 +171,18 @@ def validate_artifact_file(
 ) -> list[dict[str, Any]]:
     previous_artifacts = load_json(previous_artifact_file) if previous_artifact_file is not None else {}
     rows = validate_artifacts(load_json(current_artifact_file), previous_artifacts, model_class, tolerances)
+    failure_rows = {
+        row.get("model_name"): row
+        for row in load_recorded_test_failure_rows(current_artifact_file.parent, model_class)
+    }
+    for row in rows:
+        failure = failure_rows.get(row.get("model_name"))
+        if failure:
+            row["status"] = failure["status"]
+            row["failure_reason"] = failure["failure_reason"]
+    for model_name, failure in failure_rows.items():
+        if not any(row.get("model_name") == model_name for row in rows):
+            rows.append(failure)
     write_validation_csv(output_csv_file, model_class, rows)
     return rows
 
@@ -547,8 +580,11 @@ def _extract_total_size_bytes(payload: dict[str, Any]) -> float | None:
 
 def _is_artifact_size_key(key: str) -> bool:
     key_lower = key.lower()
-    return key_lower == "size" or ("size" in key_lower and ("onnx" in key_lower or "qpc" in key_lower))
-
+    return (
+        key_lower == "size"
+        or "onnx_and_qpc_dir size" in key_lower
+        or ("size" in key_lower and ("onnx" in key_lower or "qpc" in key_lower))
+    )
 
 def _parse_size_bytes(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):

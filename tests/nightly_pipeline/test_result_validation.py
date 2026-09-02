@@ -30,7 +30,10 @@ MODEL_ARTIFACTS = [
         "image_text_to_text_model_validation.csv",
     ),
     ("sequence_model_configs", "sequence_model_artifacts.json", "sequence_model_validation.csv"),
-    ("diffuser_model_configs", "diffuser_model_artifacts.json", "diffuser_model_validation.csv"),
+    ("diffuser_flux_configs", "diffuser_model_artifacts.json", "diffuser_model_validation.csv"),
+    ("diffuser_wan_configs", "diffuser_model_artifacts.json", "diffuser_model_validation.csv"),
+    ("diffuser_wan_non_unified_configs", "diffuser_model_artifacts.json", "diffuser_model_validation.csv"),
+    ("diffuser_wan_i2v_configs", "diffuser_model_artifacts.json", "diffuser_model_validation.csv"),
 ]
 
 

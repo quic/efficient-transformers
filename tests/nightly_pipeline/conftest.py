@@ -205,7 +205,11 @@ def _nightly_model_classes_from_nodeid(nodeid):
 
 def _short_failure_reason(report):
     reason = getattr(report, "longreprtext", "") or str(report.longrepr)
-    reason = " ".join(reason.split())
+    error_lines = [line.strip()[2:].strip() for line in reason.splitlines() if line.strip().startswith("E ")]
+    if error_lines:
+        reason = " ".join(error_lines)
+    else:
+        reason = " ".join(reason.split())
     return reason[:500] if reason else "pytest test failed"
 
 

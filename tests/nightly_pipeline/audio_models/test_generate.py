@@ -20,7 +20,6 @@ from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 from ..model_age_utils import filter_models_for_nightly
 from ..nightly_utils import (
     compare_with_golden,
-    get_file_or_dir_size,
     make_golden_key,
     measure_peak_ram,
     pre_generate_utils,
@@ -103,16 +102,12 @@ def _generate_audio_model(model_name, get_pipeline_config, audio_model_artifacts
     )
     print(f"\n[GOLDEN COMPARISON] passed={comparison['passed']} details={comparison['per_key']}")
 
-    onnx_and_qpc_dir = os.path.dirname(onnx_path)
     audio_model_artifacts[model_name][dtype_key].update(
         {
             "batch_size": exec_info.batch_size,
             "transcription": transcription,
             "generated_ids": exec_info.generated_ids,
-            "onnx_and_qpc_dir": onnx_and_qpc_dir,
-            "onnx_size": get_file_or_dir_size(onnx_path),
-            "qpc_size": get_file_or_dir_size(audio_model_artifacts[model_name][dtype_key]["qpc_path"]),
-            "peak_ram_mb": round(ram["peak_mb"], 2),
+            "generate_peak_ram_mb": round(ram["peak_mb"], 2),
             "golden_comparison": comparison,
             "perf_metrics": {
                 "prefill_time": exec_info.perf_metrics.prefill_time,

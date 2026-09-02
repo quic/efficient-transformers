@@ -131,12 +131,11 @@ def _generate_flux(model_id, diffuser_model_artifacts, get_pipeline_config, enab
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
     diffuser_model_artifacts[model_id][dtype_key].update({
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "onnx_and_qpc_dir": entry.get("onnx_and_qpc_dir"),
-        "size": entry.get("size"),
-        "onnx_size": entry.get("onnx_size"),
-        "qpc_size": entry.get("qpc_size"),
+        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
         "golden_comparison": comparison,
+        "image_shape": list(qaic_arr.shape),
+        "image_mean": round(float(qaic_arr.mean()), 6),
+        "image_max": round(float(qaic_arr.max()), 6),
     })
 
     assert comparison["passed"], f"QPC image differs from golden PyTorch: {comparison['per_key']}"
@@ -247,12 +246,11 @@ def _generate_wan(model_id, diffuser_model_artifacts, get_pipeline_config, use_u
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
     diffuser_model_artifacts[model_id][dtype_key].update({
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "onnx_and_qpc_dir": entry.get("onnx_and_qpc_dir"),
-        "size": entry.get("size"),
-        "onnx_size": entry.get("onnx_size"),
-        "qpc_size": entry.get("qpc_size"),
+        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
         "golden_comparison": comparison,
+        "image_shape": list(qaic_frames.shape),
+        "image_mean": round(float(qaic_frames.mean()), 6),
+        "image_max": round(float(qaic_frames.max()), 6),
     })
 
     assert comparison["passed"], f"QPC video differs from golden PyTorch: {comparison['per_key']}"
@@ -375,12 +373,11 @@ def _generate_wan_i2v(model_id, diffuser_model_artifacts, get_pipeline_config):
     print(f"\n[GOLDEN] passed={comparison['passed']} peak_ram_mb={ram['peak_mb']:.1f} details={comparison['per_key']}")
 
     diffuser_model_artifacts[model_id][dtype_key].update({
-        "peak_ram_mb": round(ram["peak_mb"], 2),
-        "onnx_and_qpc_dir": entry.get("onnx_and_qpc_dir"),
-        "size": entry.get("size"),
-        "onnx_size": entry.get("onnx_size"),
-        "qpc_size": entry.get("qpc_size"),
+        "generate_peak_ram_mb": round(ram["peak_mb"], 2),
         "golden_comparison": comparison,
+        "image_shape": list(qaic_frames.shape),
+        "image_mean": round(float(qaic_frames.mean()), 6),
+        "image_max": round(float(qaic_frames.max()), 6),
     })
 
     assert comparison["passed"], f"QPC video differs from golden PyTorch: {comparison['per_key']}"

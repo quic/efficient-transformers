@@ -46,6 +46,20 @@ def get_onnx_and_qpc_size(dir):
     return human_readable(total_size)
 
 
+def get_onnx_dir_size(onnx_dir):
+    """Return size of ONNX artifacts only (excludes qpc subdirectory and JSON files)."""
+    total_size = 0
+    for root, dirs, files in os.walk(onnx_dir):
+        dirs[:] = [d for d in dirs if not d.startswith("qpc")]
+        for name in files:
+            if name.endswith(".json"):
+                continue
+            file_path = os.path.join(root, name)
+            if not os.path.islink(file_path):
+                total_size += os.path.getsize(file_path)
+    return human_readable(total_size)
+
+
 def get_file_or_dir_size(path):
     """Return human-readable size of a single file or directory."""
     path = str(path)

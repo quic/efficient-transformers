@@ -122,7 +122,7 @@
       "embedding_model_configs": {
         "percentage_tolerance": 5.0,
         "perf_delta_tolerance": 0.1,
-        "mad_tolerance": 0.1
+        "mad_tolerance": 0.01
       },
       "audio_model_configs": {
         "percentage_tolerance": 5.0,
@@ -143,6 +143,26 @@
         "percentage_tolerance": 5.0,
         "perf_delta_tolerance": 0.1,
         "mad_tolerance": 0.1
+      },
+      "diffuser_flux_configs": {
+        "percentage_tolerance": 5.0,
+        "perf_delta_tolerance": 0.1,
+        "mad_tolerance": 0.05
+      },
+      "diffuser_wan_configs": {
+        "percentage_tolerance": 5.0,
+        "perf_delta_tolerance": 0.1,
+        "mad_tolerance": 0.05
+      },
+      "diffuser_wan_non_unified_configs": {
+        "percentage_tolerance": 5.0,
+        "perf_delta_tolerance": 0.1,
+        "mad_tolerance": 0.05
+      },
+      "diffuser_wan_i2v_configs": {
+        "percentage_tolerance": 5.0,
+        "perf_delta_tolerance": 0.1,
+        "mad_tolerance": 0.05
       }
     }
   },
@@ -163,7 +183,7 @@
     },
     "mad_validation": {
       "tolerances": {
-        "end_to_end": 0.35
+        "end_to_end": 0.3
       }
     }
   },
@@ -186,7 +206,7 @@
     },
     "mad_validation": {
       "tolerances": {
-        "end_to_end": 1.5
+        "end_to_end": 0.1
       }
     }
   },
@@ -232,7 +252,7 @@
     },
     "mad_validation": {
       "tolerances": {
-        "end_to_end": 3.0
+        "end_to_end": 0.5
       }
     }
   }
