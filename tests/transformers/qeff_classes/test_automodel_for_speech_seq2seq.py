@@ -55,8 +55,9 @@ model_kwargs = {"attn_implementation": "eager"}
 
 def test_seq2seq_unsupported():
     model = AutoModelForSpeechSeq2Seq.from_config(AutoConfig.for_model("speech_to_text"))
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
     with pytest.warns():
-        QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform()
 
 
 @pytest.mark.parametrize("config", configs, ids=config_ids)
@@ -65,6 +66,9 @@ def test_seq2seq_init(config):
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
     with pytest.raises(TypeError):
         QEFFAutoModelForSpeechSeq2Seq(AutoModel.from_config(config, **model_kwargs))
+    assert not qeff_model.is_transformed
+    qeff_model.transform()
+    assert qeff_model.is_transformed
     assert qeff_model.model.model.__class__.__name__.startswith("QEff")
 
 
@@ -74,6 +78,9 @@ def test_seq2seq_pretrained(config, tmp_path):
     model.save_pretrained(tmp_path)
 
     qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(tmp_path)
+    assert not qeff_model.is_transformed
+    qeff_model.transform()
+    assert qeff_model.is_transformed
     assert qeff_model.model.model.__class__.__name__.startswith("QEff")
 
 
@@ -129,7 +136,7 @@ def test_seq2seq_hash_creation(config, tmp_path):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
     qeff_model.export(tmp_path)
-    hash_params = {}
+    hash_params = copy.deepcopy(qeff_model.hash_params)
     hash_params["config"] = qeff_model.model.config.to_diff_dict()
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()

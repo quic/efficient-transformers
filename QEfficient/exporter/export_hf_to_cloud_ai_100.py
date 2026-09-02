@@ -318,6 +318,9 @@ def export_lm_model_for_cloud(
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
+    if not qeff_model.is_transformed:
+        qeff_model.transform(seq_len=seq_length, bs=full_batch_size or len(Constants.INPUT_STR))
+
     model_name = export_kvstyle_transformed_model_to_onnx(
         model_name=model_name,
         transformed_model=qeff_model.model,
