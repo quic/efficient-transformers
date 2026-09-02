@@ -31,7 +31,7 @@ IMAGE_PROMPT = "Describe this image in detail."
 # TEXT_PROMPT = "What are the seven continents? Answer in one sentence."
 # TEXT_PROMPT = "Can you summarize Romeo and Juliet story by William Shakespere? Explain in more detail with answer no less than 1280 tokens"
 TEXT_PROMPT = "What is diffusion based generative learning?"
-# TEXT_PROMPT = "How to make pizza? Answer in one sentence."
+# TEXT_PROMPT = "How to make pizza?"
 # TEXT_PROMPT = "What is diffusion based generative learning? Answer in one sentence."
 
 
@@ -50,6 +50,7 @@ def load_model_and_processor(model_id: str, canvas_length: int, num_lang_layers:
     if num_lang_layers is not None:
         config = _apply_reduced_layer_config(config, num_lang_layers=num_lang_layers)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+    
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_id,
         config=config,
