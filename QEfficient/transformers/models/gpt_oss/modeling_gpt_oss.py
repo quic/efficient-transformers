@@ -645,6 +645,9 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
+
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
@@ -660,16 +663,13 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
                 key_states, value_states = past_key_values.sliding_window_update_chunked(
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
-            else:
+            elif not use_blocking:
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_values.full_cache_update_chunked(
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
-
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
 
         if use_blocking:
             attention_interface = generic_blocked_attention_interface

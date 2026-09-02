@@ -140,7 +140,7 @@ def run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_la
     st = time.time()
     for _ in range(generation_len):
         out = decode_session.run(decode_inputs)
-        next_tokens = np.argmax(out["logits"], axis=-1)  # [B, 1]
+        next_tokens = select_next_token_ids(out["logits"])  # [B, 1]
         all_tokens.append(next_tokens)
         decode_inputs["input_ids"] = next_tokens
         decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
@@ -148,6 +148,21 @@ def run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_la
             decode_inputs[f"past_key.{layer}"] = out[f"past_key.{layer}_RetainedState"]
             decode_inputs[f"past_value.{layer}"] = out[f"past_value.{layer}_RetainedState"]
     return np.concatenate(all_tokens, axis=1), time.time() - st  # [B, gen_len]
+
+
+def select_next_token_ids(logits, token_idx=None):
+    """Return greedy token ids from logits shaped [B, V], [B, 1, V], or [B, S, V]."""
+    if logits.ndim == 2:
+        token_logits = logits
+    elif logits.ndim == 3:
+        if token_idx is None or token_idx >= logits.shape[1]:
+            token_logits = logits[:, -1, :]
+        else:
+            token_logits = logits[:, token_idx, :]
+    else:
+        raise ValueError(f"Unsupported logits shape: {logits.shape}")
+
+    return np.argmax(token_logits, axis=-1, keepdims=True)
 
 
 def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
@@ -166,7 +181,7 @@ def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
     last_valid_idx = int(np.argmax(last_chunk_pos[0]))
     decode_inputs = {
         # [B, 1]: argmax over vocab at the last valid position of the last chunk
-        "input_ids": np.argmax(qpc_out["logits"][:, last_valid_idx, :], axis=-1, keepdims=True),
+        "input_ids": select_next_token_ids(qpc_out["logits"], token_idx=last_valid_idx),
         # [B, 1]: per-batch next decode position
         "position_ids": np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1,
     }
@@ -208,6 +223,7 @@ def main():
         "num_kv_blocks": 2,
         "num_q_blocks": 2,
         "ctx_len": args.ctx_len,
+        "moe_config": {"expert_prefill_chunk_size": args.moe_prefill_packed_chunk_size},
     }
 
     compile_kwargs = dict(
@@ -235,6 +251,7 @@ def main():
     # ── Compile prefill model ─────────────────────────────────────────────────
     print("\n[2/2] Compiling prefill model (blocked head-par prefill)...")
     prefill_model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, **from_pretrained_kwargs)
+
     prefill_qpc_path = prefill_model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
@@ -242,7 +259,6 @@ def main():
         prefill_only=True,
         enable_chunking=True,
         user_tiled=True,
-        moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
         **compile_kwargs,
     )
     print(f"  -> {prefill_qpc_path}")
@@ -265,7 +281,6 @@ def main():
             prefill_only=True,
             enable_chunking=True,
             aic_enable_depth_first=True,
-            moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
             **compile_kwargs,
         )
         print(f"  -> decode:  {baseline_decode_qpc}")
