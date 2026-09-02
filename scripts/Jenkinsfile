@@ -426,8 +426,15 @@ pipeline {
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
-                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10 &&
-                            junitparser merge tests/tests_log6.xml tests/tests_log.xml && deactivate"
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\$?;
+                            deactivate;
+                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
+                            exit \$test_status"
                             '''
                         }
                     } else {
@@ -451,8 +458,15 @@ pipeline {
                             cd /efficient-transformers && . preflight_qeff/bin/activate &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                             export QEFF_PER_PR_SHARED_HOME=1 && export QEFF_NUM_QAIC_CARDS=${CI_QAIC_WORKERS} && export QEFF_QAIC_CARDS_PER_WORKER=2 &&
-                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10 &&
-                            junitparser merge tests/tests_log6.xml tests/tests_log.xml && deactivate"
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\$?;
+                            deactivate;
+                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
+                            exit \$test_status"
                             '''
                         }
                     }
