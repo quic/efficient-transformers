@@ -497,6 +497,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["pooling"] = pooling.__name__ if callable(pooling) else pooling
 
     @classmethod
     @with_replaced_quantizers
@@ -544,6 +545,10 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        # NomicBert loads the model in fp32 eventhough we pass the torch dtype param as fp16
+        if kwargs.get("torch_dtype") == torch.float16 and next(model.parameters()).dtype == torch.float32:
+            model.half()
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -738,7 +743,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids, dtype=dtype)
         # PyTorch runtime
         else:
             return self.pytorch_feature_generate(model=self.model, inputs=inputs)
