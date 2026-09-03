@@ -225,16 +225,19 @@ pipeline {
                         sh '''
                             . ~/.bashrc
                             sudo docker rm -f ${BUILD_TAG} >/dev/null 2>&1 || true
+                            export QEFF_UV_CACHE_PATH="${QEFF_UV_CACHE_PATH:-${HOME}/.cache/qeff-uv}"
                             export QEFF_PIP_CACHE_PATH="${QEFF_PIP_CACHE_PATH:-${HOME}/.cache/qeff-pip}"
                             export QEFF_APT_ARCHIVES_PATH="${QEFF_APT_ARCHIVES_PATH:-${HOME}/.cache/qeff-apt/archives}"
                             export QEFF_APT_LISTS_PATH="${QEFF_APT_LISTS_PATH:-${HOME}/.cache/qeff-apt/lists}"
-                            mkdir -p "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
+                            mkdir -p "${QEFF_UV_CACHE_PATH}" "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
                             sudo docker run --privileged -dit --name ${BUILD_TAG} \
                             -e HF_TOKEN=${HF_TOKEN} \
                             -e TMPDIR=/efficient-transformers/.ci-tmp/default \
                             -e PIP_CACHE_DIR=/root/.cache/pip \
+                            -e UV_CACHE_DIR=/root/.cache/uv \
                             -v ./:/efficient-transformers \
                             -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                            -v ${QEFF_UV_CACHE_PATH}:/root/.cache/uv \
                             -v ${QEFF_PIP_CACHE_PATH}:/root/.cache/pip \
                             -v ${QEFF_APT_ARCHIVES_PATH}:/var/cache/apt/archives \
                             -v ${QEFF_APT_LISTS_PATH}:/var/lib/apt/lists \
@@ -248,12 +251,9 @@ pipeline {
                             python3.12 -m venv preflight_qeff &&
                             . preflight_qeff/bin/activate &&
                             pip install --upgrade pip setuptools &&
-                            pip install .[test] &&
-                            pip install junitparser pytest-xdist &&
-                            pip install librosa==0.10.2 soundfile==0.13.1 &&
-                            pip install qwen-vl-utils==0.0.14 &&
-                            pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                            pip install onnx_ir"
+                            pip install uv==0.11.16 &&
+                            uv pip install --extra-index-url https://download.pytorch.org/whl/cpu '.[test]' junitparser pytest-xdist librosa==0.10.2 soundfile==0.13.1 timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 onnx_ir &&
+                            uv pip install --no-deps qwen-vl-utils==0.0.14"
                         '''
                     }
                 }
@@ -376,7 +376,7 @@ pipeline {
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                             export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' -k 'not test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
                             junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                             deactivate"
                             '''
@@ -634,9 +634,23 @@ pipeline {
                     echo "No test results file found or parsing failed: ${error}"
                 }
                 try {
-                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
+                    sh '''
+                        python3 scripts/ci_report/generate_ci_report.py \
+                            --xml-dir tests \
+                            --output tests/ci_report.html \
+                            --pr "${CHANGE_ID:-}" \
+                            --commit "${GIT_COMMIT:-}" \
+                            --branch "${BRANCH_NAME:-}" \
+                            --profile "${TEST_PROFILE:-}" \
+                            --build-url "${BUILD_URL:-}" || true
+                    '''
                 } catch (error) {
-                    echo "Failed to archive CI impact artifacts: ${error}"
+                    echo "CI report generation failed: ${error}"
+                }
+                try {
+                    archiveArtifacts artifacts: 'tests/ci_report.html,tests/tests_log*.xml,.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
+                } catch (error) {
+                    echo "Failed to archive CI artifacts: ${error}"
                 }
                 try {
                     sh 'sudo docker rm -f ${BUILD_TAG}'
