@@ -40,6 +40,7 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
+from QEfficient.customop import CtxPagedScatterFuncDP
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -124,14 +125,28 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         layer_idx: int,
         cos: torch.Tensor,
         sin: torch.Tensor,
+        blocking_config: Optional[AttentionBlockingConfig] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         cfg = self.config
         batch, seq_len = hidden_states.shape[0], hidden_states.shape[1]
         ctx_len = past_key_values.layers[layer_idx].keys.shape[2]
         num_blocks = (ctx_len + cfg.index_block_size - 1) // cfg.index_block_size
 
+        dp = blocking_config.msa_indexer_dp if (blocking_config and blocking_config.msa_indexer_dp) else 1
+        cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
+        hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
+        num_kv_blocks = blocking_config.num_kv_blocks if (blocking_config and blocking_config.num_kv_blocks) else 1
+        num_cores = (
+            blocking_config.num_cores_per_device if (blocking_config and blocking_config.num_cores_per_device) else 1
+        )
+
+        if dp > 1:
+            return self._select_blocks_dp(
+                hidden_states, position_ids, past_key_values, layer_idx, cos, sin, blocking_config
+            )
+
         idx_q = self.q_proj(hidden_states).view(batch, seq_len, cfg.index_n_heads, cfg.index_head_dim).transpose(1, 2)
-        idx_k = self.k_proj(hidden_states).view(batch, seq_len, 1, cfg.index_head_dim).transpose(1, 2)
+        idx_k = self.k_proj(hidden_states).view(batch, seq_len, hkv, cfg.index_head_dim).transpose(1, 2)
         idx_q = self.q_norm(idx_q)
         idx_k = self.k_norm(idx_k)
         idx_q, idx_k = qeff_apply_rotary_pos_emb(
@@ -164,6 +179,249 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
 
         topk_scores, block_indices = torch.topk(block_scores, k=min(cfg.index_topk_blocks, num_blocks), dim=-1)
         block_valid = topk_scores > -1.0e29
+        offsets = torch.arange(cfg.index_block_size, device=hidden_states.device).view(1, 1, 1, 1, -1)
+        token_indices = block_indices.unsqueeze(-1) * cfg.index_block_size + offsets
+        token_valid = block_valid.unsqueeze(-1) & (token_indices < ctx_len)
+        token_valid = token_valid & (token_indices <= position_ids[:, None, :, None, None])
+        token_indices = token_indices[:, :, 0]
+        token_valid = token_valid[:, :, 0]
+        safe_indices = torch.where(token_valid, token_indices, torch.zeros_like(token_indices)).to(torch.int32)
+        return safe_indices, token_valid
+
+    @staticmethod
+    def _apply_rope_dp(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+        """Apply RoPE to x in DP layout.
+
+        x:   [..., H, seq_len, D]  where the leading dims include a DP axis
+        cos: [..., seq_len, rotary_dim]  (no head axis yet)
+        sin: [..., seq_len, rotary_dim]
+        """
+        rotary_dim = cos.shape[-1]
+        rotated = x[..., :rotary_dim]
+        passthrough = x[..., rotary_dim:]
+        head_axis = x.ndim - 3  # insert singleton for H axis
+        cos = cos.unsqueeze(head_axis)
+        sin = sin.unsqueeze(head_axis)
+        rotated = rotated * cos + rotate_half(rotated) * sin
+        return torch.cat((rotated, passthrough), dim=-1)
+
+    def _select_blocks_dp(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values: "QEffMiniMaxSparseCache",
+        layer_idx: int,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        blocking_config: Optional[AttentionBlockingConfig] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """DP-optimised block selection using CtxPagedScatterFuncDP / CtxGatherFuncBlockedKVDP.
+
+        Mirrors the benchmark's ``_select_blocks`` DP path as closely as possible while
+        staying within QEfficient's cache and export conventions.  Only CP=1 is
+        implemented; CP>1 raises ``NotImplementedError``.
+        """
+        cfg = self.config
+        batch, seq_len = hidden_states.shape[0], hidden_states.shape[1]
+        ctx_len = past_key_values.layers[layer_idx].keys.shape[2]
+
+        dp = blocking_config.msa_indexer_dp
+        cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
+        hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
+        num_kv_blocks = blocking_config.num_kv_blocks if (blocking_config and blocking_config.num_kv_blocks) else 1
+        num_cores = (
+            blocking_config.num_cores_per_device if (blocking_config and blocking_config.num_cores_per_device) else 1
+        )
+
+        if cp > 1:
+            raise NotImplementedError(
+                "MSA indexer DP path with cp > 1 is not yet supported in QEfficient."
+            )
+        if batch % dp != 0:
+            raise ValueError(f"MSA indexer: batch size {batch} must be divisible by msa_indexer_dp={dp}.")
+        if ctx_len % num_kv_blocks != 0:
+            raise ValueError(f"MSA indexer: ctx_len ({ctx_len}) must be divisible by num_kv_blocks ({num_kv_blocks}).")
+        cache_block_size = ctx_len // num_kv_blocks
+        if cache_block_size % num_cores != 0:
+            raise ValueError(
+                f"MSA indexer: cache block size ({cache_block_size}) must be divisible by "
+                f"num_cores_per_device ({num_cores})."
+            )
+        tokens_per_core = cache_block_size // num_cores
+        if tokens_per_core % cfg.index_block_size != 0:
+            raise ValueError(
+                f"MSA indexer: tokens per core ({tokens_per_core}) must be divisible by "
+                f"index_block_size ({cfg.index_block_size})."
+            )
+        blocks_per_core = tokens_per_core // cfg.index_block_size
+        B_local = batch // dp
+        rows = dp * hkv  # cp == 1
+        D = cfg.index_head_dim
+
+        # ── Q/K projections in standard layout ─────────────────────────────
+        idx_q = self.q_proj(hidden_states).view(batch, seq_len, cfg.index_n_heads, D).transpose(1, 2)
+        idx_k = self.k_proj(hidden_states).view(batch, seq_len, hkv, D).transpose(1, 2)
+        idx_q = self.q_norm(idx_q)
+        idx_k = self.k_norm(idx_k)
+
+        # RoPE in standard layout; DP reshape happens after.
+        idx_q, idx_k = qeff_apply_rotary_pos_emb(
+            idx_q,
+            idx_k,
+            cos[..., :D],
+            sin[..., :D],
+            D // 2,
+        )
+
+        # ── Convert to DP / GP layout ───────────────────────────────────────
+        # position_ids: [B, seq_len] → [B_local, dp, seq_len]
+        position_ids_dp = position_ids.view(dp, B_local, seq_len).permute(1, 0, 2)
+
+        # idx_k: [B, hkv, seq_len, D] → GP layout [B_local, rows, seq_len, D]
+        idx_k_gp = (
+            idx_k.view(dp, B_local, hkv, seq_len, D).permute(1, 0, 2, 3, 4).reshape(B_local, rows, seq_len, D)
+        )
+
+        # idx_q: [B, index_n_heads, seq_len, D] → [B_local, rows, ql_eff, D]
+        q_heads_per_kv = cfg.index_n_heads // hkv
+        ql_eff = q_heads_per_kv * seq_len
+        q_rows = (
+            idx_q.view(dp, B_local, cfg.index_n_heads, seq_len, D)
+            .permute(1, 0, 2, 3, 4)
+            .view(B_local, dp, hkv, q_heads_per_kv, seq_len, D)
+            .reshape(B_local, rows, ql_eff, D)
+        )
+
+        # ── Write idx_k into GP-format index key cache ──────────────────────
+        # Get / initialize GP-format cache  [B_local, rows, ctx_len, D].
+        existing_cache = past_key_values.index_keys.get(layer_idx)
+        if existing_cache is None:
+            cache_gp = torch.zeros(B_local, rows, ctx_len, D, dtype=idx_k.dtype, device=idx_k.device)
+        elif existing_cache.ndim == 4 and existing_cache.shape[0] == batch:
+            # Standard [B, hkv, ctx_len, D] → GP [B_local, rows, ctx_len, D]
+            cache_gp = (
+                existing_cache.view(dp, B_local, hkv, ctx_len, D).permute(1, 0, 2, 3, 4).reshape(B_local, rows, ctx_len, D)
+            )
+        else:
+            cache_gp = existing_cache  # Already in GP format
+
+        # Build (block_id, addr) for CtxPagedScatterFuncDP.
+        # For CP=1, non-paged decode: each batch-local item maps to its own
+        # physical block; addr is the global token position.
+        batch_local_idx = (
+            torch.arange(B_local, device=idx_k.device, dtype=torch.int32).view(B_local, 1, 1).expand(B_local, rows, seq_len)
+        )
+        # Expand position per row: row r belongs to dp-lane r // hkv.
+        dp_lane_per_row = torch.arange(rows, device=idx_k.device) // hkv  # [rows]
+        addr = position_ids_dp[:, dp_lane_per_row, :].to(torch.int32)  # [B_local, rows, seq_len]
+
+        cache_gp = CtxPagedScatterFuncDP.apply(cache_gp, batch_local_idx, addr, idx_k_gp)
+        past_key_values.index_keys[layer_idx] = cache_gp
+
+        # ── Scoring: block-by-block matmul with causal masking ──────────────
+        # Per-row query position limit [B_local, rows].
+        q_pos_rows = (
+            position_ids_dp[:, :, 0].unsqueeze(2).expand(B_local, dp, hkv).reshape(B_local, rows)
+        )
+
+        # Expand q for batched matmul: [B_local, rows, num_cores, ql_eff, D]
+        q_5d = q_rows.unsqueeze(2).expand(B_local, rows, num_cores, ql_eff, D)
+
+        block_score_groups: list[torch.Tensor] = []
+        block_id_groups: list[torch.Tensor] = []
+
+        for kv_block_idx in range(num_kv_blocks):
+            blk_start = kv_block_idx * cache_block_size
+            blk_end = blk_start + cache_block_size
+
+            # [B_local, rows, cache_block_size, D]
+            key_flat = past_key_values.read_blocked_k_dp(
+                layer_idx=layer_idx,
+                cache_gp=cache_gp,
+                position_ids_dp=position_ids_dp,
+                start=blk_start,
+                end=blk_end,
+                index_block_size=cfg.index_block_size,
+                cp=cp,
+                hkv=hkv,
+            )
+            # [B_local, rows, num_cores, tokens_per_core, D]
+            key_5d = key_flat.view(B_local, rows, num_cores, tokens_per_core, D)
+
+            # [B_local, rows, num_cores, ql_eff, tokens_per_core]
+            scores = torch.matmul(q_5d.float(), key_5d.transpose(-1, -2).float())
+
+            # Causal mask: flat token positions within the block vs per-row pos limit.
+            flat_tok_pos = (
+                blk_start
+                + torch.arange(num_cores, device=hidden_states.device).view(num_cores, 1) * tokens_per_core
+                + torch.arange(tokens_per_core, device=hidden_states.device).view(1, tokens_per_core)
+            )  # [num_cores, tokens_per_core]
+            causal = flat_tok_pos > q_pos_rows.view(B_local, rows, 1, 1)
+            scores = scores.masked_fill(causal.unsqueeze(3), MIN_MASKED_ATTENTION_VALUE)
+
+            # Reduce to per-block scores: [B_local, rows, num_cores, ql_eff, blocks_per_core]
+            block_scores_core = scores.view(
+                B_local, rows, num_cores, ql_eff, blocks_per_core, cfg.index_block_size
+            ).amax(dim=-1)
+
+            # Global block ID for each (core, block-within-core): [num_cores, blocks_per_core]
+            block_start_global = blk_start // cfg.index_block_size
+            block_ids_core = (
+                block_start_global
+                + torch.arange(num_cores, device=hidden_states.device).view(num_cores, 1) * blocks_per_core
+                + torch.arange(blocks_per_core, device=hidden_states.device).view(1, blocks_per_core)
+            )
+            block_ids_rows = block_ids_core.view(1, 1, num_cores, blocks_per_core).expand(
+                B_local, rows, num_cores, blocks_per_core
+            )
+
+            # Pin local blocks (guarantee selection)
+            q_block_rows = q_pos_rows // cfg.index_block_size  # [B_local, rows]
+            for local_offset in range(cfg.index_local_blocks):
+                local_block = (q_block_rows - local_offset).clamp(min=0)
+                local_mask = block_ids_rows == local_block.view(B_local, rows, 1, 1)
+                block_scores_core = torch.where(
+                    local_mask.unsqueeze(3),
+                    torch.full_like(block_scores_core, -MIN_MASKED_ATTENTION_VALUE),
+                    block_scores_core,
+                )
+
+            block_score_groups.append(block_scores_core)
+            block_id_groups.append(block_ids_rows)
+
+        # Merge all block groups: [B_local, rows, ql_eff, num_kv_blocks*num_cores*blocks_per_core]
+        all_scores = (
+            torch.cat(block_score_groups, dim=2)
+            .permute(0, 1, 3, 2, 4)
+            .reshape(B_local, rows, ql_eff, num_kv_blocks * num_cores * blocks_per_core)
+        )
+        all_block_ids = (
+            torch.cat(block_id_groups, dim=2)
+            .unsqueeze(2)
+            .expand(B_local, rows, ql_eff, num_kv_blocks * num_cores, blocks_per_core)
+            .reshape(B_local, rows, ql_eff, num_kv_blocks * num_cores * blocks_per_core)
+        )
+
+        # Per-device TopK then (for cp > 1) a merge TopK; for cp == 1 a single pass suffices.
+        device_topk = min(cfg.index_topk_blocks, all_scores.shape[-1])
+        device_topk_scores, device_topk_idx = torch.topk(all_scores, k=device_topk, dim=-1)
+        device_topk_block_ids = torch.gather(all_block_ids, -1, device_topk_idx)
+
+        # Reshape to [B_local, dp, hkv, q_heads_per_kv, seq_len, device_topk] and permute
+        # dp in front to recover the external DP-major batch order.
+        topk_scores = (
+            device_topk_scores.view(B_local, dp, hkv, q_heads_per_kv, seq_len, device_topk)
+            .permute(1, 0, 2, 3, 4, 5)
+            .reshape(batch, cfg.index_n_heads, seq_len, device_topk)
+        )
+        block_indices = (
+            device_topk_block_ids.view(B_local, dp, hkv, q_heads_per_kv, seq_len, device_topk)
+            .permute(1, 0, 2, 3, 4, 5)
+            .reshape(batch, cfg.index_n_heads, seq_len, device_topk)
+        )
+
+        block_valid = topk_scores > (MIN_MASKED_ATTENTION_VALUE / 2)
         offsets = torch.arange(cfg.index_block_size, device=hidden_states.device).view(1, 1, 1, 1, -1)
         token_indices = block_indices.unsqueeze(-1) * cfg.index_block_size + offsets
         token_valid = block_valid.unsqueeze(-1) & (token_indices < ctx_len)
@@ -222,9 +480,11 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             cache_kwargs["CCL"] = attention_mask.shape[-1]
 
         if self.indexer is not None and isinstance(past_key_values, QEffMiniMaxSparseCache):
+            blocking_config = getattr(self, "attn_blocking_config", None)
             past_key_values.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
             token_indices, token_valid = self.indexer._select_blocks(
-                hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin
+                hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin,
+                blocking_config=blocking_config,
             )
             selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
                 self.layer_idx, token_indices, token_valid
@@ -365,6 +625,7 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
         past_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
+        index_keys = None,
         **kwargs,
     ) -> MoeModelOutputWithPast:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
@@ -375,7 +636,7 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
         use_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             use_legacy_cache = True
-            past_key_values = QEffMiniMaxSparseCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffMiniMaxSparseCache.from_legacy_cache(past_key_values, index_keys)
         elif use_cache and past_key_values is None:
             past_key_values = QEffMiniMaxSparseCache()
 
@@ -432,6 +693,7 @@ class QEffMiniMaxM3VLForCausalLM(MiniMaxM3VLForCausalLM):
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
+        index_keys = None,
         **kwargs,
     ) -> Union[Tuple, MoeCausalLMOutputWithPast]:
         outputs = self.model(
@@ -441,6 +703,7 @@ class QEffMiniMaxM3VLForCausalLM(MiniMaxM3VLForCausalLM):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
+            index_keys=index_keys,
             **kwargs,
         )
 

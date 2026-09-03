@@ -15,6 +15,7 @@ from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncBlockedKVDP,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -1156,6 +1157,125 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         layer = self.layers[layer_idx]
         selected_k, selected_v = read_kv_cache_with_indices(layer.keys, layer.values, flat_indices)
         return selected_k, selected_v, flat_valid
+
+    def read_index_key_block_gp(
+        self,
+        layer_idx: int,
+        position_ids_dp: torch.Tensor,
+        start: int,
+        end: int,
+        cp: int,
+        hkv: int,
+        index_block_size: int,
+        cache_gp: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Gather one contiguous block [start:end] from the GP-layout index key cache.
+
+        The index key cache is expected to have shape
+        ``[B_local, rows, cache_slots, D]`` where ``rows = dp * cp * hkv`` and
+        ``cache_slots = ctx_len // cp``.
+
+        position_ids_dp:  ``[B_local, dp, QL]``
+        cache_gp:         Optional pre-reshaped GP-layout cache ``[B_local, rows, ctx_len, D]``.
+                          When provided it is used directly; otherwise ``self.index_keys[layer_idx]``
+                          is expected to already be in GP layout.
+        Returns:          ``[B_local, rows, end - start, D]``
+
+        For ``cp == 1`` the causal validity limit per row is the DP-lane's
+        maximum position_id.  For ``cp > 1`` the compact CP-interleaved layout
+        is assumed and the per-way limit is computed accordingly.
+        """
+        if cache_gp is not None:
+            cache = cache_gp
+        else:
+            cache = self.index_keys.get(layer_idx)
+            if cache is None:
+                raise ValueError(f"No index key cache for layer {layer_idx}.")
+        batch_local, rows, _, _ = cache.shape
+        dp = position_ids_dp.shape[1]
+        block_len = end - start
+
+        pos_max = position_ids_dp.max(dim=-1).values  # [B_local, dp]
+
+        # Map dp-lane pos_max → rows: row r belongs to dp-lane r // (cp * hkv).
+        dp_lane_per_row = torch.arange(rows, device=cache.device) // (cp * hkv)
+        pos_max_rows = pos_max[:, dp_lane_per_row]  # [B_local, rows]
+
+        if cp == 1:
+            gather_limit = pos_max_rows
+        else:
+            way = torch.arange(rows, device=cache.device).remainder(cp * hkv) // hkv
+            cycle_size = index_block_size * cp
+            way_start = way * index_block_size
+            offset_in_cycle = _remainder_with_symbolic_divisor(pos_max_rows, cycle_size)
+            offset_in_way = offset_in_cycle - way_start.unsqueeze(0)
+            offset_in_way = torch.where(
+                offset_in_way >= 0,
+                offset_in_way.clamp_max(index_block_size - 1),
+                torch.full_like(offset_in_way, -1),
+            )
+            gather_limit = (pos_max_rows // cycle_size) * index_block_size + offset_in_way
+
+        ctx_indices = torch.arange(start, end, device=cache.device).view(1, 1, block_len)
+        invalid_mask = ctx_indices > gather_limit.unsqueeze(-1)  # [B_local, rows, block_len]
+        invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx, ctx_indices).to(torch.int32)
+        ctx_indices = ctx_indices.expand(batch_local, rows, block_len)
+        return ctx_gather_blocked_kv(cache, ctx_indices)
+
+    def read_blocked_k_dp(
+        self,
+        layer_idx: int,
+        cache_gp: torch.Tensor,
+        position_ids_dp: torch.Tensor,
+        start: int,
+        end: int,
+        index_block_size: int,
+        cp: int = 1,
+        hkv: int = 1,
+    ) -> torch.Tensor:
+        """Gather one contiguous block [start:end] from a GP-layout cache with DP-aware validity.
+
+        Mirrors ``_read_blocked_k_dp`` from the MSA decode benchmark.
+
+        cache_gp:         ``[B_local, rows, ctx_len, D]``  (GP-layout; rows = dp * cp * hkv)
+        position_ids_dp:  ``[B_local, dp, QL]``
+        Returns:          ``[B_local, rows, end - start, D]``
+
+        For ``cp == 1`` the per-row validity limit equals the maximum position_id of the
+        owning DP lane.  For ``cp > 1`` the CP-interleaved layout is assumed and the
+        per-way limit is derived accordingly (same logic as read_index_key_block_gp).
+        """
+        batch_local, rows, _, _ = cache_gp.shape
+        dp = position_ids_dp.shape[1]
+        block_len = end - start
+
+        pos_max = position_ids_dp.max(dim=-1).values  # [B_local, dp]
+
+        dp_lane_per_row = torch.arange(rows, device=cache_gp.device) // (cp * hkv)
+        pos_max_rows = pos_max[:, dp_lane_per_row]  # [B_local, rows]
+
+        if cp == 1:
+            gather_limit = pos_max_rows
+        else:
+            way = torch.arange(rows, device=cache_gp.device).remainder(cp * hkv) // hkv
+            cycle_size = index_block_size * cp
+            way_start = way * index_block_size
+            offset_in_cycle = _remainder_with_symbolic_divisor(pos_max_rows, cycle_size)
+            offset_in_way = offset_in_cycle - way_start.unsqueeze(0)
+            offset_in_way = torch.where(
+                offset_in_way >= 0,
+                offset_in_way.clamp_max(index_block_size - 1),
+                torch.full_like(offset_in_way, -1),
+            )
+            gather_limit = (pos_max_rows // cycle_size) * index_block_size + offset_in_way
+
+        ctx_indices = torch.arange(start, end, device=cache_gp.device).view(1, 1, block_len)
+        invalid_mask = ctx_indices > gather_limit.unsqueeze(-1)  # [B_local, rows, block_len]
+        invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx, ctx_indices).to(torch.int32)
+        ctx_indices = ctx_indices.expand(batch_local, rows, block_len)
+        return CtxGatherFuncBlockedKVDP.apply(cache_gp, ctx_indices)
 
     @classmethod
     def from_legacy_cache(

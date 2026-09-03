@@ -138,6 +138,14 @@ class AttentionBlockingConfig:
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    # MiniMax M3 MSA-specific options
+    msa_attn_dp: Optional[int] = None
+    msa_attn_cp: Optional[int] = None
+    msa_attn_dp_local_batch_size: Optional[int] = None
+    msa_indexer_dp: Optional[int] = None
+    msa_indexer_cp: Optional[int] = None
+    indexer_n_head: Optional[int] = None
+    num_cores_per_device: Optional[int] = None
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
