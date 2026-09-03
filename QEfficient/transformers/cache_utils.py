@@ -541,12 +541,6 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.keys = CtxScatterFuncPagedAttention.apply(self.keys, block_id, ctx_indices, key_states)
             self.values = CtxScatterFuncPagedAttention.apply(self.values, block_id, ctx_indices, value_states)
 
-    def get_seq_length_paged_attention(self, cache_position=None) -> int:
-        """Returns the sequence length of the cached states for pagedAttention."""
-        if self.keys is None or self.keys.numel() == 0:
-            return 0
-        return self.keys.shape[-2] * self.keys.shape[0]
-
     def write_only(self, key_states, value_states, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer.
@@ -1125,15 +1119,6 @@ class QEffDynamicCache(Cache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].write_only_paged_attention(key_states, value_states, cache_kwargs)
-
-    def get_seq_length_paged_attention(self, layer_idx: int = 0, cache_position=None) -> int:
-        """Returns the sequence length of the cache for the given layer. TODO: deprecate in favor of cache_position"""
-        if layer_idx >= len(self.layers):
-            return 0
-        # Hack since QuantizedCache messes with keys shape as it becomes the residual cache
-        # if self.cache_processor is not None and isinstance(self.cache_processor, QuantizedCacheProcessor):
-        # return self.cache_processor.erased_length + self.layers[layer_idx].get_seq_length(cache_position)
-        return self.layers[layer_idx].get_seq_length_paged_attention(cache_position)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
