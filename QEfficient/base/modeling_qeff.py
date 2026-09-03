@@ -66,6 +66,88 @@ logger = logging.getLogger(__name__)
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
     "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
+FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
+MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
+
+def _write_unified_accum_npi(onnx_path):
+    graph = onnx.load(onnx_path, load_external_data=False).graph
+    producers = {output_name: node for node in graph.node for output_name in node.output}
+    keep_nodes = []
+
+    def is_moe_node(node):
+        node_name = node.name.lower()
+        return any(part in node_name for part in MOE_NODE_NAME_PARTS)
+
+    def is_excluded_npi_node(node):
+        return "/lm_head/MatMul" in node.name
+        # return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
+
+    for node in graph.node:
+        if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        if node.op_type in FP32_ACCUM_OPS:
+            keep_nodes.append(node)
+        if "/decoder/self_conditioning/" in node.name or node.name.endswith("/decoder/norm/CustomRMSNorm"):
+            keep_nodes.append(node)
+
+    seen_names = set()
+
+    def backtrace(tensor_name, depth=0):
+        if tensor_name in seen_names or depth > 8:
+            return
+        seen_names.add(tensor_name)
+        node = producers.get(tensor_name)
+        if node is None or is_moe_node(node) or is_excluded_npi_node(node):
+            return
+        keep_nodes.append(node)
+        for input_name in node.input:
+            if input_name in producers:
+                backtrace(input_name, depth + 1)
+
+    if graph.output:
+        backtrace(graph.output[0].name)
+
+    initializer_names = {initializer.name for initializer in graph.initializer}
+
+    def depends_on_initializer(tensor_name, depth=0):
+        if tensor_name in initializer_names:
+            return True
+        if depth > 4:
+            return False
+        producer = producers.get(tensor_name)
+        if producer is None:
+            return False
+        return any(depends_on_initializer(input_name, depth + 1) for input_name in producer.input)
+
+    excluded_outputs = {"/decoder/MatMul_output_0", "/lm_head/MatMul_output_0"}
+    tensors = []
+    seen_tensors = set()
+    for node in keep_nodes:
+        if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        for output_name in node.output:
+            if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
+                continue
+            if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
+                continue
+            if node.op_type in {
+                "Cast",
+                "Transpose",
+                "Reshape",
+                "DequantizeLinear",
+                "QuantizeLinear",
+            } and depends_on_initializer(output_name):
+                continue
+            seen_tensors.add(output_name)
+            tensors.append(output_name)
+
+    npi_path = os.path.join(os.path.dirname(onnx_path), "npi_fp32_unified_accum.yaml")
+    with open(npi_path, "w", encoding="utf-8") as handle:
+        handle.write("FP32NodeInstanceNames: [")
+        handle.write(", ".join(f"'{name}'" for name in sorted(tensors)))
+        handle.write("]\n")
+    print(f"  unified fp32 accumulation island: {len(tensors)} tensors -> {npi_path}")
+    return npi_path
 
 
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
@@ -698,6 +780,11 @@ class QEFFBaseModel(ABC):
             **compiler_options,
         )
 
+        extras = {"inputs": self.model.get_dummy_inputs(),
+        "output_names": self.model.get_output_names(),
+        "dynamic_axes": self.model.get_onnx_dynamic_axes()
+        }
+        kwargs.update(extras)
         with export_from_compile():
             self.export(**kwargs)
         return self.onnx_path
@@ -1159,6 +1246,9 @@ class QEFFBaseModel(ABC):
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
 
+        npi_file_path = _write_unified_accum_npi(self.onnx_path)
+        compiler_options.update({"node_precision_info": npi_file_path})
+        
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):

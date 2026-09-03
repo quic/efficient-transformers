@@ -28,8 +28,6 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 # from QEfficient.transformers.diffusion_gemma_utils import DiffusionGemmaRuntimeResult
 from QEfficient.transformers.models.modeling_auto import QEffCausalLMForTextImageToTextModel
 
-FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
-MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
 
 
 @dataclass
@@ -92,7 +90,7 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
 
     def export(self, inputs, output_names, dynamic_axes,qaic_config, **kwargs):
         # breakpoint()
-        return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes, qaic_config=qaic_config)
+        return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes)
 
 
 class DiffusionGemmaSingleQPCGenerator:
@@ -652,85 +650,7 @@ def load_model_and_processor(model_id: str, canvas_length: int):
     return processor, qeff_model
 
 
-def _write_unified_accum_npi(onnx_path):
-    graph = onnx.load(onnx_path, load_external_data=False).graph
-    producers = {output_name: node for node in graph.node for output_name in node.output}
-    keep_nodes = []
 
-    def is_moe_node(node):
-        node_name = node.name.lower()
-        return any(part in node_name for part in MOE_NODE_NAME_PARTS)
-
-    def is_excluded_npi_node(node):
-        return "/lm_head/MatMul" in node.name
-        # return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
-
-    for node in graph.node:
-        if is_moe_node(node) or is_excluded_npi_node(node):
-            continue
-        if node.op_type in FP32_ACCUM_OPS:
-            keep_nodes.append(node)
-        if "/decoder/self_conditioning/" in node.name or node.name.endswith("/decoder/norm/CustomRMSNorm"):
-            keep_nodes.append(node)
-
-    seen_names = set()
-
-    def backtrace(tensor_name, depth=0):
-        if tensor_name in seen_names or depth > 8:
-            return
-        seen_names.add(tensor_name)
-        node = producers.get(tensor_name)
-        if node is None or is_moe_node(node) or is_excluded_npi_node(node):
-            return
-        keep_nodes.append(node)
-        for input_name in node.input:
-            if input_name in producers:
-                backtrace(input_name, depth + 1)
-
-    if graph.output:
-        backtrace(graph.output[0].name)
-
-    initializer_names = {initializer.name for initializer in graph.initializer}
-
-    def depends_on_initializer(tensor_name, depth=0):
-        if tensor_name in initializer_names:
-            return True
-        if depth > 4:
-            return False
-        producer = producers.get(tensor_name)
-        if producer is None:
-            return False
-        return any(depends_on_initializer(input_name, depth + 1) for input_name in producer.input)
-
-    excluded_outputs = {"/decoder/MatMul_output_0", "/lm_head/MatMul_output_0"}
-    tensors = []
-    seen_tensors = set()
-    for node in keep_nodes:
-        if is_moe_node(node) or is_excluded_npi_node(node):
-            continue
-        for output_name in node.output:
-            if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
-                continue
-            if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
-                continue
-            if node.op_type in {
-                "Cast",
-                "Transpose",
-                "Reshape",
-                "DequantizeLinear",
-                "QuantizeLinear",
-            } and depends_on_initializer(output_name):
-                continue
-            seen_tensors.add(output_name)
-            tensors.append(output_name)
-
-    npi_path = os.path.join(os.path.dirname(onnx_path), "npi_fp32_unified_accum.yaml")
-    with open(npi_path, "w", encoding="utf-8") as handle:
-        handle.write("FP32NodeInstanceNames: [")
-        handle.write(", ".join(f"'{name}'" for name in sorted(tensors)))
-        handle.write("]\n")
-    print(f"  unified fp32 accumulation island: {len(tensors)} tensors -> {npi_path}")
-    return npi_path
 
 
 def compile_unified_qpc(
@@ -752,12 +672,12 @@ def compile_unified_qpc(
                     "tree_reduce":True,
                 }
             } 
-    unified.export(
-        unified.model.get_dummy_inputs(),
-        unified.model.get_output_names(),
-        unified.model.get_onnx_dynamic_axes(),
-        qaic_config = qaic_config_moe
-    )
+    # unified.export(
+    #     unified.model.get_dummy_inputs(),
+    #     unified.model.get_output_names(),
+    #     unified.model.get_onnx_dynamic_axes(),
+    #     qaic_config = qaic_config_moe
+    # )
     specializations, _ = unified.model.get_specializations(
         batch_size=1,
         prefill_seq_len=prefill_seq_len,
@@ -775,7 +695,7 @@ def compile_unified_qpc(
             # custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "float16"
 
     qpc_path = unified._compile(
-        onnx_path=unified.onnx_path,
+        # onnx_path=unified.onnx_path,
         compile_dir=None,
         specializations=specializations,
         convert_to_fp16=True,
@@ -787,7 +707,7 @@ def compile_unified_qpc(
         qaic_config=qaic_config_moe,
         # aic_enable_depth_first=True,
         user_tiled=True,
-        node_precision_info=_write_unified_accum_npi(unified.onnx_path),
+        # node_precision_info=_write_unified_accum_npi(unified.onnx_path),
         # node_precision_info=_write_unified_accum_npi("/home/jsaisaga/qeff_llama/DiffusionGemmaForBlockDiffusion_old/DiffusionGemmaUnifiedWrapper-4a99121a82e31174/DiffusionGemmaUnifiedWrapper.onnx"),
     )
     print(f"  unified QPC: {qpc_path} ({time.time() - start:.0f}s)")
