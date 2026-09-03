@@ -102,7 +102,7 @@ def moe_quantized_decode_bmm(
         1,
         topk_indices.unsqueeze(-1).expand(-1, topk_indices.shape[1], down_out.shape[-1]),
     )
-    return torch.einsum("abc,ab->ac", selected_out, topk_weights)
+    return (selected_out * topk_weights.unsqueeze(-1)).sum(dim=1)
 
 
 def _cumsum_scatter_gather_update_quantized_expert(
@@ -148,7 +148,7 @@ def _cumsum_scatter_gather_update_quantized_expert(
     packed_chunk_size = seq_len // num_packed_chunks
 
     matched_idx = _build_matched_idx_from_cumsum(token_to_expert)
-    valid_rows = torch.einsum("bi->b", token_to_expert.to(torch.int32)).unsqueeze(1)
+    valid_rows = token_to_expert.to(torch.int32).sum(dim=-1, keepdim=True)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
@@ -278,4 +278,4 @@ def moe_quantized_expert_parallel(
             group_size=weights.group_size,
             num_packed_chunks=num_packed_chunks,
         )
-    return torch.einsum("nth->th", expert_out)
+    return expert_out.sum(dim=0)

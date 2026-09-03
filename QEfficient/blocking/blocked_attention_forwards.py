@@ -62,7 +62,7 @@ def update_running_softmax(
 
     # update running denominator
     prev_denominator = current_denominator
-    curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
+    curr_exp_sum = current_exp.sum(dim=-1)
     current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
 
     prob = current_exp / current_denominator_updated.unsqueeze(-1)
@@ -107,7 +107,7 @@ def update_running_softmax_prefill(
     delta_max = prev_max - current_max_updated
     current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
     prev_denominator = current_denominator
-    curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
+    curr_exp_sum = current_exp.sum(dim=-1)
     current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
     prev_output = output
     output_updated = prev_output * torch.exp(delta_max.unsqueeze(-1)) + torch.matmul(current_exp, v_block)
@@ -333,7 +333,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         v_block = past_key_value.read_only_blocked_V_batch(
             start_index, end_index, layer_idx, cache_kwargs, folded_cache=value_cache_folded
         )
-        sum_block = torch.einsum("btdn->btd", exp_block)
+        sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, v_block)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
@@ -347,8 +347,8 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     out_stacked = torch.stack(out_blocks)
     block_max = max_stacked.max(dim=0).values
     block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
-    block_sum = torch.einsum("nbtd->btd", (block_weight * sum_stacked))
-    block_out = torch.einsum("nbtdk->btdk", (block_weight.unsqueeze(4) * out_stacked))
+    block_sum = (block_weight * sum_stacked).sum(dim=0)
+    block_out = (block_weight.unsqueeze(4) * out_stacked).sum(dim=0)
     output = block_out / block_sum.unsqueeze(-1)  # [1, BH, num_kv_groups*seq_len, D]
     attn_output = output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
         batch_size, num_heads, seq_len, head_dim
@@ -466,7 +466,7 @@ def blocked_kv_attention_forward_headpar_offline(
         if pad_len > 0:
             v_block = nn.functional.pad(v_block, (0, 0, 0, pad_len))
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
-        sum_block = torch.einsum("bsgkn->bsgk", exp_block)
+        sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, value_5d)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
@@ -481,13 +481,13 @@ def blocked_kv_attention_forward_headpar_offline(
     out_stacked = torch.stack(out_blocks)
     block_max = max_stacked.max(dim=0).values
     block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
-    block_sum = torch.einsum("nbsgk->bsgk", (block_weight * sum_stacked))
-    block_out = torch.einsum("nbsgkv->bsgkv", (block_weight.unsqueeze(-1) * out_stacked))
+    block_sum = (block_weight * sum_stacked).sum(dim=0)
+    block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
 
     split_max = block_max.max(dim=2).values
     split_weight = torch.exp(block_max - split_max.unsqueeze(2))
-    split_sum = torch.einsum("bsgk->bsk", (split_weight * block_sum))
-    split_out = torch.einsum("bsgkv->bskv", (split_weight.unsqueeze(-1) * block_out))
+    split_sum = (split_weight * block_sum).sum(dim=2)
+    split_out = (split_weight.unsqueeze(-1) * block_out).sum(dim=2)
 
     if sinks is not None:
         sinks_logits = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
@@ -893,7 +893,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
                 m_c = torch.where(skip_future, torch.full_like(m_c, float(MIN_MASKED_ATTENTION_VALUE)), m_c)
                 exp_c = torch.where(skip_future, torch.zeros_like(exp_c), exp_c)
 
-            sum_c = torch.einsum("bhsrqt->bhsrq", exp_c)
+            sum_c = exp_c.sum(dim=-1)
             out_c = torch.matmul(exp_c, V_5d.unsqueeze(3))  # [B, Hkv, split, chunk, QL, kv_lora_rank]
 
             if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -919,14 +919,14 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
     m1 = max_stk.max(dim=0).values
     w1 = torch.exp(max_stk - m1.unsqueeze(0))
-    s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
-    o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
+    s1 = (w1 * sum_stk).sum(dim=0)
+    o1 = (w1.unsqueeze(-1) * out_stk).sum(dim=0)
 
     # ── Stage 2: merge across splits ─────────────────────────────────────────
     m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
     w2 = torch.exp(m1 - m2.unsqueeze(2))
-    s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
-    o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
+    s2 = (w2 * s1).sum(dim=2)
+    o2 = (w2.unsqueeze(-1) * o1).sum(dim=2)
 
     if sinks is not None:
         # sinks: [NQH] → per-head logit, same for all query positions
