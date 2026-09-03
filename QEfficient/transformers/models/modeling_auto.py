@@ -2298,7 +2298,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
             # Create VisionLanguageGeneration instance
-            batch_size_comp, ctx_len_comp, fbs, _ = get_compilation_dims(self.lang_model.qpc_path)
+            batch_size_comp, ctx_len_comp, fbs, num_kv_blocks_comp = get_compilation_dims(self.lang_model.qpc_path)
             vlm_gen = VisionLanguageGeneration(
                 qeff_model=self,
                 lang_qpc_path=self.lang_model.qpc_path,
@@ -2307,6 +2307,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 processor=processor,
                 device_id=device_ids,  # if device_ids is not None else [0],
                 ctx_len=ctx_len_comp,
+                num_kv_blocks=num_kv_blocks_comp,
                 full_batch_size=fbs,
                 comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
