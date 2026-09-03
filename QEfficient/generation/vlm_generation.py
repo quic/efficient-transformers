@@ -86,6 +86,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         vision_qpc_path: str,
         device_id: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
+        num_kv_blocks: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
@@ -110,6 +111,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             vision_qpc_path: Path to vision encoder QPC
             device_id: Device IDs for execution (default: [0])
             ctx_len: Context length
+            num_kv_blocks: Number of physical KV blocks for paged attention on the language
+                QPC (optional). When None (default), paged attention is disabled and
+                block_table/slot_id are never populated or sent to the language session.
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
@@ -133,6 +137,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             tokenizer=tokenizer,
             qpc_path=lang_qpc_path,
             full_batch_size=full_batch_size,
+            num_kv_blocks=num_kv_blocks,
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
@@ -145,6 +150,19 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
             activate=False,  # vision components need to be initialized first
+        )
+
+        # Physical KV block table for paged attention on the language QPC. None (default)
+        # when num_kv_blocks isn't supplied, matching the non-VLM TextGeneration path
+        # (_setup_model_execution_inputs) -- every paged-attention code path below is
+        # already gated on self.block_table/self.num_kv_blocks being non-None.
+        execution_batch_size = full_batch_size if full_batch_size else self.batch_size
+        self.block_table = (
+            np.arange(execution_batch_size * self.num_kv_blocks, dtype=np.int64).reshape(
+                execution_batch_size, self.num_kv_blocks
+            )
+            if self.num_kv_blocks
+            else None
         )
 
         # Vision-specific initialization
@@ -476,9 +494,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
             # Execute chunked prefill
-            block_table = getattr(self, "block_table", None)
             outputs = self._execute_chunked_prefill(
-                lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs, block_table
+                lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs, self.block_table
             )
 
             self._session.skip_buffers(vision_outputs)
@@ -733,7 +750,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
         # Execute chunked prefill
-        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, block_table=getattr(self, "block_table", None))
+        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, block_table=self.block_table)
 
         self._session.skip_buffers(vision_outputs)
 
@@ -958,9 +975,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
                 # Run prefill with cached inputs
                 block_table = (
-                    self.block_table[decode_batch_id].reshape(1, -1)
-                    if getattr(self, "block_table", None) is not None
-                    else None
+                    self.block_table[decode_batch_id].reshape(1, -1) if self.block_table is not None else None
                 )
                 outputs = self._execute_chunked_prefill(
                     lang_inputs,
