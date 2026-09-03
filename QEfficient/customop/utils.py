@@ -78,6 +78,12 @@ def ctx_gather_blocked_kv(data: torch.Tensor, ctx_indices: torch.Tensor) -> torc
     return select_interface(CtxGatherFuncBlockedKV.apply, torch.ops.qefficient.ctx_gather_blocked_kv)(data, ctx_indices)
 
 
+def m3_ctx_scatter(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    from QEfficient.customop.ctx_scatter_gather import M3CtxScatterFunc
+
+    return select_interface(M3CtxScatterFunc.apply, torch.ops.qefficient.m3_ctx_scatter)(data, position_ids, updates)
+
+
 # ---------------------------------------------------------------------------
 # Interface functions for ctx_scatter_gather_cb ops
 # ---------------------------------------------------------------------------

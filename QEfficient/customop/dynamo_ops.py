@@ -14,6 +14,7 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
+    M3CtxScatter,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxGatherBlockedKVCB,
@@ -367,6 +368,25 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
     return torch.empty_like(data)
 
 
+# M3 INDEX-KEY SCATTER (CtxScatter with INT64 index cast — MiniMax-M3 indexer)
+@torch.library.custom_op("qefficient::m3_ctx_scatter", mutates_args=())
+def m3_ctx_scatter_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    """MiniMax-M3 index-key cache scatter. Same eager semantics as ctx_scatter but the
+    ONNX export uses M3CtxScatter which casts position_ids to INT64 before building
+    ScatterND indices, avoiding the INT32/INT64 Concat type mismatch."""
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[0]).view(-1, 1, 1)
+    head_idx = torch.arange(result.shape[1]).view(1, -1, 1)
+    ctx_idx = position_ids.unsqueeze(1)
+    result[batch_idx, head_idx, ctx_idx] = updates
+    return result
+
+
+@m3_ctx_scatter_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
@@ -380,6 +400,7 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_scatter_cb_3d.default: get_dynamo_onnxscript_func(CtxScatterCB3D),
     torch.ops.qefficient.ctx_scatter_3d_int.default: get_dynamo_onnxscript_func(CtxScatter3DInt),
     torch.ops.qefficient.ctx_scatter_3d_generalized.default: get_dynamo_onnxscript_func(CtxScatter3D),
+    torch.ops.qefficient.m3_ctx_scatter.default: get_dynamo_onnxscript_func(M3CtxScatter),
     torch.ops.qefficient.ctx_gather.default: get_dynamo_onnxscript_func(CtxGather),
     torch.ops.qefficient.ctx_gather_3d.default: get_dynamo_onnxscript_func(CtxGather3D),
     torch.ops.qefficient.ctx_gather_cb.default: get_dynamo_onnxscript_func(CtxGatherCB),
