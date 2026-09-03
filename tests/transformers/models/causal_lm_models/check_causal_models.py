@@ -105,6 +105,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    prompts: Optional[str] = None,
 ):
     torch.manual_seed(42)
     replace_transformers_quantizers()
@@ -112,7 +113,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
-    prompts = Constants.INPUT_STR * 4 if continuous_batching else Constants.INPUT_STR
+    prompts = prompts if prompts else Constants.INPUT_STR
+    prompts = Constants.INPUT_STR * 4 if continuous_batching else prompts
     full_batch_size = 4
     gen_len = 24
     is_tlm = False if num_speculative_tokens is None else True
@@ -139,7 +141,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         tokenizer,
         qeff_model.config,
         prompts,
-        Constants.PROMPT_LEN,
+        prompt_len,
         Constants.CTX_LEN,
         full_batch_size if continuous_batching else None,
     )
@@ -204,6 +206,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         batch_size=batch_size if continuous_batching else 1,
         full_batch_size=full_batch_size if continuous_batching else None,
         use_onnx_subfunctions=use_onnx_subfunctions,
+        onnx_path=onnx_model_path,
         **compiler_options,
         **mdp_compile_kwargs,
     )

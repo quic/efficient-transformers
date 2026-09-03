@@ -1544,7 +1544,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "_moe_flavour": MoEFlavour.DECODE_BMM,
             "supported_moe_flavours": QEffGrok1MoeBlock.supported_moe_flavours,
             "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
-            "__qeff_init__": QEffMoEBlockMixin.__qeff_init__,
+            "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__,
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
