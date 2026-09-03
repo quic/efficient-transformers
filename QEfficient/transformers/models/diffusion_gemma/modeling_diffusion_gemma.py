@@ -41,7 +41,17 @@ _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+SELF_CONDITIONING_TOP_K = 128
 
+def _top_k_self_conditioning_embeddings(
+    logits: torch.Tensor,
+    embedding_weight: torch.Tensor,
+) -> torch.Tensor:
+    top_k = min(SELF_CONDITIONING_TOP_K, logits.shape[-1])
+    top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
+    top_k_probabilities = top_k_logits.softmax(dim=-1, dtype=torch.float32).to(embedding_weight.dtype)
+    top_k_embeddings = torch.nn.functional.embedding(top_k_indices, embedding_weight)
+    return torch.matmul(top_k_probabilities.unsqueeze(-2), top_k_embeddings).squeeze(-2)
 
 def _is_onnx_export() -> bool:
     return torch.onnx.is_in_onnx_export()
@@ -479,10 +489,10 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         if self_conditioning_logits is None:
             soft_embeddings = torch.zeros_like(inputs_embeds)
         else:
-            soft_embeddings = torch.matmul(
-                self_conditioning_logits.softmax(dim=-1, dtype=torch.float32).to(decoder.embed_tokens.weight.dtype),
-                decoder.embed_tokens.weight,
-            ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
+            soft_embeddings = _top_k_self_conditioning_embeddings(
+                 self_conditioning_logits,
+                 decoder.embed_tokens.weight,
+             ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
         use_sc = use_self_conditioning.bool().view(1, 1, 1)
         soft_embeddings = torch.where(use_sc, soft_embeddings, torch.zeros_like(soft_embeddings))
         conditioned_embeds = decoder.self_conditioning(inputs_embeds, soft_embeddings)
