@@ -20,6 +20,7 @@ from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
+    LocalizeFunctionReduceSumAxesTransform,
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
@@ -529,6 +530,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._onnx_transforms.append(CustomOpTransform)
         if RenameWsubNodesTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameWsubNodesTransform)
+
+    if LocalizeFunctionReduceSumAxesTransform not in qeff_model._onnx_transforms:
+        qeff_model._onnx_transforms.append(LocalizeFunctionReduceSumAxesTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase, remove from here.
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)

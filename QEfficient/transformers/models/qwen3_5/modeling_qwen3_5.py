@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -49,6 +48,11 @@ from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.models._layerwise import (
+    is_last_layer_window,
+    is_layerwise_active,
+    resolve_layer_window,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -63,11 +67,12 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states, gate):
-        return (
-            CustomRMSNormFunc.apply(
-                hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
-            )
-        ) * F.silu(gate.to(torch.float32))
+        normed = CustomRMSNormFunc.apply(
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )
+        # silu is computed in float32 for numerical parity, then cast back so the
+        # gated output keeps the module dtype (e.g. float16) and matches out_proj.
+        return normed * F.silu(gate.to(torch.float32)).to(normed.dtype)
 
 
 class QEffQwen3_5DynamicCache(Cache):
@@ -97,27 +102,59 @@ class QEffQwen3_5DynamicCache(Cache):
     def from_legacy_cache(
         cls,
         config,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
+        past_key_values: tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
     ) -> "QEffQwen3_5DynamicCache":
         cache = cls(config)
         if past_key_values is None:
             return cache
 
-        for layer_idx, layer_state in enumerate(past_key_values):
-            if cache.layer_types[layer_idx] == "full_attention":
-                key_states, value_states = layer_state
-                layer = QEffDynamicLayer()
-                layer.keys = key_states
-                layer.values = value_states
-                cache.kv_layers[layer_idx] = layer
-            else:
-                conv_state, recurrent_state = layer_state
-                cache.conv_states[layer_idx] = conv_state
-                cache.recurrent_states[layer_idx] = recurrent_state
+        if not is_layerwise_active():
+            # Default path: restore every layer, matching pre-layerwise behavior.
+            for layer_idx, layer_state in enumerate(past_key_values):
+                if cache.layer_types[layer_idx] == "full_attention":
+                    key_states, value_states = layer_state
+                    layer = QEffDynamicLayer()
+                    layer.keys = key_states
+                    layer.values = value_states
+                    cache.kv_layers[layer_idx] = layer
+                else:
+                    conv_state, recurrent_state = layer_state
+                    cache.conv_states[layer_idx] = conv_state
+                    cache.recurrent_states[layer_idx] = recurrent_state
+            return cache
+
+        layer_idx = QEffQwen3_5TextModel._start
+        layer_state = past_key_values
+        if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
+            layer_state = past_key_values[layer_idx]
+        elif len(past_key_values) == 1 and isinstance(past_key_values[0], (tuple, list)):
+            layer_state = past_key_values[0]
+        if cache.layer_types[layer_idx] == "full_attention":
+            key_states, value_states = layer_state
+            layer = QEffDynamicLayer()
+            layer.keys = key_states
+            layer.values = value_states
+            cache.kv_layers[layer_idx] = layer
+        else:
+            conv_state, recurrent_state = layer_state
+            cache.conv_states[layer_idx] = conv_state
+            cache.recurrent_states[layer_idx] = recurrent_state
         return cache
 
     def __len__(self):
         return len(self.layer_types)
+
+    def __getitem__(self, layer_idx) -> tuple[torch.Tensor, torch.Tensor]:
+        if isinstance(layer_idx, slice):
+            return tuple(self[idx] for idx in range(*layer_idx.indices(len(self.layer_types))))
+        if not isinstance(layer_idx, int):
+            raise TypeError(f"Unsupported cache index type: {type(layer_idx)!r}")
+        if layer_idx < 0:
+            layer_idx += len(self.layer_types)
+        if self.layer_types[layer_idx] == "full_attention":
+            layer = self.kv_layers[layer_idx]
+            return (layer.keys, layer.values)
+        return (self.conv_states[layer_idx], self.recurrent_states[layer_idx])
 
     @property
     def key_cache(self):
@@ -132,14 +169,14 @@ class QEffQwen3_5DynamicCache(Cache):
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
-        cache_kwargs: Optional[dict[str, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        cache_kwargs: dict[str, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.update(key_states, value_states, cache_kwargs)
 
-    def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
+    def get_seq_length(self, layer_idx: int | None = 0, cache_position: torch.LongTensor | None = None) -> int:
         del cache_position
         if not self.transformer_layers:
             return 0
@@ -148,7 +185,7 @@ class QEffQwen3_5DynamicCache(Cache):
         layer = self.kv_layers[layer_idx]
         return 0 if layer is None or layer.keys is None else layer.keys.shape[-2]
 
-    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> Tuple[int, int]:
+    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> tuple[int, int]:
         kv_offset = 0
         query_length = cache_position.shape[0]
         past_seen_tokens = self.get_seq_length(layer_idx)
@@ -167,6 +204,19 @@ class QEffQwen3_5DynamicCache(Cache):
         return layer.write_only(key_states, value_states, cache_kwargs)
 
     def has_previous_state(self, layer_idx=None) -> bool:
+        if layer_idx is not None:
+            if layer_idx < 0 or layer_idx >= len(self.layer_types):
+                return False
+            if self.layer_types[layer_idx] != "linear_attention":
+                return False
+            return self.conv_states[layer_idx] is not None
+
+        # Layerwise path only materializes the active layer state.
+        if is_layerwise_active():
+            active_idx = QEffQwen3_5TextModel._start
+            if 0 <= active_idx < len(self.layer_types) and self.layer_types[active_idx] == "linear_attention":
+                return self.conv_states[active_idx] is not None
+
         if self.last_linear_layer is None:
             return False
         return self.conv_states[self.last_linear_layer] is not None
@@ -186,7 +236,7 @@ class QEffQwen3_5DynamicCache(Cache):
                 self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx_device)
                 self.recurrent_states[layer_idx] = self.recurrent_states[layer_idx].index_select(0, beam_idx_device)
 
-    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, ...], ...]:
+    def to_legacy_cache(self) -> tuple[tuple[torch.Tensor, ...], ...]:
         legacy_cache = ()
         for layer_idx, layer_type in enumerate(self.layer_types):
             if layer_type == "full_attention":
@@ -345,7 +395,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
     **kwargs,
 ):
@@ -369,23 +419,38 @@ def qeff_torch_causal_conv1d_update(
     conv_state: torch.Tensor,
     weight: torch.Tensor,
     position_ids: torch.Tensor,
-    bias: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    bias: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
-    state_len = conv_state.shape[-1]
+    grouped_conv_state = conv_state.ndim == 4
+
+    if grouped_conv_state:
+        bsz, num_kv_heads, conv_group_dim, state_len = conv_state.shape
+        if hidden_size != num_kv_heads * conv_group_dim:
+            raise ValueError(
+                "Grouped conv_state shape mismatch: "
+                f"hidden_size={hidden_size}, num_kv_heads={num_kv_heads}, conv_group_dim={conv_group_dim}"
+            )
+        conv_state_flat = conv_state.reshape(bsz, hidden_size, state_len)
+    else:
+        conv_state_flat = conv_state
+
+    state_len = conv_state_flat.shape[-1]
     pos_ids = position_ids[0]
     zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
     out = torch.cat([zeros, pos_ids], dim=1)
-    order = torch.argsort(out, dim=1)  # sorted positions per batch row
-    last_positions = order[:, -state_len:]  # (B, state_len)
+    order = torch.argsort(out, dim=1)
+    last_positions = order[:, -state_len:]
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
-    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
-    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
-    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
-    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+    updated_conv_state_flat = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+    if grouped_conv_state:
+        updated_conv_state = updated_conv_state_flat.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+    else:
+        updated_conv_state = updated_conv_state_flat
     # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
     # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
@@ -405,22 +470,23 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
+        attention_mask: torch.Tensor | None,
+        past_key_values: QEffQwen3_5DynamicCache | None = None,
+        position_ids: torch.LongTensor | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states, gate = torch.chunk(
-            self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2), 2, dim=-1
-        )
-        gate = gate.reshape(*input_shape, -1)
+        query_and_gate = self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2)
+        # Static slicing avoids ONNX SplitToSequence from torch.chunk when
+        # layerwise prefill disables canonicalization passes.
+        query_states = query_and_gate[..., : self.head_dim]
+        gate = query_and_gate[..., self.head_dim :].reshape(*input_shape, -1)
 
         query_states = self.q_norm(query_states.view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
@@ -492,6 +558,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
+        self.chunk_gated_delta_solver = "tree"
         chunk_size = 64  # must match what's used in the function
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
@@ -527,6 +594,142 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
 
+    # TODO: It would be better to use it directly from HF
+    def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        return attn + eye.to(dtype=attn.dtype, device=attn.device)
+
+    def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
+            raise ValueError(f"tree solver requires power-of-two chunk_size, got {chunk_size}")
+
+        source = attn.masked_fill(mask, 0)
+        # Build the inverse of (I - source) bottom-up from 1x1 unit blocks.
+        # Starting from full chunk_size x chunk_size blocks causes shape mismatches
+        # in the first merge (block_size=1).
+        unit = torch.ones_like(source[..., :1, :1])
+        blocks = [unit for _ in range(chunk_size)]
+        block_size = 1
+
+        while len(blocks) > 1:
+            merged = []
+            for pair in range(0, len(blocks), 2):
+                left = blocks[pair]
+                right = blocks[pair + 1]
+                row0 = pair * block_size
+                row1 = row0 + block_size
+                lower_left = source[..., row1 : row1 + block_size, row0 : row0 + block_size]
+                solved_lower_left = right @ lower_left @ left
+                zeros = torch.zeros_like(left)
+                merged.append(
+                    torch.cat(
+                        [
+                            torch.cat([left, zeros], dim=-1),
+                            torch.cat([solved_lower_left, right], dim=-1),
+                        ],
+                        dim=-2,
+                    )
+                )
+            blocks = merged
+            block_size *= 2
+
+        return blocks[0].to(attn.dtype)
+
+    def _solve_chunk_attn_recursive_sns(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+
+        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
+            X = I64.clone()
+            for _ in range(ns_iters):
+                R = I64 - ((I64 - L) @ X)
+                ck = X + (X @ R).masked_fill(~strict_lower, 0)
+                X = ck.masked_fill(~strict_lower, 0) + I64
+            return X
+
+        default_depth = max(1, (math.ceil(math.log2(chunk_size)) - 1) // 2)
+        depth = getattr(self, "recursive_sns_depth", None)
+        depth = default_depth if depth is None else int(depth)
+        depth = max(1, depth)
+
+        X = _ns_solve(A64 * (0.5**depth))
+        for _ in range(depth):
+            M = (X - I64).masked_fill(~strict_lower, 0)
+            Z = _ns_solve(M)
+            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_scaled_newton_schulz(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        attn_1 = attn.clone()
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+        As = 0.5 * A64
+
+        Xs = I64.clone()
+        for _ in range(ns_iters):
+            Rs = I64 - ((I64 - As) @ Xs)
+            ck = Xs + (Xs @ Rs).masked_fill(~strict_lower, 0)
+            Xs = ck.masked_fill(~strict_lower, 0) + I64
+
+        M = (Xs - I64).masked_fill(~strict_lower, 0)
+        Z = I64.clone()
+        for _ in range(ns_iters):
+            Rz = I64 - ((I64 - M) @ Z)
+            ck = Z + (Z @ Rz).masked_fill(~strict_lower, 0)
+            Z = ck.masked_fill(~strict_lower, 0) + I64
+
+        X = (Z @ Xs).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
+        eye = eye.to(dtype=attn.dtype, device=attn.device)
+        L = eye.clone()
+        Apow = attn
+        K = 32
+        for _ in range(int(math.log2(K))):
+            L = L @ (eye + Apow)
+            Apow = Apow @ Apow
+        return L
+
+    def _solve_chunk_attn_horner(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        A = attn.masked_fill(mask, 0)
+        acc_dtype = torch.float32
+        A64 = A.to(acc_dtype)
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        K = chunk_size - 1
+        S64 = I64.clone()
+        for _ in range(K):
+            S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+        return S64.to(A.dtype)
+
+    def _solve_chunk_attn(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
+        if solver == "original":
+            return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
+        if solver in ("tree", "forward_sub_tree"):
+            return self._solve_chunk_attn_tree(attn, mask, eye, chunk_size)
+        if solver == "factorized":
+            return self._solve_chunk_attn_factorized(attn, eye)
+        if solver == "horner":
+            return self._solve_chunk_attn_horner(attn, mask, eye, chunk_size)
+        if solver == "scaled_newton_schulz":
+            return self._solve_chunk_attn_scaled_newton_schulz(attn, mask, eye, chunk_size)
+        return self._solve_chunk_attn_recursive_sns(attn, mask, eye, chunk_size)
+
     def torch_chunk_gated_delta_rule_qeff(
         self,
         query,
@@ -549,8 +752,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         #     query = l2norm(query, dim=-1, eps=1e-6)
         #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
-            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
+            query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+            key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -595,7 +798,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
         mask = mask_causal
 
         #
@@ -617,50 +819,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
-
-        ## Approximation code ##
-        # A = attn
-        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        # Ak = A
-
-        # K = 16
-        # for _ in range(K):
-        #     L = L + Ak
-        #     Ak = Ak @ A
-
-        # attn = L
-
-        ## Factorized Approximation code ##
-        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        # L = eye.clone()
-        # Apow = attn
-
-        # K = 32
-        # for _ in range(int(math.log2(K))):
-        #     L = L @ (eye + Apow)
-        #     Apow = Apow @ Apow  # square for next power
-
-        # attn = L
-
-        # Horners Method
-        # A = attn.masked_fill(mask, 0)
-        # acc_dtype = torch.float32
-        # A64 = A.to(acc_dtype)
-        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
-
-        # K = chunk_size - 1
-        # S64 = I64.clone()
-        # for _ in range(K):
-        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
-
-        # attn = S64.to(A.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -671,11 +831,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
         mask = mask_strict
 
         # for each chunk
-        for i in range(0, total_sequence_length // chunk_size):
+        for i in range(total_sequence_length // chunk_size):
             q_i, k_i, v_i = query[:, :, i], key[:, :, i], value[:, :, i]
             attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
             v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
@@ -707,10 +866,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # L2 norm (matching chunk kernel behavior)
         q = query.float()
         k = key.float()
-        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
-        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
+        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
         v = value.float()
 
         scale = 1.0 / (q.shape[-1] ** 0.5)
@@ -730,12 +887,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # Single step — no loop because T=1
         # S update
         S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
+        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
         delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
         S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
+        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
@@ -746,7 +901,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         cache_position=None,
         attention_mask=None,
         position_ids=None,
-        batch_index: Optional[torch.LongTensor] = None,
+        batch_index: torch.LongTensor | None = None,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -763,11 +918,24 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                conv_state_grouped = conv_state_all.ndim == 4
+                if conv_state_grouped:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all_flat, conv_batch_index, conv_ctx_indices)
+                if conv_state_grouped:
+                    conv_state = conv_state.reshape(
+                        conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
+                    )
 
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
@@ -780,6 +948,19 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
+                conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
+                    conv_state.shape[0], *([1] * (conv_state.ndim - 1))
+                )
+                conv_state = torch.where(conv_reset_mask, torch.zeros_like(conv_state), conv_state)
+
+                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device).reshape(
+                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
+                )
+                recurrent_state = torch.where(recurrent_reset_mask, torch.zeros_like(recurrent_state), recurrent_state)
+
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
                 conv_state,
@@ -788,13 +969,35 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                if conv_state_all.ndim == 4:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                    new_conv_state_flat = new_conv_state.reshape(
+                        new_conv_state.shape[0],
+                        new_conv_state.shape[1] * new_conv_state.shape[2],
+                        new_conv_state.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                    new_conv_state_flat = new_conv_state
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                scattered_conv = CtxScatterFuncCB3D.apply(
+                    conv_state_all_flat, conv_batch_index, conv_position_ids, new_conv_state_flat
                 )
+                if conv_state_all.ndim == 4:
+                    scattered_conv = scattered_conv.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1],
+                        conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                cache_params.conv_states[self.layer_idx] = scattered_conv
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -894,7 +1097,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
 class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
     def __qeff_init__(self):
-        #
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5GatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -905,14 +1107,14 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: QEffQwen3_5DynamicCache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
     ) -> torch.FloatTensor:
         del use_cache
@@ -950,6 +1152,10 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
 
 
 class QEffQwen3_5TextModel(Qwen3_5TextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
         rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_5_ROPE_CACHE_EXPORT_CAP)
@@ -962,16 +1168,16 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[QEffQwen3_5DynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        output_hidden_states: Optional[bool] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: QEffQwen3_5DynamicCache | tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
+        output_hidden_states: bool | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -993,15 +1199,28 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        start, end = resolve_layer_window(QEffQwen3_5TextModel, len(self.layers))
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
+            active_layer_type = self.config.layer_types[start] if start < len(self.config.layer_types) else None
+            if is_layerwise_active() and position_ids is not None and active_layer_type == "linear_attention":
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                cache_position = text_position_ids[0].clamp_min(0)
+            else:
+                cache_position = torch.arange(
+                    past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        if isinstance(attention_mask, torch.Tensor):
+            target_length = attention_mask.shape[-1]
+        else:
+            pos_max = 0
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                pos_max = int(text_position_ids.max().item()) + 1
+            target_length = max(past_seen_tokens, pos_max)
         causal_mask = _create_causal_mask(
             position_ids=position_ids[0], target_length=target_length, sliding_window=None
         )
@@ -1016,7 +1235,13 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1036,13 +1261,16 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
             # break
 
-        hidden_states = self.norm(hidden_states)
+        if is_last_layer_window(QEffQwen3_5TextModel, len(self.layers)):
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        if is_layerwise_active():
+            past_key_values = past_key_values[QEffQwen3_5TextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1050,7 +1278,7 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
 
 class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
     @staticmethod
@@ -1059,7 +1287,7 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
             past_key_values.reorder_cache(beam_idx)
         return past_key_values
 
-    def _iter_retained_state_names(self) -> List[str]:
+    def _iter_retained_state_names(self) -> list[str]:
         names = []
         for layer_idx, layer_type in enumerate(self.config.layer_types):
             if layer_type == "full_attention":
@@ -1068,14 +1296,14 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
                 names.extend([f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"])
         return names
 
-    def get_retained_state_names(self) -> List[str]:
+    def get_retained_state_names(self) -> list[str]:
         return self._iter_retained_state_names()
 
     def get_onnx_retained_state_specs(
         self,
         batch_size: int,
         seq_len: int,
-        kv_cache_shape: List[int],
+        kv_cache_shape: list[int],
         continuous_batching: bool = False,
         retain_full_kv: bool = False,
     ) -> dict:
@@ -1088,12 +1316,13 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
             "dynamic_axes": {},
         }
 
+        kv_dtype = getattr(self.config, "torch_dtype", torch.float32)
         for layer_idx, layer_type in enumerate(self.config.layer_types):
             if layer_type == "full_attention":
                 layer_names = [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(tuple(kv_cache_shape), dtype=torch.float32),
-                    torch.zeros(tuple(kv_cache_shape), dtype=torch.float32),
+                    torch.zeros(tuple(kv_cache_shape), dtype=kv_dtype),
+                    torch.zeros(tuple(kv_cache_shape), dtype=kv_dtype),
                 ]
                 layer_axes = [
                     {0: batch_axis_name, 2: "ctx_len"},
@@ -1101,12 +1330,21 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
                 ]
             else:
                 layer = self.model.layers[layer_idx].linear_attn
-                conv_shape = (batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(conv_shape, dtype=torch.float32),
-                    torch.zeros(recurrent_shape, dtype=torch.float32),
+                    torch.zeros(conv_shape, dtype=kv_dtype),
+                    torch.zeros(recurrent_shape, dtype=kv_dtype),
                 ]
                 layer_axes = [{0: batch_axis_name}, {0: batch_axis_name}]
 
@@ -1120,17 +1358,17 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[QEffQwen3_5DynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: QEffQwen3_5DynamicCache | tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
         del logits_to_keep
@@ -1166,6 +1404,10 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
 
 
 class QEffQwen3_5Model(Qwen3_5Model):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1241,7 +1483,7 @@ class QEffQwen3_5VisionModel(Qwen3_5VisionModel):
         max_hw = max(grid_thw.shape)
         freq_table = self.rotary_pos_emb(max_hw)
         device = freq_table.device
-        bs, num_frames, height, width = grid_thw.shape
+        _bs, num_frames, height, width = grid_thw.shape
         grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
 
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
@@ -1375,8 +1617,8 @@ class QEffQwen3_5VisionAttention(Qwen3_5VisionAttention):
         self,
         hidden_states: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        rotary_pos_emb: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        rotary_pos_emb: torch.Tensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
@@ -1431,7 +1673,7 @@ class QEffQwen3_5EncoderWrapper(nn.Module):
         self.model = model
         self.config = model.config
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
             return {self.model.model.visual.blocks[0].__class__}
         if hasattr(self.model.model, "vision_model") and hasattr(self.model.model.vision_model, "blocks"):
@@ -1461,41 +1703,110 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         self.language_model = self.model.model.language_model
         self.config = model.config
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
+
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> list[str]:
+        if self.config.text_config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        position_ids,
-        image_idx,
-        past_key_values,
-        batch_index: Optional[torch.LongTensor] = None,
-        comp_ctx_lengths: Optional[List[int]] = None,
+        input_ids=None,
+        inputs_embeds=None,
+        vision_embeds=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
+        batch_index: torch.LongTensor | None = None,
+        comp_ctx_lengths: list[int] | None = None,
     ):
-        inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-        _, _, channel_size = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = image_input_embeds
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            use_cache=True,
-        )
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        logits = self.model.lm_head(hidden_states)
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+
+        if not is_layerwise_active():
+            # Default (non-layerwise) path: image merge + full decoder + lm_head in
+            # a single forward, identical to the pre-layerwise behavior/output contract.
+            _, _, channel_size = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = image_input_embeds
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
+
+        if QEffQwen3_5TextModel._start == 0:
+            B, S, _ = inputs_embeds.shape
+            if input_ids is None:
+                input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
+            _, _, channel_size = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = image_input_embeds
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, image_idx, outputs.past_key_values
+
+        elif QEffQwen3_5TextModel._end == QEffQwen3_5TextModel._total_layers:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            return logits, outputs.past_key_values
+
+        else:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            return logits, outputs.past_key_values
 
 
 class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
@@ -1511,8 +1822,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
@@ -1571,8 +1882,6 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         ```
         """
 
-        #
-
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -1603,15 +1912,15 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        height: int | List[int] = None,
-        width: int | List[int] = None,
+        height: int | list[int] | None = None,
+        width: int | list[int] | None = None,
         img_size=None,
         time: int = 1,
-        num_frames: int | List[int] = 1,
+        num_frames: int | list[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
-        kv_cache_batch_size: Optional[int] = None,
-        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: int | None = None,
+        full_batch_size: int | None = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
@@ -1732,7 +2041,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
@@ -1753,8 +2062,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
                 lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
             else:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"conv_state.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
@@ -1775,7 +2084,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
     def get_dummy_inputs(
         self,
-        comp_ctx_lengths: Optional[List[int]] = None,
+        comp_ctx_lengths: list[int] | None = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         **kwargs,
@@ -1806,10 +2115,12 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        # Float inputs follow the model dtype so float16 export traces cleanly.
+        float_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=float_dtype)
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=float_dtype)
         lang_inputs["position_ids"] = (
             (
                 torch.arange(dummy_seq_len, dtype=torch.int64)
@@ -1833,18 +2144,34 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         linear_batch_size = fbs if continuous_batching else bs
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
-        for i in range(self.model.config.text_config.num_hidden_layers):
+        # Default path exports all layers; layerwise exports only the active window's layer.
+        if is_layerwise_active():
+            window_layers = [QEffQwen3_5TextModel._start]
+        else:
+            window_layers = range(self.model.config.text_config.num_hidden_layers)
+        # KV/state dummy dtype follows the model dtype so the export trace works
+        # for float16 as well as float32.
+        kv_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        for i in window_layers:
             if self.model.config.text_config.layer_types[i] == "full_attention":
                 for kv in ["key", "value"]:
-                    lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=kv_dtype))
             else:
                 layer = self.model.language_model.layers[i].linear_attn
-                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    linear_batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
-                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
-                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=kv_dtype))
+                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=kv_dtype))
 
-        #
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
@@ -1876,8 +2203,6 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
-            # lang_output_names.insert(1, "pixel_values_RetainedState")
-            # lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
@@ -1891,10 +2216,10 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
-        pos_ids, rope_deltas = self.model.get_rope_index(
+        pos_ids, _rope_deltas = self.model.get_rope_index(
             inputs["input_ids"],
             inputs["mm_token_type_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            inputs.get("image_grid_thw", None),
             video_grid_thw=None,
             attention_mask=inputs["attention_mask"],
         )
@@ -1908,6 +2233,5 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
         )
 
-        inputs.pop("image_grid_thw", None)
         inputs.pop("mm_token_type_ids")
         return inputs

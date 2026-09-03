@@ -256,7 +256,7 @@ class QEffGemma4TextRouter(Gemma4TextRouter):
             dim=-1,
         )
 
-        top_k_weights = top_k_weights / torch.einsum("bk->b", top_k_weights).unsqueeze(-1)
+        top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True)
         top_k_weights = top_k_weights * self.per_expert_scale[top_k_index]
 
         return router_probabilities, top_k_weights, top_k_index
