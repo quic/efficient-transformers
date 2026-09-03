@@ -141,6 +141,13 @@ class AttentionBlockingConfig:
     kv_block_unroll: Optional[int] = 1
     num_cores_per_device: Optional[int] = None
     paged_attention: Optional[bool] = False
+    # MiniMax M3 MSA-specific options
+    msa_attn_dp: Optional[int] = None
+    msa_attn_cp: Optional[int] = None
+    msa_attn_dp_local_batch_size: Optional[int] = None
+    msa_indexer_dp: Optional[int] = None
+    msa_indexer_cp: Optional[int] = None
+    indexer_n_head: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
