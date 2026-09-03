@@ -1185,7 +1185,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         qaic_config = getattr(self.model, "qaic_config", None)
         blocking_mode = qaic_config.get("blocking_mode") if qaic_config is not None else None
         if blocking_mode is not None and "paged" in blocking_mode:
-            lang_dynamic_axes["block_table"] = {0: "batch_size", 1: "num_kv_blocks"}
+            lang_dynamic_axes["block_table"] = {0: "batch_size"}
             lang_dynamic_axes["slot_id"] = {0: "batch_size"}
             pkv_dynamic_axes = {
                 0: "total_num_kv_blocks",
