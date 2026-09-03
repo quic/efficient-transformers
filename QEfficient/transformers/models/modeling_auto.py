@@ -4327,7 +4327,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ctx_len : int, optional
             Maximum context length the compiled model can remember. Default is 128.
         batch_size : int, optional
-            Batch size for the decode phase. Default is 1.
+            The decode *input* batch for this specialization, i.e. the size of the input axis
+            (`input_ids`/`position_ids`/`batch_index`). On every path this is the live decode
+            batch; the retained KV-cache batch (B_max) is carried separately by
+            `kv_cache_batch_size`/`full_batch_size`, so a single spec can pin the retained state
+            while its input batch varies (dynamic batching). Default is 1.
         kv_cache_batch_size : int, optional
             Batch size for KV cache. If not provided, it defaults based on `full_batch_size` or `batch_size`.
         full_batch_size : int, optional
@@ -4344,15 +4348,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         decode_seq_len = (num_speculative_tokens + 1) if self.is_tlm else 1
         if decode_seq_len == prefill_seq_len and not self.continuous_batching:
             return None
+        # `batch_size` is the decode *input* batch for this specialization on every path. The
+        # retained KV-cache batch (B_max) is carried separately by `kv_cache_batch_size`, so a
+        # single spec can pin the retained state while its input batch varies (dynamic batching).
+        exec_input_bs = batch_size
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
-                batch_size=full_batch_size if self.continuous_batching else batch_size,
+                batch_size=exec_input_bs,
                 prefill_seq_len=(num_speculative_tokens + 1) if self.is_tlm else 1,
                 ctx_len=ctx_len,
             )[1]
         else:
             spec = {
-                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "batch_size": exec_input_bs,
                 "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
                 "ctx_len": ctx_len,
             }
@@ -4361,10 +4369,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
+        # The retained KV-cache batch (B_max) is `kv_cache_batch_size`; fall back to
+        # `full_batch_size` so a direct caller that passes only `full_batch_size` still pins it.
+        retained_batch_size = kv_cache_batch_size if kv_cache_batch_size is not None else full_batch_size
         if self.continuous_batching:
-            spec["full_batch_size"] = kv_cache_batch_size
+            spec["full_batch_size"] = retained_batch_size
         else:
-            spec["batch_size"] = kv_cache_batch_size
+            spec["batch_size"] = retained_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode"
         return result
@@ -4378,7 +4389,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ctx_len: int = 128,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        batch_size: int = 1,
+        batch_size: Union[int, List[int]] = 1,
         full_batch_size: Optional[int] = None,
         kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
@@ -4414,8 +4425,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Length of the prefill prompt. Default is 32.
         ctx_len : int, optional
             Maximum context length the compiled model can remember. Default is 128.
-        batch_size : int, optional
-            Batch size. Default is 1.
+        batch_size : int or list[int], optional
+            Batch size. Default is 1. A list requests **dynamic batching**: one decode
+            specialization is emitted per batch size into a single QPC, and the runtime selects
+            the matching decode specialization by input tensor batch shape. A list is only
+            supported when `continuous_batching=True`; the retained KV cache is pinned at
+            `full_batch_size` (B_max) for every specialization while only the input batch axis
+            varies, so each value must satisfy `1 <= batch_size <= full_batch_size`. It may be
+            combined with speculative-decoding `num_speculative_tokens` (a full cartesian product),
+            but NOT with CCL (`comp_ctx_lengths_decode`) — that combination is rejected because the
+            two features vary different identifying inputs that the compiler cannot disambiguate.
         full_batch_size : int, optional
             Continuous batching batch size. Required if `continuous_batching=True` was
             set during `from_pretrained`.
@@ -4540,8 +4559,40 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     "Please pass valid integer for kv_cache_batch_size or full_batch_size, both have same meaning, as continuous_batching is enabled for prefill-only model"
                 )
 
-        # Infer kv_cache_batch_size if not provided
-        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+        # Normalize batch_size. A list requests dynamic batching: one decode specialization per
+        # batch size in a single QPC. A plain int N behaves exactly as before (single-element list).
+        _is_dynamic_batch = isinstance(batch_size, (list, tuple))
+        if _is_dynamic_batch:
+            if any((not isinstance(b, int)) or b < 1 for b in batch_size):
+                raise ValueError(f"All `batch_size` values must be integers >= 1, got {batch_size}.")
+            _decode_bs = sorted(set(batch_size))
+            # Dynamic batching only works on the continuous-batching export path: there the input
+            # batch axis (`input_ids`/`position_ids`/`batch_index`) is a distinct ONNX symbol from the
+            # retained KV-cache batch axis (`full_batch_size`), so decode specializations can vary the
+            # input batch while sharing one retained-state shape. On the non-CB path the two axes are
+            # the same symbol, so a list would ask the compiler for multiple retained-state shapes in
+            # one QPC, which QAIC rejects ("inconsistent retained state"). See
+            # docs/qaic/dynamic_batching/finding_and_pivot.md.
+            if not self.continuous_batching:
+                raise ValueError(
+                    "`batch_size` as a list (dynamic batching) requires `continuous_batching=True` in "
+                    "`from_pretrained`. On the non-continuous-batching path the input batch axis and the "
+                    "retained KV-cache batch axis are the same ONNX symbol, so multiple batch sizes would "
+                    "require multiple retained-state shapes in one QPC, which QAIC rejects."
+                )
+            if full_batch_size is None:
+                raise TypeError("`full_batch_size` (B_max, the KV-cache capacity) is required for dynamic batching.")
+            if max(_decode_bs) > full_batch_size:
+                raise ValueError(
+                    f"Every `batch_size` value must be <= `full_batch_size` (B_max={full_batch_size}); "
+                    f"got {batch_size}."
+                )
+        else:
+            _decode_bs = [batch_size]
+
+        # Infer kv_cache_batch_size if not provided. Under continuous batching the retained KV cache
+        # is always sized at full_batch_size (B_max) regardless of the decode input batch(es).
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or max(_decode_bs)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -4595,6 +4646,31 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 _decode_ks = [validated_k]
 
+        # CCL cannot be crossed with any other co-varying decode axis. CCL distinguishes decode
+        # specializations by the length of the separate `comp_ctx_lengths` tensor, while dynamic
+        # batching varies the `input_ids` batch dim and multi-spec SpD varies the `input_ids`
+        # seq_len. When CCL co-varies with either of those, no single input uniquely identifies a
+        # specialization and the QAIC compiler rejects the QPC with "No input that uniquely
+        # identifies specialization" (see docs/qaic/dynamic_batching/finding_and_pivot.md §8).
+        # Reject early with a clear error instead of deferring to an opaque compiler failure.
+        # (Checked after the speculative_config collapse above so a list reduced to one effective
+        # K is not falsely rejected.)
+        if self.comp_ctx_lengths_decode is not None:
+            _multi_spec_ks = _decode_ks is not None and self.is_tlm and len(_decode_ks) > 1
+            if _is_dynamic_batch:
+                raise ValueError(
+                    "`batch_size` as a list (dynamic batching) cannot be combined with compute-context-length "
+                    "specializations (`comp_ctx_lengths_decode`/CCL): the two vary different identifying inputs "
+                    "(input_ids batch dim vs the comp_ctx_lengths tensor), which the QAIC compiler cannot "
+                    "disambiguate. Use one or the other."
+                )
+            if _multi_spec_ks:
+                raise ValueError(
+                    "Multi-spec speculative decoding (`num_speculative_tokens` as a list) cannot be combined "
+                    "with compute-context-length specializations (`comp_ctx_lengths_decode`/CCL): the two vary "
+                    "different identifying inputs (input_ids seq_len vs the comp_ctx_lengths tensor), which the "
+                    "QAIC compiler cannot disambiguate. Pass a plain int for num_speculative_tokens when using CCL."
+                )
         if (
             self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
@@ -4612,6 +4688,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             retain_full_kv = False
 
         # --- Specializations ---
+        # Decode specializations are a full cartesian product of batch_size × CCL × spec_len.
+        # Warn (do not block) on large counts, mirroring the soft seq_len guidance elsewhere.
+        _n_ccl = len(self.comp_ctx_lengths_decode) if self.comp_ctx_lengths_decode is not None else 1
+        _n_ks = len(_decode_ks) if (self.is_tlm and _decode_ks is not None) else 1
+        _projected_decode_specs = len(_decode_bs) * _n_ccl * _n_ks
+        if _projected_decode_specs > 15:
+            logger.warning(
+                f"Compiling {_projected_decode_specs} decode specializations "
+                f"(batch×CCL×spec_len = {len(_decode_bs)}×{_n_ccl}×{_n_ks}); "
+                "large counts increase compile time and QPC size."
+            )
         specializations = []
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
@@ -4624,7 +4711,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                             prefill_seq_len=prefill_seq_len,
                             ctx_len=ctx_len,
                             comp_ctx_lengths=ccl_lengths[i],
-                            batch_size=batch_size,
+                            batch_size=max(_decode_bs),
                             kv_cache_batch_size=kv_cache_batch_size,
                             full_batch_size=full_batch_size,
                             prefill_only=prefill_only,
@@ -4636,7 +4723,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     self.build_prefill_specialization(
                         prefill_seq_len=prefill_seq_len,
                         ctx_len=ctx_len,
-                        batch_size=batch_size,
+                        batch_size=max(_decode_bs),
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
                         prefill_only=prefill_only,
@@ -4645,58 +4732,34 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
 
         if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
-            if _decode_ks is not None and self.is_tlm:
-                # TLM multi-spec path: one decode specialization per K in num_speculative_tokens.
-                # CCL (comp_ctx_lengths) + multi-spec TLM is not yet supported: the per-K call
-                # to build_decode_specialization would need to iterate over CCL values, producing
-                # len(decode_ks) × len(comp_ctx_lengths_decode) decode specializations whose
-                # naming and ordering is untested.  Reject early so users get a clear error
-                # instead of a silently wrong QPC.
-                if self.comp_ctx_lengths_decode is not None:
-                    raise NotImplementedError(
-                        "TLM multi-spec (num_speculative_tokens as a list) combined with "
-                        "comp_ctx_lengths_decode is not yet supported. Pass a plain int for "
-                        "num_speculative_tokens when using CCL."
-                    )
-                for k in _decode_ks:
-                    spec = self.build_decode_specialization(
-                        num_speculative_tokens=k,
-                        prefill_seq_len=prefill_seq_len,
-                        ctx_len=ctx_len,
-                        batch_size=batch_size,
-                        kv_cache_batch_size=kv_cache_batch_size,
-                        full_batch_size=full_batch_size,
-                    )
-                    if spec is not None:
-                        specializations.append(spec)
-
-            elif self.comp_ctx_lengths_decode is not None:
-                # CCL loop (non-TLM)
-                for i in range(0, len(self.comp_ctx_lengths_decode)):
-                    decode_spec = self.build_decode_specialization(
-                        prefill_seq_len=prefill_seq_len,
-                        ctx_len=ctx_len,
-                        comp_ctx_lengths=self.comp_ctx_lengths_decode[i],
-                        batch_size=batch_size,
-                        kv_cache_batch_size=kv_cache_batch_size,
-                        full_batch_size=full_batch_size,
-                        num_speculative_tokens=None,
-                    )
-                    if decode_spec:
-                        specializations.append(decode_spec)
-
-            else:
-                decode_spec = self.build_decode_specialization(
-                    prefill_seq_len=prefill_seq_len,
-                    ctx_len=ctx_len,
-                    batch_size=batch_size,
-                    kv_cache_batch_size=kv_cache_batch_size,
-                    full_batch_size=full_batch_size,
-                    num_speculative_tokens=None,
-                    prefill_only=prefill_only,
-                )
-                if decode_spec:
-                    specializations.append(decode_spec)
+            # Decode specializations expand as a full cartesian product over
+            # (batch_size × comp_ctx_lengths_decode × num_speculative_tokens). [None] sentinels
+            # stand in for "no CCL" / "no SpD" so the single loop covers every combination,
+            # including the legacy single-decode-spec case. For dynamic batching (continuous
+            # batching), each spec varies only its decode *input* batch (the `batch_size` passed
+            # per iteration) while `kv_cache_batch_size` stays pinned at full_batch_size (B_max)
+            # so the retained KV-cache shape is identical across all specs.
+            _ccl_decode_vals = self.comp_ctx_lengths_decode if self.comp_ctx_lengths_decode is not None else [None]
+            _ks_vals = _decode_ks if (self.is_tlm and _decode_ks is not None) else [None]
+            for bs in _decode_bs:
+                for ccl in _ccl_decode_vals:
+                    for k in _ks_vals:
+                        # `batch_size` is the decode input batch for this spec. On plain continuous
+                        # batching the input batch is full_batch_size (B_max); for dynamic batching
+                        # (and the non-CB path) it is the per-spec batch `bs`.
+                        input_bs = full_batch_size if (self.continuous_batching and not _is_dynamic_batch) else bs
+                        decode_spec = self.build_decode_specialization(
+                            prefill_seq_len=prefill_seq_len,
+                            ctx_len=ctx_len,
+                            comp_ctx_lengths=ccl,
+                            batch_size=input_bs,
+                            kv_cache_batch_size=(kv_cache_batch_size if self.continuous_batching else bs),
+                            full_batch_size=full_batch_size,
+                            num_speculative_tokens=k,
+                            prefill_only=prefill_only,
+                        )
+                        if decode_spec is not None:
+                            specializations.append(decode_spec)
 
         if kw_spec := compiler_options.pop("specializations", None):
             specializations = kw_spec
