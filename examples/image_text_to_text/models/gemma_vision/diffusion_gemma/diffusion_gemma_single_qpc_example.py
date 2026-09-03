@@ -142,13 +142,19 @@ def main():
         raw_output,
         truncate_first_sentence=(result.generated_ids.shape[1] <= args.canvas_length or args.truncate_first_sentence),
     )
+    clean_token_count = len(processor.tokenizer(output_text, add_special_tokens=False).input_ids)
     canvas_throughput = (
         result.total_steps * result.canvas_length / result.total_canvas_time if result.total_canvas_time > 0 else 0.0
     )
     print(f"\nTTFT: {result.ttft:.2f}s ({result.retained_kv_buffers} KV buffers retained)")
+    # print(
+    #     f"\nCanvas: {result.total_steps} steps across {result.executed_blocks} blocks, "
+    #     f"{result.total_canvas_time:.1f}s, {canvas_throughput:.1f} tok/s"
+    # )
+    # breakpoint()
     print(
-        f"\nCanvas: {result.total_steps} steps across {result.executed_blocks} blocks, "
-        f"{result.total_canvas_time:.1f}s, {canvas_throughput:.1f} tok/s"
+            f"\Average number of steps: {result.total_steps/result.executed_blocks}, "
+            f"Tokens per second: {clean_token_count/result.total_canvas_time:.1f}"
     )
     print(f"\nOutput:\n{output_text}")
     print(f"\nQPC_PATH={qpc_path}")

@@ -650,9 +650,6 @@ def load_model_and_processor(model_id: str, canvas_length: int):
     return processor, qeff_model
 
 
-
-
-
 def compile_unified_qpc(
     qeff_model,
     *,
