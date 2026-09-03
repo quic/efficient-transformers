@@ -298,6 +298,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         num_chunks: int,
         decode_batch_id: Optional[np.ndarray] = None,
         prefill_logit_bs: int = 1,
+        block_table: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """
         Execute chunked prefill with language inputs
@@ -307,6 +308,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             num_chunks: Number of chunks to process
             decode_batch_id: Batch ID for continuous batching (optional)
             prefill_logit_bs: Batch size for prefill logits
+            block_table: Physical KV block table for paged attention (optional)
 
         Returns:
             Final prefill outputs
@@ -367,6 +369,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 "position_ids": position_ids_slice,
                 "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
             }
+
+            if block_table is not None:
+                chunk_inputs["block_table"] = block_table
+                chunk_start_position_id = i * self._prefill_seq_len
+                chunk_inputs["slot_id"] = np.full(
+                    (prefill_logit_bs,), chunk_start_position_id % self.kv_block_size, dtype=np.int64
+                )
 
             if "mm_token_type_ids" in lang_inputs:
                 chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
@@ -467,7 +476,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
             # Execute chunked prefill
-            outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs)
+            block_table = getattr(self, "block_table", None)
+            outputs = self._execute_chunked_prefill(
+                lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs, block_table
+            )
 
             self._session.skip_buffers(vision_outputs)
 
@@ -721,7 +733,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
         # Execute chunked prefill
-        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks)
+        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, block_table=getattr(self, "block_table", None))
 
         self._session.skip_buffers(vision_outputs)
 
@@ -945,11 +957,17 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 logger.debug(f"Set vision buffers for batch_id {decode_batch_id} prefill")
 
                 # Run prefill with cached inputs
+                block_table = (
+                    self.block_table[decode_batch_id].reshape(1, -1)
+                    if getattr(self, "block_table", None) is not None
+                    else None
+                )
                 outputs = self._execute_chunked_prefill(
                     lang_inputs,
                     num_chunks,
                     decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                     prefill_logit_bs=1,
+                    block_table=block_table,
                 )
 
                 self._session.skip_buffers(vision_outputs.keys())
