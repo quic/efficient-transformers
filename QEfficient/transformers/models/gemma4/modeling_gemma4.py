@@ -46,6 +46,25 @@ from QEfficient.transformers.moe import (
 )
 from QEfficient.utils import constants
 
+
+def _get_gemma4_config_attr(config, name, default=None, layer_idx=None):
+    if layer_idx is not None:
+        per_layer_config = getattr(config, "per_layer_config", None)
+        if per_layer_config is not None and layer_idx < len(per_layer_config):
+            try:
+                return getattr(per_layer_config[layer_idx], name)
+            except AttributeError:
+                pass
+    try:
+        return getattr(config, name)
+    except AttributeError:
+        return default
+    except Exception as exc:
+        if exc.__class__.__name__ != "AmbiguousGlobalPerLayerAttributeError":
+            raise
+        return getattr(config, "__dict__", {}).get(name, default)
+
+
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 _DISABLE_EXPORT_FP16_CLAMP = False
@@ -993,10 +1012,12 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         past_key_values = []
-        for layer_type in config.layer_types:
+        for i, layer_type in enumerate(config.layer_types):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
-                d_head = config.head_dim
+                d_head = _get_gemma4_config_attr(
+                    config, "head_dim", config.hidden_size // config.num_attention_heads, i
+                )
                 layer_seq_len = min(config.sliding_window, seq_len)
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
@@ -1005,7 +1026,12 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
                     if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
                     else config.num_key_value_heads
                 )
-                d_head = config.global_head_dim if getattr(config, "global_head_dim", None) else config.head_dim
+                d_head = _get_gemma4_config_attr(
+                    config,
+                    "global_head_dim",
+                    _get_gemma4_config_attr(config, "head_dim", config.hidden_size // config.num_attention_heads, i),
+                    i,
+                )
                 layer_seq_len = seq_len
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
@@ -1377,7 +1403,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         for i, layer_type in enumerate(config.layer_types):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
-                d_head = config.head_dim
+                d_head = _get_gemma4_config_attr(
+                    config, "head_dim", config.hidden_size // config.num_attention_heads, i
+                )
                 layer_seq_len = min(config.sliding_window, seq_len)
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
@@ -1386,7 +1414,12 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                     if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
                     else config.num_key_value_heads
                 )
-                d_head = config.global_head_dim if getattr(config, "global_head_dim", None) else config.head_dim
+                d_head = _get_gemma4_config_attr(
+                    config,
+                    "global_head_dim",
+                    _get_gemma4_config_attr(config, "head_dim", config.hidden_size // config.num_attention_heads, i),
+                    i,
+                )
                 layer_seq_len = seq_len
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
