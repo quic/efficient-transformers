@@ -70,6 +70,9 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SimpleDecodeMoeTransform,
     SpDTransform,
 )
+from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    QEffDiffusionGemmaTextMoeBlock,
+)
 from QEfficient.transformers.moe import (
     MoEFlavour,
     MoEProfile,
@@ -2289,6 +2292,60 @@ class TestMoETransformReplacement:
         with torch.no_grad():
             out = transformed(**qeff_inputs)
         assert torch.isfinite(out.logits).all(), "Mixtral KVCacheTransform must produce finite logits"
+
+
+@pytest.mark.transforms
+class TestDiffusionGemmaMoEBlock:
+    def test_decode_bmm_matches_explicit_top_k_expert_execution(self):
+        class Router(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("top_k_index", torch.tensor([[0, 1], [2, 0], [1, 2], [0, 2]]))
+                self.register_buffer(
+                    "top_k_weights",
+                    torch.tensor([[0.7, 0.3], [0.6, 0.4], [0.55, 0.45], [0.8, 0.2]]),
+                )
+
+            def forward(self, hidden_states):
+                tokens = hidden_states.shape[0]
+                probabilities = hidden_states.new_zeros((tokens, 3))
+                return probabilities, self.top_k_weights[:tokens], self.top_k_index[:tokens]
+
+        class Experts(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate_up_proj = nn.Parameter(torch.randn(3, 8, 6))
+                self.down_proj = nn.Parameter(torch.randn(3, 6, 4))
+                self.act_fn = F.silu
+
+        torch.manual_seed(0)
+        router = Router()
+        experts = Experts()
+        gate_up_proj = experts.gate_up_proj.detach().clone()
+        down_proj = experts.down_proj.detach().clone()
+        hidden_states = torch.randn(1, 4, 6)
+
+        moe_block = QEffDiffusionGemmaTextMoeBlock(router, experts, nn.Identity(), nn.Identity())
+        moe_block.transform_weights()
+        actual = moe_block(hidden_states)
+
+        expected_outputs = []
+        for token, expert_indices, expert_weights in zip(
+            hidden_states.reshape(-1, hidden_states.shape[-1]),
+            router.top_k_index,
+            router.top_k_weights,
+        ):
+            token_output = torch.zeros(4)
+            for expert_index, expert_weight in zip(expert_indices, expert_weights):
+                gate, up = torch.mv(gate_up_proj[expert_index], token).chunk(2)
+                expert_output = torch.mv(down_proj[expert_index], F.silu(gate) * up)
+                token_output = token_output + expert_weight * expert_output
+            expected_outputs.append(token_output)
+        expected = torch.stack(expected_outputs).reshape_as(actual)
+
+        torch.testing.assert_close(actual, expected)
+        assert not hasattr(experts, "gate_up_proj")
+        assert not hasattr(experts, "down_proj")
 
 
 # ---------------------------------------------------------------------------
