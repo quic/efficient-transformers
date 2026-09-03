@@ -511,6 +511,35 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         assert captured_kwargs["specializations"][0]["_graph_name"] == "Prefill"
         assert "chunking is always enabled for prefill-only mode" in caplog.text
 
+    def test_compile_ignores_public_mdp_ts_num_devices(self, tmp_path, monkeypatch, caplog):
+        """compile ignores public mdp_ts_num_devices and derives it from num_devices."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=8,
+            ctx_len=32,
+            num_devices=4,
+            mdp_num_partitions=2,
+            mdp_ts_num_devices=99,
+        )
+
+        assert captured_kwargs["mdp_ts_num_devices"] == 4
+        assert captured_kwargs["mdp_num_partitions"] == 2
+        assert "`mdp_ts_num_devices` passed to compile() is ignored" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # Stage 4: QEFFAutoModelForCausalLM — export prefill seq len handling

@@ -26,6 +26,9 @@ Patches removed (upstreamed to PyTorch):
   - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
 """
 
+import inspect
+import os
+import threading
 from contextlib import contextmanager
 
 import torch
@@ -369,3 +372,75 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
                 delattr(module, "forward")
             else:
                 setattr(module, "forward", previous_forward)
+
+
+@contextmanager
+def temporarily_disable_nested_compile_regions(model, target_classes=None):
+    """
+    Replace nested_compile_region-wrapped ``forward`` methods with their original
+    underlying functions for the duration of plain dynamo export (flat graph path).
+
+    Used during weight-free export with use_onnx_subfunctions=False so that
+    @nested_compile_region boundaries on decoder layer forward() methods do not
+    create unwanted subgraph splits during tracing.
+    """
+    target_classes = tuple(target_classes) if target_classes else None
+    patched_modules = []
+
+    try:
+        for module in model.modules():
+            if target_classes and not isinstance(module, target_classes):
+                continue
+
+            bound_forward = getattr(module, "forward", None)
+            if bound_forward is None:
+                continue
+
+            wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
+            if getattr(wrapped_forward, "__qualname__", "") != "mark_compile_region.<locals>.wrap.<locals>.inner":
+                continue
+
+            closure = getattr(wrapped_forward, "__closure__", None) or ()
+            original_forward = next(
+                (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),
+                None,
+            )
+            if original_forward is None:
+                continue
+
+            previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
+            setattr(module, "forward", original_forward.__get__(module, type(module)))
+            patched_modules.append((module, previous_forward))
+
+        yield
+    finally:
+        for module, previous_forward in reversed(patched_modules):
+            if previous_forward is _MISSING_INSTANCE_ATTR:
+                delattr(module, "forward")
+            else:
+                setattr(module, "forward", previous_forward)
+
+
+_DYNAMO_ENV_LOCK = threading.RLock()
+
+
+@contextmanager
+def dynamo_invoke_subgraph_fallback_env():
+    """Temporarily set TORCH_INVOKE_ALLOW_CREATE_FALLBACK=1 for dynamo export.
+
+    torch.onnx.export's dynamo path (dynamo=True) needs this env var set to
+    allow invoke_subgraph placeholders to fall back correctly during tracing.
+    Saves and restores whatever value (or absence) the caller's environment
+    already had, rather than assuming it was previously unset.
+    Uses an RLock so concurrent exports don't race on the env var.
+    """
+    with _DYNAMO_ENV_LOCK:
+        previous = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = previous

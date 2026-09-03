@@ -16,9 +16,43 @@ Tests verify:
 All tests run on CPU only. No actual model loading or QAIC hardware execution.
 """
 
+import logging
+from types import SimpleNamespace
+
 import pytest
 import torch
 from torch import nn
+
+
+class _CompileOnlyModule:
+    def __init__(self, name, calls):
+        self.onnx_path = f"{name}.onnx"
+        self.qpc_path = None
+        self._calls = calls
+
+    def transform(self, **kwargs):
+        pass
+
+    def _compile(self, **kwargs):
+        self._calls.append(kwargs)
+        self.qpc_path = f"{self.onnx_path}.qpc"
+        return self.qpc_path
+
+
+class _CompileOnlyVLM:
+    config = SimpleNamespace(torch_dtype=torch.float32, model_type="dummy_vlm")
+    name_or_path = "dummy-vlm"
+
+    def get_output_names(self, kv_offload=False):
+        if kv_offload:
+            return {"vision": ["vision_state_RetainedState"], "lang": ["past_key.0_RetainedState"]}
+        return ["past_key.0_RetainedState"]
+
+    def get_specializations(self, **kwargs):
+        if kwargs.get("kv_offload"):
+            return {"vision": [{"batch_size": 1}], "lang": [{"batch_size": 1}]}, dict(kwargs)
+        return [{"batch_size": 1}], dict(kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEFFAutoModelForImageTextToText structure
@@ -158,6 +192,70 @@ class TestQEffAutoModelForImageTextToTextDualQPCStructure:
         sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
         assert "skip_lang" in sig.parameters
         assert "skip_vision" in sig.parameters
+
+    def test_dual_qpc_compile_ignores_public_mdp_ts_num_devices(self, caplog):
+        """Dual-QPC compile ignores public mdp_ts_num_devices before internal _compile calls."""
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        calls = []
+        qeff_model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+        qeff_model.model = _CompileOnlyVLM()
+        qeff_model.vision_model = _CompileOnlyModule("vision", calls)
+        qeff_model.lang_model = _CompileOnlyModule("lang", calls)
+        qeff_model.continuous_batching = False
+        qeff_model.ccl_enabled = False
+        qeff_model.comp_ctx_lengths_prefill = None
+        qeff_model.comp_ctx_lengths_decode = None
+        qeff_model.transform = lambda **kwargs: None
+
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model.compile(
+            vision_onnx_path="vision.onnx",
+            lang_onnx_path="lang.onnx",
+            num_devices=4,
+            mdp_num_partitions=2,
+            mdp_ts_num_devices=99,
+        )
+
+        assert len(calls) == 2
+        assert all(call["mdp_ts_num_devices"] == 4 for call in calls)
+        assert all(call["mdp_num_partitions"] == 2 for call in calls)
+        assert "`mdp_ts_num_devices` passed to compile() is ignored" in caplog.text
+
+
+class TestQEffAutoModelForImageTextToTextSingleQPCCompile:
+    def test_single_qpc_compile_ignores_public_mdp_ts_num_devices(self, caplog):
+        """Single-QPC compile ignores public mdp_ts_num_devices before internal _compile call."""
+        from QEfficient.transformers.models.modeling_auto import _QEFFAutoModelForImageTextToTextSingleQPC
+
+        calls = []
+        qeff_model = object.__new__(_QEFFAutoModelForImageTextToTextSingleQPC)
+        qeff_model.model = _CompileOnlyVLM()
+        qeff_model.ccl_enabled = False
+        qeff_model.comp_ctx_lengths_prefill = None
+        qeff_model.comp_ctx_lengths_decode = None
+        qeff_model.qpc_path = None
+
+        def fake_compile(**kwargs):
+            calls.append(kwargs)
+            qeff_model.qpc_path = "single.qpc"
+            return qeff_model.qpc_path
+
+        qeff_model._compile = fake_compile
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model.compile(
+            onnx_path="single.onnx",
+            num_devices=4,
+            mdp_num_partitions=2,
+            mdp_ts_num_devices=99,
+        )
+
+        assert len(calls) == 1
+        assert calls[0]["mdp_ts_num_devices"] == 4
+        assert calls[0]["mdp_num_partitions"] == 2
+        assert "`mdp_ts_num_devices` passed to compile() is ignored" in caplog.text
 
 
 # ---------------------------------------------------------------------------
