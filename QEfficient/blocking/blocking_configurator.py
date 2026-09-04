@@ -360,7 +360,10 @@ def build_transformer_blocking_config_for_transform(
     if requested_blocking_mode is None:
         return None
 
-    blocking_mode = BlockingMode.resolve(requested_blocking_mode)
+    # "paged" is an orthogonal flag on top of a base blocking mode (e.g. "kv_paged"), not its own
+    # BlockingMode member, so it must be stripped before resolving the base mode via the enum.
+    base_blocking_mode = str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
+    blocking_mode = BlockingMode.resolve(base_blocking_mode)
 
     required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])
     provided_keys = [key for key in required_keys if qaic_config.get(key)]
@@ -374,9 +377,11 @@ def build_transformer_blocking_config_for_transform(
 
     # if we haven't been passed manual number of blocks, do automatic calculation
     if missing_keys:
+        # Pass the raw requested mode (not the paged-stripped enum) through so the "paged"
+        # substring is still visible to build_transformer_blocking_config's own paged detection.
         blocking_config = build_transformer_blocking_config(
             model_config,
-            blocking_mode=blocking_mode,
+            blocking_mode=str(requested_blocking_mode),
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
