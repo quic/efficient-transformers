@@ -3577,6 +3577,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
+
+        # DFlash changes the model structure and output contract, so apply it before
+        # the generic speculative-decoding and sampler transforms wrap model.forward.
+        self.dflash_dlm = bool(qaic_config and qaic_config.get("dflash_dlm", False))
+        self.dflash_tlm = bool(qaic_config and qaic_config.get("target_layer_ids", None))
+        if self.dflash_dlm:
+            self.model, _ = DFlashTransform.apply(self.model, qaic_config)
+            self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
+        if self.dflash_tlm:
+            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
 
@@ -3600,20 +3611,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
-        self.dflash_dlm = False
         self.hidden_size = self.model.config.hidden_size
         self.vocab_size = self.model.config.vocab_size
-        if qaic_config is not None:
-            self.dflash_dlm = qaic_config.get("dflash_dlm", False)
-        if self.dflash_dlm:
-            self.model, _ = DFlashTransform.apply(self.model, qaic_config)
-            self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
-
-        self.dflash_tlm = False
-        if qaic_config is not None:
-            self.dflash_tlm = bool(qaic_config.get("target_layer_ids", None))
-        if self.dflash_tlm:
-            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -3987,8 +3986,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if self.dflash_dlm:
             example_inputs["target_hidden"] = torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float)
-            example_inputs["position_ids"] = torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
-            example_inputs["position_ids_target"] = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+            example_inputs["position_ids"] = (
+                torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+            )
+            example_inputs["position_ids_target"] = (
+                torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+            )
             dynamic_axes["target_hidden"] = {0: "batch_size", 1: "seq_len"}
             dynamic_axes["position_ids_target"] = {0: "batch_size", 1: "seq_len"}
 

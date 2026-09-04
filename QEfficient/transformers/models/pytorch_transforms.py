@@ -333,6 +333,12 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
 )
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffDFlashAttention,
+    QEffDFlashDecoderLayer,
+    QEffDFlashForCausalLM,
+    QEffDFlashModel,
+)
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -582,12 +588,6 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
 )
-from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffDFlashAttention,
-    QEffDFlashDecoderLayer,
-    QEffDFlashForCausalLM,
-    QEffDFlashModel,
-)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
@@ -650,6 +650,7 @@ from QEfficient.transformers.moe import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.checkpoint_utils import load_checkpoint_weights
 from QEfficient.utils.config_utils import (
     resolve_attention_heads,
     resolve_hidden_size,
@@ -657,13 +658,13 @@ from QEfficient.utils.config_utils import (
     set_kv_head_aliases,
 )
 from QEfficient.utils.constants import (
+    _DFLASH_TARGET_ABSMAX,
     ATTENTION_HEAD_CONFIG_KEYS,
     DEFAULT_AIC_NUM_CORES,
     HIDDEN_SIZE_CONFIG_KEYS,
     KV_HEAD_CONFIG_KEYS,
     MOE_PREFILL_PACKED_CHUNK_SIZE,
     ONNX_EXPORT_EXAMPLE_SEQ_LEN,
-    _DFLASH_TARGET_ABSMAX,
 )
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.repeat_kv_utils import (
@@ -1224,30 +1225,12 @@ class DFlashTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         if not (qaic_config and qaic_config.get("dflash_dlm", False)):
             return model, False
+        if type(model) is not QEffQwen3ForCausalLM:
+            raise NotImplementedError(
+                f"DFlash DLM does not support model class {type(model).__name__}. "
+                "Supported model class: QEffQwen3ForCausalLM."
+            )
         return super().apply(model)
-
-
-def _load_weights(checkpoint_path: str, keys: set) -> dict:
-    """Read the given weight tensors from a checkpoint (local dir or HF repo id)."""
-    from pathlib import Path
-
-    path = Path(checkpoint_path)
-    if not path.is_dir():
-        from huggingface_hub import snapshot_download
-
-        path = Path(snapshot_download(checkpoint_path, allow_patterns=["*.safetensors", "pytorch_model*.bin"]))
-
-    found: dict = {}
-    for sf in sorted(path.glob("*.safetensors")):
-        from safetensors import safe_open
-
-        with safe_open(str(sf), framework="pt", device="cpu") as f:
-            found.update({k: f.get_tensor(k) for k in f.keys() if k in keys})
-    if not found:
-        for bf in sorted(path.glob("pytorch_model*.bin")):
-            sd = torch.load(str(bf), map_location="cpu", weights_only=True)
-            found.update({k: sd[k] for k in keys if k in sd})
-    return found
 
 
 class DFlashDLMTransform:
@@ -1267,7 +1250,7 @@ class DFlashDLMTransform:
         if not tlm_repo:
             return model, True
 
-        w = _load_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
+        w = load_checkpoint_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
         embed_w = w.get("model.embed_tokens.weight")
         lm_head_w = w.get("lm_head.weight", embed_w)  # tie_word_embeddings: lm_head is a view of embed_tokens
         if lm_head_w is None or embed_w is None:
@@ -1300,6 +1283,10 @@ class DFlashTLMTransform:
         if hasattr(inner, "language_model"):
             inner = inner.language_model
         n = len(target_layer_ids)
+        # Keep injected modules aligned with the decoder hidden-state precision.
+        reference_weight = inner.embed_tokens.weight
+        module_device = reference_weight.device
+        module_dtype = reference_weight.dtype
 
         # Skip if a caller pre-injected fc/hidden_norm before constructing the model.
         if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
@@ -1315,21 +1302,25 @@ class DFlashTLMTransform:
                 RMSNorm = LlamaRMSNorm
             else:
                 RMSNorm = nn.RMSNorm
-            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False)
-            inner.hidden_norm = RMSNorm(hidden_size, eps=eps)
+            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False).to(device=module_device, dtype=module_dtype)
+            inner.hidden_norm = RMSNorm(hidden_size, eps=eps).to(device=module_device, dtype=module_dtype)
 
             dlm_repo = qaic_config.get("dflash_dlm_repo")
-            w = _load_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
+            w = load_checkpoint_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
             if "fc.weight" in w and "hidden_norm.weight" in w:
-                inner.fc.weight.data.copy_(w["fc.weight"].float())
-                inner.hidden_norm.weight.data.copy_(w["hidden_norm.weight"].float())
+                inner.fc.weight.data.copy_(w["fc.weight"].to(device=module_device, dtype=module_dtype))
+                inner.hidden_norm.weight.data.copy_(
+                    w["hidden_norm.weight"].to(device=module_device, dtype=module_dtype)
+                )
                 # RMSNorm(x/s) == RMSNorm(x): scale fc down to keep activations in fp16 range.
                 with torch.no_grad():
-                    bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.norm(dim=1).max().item()
+                    bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.float().norm(dim=1).max().item()
                     inner.fc.weight.data.div_(max(bound / _DFLASH_TARGET_ABSMAX, 1.0))
             else:
                 warnings.warn(f"DFlashTLMTransform: fc/hidden_norm not found in {dlm_repo!r}; left random.")
 
+        inner.fc.to(device=module_device, dtype=module_dtype)
+        inner.hidden_norm.to(device=module_device, dtype=module_dtype)
         inner.target_layer_ids = target_layer_ids
         return model, True
 

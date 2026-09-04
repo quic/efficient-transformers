@@ -91,6 +91,49 @@ def _make_legacy_past_key_values(config, batch, ctx_len):
 
 
 # ---------------------------------------------------------------------------
+# Tests: transform ordering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.transforms
+@pytest.mark.parametrize(
+    ("qaic_config", "expected_order"),
+    [
+        ({"dflash_dlm": True}, ["dflash", "dflash_dlm", "spd", "sampler"]),
+        ({"target_layer_ids": [1]}, ["dflash_tlm", "spd", "sampler"]),
+    ],
+)
+def test_dflash_transforms_run_before_spd_and_sampler(monkeypatch, qaic_config, expected_order):
+    from QEfficient import QEFFAutoModelForCausalLM
+    from QEfficient.transformers.models.pytorch_transforms import (
+        DFlashDLMTransform,
+        DFlashTLMTransform,
+        DFlashTransform,
+        SamplerTransform,
+        SpDTransform,
+    )
+
+    applied = []
+
+    def record_apply(name):
+        def apply(cls, model, config=None, **kwargs):
+            applied.append(name)
+            return model, False
+
+        return classmethod(apply)
+
+    monkeypatch.setattr(DFlashTransform, "apply", record_apply("dflash"))
+    monkeypatch.setattr(DFlashDLMTransform, "apply", record_apply("dflash_dlm"))
+    monkeypatch.setattr(DFlashTLMTransform, "apply", record_apply("dflash_tlm"))
+    monkeypatch.setattr(SpDTransform, "apply", record_apply("spd"))
+    monkeypatch.setattr(SamplerTransform, "apply", record_apply("sampler"))
+
+    QEFFAutoModelForCausalLM(make_tiny_qwen3(), qaic_config=qaic_config)
+
+    assert applied == expected_order
+
+
+# ---------------------------------------------------------------------------
 # Tests: draft (DLM) side -- DFlashTransform + DFlashDLMTransform
 # ---------------------------------------------------------------------------
 
@@ -104,6 +147,12 @@ class TestDFlashDraftTransform:
 
         hf_model = make_tiny_qwen3()
         return QEFFAutoModelForCausalLM(hf_model, qaic_config={"dflash_dlm": True})
+
+    def test_unsupported_dlm_architecture_raises(self):
+        from QEfficient import QEFFAutoModelForCausalLM
+
+        with pytest.raises(NotImplementedError, match="QEffLlamaForCausalLM"):
+            QEFFAutoModelForCausalLM(make_tiny_llama(), qaic_config={"dflash_dlm": True})
 
     def test_dflash_transform_swaps_to_dflash_classes(self):
         qeff_model = self._build_dlm()
@@ -163,6 +212,22 @@ class TestDFlashDraftTransform:
 @pytest.mark.transforms
 class TestDFlashTLMTransform:
     """DFlashTLMTransform on the target (TLM) side -- multiple model families."""
+
+    @pytest.mark.parametrize("make_model,label", _TLM_MODEL_FACTORIES, ids=_TLM_MODEL_IDS)
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+    def test_dflash_tlm_projection_matches_model_precision(self, make_model, label, dtype):
+        from QEfficient import QEFFAutoModelForCausalLM
+        from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
+
+        qeff_model = QEFFAutoModelForCausalLM(make_model().to(dtype=dtype), qaic_config={"target_layer_ids": [1]})
+        inner = qeff_model.model.model
+        target_hidden = torch.randn(1, 2, HIDDEN_SIZE, dtype=dtype)
+
+        assert inner.fc.weight.dtype is dtype, f"[{label}] fc dtype does not match model dtype"
+        assert inner.hidden_norm.weight.dtype is dtype, f"[{label}] hidden_norm dtype does not match model dtype"
+        projected = compute_dflash_target_hidden_states([target_hidden], inner.fc, inner.hidden_norm)
+        assert projected.dtype is dtype
+        assert torch.isfinite(projected).all()
 
     @pytest.mark.parametrize("make_model,label", _TLM_MODEL_FACTORIES, ids=_TLM_MODEL_IDS)
     def test_dflash_tlm_transform_attaches_fc_and_hidden_norm(self, make_model, label):

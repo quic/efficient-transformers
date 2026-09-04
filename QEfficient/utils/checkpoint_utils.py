@@ -5,7 +5,30 @@
 #
 # -----------------------------------------------------------------------------
 
+from pathlib import Path
+
+import torch
+from huggingface_hub import snapshot_download
+from safetensors import safe_open
 from safetensors.torch import load_file
+
+
+def load_checkpoint_weights(checkpoint_path: str, keys: set[str]) -> dict[str, torch.Tensor]:
+    """Read selected weight tensors from a local checkpoint directory or Hugging Face repository."""
+    path = Path(checkpoint_path)
+    if not path.is_dir():
+        path = Path(snapshot_download(checkpoint_path, allow_patterns=["*.safetensors", "pytorch_model*.bin"]))
+
+    found: dict[str, torch.Tensor] = {}
+    for safetensors_file in sorted(path.glob("*.safetensors")):
+        with safe_open(str(safetensors_file), framework="pt", device="cpu") as checkpoint:
+            available_keys = set(checkpoint.keys())
+            found.update({key: checkpoint.get_tensor(key) for key in keys & available_keys})
+    if not found:
+        for pytorch_file in sorted(path.glob("pytorch_model*.bin")):
+            state_dict = torch.load(str(pytorch_file), map_location="cpu", weights_only=True)
+            found.update({key: state_dict[key] for key in keys if key in state_dict})
+    return found
 
 
 def load_checkpoint(model, checkpoint: str, strict=False, post_process_func=None):
