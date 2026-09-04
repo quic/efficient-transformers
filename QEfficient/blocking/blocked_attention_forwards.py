@@ -123,6 +123,31 @@ def update_running_softmax_prefill(
     return current_max, current_denominator, output
 
 
+def _read_kv_block(
+    *,
+    past_key_value: Cache,
+    start_index: int,
+    end_index: int,
+    layer_idx: int,
+    kv_block_size: int,
+    paged_attention: bool,
+    j: int,
+    block_table: Optional[torch.Tensor],
+    cache_kwargs: Dict[str, Any],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Read one key/value cache block.
+
+    When ``paged_attention`` is set the block is gathered through the paged-attention
+    block table; otherwise it is read as a contiguous slice of the KV cache.
+    """
+    if paged_attention:
+        position_ids = cache_kwargs.get("position_ids")
+        block_index = block_table[:, j]
+        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
+        return past_key_value.read_only_paged_attention(block_index, updated, layer_idx, cache_kwargs)
+    return past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
+
+
 def blocked_kv_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -135,6 +160,7 @@ def blocked_kv_attention_forward(
     layer_idx: int,
     past_key_value: Cache,
     *,
+    paged_attention: bool = False,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
@@ -147,7 +173,9 @@ def blocked_kv_attention_forward(
 
     This reduces peak activation memory for long contexts by splitting the cached
     key/value sequence into ``num_kv_blocks`` chunks while preserving numerically
-    stable softmax accumulation across blocks.
+    stable softmax accumulation across blocks. When ``paged_attention`` is set, cache
+    blocks are gathered through the paged-attention block table instead of contiguous
+    slices, and the block extent is taken from the physical cache layout.
     """
     # Initialize result tensor
     output = torch.zeros_like(query)
@@ -168,7 +196,13 @@ def blocked_kv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked KV attention.")
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-ctx_len // num_kv_blocks)
+    block_table = None
+    if paged_attention:
+        block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
+        kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+    else:
+        kv_block_size = -(-ctx_len // num_kv_blocks)
+
     if hasattr(module, "config"):
         mask_dtype = module.config.torch_dtype
     else:
@@ -195,7 +229,17 @@ def blocked_kv_attention_forward(
                 if skip_future.item():
                     break
 
-        k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        k_block, v_block = _read_kv_block(
+            past_key_value=past_key_value,
+            start_index=start_index,
+            end_index=end_index,
+            layer_idx=layer_idx,
+            kv_block_size=kv_block_size,
+            paged_attention=paged_attention,
+            j=j,
+            block_table=block_table,
+            cache_kwargs=cache_kwargs,
+        )
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
         attn_weights_block = torch.matmul(query, k_block_states.transpose(2, 3)) * scaling
@@ -1033,6 +1077,7 @@ def blocked_qkv_attention_forward(
     layer_idx: int,
     past_key_value: Cache,
     *,
+    paged_attention: bool = False,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
@@ -1060,7 +1105,14 @@ def blocked_qkv_attention_forward(
     num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
     num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
-    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+
+    block_table = None
+    if paged_attention:
+        block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
+        kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = kv_block_size * num_kv_blocks
+    else:
+        kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     q_output_blocks = []
     q_attn_blocks = []
@@ -1073,6 +1125,39 @@ def blocked_qkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # not on q_block_idx, so hoist the read out of the q-block loop below.
+    kv_blocks = []
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        if j == num_kv_blocks - 1:
+            kv_len_block = past_seen_tokens - start_index
+        else:
+            kv_len_block = kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # Eager mode Only
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        k_block, v_block = _read_kv_block(
+            past_key_value=past_key_value,
+            start_index=start_index,
+            end_index=end_index,
+            layer_idx=layer_idx,
+            kv_block_size=kv_block_size,
+            paged_attention=paged_attention,
+            j=j,
+            block_table=block_table,
+            cache_kwargs=cache_kwargs,
+        )
+        k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
+        kv_blocks.append((start_index, end_index, skip_future, k_block_states, v_block_states))
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -1091,25 +1176,7 @@ def blocked_qkv_attention_forward(
         current_denominator = torch.zeros(batch_size, num_heads, q_len_block, device=query.device)
         output_blocks = torch.zeros((batch_size, num_heads, q_len_block, DH), device=query.device, dtype=query.dtype)
 
-        for j in range(num_kv_blocks):
-            start_index = j * kv_block_size
-            if j == num_kv_blocks - 1:
-                kv_len_block = past_seen_tokens - start_index
-            else:
-                kv_len_block = kv_block_size
-            end_index = start_index + kv_len_block
-
-            skip_future = None
-            if skip_kv:
-                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-                # Eager mode Only
-                if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
-                    if skip_future.item():
-                        break
-
-            k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
-            k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
-
+        for start_index, end_index, skip_future, k_block_states, v_block_states in kv_blocks:
             attn_weights_block = torch.matmul(q_block, k_block_states.transpose(2, 3)) * scaling
             # position bias needed for mpt model
             if position_bias is not None:
@@ -1179,6 +1246,7 @@ def blocked_hqkv_attention_forward(
     layer_idx: int,
     past_key_value: Cache,
     *,
+    paged_attention: bool = False,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
@@ -1203,7 +1271,13 @@ def blocked_hqkv_attention_forward(
     num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks else 1
+    block_table = None
+    if paged_attention:
+        block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
+        kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = kv_block_size * num_kv_blocks
+    else:
+        kv_block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks else 1
 
     h_output_blocks = []
     h_attn_blocks = []
@@ -1216,6 +1290,39 @@ def blocked_hqkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # not on head_block_idx/q_block_idx, so hoist the read out of the loops below.
+    kv_blocks = []
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        if j == num_kv_blocks - 1:
+            kv_len_block = past_seen_tokens - start_index
+        else:
+            kv_len_block = kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # Eager mode Only
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        k_block, v_block = _read_kv_block(
+            past_key_value=past_key_value,
+            start_index=start_index,
+            end_index=end_index,
+            layer_idx=layer_idx,
+            kv_block_size=kv_block_size,
+            paged_attention=paged_attention,
+            j=j,
+            block_table=block_table,
+            cache_kwargs=cache_kwargs,
+        )
+        k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
+        kv_blocks.append((start_index, end_index, skip_future, k_block_states, v_block_states))
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -1247,25 +1354,7 @@ def blocked_hqkv_attention_forward(
                 (batch_size, h_end - h_start, q_len_block, DH), device=query.device, dtype=query.dtype
             )
 
-            for j in range(num_kv_blocks):
-                start_index = j * kv_block_size
-                if j == num_kv_blocks - 1:
-                    kv_len_block = past_seen_tokens - start_index
-                else:
-                    kv_len_block = kv_block_size
-                end_index = start_index + kv_len_block
-
-                skip_future = None
-                if skip_kv:
-                    skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-                    # Eager mode Only
-                    if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
-                        if skip_future.item():
-                            break
-
-                k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
-                k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
-
+            for start_index, end_index, skip_future, k_block_states, v_block_states in kv_blocks:
                 k_g = k_block_states[:, h_start:h_end, :, :]
                 v_g = v_block_states[:, h_start:h_end, :, :]
 
@@ -1339,6 +1428,7 @@ def blocked_bhqkv_attention_forward(
     layer_idx: int,
     past_key_value: Cache,
     *,
+    paged_attention: bool = False,
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -1364,7 +1454,14 @@ def blocked_bhqkv_attention_forward(
     num_q_blocks = max(1, _normalize_int(num_q_blocks))
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+
+    block_table = None
+    if paged_attention:
+        block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
+        kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = kv_block_size * num_kv_blocks
+    else:
+        kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []
     h_attn_blocks = []
@@ -1384,6 +1481,39 @@ def blocked_bhqkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # not on head_block_idx/q_block_idx/b_block_idx, so hoist the read out of the loops below.
+    kv_blocks = []
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        if j == num_kv_blocks - 1:
+            kv_len_block = past_seen_tokens - start_index
+        else:
+            kv_len_block = kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # Eager mode Only
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        k_block, v_block = _read_kv_block(
+            past_key_value=past_key_value,
+            start_index=start_index,
+            end_index=end_index,
+            layer_idx=layer_idx,
+            kv_block_size=kv_block_size,
+            paged_attention=paged_attention,
+            j=j,
+            block_table=block_table,
+            cache_kwargs=cache_kwargs,
+        )
+        k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
+        kv_blocks.append((start_index, end_index, skip_future, k_block_states, v_block_states))
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -1427,27 +1557,7 @@ def blocked_bhqkv_attention_forward(
                     (batch_len, h_end - h_start, q_len_block, DH), device=query.device, dtype=query.dtype
                 )
 
-                for j in range(num_kv_blocks):
-                    start_index = j * kv_block_size
-                    if j == num_kv_blocks - 1:
-                        kv_len_block = past_seen_tokens - start_index
-                    else:
-                        kv_len_block = kv_block_size
-                    end_index = start_index + kv_len_block
-
-                    skip_future = None
-                    if skip_kv:
-                        skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-                        # Eager mode Only
-                        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
-                            if skip_future.item():
-                                break
-
-                    k_block, v_block = past_key_value.read_only_blockedKV(
-                        start_index, end_index, layer_idx, cache_kwargs
-                    )
-                    k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
-
+                for start_index, end_index, skip_future, k_block_states, v_block_states in kv_blocks:
                     k_g = k_block_states[batch_start : batch_start + batch_len, h_start:h_end, :, :]
                     v_g = v_block_states[batch_start : batch_start + batch_len, h_start:h_end, :, :]
 

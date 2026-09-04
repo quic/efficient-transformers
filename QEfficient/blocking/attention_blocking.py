@@ -138,6 +138,7 @@ class AttentionBlockingConfig:
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    paged_attention: Optional[bool] = False
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
@@ -165,7 +166,11 @@ BLOCKING_MODE_REQUIRED_PARAMS: Dict[BlockingMode, list] = {
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
+    return past_key_value is not None and hasattr(past_key_value, "read_only_blocked_kv")
+
+
+def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool:
+    return past_key_value is not None and hasattr(past_key_value, "read_only_paged_attention")
 
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
@@ -204,7 +209,10 @@ def past_key_value_update(
     sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
-        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+        }
         if sliding_window is not None:
             cache_kwargs.update(
                 {
@@ -232,6 +240,8 @@ def generic_blocked_attention_interface(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    block_table: Optional[torch.LongTensor] = None,
+    slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Optional[Callable] = None,
     score_mod: Optional[Callable] = None,
@@ -249,9 +259,27 @@ def generic_blocked_attention_interface(
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
+    use_paged_kv_blocked = (
+        blocking_config is not None
+        and blocking_config.paged_attention
+        and supports_paged_attention_blocked_kv(past_key_value)
+    )
+
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
-        if prefill_only:
+        if use_paged_kv_blocked and sliding_window is None:
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "block_table": block_table,
+                "slot_id": slot_id,
+            }
+            past_key_value.write_only_paged_attention(key, value, module.layer_idx, cache_kwargs)
+        elif use_paged_kv_blocked and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
+        elif prefill_only:
             if sliding_window is not None:
                 cache_kwargs.update(
                     {
@@ -266,6 +294,10 @@ def generic_blocked_attention_interface(
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+            elif use_kv_blocked and sliding_window is not None:
+                raise NotImplementedError(
+                    "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+                )
             else:
                 key, value, attention_mask, cache_kwargs = past_key_value_update(
                     module=module,
@@ -304,6 +336,7 @@ def generic_blocked_attention_interface(
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
+        paged_attention=blocking_config.paged_attention,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
         # MLA-specific
@@ -312,3 +345,4 @@ def generic_blocked_attention_interface(
     )
 
     return attn_output, attn_weights
+

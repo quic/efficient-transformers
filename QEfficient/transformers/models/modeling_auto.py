@@ -1277,7 +1277,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
-        self.model.qaic_config = qaic_config
+        self.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
         if qaic_config:
@@ -1500,6 +1500,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
+        self.lang_model.model.qaic_config = qaic_config
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
     @classmethod
@@ -1669,7 +1670,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
+        if self.lang_model.qaic_config is not None and self.lang_model.qaic_config.get(
             "include_sampler", False
         ):
             logits_index = output_names["lang"].index("logits")
@@ -1680,7 +1681,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.model.language_model.config.vocab_size,
-                qaic_config=self.lang_model.model.qaic_config,
+                qaic_config=self.lang_model.qaic_config,
             )
 
         layerwise_export = QEFFBaseModel._layerwise_active
@@ -2297,7 +2298,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
             # Create VisionLanguageGeneration instance
-            batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
+            batch_size_comp, ctx_len_comp, fbs, num_kv_blocks_comp = get_compilation_dims(self.lang_model.qpc_path)
             vlm_gen = VisionLanguageGeneration(
                 qeff_model=self,
                 lang_qpc_path=self.lang_model.qpc_path,
@@ -2306,6 +2307,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 processor=processor,
                 device_id=device_ids,  # if device_ids is not None else [0],
                 ctx_len=ctx_len_comp,
+                num_kv_blocks=num_kv_blocks_comp,
                 full_batch_size=fbs,
                 comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
@@ -2375,7 +2377,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.vision_model.qpc_path:
             vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+        batch_size, ctx_len, fbs, num_kv_blocks = get_compilation_dims(self.lang_model.qpc_path)
 
         pad_token_id = 1
 
@@ -2494,6 +2496,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
+        if num_kv_blocks:
+            kv_block_size = -(-ctx_len // num_kv_blocks)
+            lang_inputs["block_table"] = np.arange(batch_size * num_kv_blocks, dtype=np.int64).reshape(
+                batch_size, num_kv_blocks
+            )
+            lang_inputs["slot_id"] = np.zeros(batch_size, dtype=np.int64)
+
         lang_start = perf_counter()
         # Run prefill
         chunk_inputs = lang_inputs.copy()
@@ -2588,6 +2597,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["mm_token_type_ids"] = np.zeros_like(
                 lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
             )
+        if num_kv_blocks:
+            lang_inputs["slot_id"] = lang_inputs["position_ids"].reshape(-1, batch_size).max(axis=0) % kv_block_size
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
@@ -2634,6 +2645,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 lang_inputs["mm_token_type_ids"] = np.zeros_like(
                     lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
                 )
+            if num_kv_blocks:
+                lang_inputs["slot_id"] += 1
+                lang_inputs["slot_id"] %= kv_block_size
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
@@ -3099,7 +3113,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
         )
-        batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
+        batch_size, ctx_len, fbs, _ = get_compilation_dims(self.qpc_path)
         pad_token_id = 1
         # Skip inputs/outputs
         qpc_session.skip_buffers(
@@ -3605,7 +3619,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
-        self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
+        self.model, transformed = SpDTransform.apply(self.model, qaic_config=qaic_config, **kwargs)
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -3622,7 +3636,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        self.model, transformed = SamplerTransform.apply(self.model, qaic_config=qaic_config, **kwargs)
         # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
@@ -3964,6 +3978,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
+        supports_paged_attention = False
+        # increase seq_len if using a larger number of blocks and set PagedAttention params if required
+        if self.hash_params.get("blocking_kwargs", None):
+            blocking_kwargs = self.hash_params["blocking_kwargs"]
+            block_counts = [
+                blocking_kwargs.num_q_blocks,
+                blocking_kwargs.num_kv_blocks,
+                blocking_kwargs.num_batch_blocks,
+            ]
+            max_blocks = max([b for b in block_counts if b is not None], default=1)
+            block_size = -(-seq_len // max_blocks)
+            seq_len = block_size * max_blocks
+            num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
+            supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
+            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if supports_paged_attention else seq_len
+
         # TODO: Remove this hack ##################
         if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
@@ -4034,6 +4064,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -4055,6 +4086,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("next_tokens")
         else:
             output_names.append("logits")
+
+        if supports_paged_attention:
+            batch, num_kv_heads, CL, dh = kv_cache_shape
+            total_num_kv_blocks = batch * num_kv_blocks
+            kv_cache_shape = [total_num_kv_blocks, num_kv_heads, kv_block_size, dh]
+            example_inputs["block_table"] = torch.arange((bs * num_kv_blocks), dtype=torch.int64).view(
+                bs, num_kv_blocks
+            )
+            example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
+            dynamic_axes["block_table"] = {0: "batch_size"}
+            dynamic_axes["slot_id"] = {0: "batch_size"}
+            # Assuming 4d pkv, might have to recheck for GPTBigCode with 3d pkv
+            pkv_dynamic_axes = {
+                0: "total_num_kv_blocks",
+                2: "kv_block_size",
+            }
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
         if (
@@ -4240,7 +4287,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
             )
-
     def build_prefill_specialization(
         self,
         prefill_seq_len: int = 32,
@@ -4302,6 +4348,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", ""):
+            num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
+            spec["num_kv_blocks"] = num_kv_blocks
+            spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+            spec["kv_block_size"] = -(-ctx_len // num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is False else "Prefill"
         return result
@@ -4365,6 +4416,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", ""):
+            num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
+            spec["num_kv_blocks"] = num_kv_blocks
+            spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+            spec["kv_block_size"] = -(-ctx_len // num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode"
         return result

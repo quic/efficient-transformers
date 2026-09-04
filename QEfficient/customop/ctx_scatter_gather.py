@@ -42,6 +42,12 @@ class CtxScatterFunc(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        if not torch.onnx.is_in_onnx_export():
+            # Clone to avoid mutating the caller's live KV-cache buffer in place. Skipped
+            # during export: the traced ScatterND is already pure/functional at the ONNX
+            # level, and cloning here perturbs the trace enough to break cross-layer
+            # decoder subfunction dedup under use_onnx_subfunctions=True.
+            data = data.clone()
         batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_idx = position_ids.unsqueeze(1)
@@ -55,6 +61,56 @@ class CtxScatterFunc(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
+
+
+@qeff_custom_op("com.qualcomm.cloud", 1)
+def CtxScatterPagedAttention(
+    data: onnxscript.FLOAT, block_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
+) -> onnxscript.FLOAT:
+    # Find dims
+    num_blocks = ops.Gather(ops.Shape(block_index), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
+
+    # Expanded shape to create indices
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    exp_shape = ops.Concat(num_blocks, num_heads, seq_len, one, axis=0)
+
+    # Create indices
+    block_idx = ops.Expand(ops.Unsqueeze(block_index, [3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [1, 3]), exp_shape)
+    indices = ops.Concat(block_idx, head_idx, ctx_idx, axis=3)
+
+    return ops.ScatterND(data, indices, updates)
+
+
+class CtxScatterFuncPagedAttention(torch.autograd.Function):
+    """
+    Function to scatter the current key values into KV-cache.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, block_index: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        if not torch.onnx.is_in_onnx_export():
+            # See CtxScatterFunc.forward above for why this is skipped during export.
+            data = data.clone()
+        block_index = block_index.view(-1, 1, 1)
+        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_idx = position_ids.unsqueeze(1)
+        data[block_index, head_idx, ctx_idx] = updates
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(
+        g: torch.Graph, data: torch.Value, block_index: torch.Value, position_ids: torch.Value, updates: torch.Value
+    ) -> torch.Value:
+        return g.onnxscript_op(CtxScatterPagedAttention, data, block_index, position_ids, updates).setTypeAs(data)
 
 
 @qeff_custom_op("com.qualcomm.cloud", 1)
@@ -393,3 +449,48 @@ class CtxGatherFuncBlockedKVBatch(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKVBatch, data, ctx_indices).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGatherPagedAttention(
+    data: onnxscript.FLOAT, block_indices: onnxscript.INT32, ctx_indices: onnxscript.INT32
+) -> onnxscript.FLOAT:
+    num_kv_blocks = ops.Gather(ops.Shape(block_indices), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    seq_len = ops.Gather(ops.Shape(ctx_indices), [1])
+
+    # Expanded shape to create indices
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    exp_shape = ops.Concat(num_kv_blocks, num_heads, seq_len, one, axis=0)
+
+    # Create indices
+    block_idx = ops.Expand(ops.Unsqueeze(block_indices, [1, 3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    ctx_idx = ops.Expand(ops.Unsqueeze(ctx_indices, [1, 3]), exp_shape)
+    indices = ops.Concat(block_idx, head_idx, ctx_idx, axis=3)
+
+    return ops.GatherND(data, indices)
+
+
+class CtxGatherFuncPagedAttention(torch.autograd.Function):
+    """
+    Function to gather only the valid key values from KV-cache.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, block_indices: torch.Tensor, ctx_indices: torch.Tensor):
+        block_indices = block_indices.view(-1, 1, 1)
+        head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_indices = ctx_indices.unsqueeze(1)
+        return data[block_indices, head_indices, ctx_indices]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(
+        g: torch.Graph, data: torch.Value, block_indices: torch.Value, ctx_indices: torch.Value
+    ) -> torch.Value:
+        return g.onnxscript_op(CtxGatherPagedAttention, data, block_indices, ctx_indices).setTypeAs(data)

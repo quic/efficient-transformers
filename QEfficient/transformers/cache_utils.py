@@ -15,6 +15,8 @@ from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
+    CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -400,7 +402,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
 
-    def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
+    def read_only_blocked_kv(self, start_index, end_index, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer for each KV block.
 
@@ -446,6 +448,98 @@ class QEffDynamicLayer(CacheLayerMixin):
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
+
+    def read_only_paged_attention(self, block_index, updated, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer for each KV block.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            block_index :
+                Block index of the K/V block to read from the block table
+
+            updated:
+                Was the current block updated during the current write? If yes, then read position_ids.max % block_size worth of entires from current block
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        # Gather
+        k_out, v_out = self.keys, self.values
+        if k_out is not None:
+            self._mark_initialized(k_out)
+        position_ids = cache_kwargs.get("position_ids")
+        batch, seq_len = position_ids.shape
+        num_kv_blocks, num_kv_heads, block_size, dh = k_out.shape
+        ctx_indices = torch.arange(block_size)[None, ...]
+        block_fill_len = position_ids.max(1, keepdim=True).values % block_size
+        gather_limit = torch.where(updated, block_fill_len, block_size)
+
+        block_indices = block_index.unsqueeze(-1)
+        gather_limit = torch.where(block_indices < 0, 0, gather_limit)
+        invalid_mask = ctx_indices > gather_limit
+
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        k_out = CtxGatherFuncPagedAttention.apply(k_out, block_indices, ctx_indices)
+        v_out = CtxGatherFuncPagedAttention.apply(v_out, block_indices, ctx_indices)
+
+        v_out = torch.where((invalid_mask.unsqueeze(1)).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        return k_out, v_out
+
+    def write_only_paged_attention(self, key_states, value_states, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
+        # Update the cache
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+        else:
+            self._mark_initialized(self.keys)
+            position_ids = cache_kwargs.get("position_ids")
+            block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
+            slot_id = cache_kwargs.get("slot_id")
+            batch, num_kv_heads, seq_len, dh = key_states.shape
+            num_kv_blocks, num_kv_heads, block_size, dh = self.keys.shape
+            if seq_len > block_size:
+                raise NotImplementedError(
+                    f"write_only_paged_attention only supports writing within a single KV block per call "
+                    f"(seq_len={seq_len} > block_size={block_size}). Prefill/decode chunks larger than "
+                    f"block_size must be split by the caller before writing to a paged KV cache."
+                )
+            if int((slot_id + seq_len).max()) > block_size:
+                raise NotImplementedError(
+                    f"write_only_paged_attention write would cross a KV block boundary "
+                    f"(slot_id + seq_len > block_size={block_size}). Writes must stay within a single "
+                    f"physical block; split the write across blocks before calling this method."
+                )
+            block_index = position_ids.max(1).values // block_size  # Assuming only 1 block is written at max
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            ctx_indices = torch.arange(seq_len) + slot_id.unsqueeze(-1)
+
+            rows = torch.arange(batch)
+            block_id = block_table[rows, block_index].unsqueeze(-1)
+            ctx_indices = torch.where(block_id < 0, invalid_scatter_index, ctx_indices)
+            block_id = block_id.unsqueeze(-1)
+            self.keys = CtxScatterFuncPagedAttention.apply(self.keys, block_id, ctx_indices, key_states)
+            self.values = CtxScatterFuncPagedAttention.apply(self.values, block_id, ctx_indices, value_states)
 
     def write_only(self, key_states, value_states, cache_kwargs):
         """
@@ -886,7 +980,7 @@ class QEffDynamicCache(Cache):
         for idx in range(len(self.layers)):
             yield self[idx]
 
-    def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
+    def read_only_blocked_kv(self, start_index, end_index, layer_idx, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -903,7 +997,7 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        return self.layers[layer_idx].read_only_blockedKV(start_index, end_index, cache_kwargs)
+        return self.layers[layer_idx].read_only_blocked_kv(start_index, end_index, cache_kwargs)
 
     def read_only_blocked_K(self, start_index, end_index, layer_idx, cache_kwargs):
         """
@@ -988,6 +1082,43 @@ class QEffDynamicCache(Cache):
         return self.layers[layer_idx].read_only_blocked_V_batch(
             start_index, end_index, cache_kwargs, folded_cache=folded_cache
         )
+
+    def read_only_paged_attention(self, block_index, updated, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_paged_attention(block_index, updated, cache_kwargs)
+        # return self.layers[layer_idx].read_only_paged_attention(start_index, end_index, cache_kwargs)
+
+    def write_only_paged_attention(self, key_states, value_states, layer_idx, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_paged_attention(key_states, value_states, cache_kwargs)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
@@ -1567,7 +1698,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
             self.values = ctx_scatter(self.values, kv_position_ids, value_states)
         return self.keys, self.values
 
-    def read_only_blockedKV(
+    def read_only_blocked_kv(
         self,
         start_idx: torch.Tensor,
         end_idx: torch.Tensor,

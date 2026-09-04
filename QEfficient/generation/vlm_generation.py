@@ -86,6 +86,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         vision_qpc_path: str,
         device_id: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
+        num_kv_blocks: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
@@ -110,6 +111,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             vision_qpc_path: Path to vision encoder QPC
             device_id: Device IDs for execution (default: [0])
             ctx_len: Context length
+            num_kv_blocks: Number of physical KV blocks for paged attention on the language
+                QPC (optional). When None (default), paged attention is disabled and
+                block_table/slot_id are never populated or sent to the language session.
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
@@ -133,6 +137,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             tokenizer=tokenizer,
             qpc_path=lang_qpc_path,
             full_batch_size=full_batch_size,
+            num_kv_blocks=num_kv_blocks,
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
@@ -145,6 +150,19 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
             activate=False,  # vision components need to be initialized first
+        )
+
+        # Physical KV block table for paged attention on the language QPC. None (default)
+        # when num_kv_blocks isn't supplied, matching the non-VLM TextGeneration path
+        # (_setup_model_execution_inputs) -- every paged-attention code path below is
+        # already gated on self.block_table/self.num_kv_blocks being non-None.
+        execution_batch_size = full_batch_size if full_batch_size else self.batch_size
+        self.block_table = (
+            np.arange(execution_batch_size * self.num_kv_blocks, dtype=np.int64).reshape(
+                execution_batch_size, self.num_kv_blocks
+            )
+            if self.num_kv_blocks
+            else None
         )
 
         # Vision-specific initialization
@@ -298,6 +316,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         num_chunks: int,
         decode_batch_id: Optional[np.ndarray] = None,
         prefill_logit_bs: int = 1,
+        block_table: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """
         Execute chunked prefill with language inputs
@@ -307,6 +326,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             num_chunks: Number of chunks to process
             decode_batch_id: Batch ID for continuous batching (optional)
             prefill_logit_bs: Batch size for prefill logits
+            block_table: Physical KV block table for paged attention (optional)
 
         Returns:
             Final prefill outputs
@@ -367,6 +387,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 "position_ids": position_ids_slice,
                 "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
             }
+
+            if block_table is not None:
+                chunk_inputs["block_table"] = block_table
+                chunk_start_position_id = i * self._prefill_seq_len
+                chunk_inputs["slot_id"] = np.full(
+                    (prefill_logit_bs,), chunk_start_position_id % self.kv_block_size, dtype=np.int64
+                )
 
             if "mm_token_type_ids" in lang_inputs:
                 chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
@@ -467,7 +494,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
             # Execute chunked prefill
-            outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs)
+            outputs = self._execute_chunked_prefill(
+                lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs, self.block_table
+            )
 
             self._session.skip_buffers(vision_outputs)
 
@@ -584,7 +613,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             logger.warning("num_frames not specified, defaulting to 1")
             num_frames = 1
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self._qpc_path)
+        batch_size, ctx_len, fbs, _ = get_compilation_dims(self._qpc_path)
 
         pad_token_id = 1
 
@@ -721,7 +750,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
         # Execute chunked prefill
-        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks)
+        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, block_table=self.block_table)
 
         self._session.skip_buffers(vision_outputs)
 
@@ -945,11 +974,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 logger.debug(f"Set vision buffers for batch_id {decode_batch_id} prefill")
 
                 # Run prefill with cached inputs
+                block_table = (
+                    self.block_table[decode_batch_id].reshape(1, -1) if self.block_table is not None else None
+                )
                 outputs = self._execute_chunked_prefill(
                     lang_inputs,
                     num_chunks,
                     decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                     prefill_logit_bs=1,
+                    block_table=block_table,
                 )
 
                 self._session.skip_buffers(vision_outputs.keys())
