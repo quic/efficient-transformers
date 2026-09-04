@@ -17,6 +17,10 @@ from safetensors import safe_open
 from torch import nn
 from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
+from QEfficient.generation.cloud_infer import (
+    QAICInferenceSession,
+    is_retained_state_name,
+)
 from QEfficient.utils.logging_utils import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +49,10 @@ MODEL_MAP = {
     "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
     "Qwen3-Coder-30B-A3B": ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "z-lab/Qwen3-Coder-30B-A3B-DFlash"),
     "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
-    "Qwen3-VL-32B-Instruct": ("Qwen/Qwen3-VL-32B-Instruct", "Path_to_Qwen3-VL-32B_DFlash"),
+    "Qwen3-VL-32B-Instruct": (
+        "Qwen/Qwen3-VL-32B-Instruct",
+        "/local/mnt/workspace/vjanfaza/aisyssol_scratch/cache/DFlash-VLM/Qwen3-VL-32B-Instruct-DFlash",
+    ),
 }
 
 
@@ -60,6 +67,41 @@ def _build_aliases(model_map):
 
 
 MODEL_ALIASES = _build_aliases(MODEL_MAP)
+
+
+def load_spd_sessions(tlm_qpc: str, dlm_qpc: str, tlm_devices: list[int], dlm_devices: list[int]):
+    """Create DFlash sessions and enable retained-state cache handling."""
+    dlm_session = QAICInferenceSession(dlm_qpc, dlm_devices)
+    tlm_session = QAICInferenceSession(tlm_qpc, tlm_devices)
+    for session in (dlm_session, tlm_session):
+        session.skip_buffers(
+            [
+                name
+                for name in session.input_names + session.output_names
+                if is_retained_state_name(name) or name.endswith("_RetainedState")
+            ]
+        )
+    return dlm_session, tlm_session
+
+
+def get_spd_prompt_chunk_size(tlm_session: QAICInferenceSession) -> int:
+    """Return the largest compiled input sequence length used for TLM prefill."""
+    input_index = tlm_session.binding_index_map["input_ids"]
+    return max(
+        [shape[input_index][1][1] for shape in tlm_session.allowed_shapes] + [tlm_session.bindings[input_index].dims[1]]
+    )
+
+
+def validate_spd_decode_specialization(tlm_session: QAICInferenceSession, block_size: int) -> None:
+    """Require a TLM specialization that verifies one complete DFlash block."""
+    input_index = tlm_session.binding_index_map["input_ids"]
+    sequence_lengths = sorted({shape[input_index][1][1] for shape in tlm_session.allowed_shapes})
+    logger.info(f"TLM input_ids seq_lens (allowed shapes): {sequence_lengths}")
+    if block_size not in sequence_lengths:
+        raise ValueError(
+            f"TLM QPC has no decode specialization with seq_len={block_size} "
+            f"(found {sequence_lengths}). Recompile the TLM with dflash_block_size={block_size}."
+        )
 
 
 def resolve_model_name(name: str) -> str:
@@ -450,9 +492,7 @@ def build_dlm_model(
 
     lm_w = dlm_model.lm_head.weight
     if tuple(lm_head_weight.shape) != tuple(lm_w.shape):
-        raise ValueError(
-            f"lm_head shape mismatch: base {tuple(lm_head_weight.shape)} vs DLM {tuple(lm_w.shape)}."
-        )
+        raise ValueError(f"lm_head shape mismatch: base {tuple(lm_head_weight.shape)} vs DLM {tuple(lm_w.shape)}.")
     if embed_weight is not None and tuple(embed_weight.shape) != tuple(dlm_inner.embed_tokens.weight.shape):
         raise ValueError(
             f"embed_tokens shape mismatch: base {tuple(embed_weight.shape)} "
@@ -710,32 +750,3 @@ def reformat_jsonl_by_category(questions: list) -> list:
         category = q.get("category", "")
         q["turns"][0] = format_prompt(q["turns"][0], category)
     return questions
-
-
-# ===== QPC VALIDATION (shared by the vision benchmark scripts) =====
-
-
-def qpc_num_devices(qpc_dir):
-    for cand in (
-        os.path.join(qpc_dir, "qconfig.json"),
-        os.path.join(os.path.dirname(qpc_dir), "qconfig.json"),
-    ):
-        if os.path.exists(cand):
-            try:
-                cfg = json.load(open(cand))
-                return int(cfg["qpc_config"]["compiler_config"]["mdp_ts_num_devices"])
-            except Exception:
-                return None
-    return None
-
-
-def qpc_ctx_len(qpc_dir):
-    spec_path = os.path.join(os.path.dirname(qpc_dir), "specializations.json")
-    if os.path.exists(spec_path):
-        try:
-            specs = json.load(open(spec_path))["specializations"]
-            vals = {int(s["symbols"]["ctx_len"]) for s in specs if "ctx_len" in s.get("symbols", {})}
-            return min(vals) if vals else None
-        except Exception:
-            return None
-    return None

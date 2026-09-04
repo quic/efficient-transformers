@@ -3,12 +3,12 @@
 Two entry points wrap the SPD (speculative-decoding) compile + run pipeline for
 **text-only** language models and **vision-language (VLM, multimodal)** models. Each
 resolves/compiles the QPCs (or reuses pre-built ones), then runs SPD inference on a
-single prompt in-process via `QEfficient.generation.dflash_generation`.
+single prompt in-process via `QEfficient.generation.dflash_generation`. The three model adapters share the same internal `_run_spd_core` flow.
 
 | | front-end (`--model_name`, builds QPCs) | runs via |
 |---|---|---|
-| text — single prompt | `basic_inference_text.py` | `dflash_generation.run_text_inference` |
-| vision — single prompt/image | `basic_inference_vision.py` | `dflash_generation.run_vision_inference` |
+| text — single prompt | `basic_inference_text.py` | `dflash_generation.run_spd_inference_single` |
+| vision — single prompt/image | `basic_inference_vision.py` | `run_spd_inference_gemma4` or `run_spd_inference_qwen3_vl` |
 
 ---
 
