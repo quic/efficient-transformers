@@ -36,6 +36,7 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -325,9 +326,15 @@ class QEffQwen3Model(Qwen3Model):
         sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
         cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
-        for decoder_layer in self.layers:
+        self.target_layer_ids = getattr(self, "target_layer_ids", None)
+        target_hidden_list = []
+
+        for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
+
+            if self.target_layer_ids and idx in self.target_layer_ids:
+                target_hidden_list.append(hidden_states)
 
             hidden_states = decoder_layer(
                 hidden_states,
@@ -351,10 +358,14 @@ class QEffQwen3Model(Qwen3Model):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        target_hidden = None
+        if self.target_layer_ids:
+            target_hidden = compute_dflash_target_hidden_states(target_hidden_list, self.fc, self.hidden_norm)
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
-            hidden_states=all_hidden_states,
+            hidden_states=target_hidden if target_hidden is not None else all_hidden_states,
         )
 
 
@@ -394,6 +405,9 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
 
+        if getattr(self.model, "target_layer_ids", None):
+            output_hidden_states = False
+
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -409,6 +423,20 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
 
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+
+        if getattr(self.model, "target_layer_ids", None):
+            target_hidden = outputs.hidden_states
+            hidden_states = outputs.last_hidden_state
+            logits = self.lm_head(hidden_states).float()
+            predicted_token_ids = logits.argmax(dim=-1).to(torch.int32)
+            return CausalLMOutputWithPast(
+                loss=None,
+                logits=predicted_token_ids,
+                past_key_values=outputs.past_key_values,
+                hidden_states=target_hidden,
+                attentions=outputs.attentions,
+            )
+
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).float()
 
