@@ -8,13 +8,11 @@
 import copy
 import json
 import os
-from io import BytesIO
 from typing import Optional
 
 import pytest
 import requests
 import torch
-from PIL import Image
 from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
@@ -33,6 +31,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
     is_kimi_k25,
@@ -164,9 +163,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 448
         image_width = 448
         for img_url in image_urls:
-            img = _session.get(img_url, stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((image_height, image_width))
+            image = load_test_image(img_url, size=(image_height, image_width), session=_session)
             images.append(image)
         generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
         generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
@@ -192,9 +189,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 536
         image_width = 354
         for img_url in image_urls:
-            img = _session.get(img_url, stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((image_height, image_width))
+            image = load_test_image(img_url, size=(image_height, image_width), session=_session)
             images.append(image)
         api_runner = ApiRunnerMolmo(
             batch_size,
@@ -216,7 +211,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         compile_kwargs["img_size"] = img_size
     elif is_kimi_k25(model_name):
         for img_url in image_urls:
-            image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+            image = load_test_image(img_url, session=_session)
             images.append(image)
 
         image_list = [images[0]] * full_batch_size
@@ -240,7 +235,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = None
         image_width = None
         for img_url in image_urls:
-            image = Image.open(_session.get(img_url, stream=True).raw)
+            image = load_test_image(img_url, session=_session)
             if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
                 image_height = 1540
                 image_width = 1540
@@ -280,7 +275,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
         processor=processor,
-        images=[image_urls[0]] * full_batch_size,
+        images=[images[0]] * full_batch_size,
         prompts=prompt_list,
         generation_len=max_gen_len,
         image_height=image_height,
@@ -312,7 +307,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
         processor=processor,
-        images=image_urls,
+        images=images,
         prompts=queries,
         generation_len=max_gen_len,
         image_height=image_height,

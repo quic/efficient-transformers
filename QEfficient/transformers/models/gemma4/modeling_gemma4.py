@@ -23,11 +23,13 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
     Gemma4TextModel,
+    Gemma4TextRotaryEmbedding,
     Gemma4TextRouter,
     Gemma4VisionAttention,
     apply_rotary_pos_emb,
     eager_attention_forward,
     repeat_kv,
+    rotate_half,
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
@@ -419,6 +421,36 @@ class QEffGemma4VisionAttention(Gemma4VisionAttention):
         return attn_output, attn_weights
 
 
+class QEffGemma4TextRotaryEmbedding(Gemma4TextRotaryEmbedding):
+    """Gemma4 rotary embeddings with static caches for each text attention type."""
+
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+
+        for layer_type in sorted(self.layer_types):
+            self._set_cos_sin_cache(
+                layer_type=layer_type,
+                seq_len=self.original_max_seq_len,
+                device=getattr(self, f"{layer_type}_inv_freq").device,
+                dtype=config.dtype,
+            )
+
+    def _set_cos_sin_cache(self, layer_type, seq_len, device, dtype):
+        inv_freq = getattr(self, f"{layer_type}_inv_freq")
+        positions = torch.arange(seq_len, device=device, dtype=torch.int64).type_as(inv_freq)
+        freqs = torch.outer(positions, inv_freq)
+        embeddings = torch.cat((freqs, freqs), dim=-1)
+
+        self.register_buffer(f"{layer_type}_cos_cached", embeddings.cos().to(dtype), persistent=False)
+        self.register_buffer(f"{layer_type}_sin_cached", embeddings.sin().to(dtype), persistent=False)
+
+
+def qeff_apply_rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Apply pre-shaped rotary embeddings and restore the input dtype."""
+    x_embed = (x * cos) + (rotate_half(x) * sin)
+    return x_embed.to(x.dtype)
+
+
 class QEffGemma4TextAttention(Gemma4TextAttention):
     def __qeff_init__(self):
         for norm_name in ("q_norm", "k_norm", "v_norm"):
@@ -448,7 +480,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
         query_states = self.q_proj(hidden_states).view(hidden_shape)
         query_states = self.q_norm(query_states)
-        query_states = apply_rotary_pos_emb(query_states, cos, sin, unsqueeze_dim=2)
+        query_states = qeff_apply_rotary_pos_emb(query_states, cos, sin)
         query_states = query_states.transpose(1, 2)
 
         if self.is_kv_shared_layer and past_key_values is not None:
@@ -464,7 +496,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             value_states = self.v_proj(hidden_states).view(hidden_shape) if self.v_proj is not None else key_states
 
             key_states = self.k_norm(key_states)
-            key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2)
+            key_states = qeff_apply_rotary_pos_emb(key_states, cos, sin)
             key_states = key_states.transpose(1, 2)
 
             value_states = self.v_norm(value_states)
@@ -595,6 +627,15 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
 
 
 class QEffGemma4TextModel(Gemma4TextModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGemma4TextRotaryEmbedding(config=self.config)
+        for layer_type in sorted(self.rotary_emb.layer_types):
+            attention_scaling = getattr(self.rotary_emb, f"{layer_type}_attention_scaling")
+            sin_cached = getattr(self.rotary_emb, f"{layer_type}_sin_cached") * attention_scaling
+            cos_cached = getattr(self.rotary_emb, f"{layer_type}_cos_cached") * attention_scaling
+            setattr(self, f"{layer_type}_sin_cached", nn.Parameter(sin_cached))
+            setattr(self, f"{layer_type}_cos_cached", nn.Parameter(cos_cached))
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -637,8 +678,12 @@ class QEffGemma4TextModel(Gemma4TextModel):
         hidden_states = inputs_embeds
 
         position_embeddings = {}
-        for layer_type in self.unique_layer_types:
-            position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
+        for layer_type in sorted(self.unique_layer_types):
+            sin_cached = getattr(self, f"{layer_type}_sin_cached")
+            cos_cached = getattr(self, f"{layer_type}_cos_cached")
+            sin = sin_cached[position_ids].unsqueeze(2)
+            cos = cos_cached[position_ids].unsqueeze(2)
+            position_embeddings[layer_type] = (cos, sin)
 
         # DFlash TLM: collect hidden states entering the selected target layers.
         self.target_layer_ids = getattr(self, "target_layer_ids", None)

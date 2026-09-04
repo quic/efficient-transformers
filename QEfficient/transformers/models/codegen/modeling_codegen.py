@@ -99,8 +99,6 @@ class QEffCodeGenAttention(CodeGenAttention):
         embed_positions = self.embed_positions
         if embed_positions.device != position_ids.device:
             embed_positions = embed_positions.to(position_ids.device)
-            self.embed_positions = embed_positions
-
         sincos = embed_positions[position_ids]
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 

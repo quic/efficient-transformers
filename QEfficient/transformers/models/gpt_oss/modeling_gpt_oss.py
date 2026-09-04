@@ -37,7 +37,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+from QEfficient.transformers.cache_utils import QEffGPTOSSHybridCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEFlavour,
@@ -50,6 +50,17 @@ from QEfficient.transformers.moe import (
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+
+
+def override_gptoss_prefill_chunking(
+    config, prefill_only: Optional[bool], enable_chunking: Optional[bool]
+) -> Optional[bool]:
+    if prefill_only is True and enable_chunking is False and getattr(config, "model_type", None) == "gpt_oss":
+        logger.warning(
+            "For gpt_oss, chunking is always enabled for prefill-only mode; overriding enable_chunking=True."
+        )
+        return True
+    return enable_chunking
 
 
 class QEffGptOssExperts(GptOssExperts):
@@ -723,11 +734,13 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 "position_ids": position_ids,
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_values.sliding_window_len,
+                "sliding_window": past_key_values.get_sliding_window_len(),
             }
             if self.sliding_window is not None:
-                sliding_window_len = past_key_values.sliding_window_len
-                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
+                sliding_window_len = past_key_values.get_sliding_window_len()
+                short_read_idx = torch.arange(
+                    past_key_values.layers[self.layer_idx].keys.shape[2], device=position_ids.device
+                )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -737,6 +750,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 v_cache = value_states[:, :, read_idx, :]
             else:
                 k_cache, v_cache = key_states, value_states
+
             _, _ = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
 
         if os.environ.get("ENABLE_OPT_SWA", "0") == "1":
@@ -804,7 +818,7 @@ class QEffGptOssAttention(GptOssAttention):
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
                 past_seen_tokens=past_seen_tokens,
@@ -888,9 +902,6 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         if output_attentions:
             outputs += (self_attn_weights,)
 
-        if use_cache:
-            outputs += (present_key_value,)
-
         return outputs
 
 
@@ -929,7 +940,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -942,20 +953,20 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.max_cache_len,
+            target_length=past_key_values.get_max_cache_len(),
             sliding_window=self.config.sliding_window,
         )
+
         hidden_states = inputs_embeds
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
         layer_sliding_mask = sliding_mask
         if isinstance(self.layers[0].self_attn, QEffPrefillOnlyChunkedGptOssAttention):
             layer_sliding_mask = _prepare_gpt_oss_sliding_chunked_attention_mask(
@@ -1042,7 +1053,7 @@ class QEffGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1055,12 +1066,11 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.sliding_window_len,
-            sliding_window=past_key_values.sliding_window_len,
+            target_length=past_key_values.get_sliding_window_len(),
+            sliding_window=past_key_values.get_sliding_window_len(),
         )
 
         hidden_states = inputs_embeds
@@ -1068,8 +1078,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:

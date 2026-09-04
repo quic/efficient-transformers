@@ -323,8 +323,8 @@ class QEffQwen3Model(Qwen3Model):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         self.target_layer_ids = getattr(self, "target_layer_ids", None)
         target_hidden_list = []

@@ -24,6 +24,7 @@ All tests run on CPU only and are safe for parallel execution.
 Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 """
 
+import logging
 import os
 from unittest.mock import MagicMock
 
@@ -481,6 +482,64 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         with pytest.raises(NotImplementedError):
             qeff.generate(tokenizer=tokenizer, prompts=["Hello"], runtime_ai100=False)
 
+    def test_compile_gptoss_prefill_only_forces_chunking(self, tmp_path, monkeypatch, caplog):
+        """gpt_oss prefill-only compile always passes enable_chunking=True downstream."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.config.model_type = "gpt_oss"
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=32,
+            ctx_len=128,
+            prefill_only=True,
+            enable_chunking=False,
+        )
+
+        assert captured_kwargs["enable_chunking"] is True
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Prefill"
+        assert "chunking is always enabled for prefill-only mode" in caplog.text
+
+    def test_compile_ignores_public_mdp_ts_num_devices(self, tmp_path, monkeypatch, caplog):
+        """compile ignores public mdp_ts_num_devices and derives it from num_devices."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=8,
+            ctx_len=32,
+            num_devices=4,
+            mdp_num_partitions=2,
+            mdp_ts_num_devices=99,
+        )
+
+        assert captured_kwargs["mdp_ts_num_devices"] == 4
+        assert captured_kwargs["mdp_num_partitions"] == 2
+        assert "`mdp_ts_num_devices` passed to compile() is ignored" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # Stage 4: QEFFAutoModelForCausalLM — export prefill seq len handling
@@ -565,6 +624,9 @@ class TestQEFFAutoModelForCausalLMExportPrefillSeqLen:
         assert export_seq_len >= ONNX_EXPORT_EXAMPLE_SEQ_LEN
         assert export_seq_len % num_packed_chunks == 0
 
+    @pytest.mark.skip(
+        reason="GPT-OSS non-chunked prefill-only export is disabled; requests are forced to chunked prefill."
+    )
     def test_no_prefill_seq_len_no_env_var_raises_value_error(self, monkeypatch):
         """GPT-OSS non-chunked prefill export requires a valid prefill_seq_len."""
         qeff = self._make_specialized_qeff()
@@ -572,6 +634,9 @@ class TestQEFFAutoModelForCausalLMExportPrefillSeqLen:
         with pytest.raises(ValueError, match="prefill_seq_len"):
             qeff.export(prefill_only=True, prefill_seq_len=None, enable_chunking=False)
 
+    @pytest.mark.skip(
+        reason="GPT-OSS non-chunked prefill-only export is disabled; requests are forced to chunked prefill."
+    )
     def test_prefill_seq_len_not_divisible_raises_value_error(self, monkeypatch):
         """GPT-OSS non-chunked prefill export validates block-size divisibility."""
         from QEfficient.utils.constants import GPT_OSS_PREFILL_Q_BLOCK_SIZE
