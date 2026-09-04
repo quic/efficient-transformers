@@ -8,13 +8,11 @@
 """PyTorch Mixtral model."""
 
 from functools import partial
-from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers.cache_utils import Cache
-from transformers.integrations.moe import _batched_linear
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -23,10 +21,12 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRotaryEmbedding,
     MixtralSparseMoeBlock,
+    MixtralTopKRouter,
     load_balancing_loss_func,
     repeat_kv,
     rotate_half,
@@ -47,7 +47,6 @@ from QEfficient.transformers.moe import (
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
     delete_module_attrs,
-    silu_glu_mlp,
     stack_expert_linears,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -102,7 +101,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
@@ -122,58 +121,35 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-def _qeff_batched_mm_experts_forward(
-    self: torch.nn.Module,
-    hidden_states: torch.Tensor,
-    top_k_index: torch.Tensor,
-    top_k_weights: torch.Tensor,
+def _mixtral_silu_glu_mlp_dtype_safe(
+    x: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    b_g: torch.Tensor | None = None,
+    b_u: torch.Tensor | None = None,
+    b_d: torch.Tensor | None = None,
+    *,
+    act_fn=F.silu,
 ) -> torch.Tensor:
-    """Like batched_mm_experts_forward but replaces masked_fill_ with torch.where
-    so ONNX Where node gets consistent f32 types on both value inputs."""
-    device = hidden_states.device
-    num_top_k = top_k_index.size(-1)
-    num_tokens = hidden_states.size(0)
-    hidden_dim = hidden_states.size(-1)
+    """Mixtral expert MLP with explicit dtype alignment for ONNX/runtime safety."""
+    compute_dtype = x.dtype
+    x = x.to(compute_dtype)
+    W_g = W_g if W_g.dtype == compute_dtype else W_g.to(compute_dtype)
+    W_u = W_u if W_u.dtype == compute_dtype else W_u.to(compute_dtype)
+    W_d = W_d if W_d.dtype == compute_dtype else W_d.to(compute_dtype)
 
-    token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)
-    sample_weights = top_k_weights.reshape(-1)
-    expert_ids = top_k_index.reshape(-1)
+    gate = x @ W_g
+    up = x @ W_u
+    if b_g is not None:
+        gate = gate + b_g.to(compute_dtype).unsqueeze(-2)
+    if b_u is not None:
+        up = up + b_u.to(compute_dtype).unsqueeze(-2)
 
-    invalid_mask = expert_ids >= self.num_experts
-    expert_ids = expert_ids.clamp(0, self.num_experts - 1)
-
-    selected_hidden_states = hidden_states[token_idx]
-
-    if self.has_gate:
-        selected_weights = self.gate_up_proj[expert_ids]
-        selected_biases = self.gate_up_proj_bias[expert_ids] if self.has_bias else None
-    else:
-        selected_weights = self.up_proj[expert_ids]
-        selected_biases = self.up_proj_bias[expert_ids] if self.has_bias else None
-
-    proj_out = _batched_linear(
-        selected_hidden_states, selected_weights, bias=selected_biases, is_transposed=self.is_transposed
-    )
-
-    if self.has_gate:
-        proj_out = self._apply_gate(proj_out)
-    else:
-        proj_out = self.act_fn(proj_out)
-
-    selected_weights = self.down_proj[expert_ids]
-    selected_biases = self.down_proj_bias[expert_ids] if self.has_bias else None
-
-    proj_out = _batched_linear(proj_out, selected_weights, bias=selected_biases, is_transposed=self.is_transposed)
-
-    weighted_out = proj_out * sample_weights.unsqueeze(-1)
-    # Use torch.where instead of masked_fill_ so the ONNX Where node sees
-    # consistent f32 types on both value branches (zeros_like inherits dtype).
-    weighted_out = torch.where(
-        invalid_mask.unsqueeze(-1), torch.zeros_like(weighted_out, dtype=weighted_out.dtype), weighted_out
-    )
-
-    final_hidden_states = weighted_out.view(num_tokens, num_top_k, hidden_dim).sum(dim=1)
-    return final_hidden_states.to(hidden_states.dtype)
+    down = (up * act_fn(gate)) @ W_d
+    if b_d is not None:
+        down = down + b_d.to(compute_dtype).unsqueeze(-2)
+    return down
 
 
 class QEffMixtralAttention(MixtralAttention):
@@ -182,15 +158,15 @@ class QEffMixtralAttention(MixtralAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        cos_cached: Optional[torch.Tensor] = None,
-        sin_cached: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        cos_cached: torch.Tensor | None = None,
+        sin_cached: torch.Tensor | None = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
@@ -198,13 +174,12 @@ class QEffMixtralAttention(MixtralAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        if past_key_values is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
+        if past_key_values is not None and self.layer_idx is None:
+            raise ValueError(
+                f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+                "with a layer index."
+            )
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
@@ -258,6 +233,54 @@ MIXTRAL_ATTENTION_CLASSES = {
 }
 
 
+class QEffMixtralTopKRouter(MixtralTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        compute_dtype = hidden_states.dtype
+        router_weight = self.weight if self.weight.dtype == compute_dtype else self.weight.to(compute_dtype)
+        router_logits = F.linear(hidden_states.to(compute_dtype), router_weight)
+        router_probs = torch.softmax(router_logits.float(), dim=-1).to(router_logits.dtype)
+        router_top_value, router_indices = torch.topk(router_probs, self.top_k, dim=-1)
+        if getattr(self, "norm_topk_prob", True):
+            router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_scores = router_top_value.to(router_logits.dtype)
+        # Keep Mixtral semantics: first return value is softmaxed routing probabilities.
+        return router_probs, router_scores, router_indices
+
+
+class QEffMixtralExperts(MixtralExperts):
+    def __qeff_init__(self):
+        self.weights_transformed = False
+        self.expert_dim = getattr(self, "intermediate_dim", self.gate_up_proj.shape[-2] // 2)
+
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+
+        if hasattr(self, "gate_up_proj"):
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.gate_up_proj,
+                down=self.down_proj,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+                clone=True,
+            )
+            delete_module_attrs(self, "gate_up_proj", "down_proj")
+        else:
+            self.moe_weights = MoEWeights(
+                gate=stack_expert_linears(self, lambda expert: expert.w1.weight).clone(),
+                up=stack_expert_linears(self, lambda expert: expert.w3.weight).clone(),
+                down=stack_expert_linears(self, lambda expert: expert.w2.weight).clone(),
+            )
+            for expert in self:
+                delete_module_attrs(expert, "w1", "w2", "w3")
+
+        self.weights_transformed = True
+        return self.moe_weights
+
+
 class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     """
     This implementation is
@@ -271,10 +294,18 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     """
 
     _moe_return_router_logits = True
-    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
 
     def __qeff_init__(self):
         super().__qeff_init__()
+        self.top_k = getattr(self.gate, "top_k", getattr(self, "top_k", None))
+        # Mixtral gate already returns normalized top-k weights.
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
         if hasattr(self.experts, "act_fn"):
             self.act_fn = self.experts.act_fn
         else:
@@ -283,39 +314,30 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):
             return self.moe_weights
-        if hasattr(self.experts, "gate_up_proj"):
-            self.moe_weights = build_canonical_expert_weights(
-                gate_up=self.experts.gate_up_proj,
-                down=self.experts.down_proj,
-                fused=True,
-                fused_split_dim=1,
-                transpose_gate_up=True,
-                transpose_down=True,
-                clone=True,
-            )
-            self.act_fn = getattr(self.experts, "act_fn", F.silu)
-            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.experts.transform_weights()
+        if hasattr(self.experts, "act_fn"):
+            self.act_fn = self.experts.act_fn
         else:
-            self.moe_weights = MoEWeights(
-                gate=stack_expert_linears(self.experts, lambda expert: expert.w1.weight),
-                up=stack_expert_linears(self.experts, lambda expert: expert.w3.weight),
-                down=stack_expert_linears(self.experts, lambda expert: expert.w2.weight),
-            )
             self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
-            for expert in self.experts:
-                delete_module_attrs(expert, "w1", "w2", "w3")
         self.weights_transformed = True
         return self.moe_weights
 
     @property
+    def moe_weights(self) -> MoEWeights:
+        # Keep a single canonical ownership path for expert weights under
+        # `experts.moe_weights` so export/input naming stays consistent.
+        return self.experts.moe_weights
+
+    @property
     def moe_profile(self) -> MoEProfile:
-        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=getattr(self, "act_fn", F.silu)))
+        return MoEProfile(expert_mlp=partial(_mixtral_silu_glu_mlp_dtype_safe, act_fn=getattr(self, "act_fn", F.silu)))
 
     def route(self, x: torch.Tensor):
         gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", x.dtype)
         gate_out = self.gate(x.to(gate_dtype))
         if isinstance(gate_out, tuple) and len(gate_out) >= 3:
             router_logits, routing_weights, selected_experts = gate_out[0], gate_out[1], gate_out[2]
+            routing_weights = routing_weights.to(x.dtype)
         else:
             router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
@@ -323,6 +345,9 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
             routing_weights = routing_weights / torch.einsum("bi->b", routing_weights)[:, None]
             routing_weights = routing_weights.to(x.dtype)
         return (selected_experts, routing_weights), router_logits
+
+
+QEffPrefillChunkedMixtralSparseMoeBlock = QEffMixtralSparseMoeBlock
 
 
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):
@@ -335,19 +360,19 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        output_router_logits: Optional[bool] = False,
-        use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_value: tuple[torch.Tensor] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        output_router_logits: bool | None = False,
+        use_cache: bool | None = False,
+        cache_position: torch.LongTensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,  # necessary, but kept here for BC
         sin_cached=None,
         cos_cached=None,
         **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         """
         Args:
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
@@ -422,19 +447,19 @@ class QEffMixtralModel(MixtralModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        output_router_logits: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        output_router_logits: bool | None = None,
+        return_dict: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, MoeModelOutputWithPast]:
+    ) -> tuple | MoeModelOutputWithPast:
         output_router_logits = (
             output_router_logits if output_router_logits is not None else self.config.output_router_logits
         )
@@ -523,7 +548,7 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     - update the hidden_states, and fix for onnx model
     """
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -535,19 +560,19 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        output_router_logits: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        output_router_logits: bool | None = None,
+        return_dict: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, MoeCausalLMOutputWithPast]:
+    ) -> tuple | MoeCausalLMOutputWithPast:
         output_router_logits = (
             output_router_logits if output_router_logits is not None else self.config.output_router_logits
         )

@@ -6,11 +6,11 @@
 # -----------------------------------------------------------------------------
 
 from collections import namedtuple
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING
 
 import torch
-import torch.nn as nn
 import transformers.models.auto.modeling_auto as mapping
+from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -213,7 +213,7 @@ qeff_supported_architectures = ModelArchitectures(
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
-SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25", "gemma4"}
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "mixtral", "kimi_k2", "kimi_k25", "gemma4"}
 
 # This is for supporting dynamic prefill sequence length for prefill_only model
 DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma4"}
@@ -243,7 +243,7 @@ def _configure_proxy_for_model(instance: "QEFFBaseModel", enable_proxy: bool) ->
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
-TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
+TransformersToQEffModulesDict: dict[type[nn.Module], type[nn.Module]] = {
     # GPT model layers
     GPT2Model: QEffGPT2Model,
     GPT2Block: QEffGPT2Block,
@@ -362,7 +362,7 @@ def _prepare_cross_attention_mask(
     cross_attention_mask: torch.Tensor,
     num_vision_tokens: int,
     dtype: str,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     # reshape so it can be used by attn module
     batch_size, text_total_length, *_ = cross_attention_mask.shape
     cross_attention_mask = cross_attention_mask.repeat_interleave(num_vision_tokens, dim=3)
@@ -420,7 +420,7 @@ def _prepare_aspect_ratio_attention_mask(
 def _create_causal_mask(
     position_ids,
     target_length,
-    sliding_window: Optional[int] = None,
+    sliding_window: int | None = None,
 ):
     """
     A utility attention mask class that allows one to:
