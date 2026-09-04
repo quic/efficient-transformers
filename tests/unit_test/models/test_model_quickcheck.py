@@ -64,7 +64,10 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
     Qwen3VLMoeVisionConfig,
 )
 
-from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import MiniMaxM3VLIndexer
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLIndexer,
+)
 
 from QEfficient.transformers.models.minimax_m3_vl import (
     MiniMaxM3SparseForConditionalGeneration,
@@ -73,7 +76,11 @@ from QEfficient.transformers.models.minimax_m3_vl import (
     MiniMaxM3VLTextConfig,
     MiniMaxM3VLVisionConfig,
 )
-from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import QEffMiniMaxM3VLIndexer
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
+)
 from QEfficient.transformers.cache_utils import QEffMiniMaxSparseCache
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
@@ -1399,6 +1406,156 @@ def test_minimax_m3_indexer_select_blocks_parity():
 
     assert torch.equal(hf_valid_blocks, qeff_valid_blocks), (
         f"Block selection mismatch: HF={hf_valid_blocks.tolist()}, QEff={qeff_valid_blocks.tolist()}"
+    )
+
+
+def check_attention_module_parity(
+    text_cfg: MiniMaxM3VLTextConfig,
+    layer_idx: int,
+    prefill_len: int = 7,
+    batch: int = 1,
+    atol: float = 1e-4,
+    seed: int = 42,
+) -> tuple:
+    """
+    Verify that QEffMiniMaxM3VLAttention and MiniMaxM3VLAttention produce the same
+    attention output on a single-token decode step with a pre-filled KV cache.
+
+    A QEffMiniMaxSparseCache is built via from_legacy_cache with pre-allocated
+    ctx_len = prefill_len + 1 buffers (positions 0..prefill_len-1 filled, position
+    prefill_len zeroed as the decode slot).  QEff's write_only / update then
+    scatter-writes the decode token into that slot.  A lightweight HF mock cache
+    appends the same decode token so both modules attend over the same ctx_len KV.
+
+    For sparse layers ctx_len is kept within index_topk_blocks * index_block_size so
+    that every key block falls within the topk budget, making HF's indexer block mask
+    equivalent to a plain causal mask and the outputs identical.
+
+    Args:
+        text_cfg:    MiniMaxM3VLTextConfig instance.
+        layer_idx:   Index of the attention layer to test.
+        prefill_len: Number of pre-existing tokens in the cache (decode position).
+        batch:       Batch size.
+        atol:        Absolute tolerance; returns True when max_diff < atol.
+        seed:        RNG seed.
+
+    Returns:
+        (passed: bool, max_diff: float)
+    """
+    torch.manual_seed(seed)
+
+    is_sparse = text_cfg.layer_types[layer_idx] == "minimax_m3_sparse"
+    if is_sparse:
+        max_ctx = text_cfg.index_topk_blocks * text_cfg.index_block_size
+        prefill_len = min(prefill_len, max_ctx - 1)  # leave one slot for decode
+
+    ctx_len = prefill_len + 1  # buffer size; position prefill_len is the decode slot
+
+    nkv = text_cfg.num_key_value_heads
+    hd = text_cfg.head_dim
+    idx_d = text_cfg.index_head_dim
+
+    # Pre-filled KV: random for positions 0..prefill_len-1, zero for the decode slot.
+    pre_k = torch.cat(
+        [torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2
+    )
+    pre_v = torch.cat(
+        [torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2
+    )
+    # Pre-filled index keys for the sparse indexer (same zeroed-slot convention).
+    pre_idx_k = torch.cat(
+        [torch.randn(batch, 1, prefill_len, idx_d), torch.zeros(batch, 1, 1, idx_d)], dim=2
+    )
+
+    # ── QEff cache ─────────────────────────────────────────────────────────────
+    # Build a per-layer tuple list so from_legacy_cache initialises layers[0..layer_idx].
+    # Dummy 2-tuples cover layers below the target; the target layer gets a 3-tuple
+    # carrying the index-key buffer so QEffMiniMaxSparseCache.index_keys is set.
+    dummy = (
+        torch.zeros(batch, nkv, ctx_len, hd),
+        torch.zeros(batch, nkv, ctx_len, hd),
+    )
+    layer_tuples = [dummy] * layer_idx + [(pre_k, pre_v, pre_idx_k)]
+    qeff_cache = QEffMiniMaxSparseCache.from_legacy_cache(layer_tuples)
+
+    # ── HF mock cache ──────────────────────────────────────────────────────────
+    # MiniMaxM3VLAttention.forward calls cache.update(k, v, layer_idx) for standard
+    # attention and cache.layers[layer_idx].update_index(new_idx_k) for the indexer.
+    pre_k_hf = pre_k[:, :, :prefill_len, :]  # HF holds only the filled positions
+    pre_v_hf = pre_v[:, :, :prefill_len, :]
+    pre_idx_k_hf = pre_idx_k[:, :, :prefill_len, :]
+
+    class _HFIndexLayer:
+        def __init__(self, past_idx_k: torch.Tensor) -> None:
+            self._past = past_idx_k
+
+        def update_index(self, new_idx_k: torch.Tensor) -> torch.Tensor:
+            return torch.cat([self._past, new_idx_k], dim=2)
+
+    class _HFCache:
+        def __init__(self) -> None:
+            self._k = pre_k_hf
+            self._v = pre_v_hf
+            self.layers = {layer_idx: _HFIndexLayer(pre_idx_k_hf)}
+
+        def update(self, key_states: torch.Tensor, value_states: torch.Tensor, _layer_idx: int):
+            k = torch.cat([self._k, key_states], dim=2)
+            v = torch.cat([self._v, value_states], dim=2)
+            self._k, self._v = k, v
+            return k, v
+
+    hf_cache = _HFCache()
+
+    # ── Shared module setup ────────────────────────────────────────────────────
+    hf_attn = MiniMaxM3VLAttention(text_cfg, layer_idx=layer_idx).eval()
+    qeff_attn = QEffMiniMaxM3VLAttention(text_cfg, layer_idx=layer_idx).eval()
+    qeff_attn.load_state_dict(hf_attn.state_dict())
+    # Mirror the production ModuleMappingTransform: swap the indexer class so that
+    # QEffMiniMaxM3VLAttention.forward can call self.indexer._select_blocks().
+    if qeff_attn.indexer is not None:
+        qeff_attn.indexer.__class__ = QEffMiniMaxM3VLIndexer
+
+    # Decode inputs: single token at position prefill_len.
+    hidden_states = torch.randn(batch, 1, text_cfg.hidden_size)
+    position_ids = torch.tensor([[prefill_len]], dtype=torch.long)
+
+    rot_emb = QEffMiniMaxM3VLRotaryEmbedding(text_cfg).eval()
+    with torch.no_grad():
+        cos, sin = rot_emb(hidden_states, position_ids)
+
+    with torch.no_grad():
+        hf_out, _ = hf_attn(
+            hidden_states,
+            position_embeddings=(cos, sin),
+            attention_mask=None,
+            past_key_values=hf_cache,
+            position_ids=position_ids,
+        )
+        qeff_out, _ = qeff_attn(
+            hidden_states,
+            position_embeddings=(cos, sin),
+            attention_mask=None,
+            past_key_values=qeff_cache,
+            position_ids=position_ids,
+        )
+
+    max_diff = (hf_out - qeff_out).abs().max().item()
+    return max_diff < atol, max_diff
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize("layer_idx", [0, 1], ids=["dense", "sparse"])
+def test_minimax_m3_attention_module_parity(layer_idx):
+    """
+    Verify that QEffMiniMaxM3VLAttention.forward and MiniMaxM3VLAttention.forward
+    produce identical outputs (within 1e-4) on a decode step with a pre-filled
+    QEffMiniMaxSparseCache, for both the dense (layer 0) and sparse (layer 1) types.
+    """
+    text_cfg = _tiny_minimax_m3_text_config()
+    passed, max_diff = check_attention_module_parity(text_cfg, layer_idx=layer_idx)
+    assert passed, (
+        f"Attention parity failed for layer_idx={layer_idx} "
+        f"(layer_type={text_cfg.layer_types[layer_idx]}): max_diff={max_diff:.6f}"
     )
 
 
