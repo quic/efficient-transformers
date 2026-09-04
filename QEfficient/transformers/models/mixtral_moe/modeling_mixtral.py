@@ -314,13 +314,19 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):
             return self.moe_weights
-        self.moe_weights = self.experts.transform_weights()
+        self.experts.transform_weights()
         if hasattr(self.experts, "act_fn"):
             self.act_fn = self.experts.act_fn
         else:
             self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
         self.weights_transformed = True
         return self.moe_weights
+
+    @property
+    def moe_weights(self) -> MoEWeights:
+        # Keep a single canonical ownership path for expert weights under
+        # `experts.moe_weights` so export/input naming stays consistent.
+        return self.experts.moe_weights
 
     @property
     def moe_profile(self) -> MoEProfile:

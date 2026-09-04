@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -58,7 +57,7 @@ def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
     return [TiedWeightAlias(alias=alias, canonical=canonical) for alias, canonical in tied_mapping.items()]
 
 
-def _moe_weight_aliases(name: str) -> List[str]:
+def _moe_weight_aliases(name: str) -> list[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
@@ -75,7 +74,7 @@ def _moe_weight_aliases(name: str) -> List[str]:
     return aliases
 
 
-def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
+def _find_checkpoint_key(candidates: list[str], checkpoint_index: dict[str, str], onnx_name: str) -> str | None:
     """Return the unique matching checkpoint key, or fail on ambiguous matches."""
     seen = set()
     matches = []
@@ -106,9 +105,9 @@ def _is_computed_initializer(name: str) -> bool:
 
 def find_checkpoint_key(
     onnx_name: str,
-    checkpoint_index: Dict[str, str],
+    checkpoint_index: dict[str, str],
     backbone: nn.Module,
-) -> Optional[str]:
+) -> str | None:
     """Resolve an ONNX initializer name to its safetensors checkpoint key.
 
     Most weights match directly. The fallback rules cover wrapper prefixes,
@@ -162,14 +161,6 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     parameter_names = {name for name, _ in qeff_model.model.named_parameters()}
     buffer_names = {name for name, _ in qeff_model.model.named_buffers()}
     model_names = parameter_names | buffer_names
-    # `named_parameters()` de-duplicates shared tensors by identity. For MoE
-    # weights, ONNX can still emit both alias paths
-    # (`...experts.moe_weights...` and `...moe_weights...`). Include alias names
-    # explicitly so all emitted initializers are promoted to graph inputs.
-    model_names_with_aliases = set(model_names)
-    for model_name in list(model_names):
-        model_names_with_aliases.update(_moe_weight_aliases(model_name))
-    model_names = model_names_with_aliases
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
     # (e.g. lm_head.weight when tie_word_embeddings=True) is absent from model_names even
@@ -187,7 +178,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         for checkpoint_file in checkpoint_files
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
-    promoted_inputs: List[WeightSpecInput] = []
+    promoted_inputs: list[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
         if name not in model_names:
