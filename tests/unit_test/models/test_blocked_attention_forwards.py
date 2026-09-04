@@ -128,6 +128,7 @@ class TestHoistedGatherCallCount:
                 paged_attention=True,
                 use_causal_mask=True,
                 skip_kv=False,
+                ctx_len=CTX_LEN,
             )
         assert mocked.call_count == NUM_PHYS_BLOCKS, (
             f"Expected the KV gather to run once per KV block ({NUM_PHYS_BLOCKS}), got "
@@ -160,6 +161,7 @@ class TestHoistedGatherCallCount:
                 paged_attention=True,
                 use_causal_mask=True,
                 skip_kv=False,
+                ctx_len=CTX_LEN,
             )
         assert mocked.call_count == NUM_PHYS_BLOCKS, (
             f"Expected the KV gather to run once per KV block ({NUM_PHYS_BLOCKS}) regardless of "
@@ -196,6 +198,7 @@ class TestHoistedGatherCallCount:
                 paged_attention=True,
                 use_causal_mask=True,
                 skip_kv=False,
+                ctx_len=CTX_LEN,
             )
         assert mocked.call_count == NUM_PHYS_BLOCKS, (
             f"Expected the KV gather to run once per KV block ({NUM_PHYS_BLOCKS}) regardless of "
@@ -238,6 +241,7 @@ class TestHoistedGatherCorrectness:
             paged_attention=True,
             use_causal_mask=True,
             skip_kv=False,
+            ctx_len=CTX_LEN,
         )
 
         expected = _manual_causal_attention(query, k_full, v_full, position_ids, SCALING)
@@ -278,6 +282,7 @@ class TestHoistedGatherCorrectness:
             paged_attention=True,
             use_causal_mask=True,
             skip_kv=False,
+            ctx_len=CTX_LEN,
         )
 
         expected = _manual_causal_attention(query, k_full, v_full, position_ids, SCALING)
@@ -320,6 +325,7 @@ class TestHoistedGatherCorrectness:
             paged_attention=True,
             use_causal_mask=True,
             skip_kv=False,
+            ctx_len=CTX_LEN,
         )
 
         expected = _manual_causal_attention(query, k_full, v_full, position_ids, SCALING)
@@ -363,6 +369,7 @@ class TestHoistedGatherCorrectness:
             paged_attention=True,
             use_causal_mask=True,
             skip_kv=False,
+            ctx_len=CTX_LEN,
         )
 
         expected = _manual_causal_attention(query, k_full_rep, v_full_rep, position_ids, SCALING)
@@ -412,6 +419,7 @@ class TestSkipKvBreakPreserved:
                 paged_attention=True,
                 use_causal_mask=True,
                 skip_kv=True,
+                ctx_len=CTX_LEN,
             )
         expected_calls = 2  # blocks j=0,1 cover position 3; j=2 (start_index=4) is entirely future
         assert mocked.call_count == expected_calls, (
@@ -452,6 +460,7 @@ class TestSkipKvBreakPreserved:
             paged_attention=True,
             use_causal_mask=True,
             skip_kv=True,
+            ctx_len=CTX_LEN,
         )
 
         expected = _manual_causal_attention(query, k_full, v_full, position_ids, SCALING)

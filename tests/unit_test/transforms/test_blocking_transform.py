@@ -400,11 +400,18 @@ class TestBlockingWrapperFallbackAndParity:
         "blocking_cfg",
         [
             AttentionBlockingConfig(mode=BlockingMode.NONE),
-            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2),
-            AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=2, num_q_blocks=2),
-            AttentionBlockingConfig(mode=BlockingMode.HQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128),
+            AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=2, num_q_blocks=2, ctx_len=128),
             AttentionBlockingConfig(
-                mode=BlockingMode.BHQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1, num_batch_blocks=2
+                mode=BlockingMode.HQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1, ctx_len=128
+            ),
+            AttentionBlockingConfig(
+                mode=BlockingMode.BHQKV,
+                num_kv_blocks=2,
+                num_q_blocks=2,
+                head_block_size=1,
+                num_batch_blocks=2,
+                ctx_len=128,
             ),
         ],
         ids=["mode_none", "mode_kv", "mode_qkv", "mode_hqkv", "mode_bhqkv"],
