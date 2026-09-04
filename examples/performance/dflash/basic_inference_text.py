@@ -14,7 +14,7 @@ script:
   2. Compiles TLM + DLM QPCs (only the side(s) not provided via
      --tlm_qpc / --dlm_qpc).
   3. Runs SPD single-prompt inference in-process via
-     QEfficient.generation.dflash_generation.run_text_inference.
+     QEfficient.generation.dflash_generation.run_spd_inference_single.
 
 Examples:
     # Compile + run with all defaults
@@ -35,17 +35,27 @@ import argparse
 import os
 import sys
 
+from rich.console import Console
+from rich.markup import escape
+from transformers import AutoConfig, AutoTokenizer
+from utils import (
+    MODEL_MAP,
+    compile_dlm_qpc,
+    compile_tlm_qpc,
+    format_prompt,
+    get_spd_prompt_chunk_size,
+    load_spd_sessions,
+    resolve_model_name,
+    validate_spd_decode_specialization,
+)
+
+from QEfficient.generation.dflash_generation import run_spd_inference_single
+from QEfficient.utils.logging_utils import logger
+
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, THIS_DIR)
-
-from rich.console import Console
-from rich.markup import escape
-from utils import MODEL_MAP, compile_dlm_qpc, compile_tlm_qpc, format_prompt, resolve_model_name
-
-from QEfficient.generation.dflash_generation import run_text_inference
-from QEfficient.utils.logging_utils import logger
 
 console = Console()
 
@@ -65,14 +75,22 @@ def parse_args():
         f"Supported: {', '.join(MODEL_MAP.keys())}",
     )
     p.add_argument("--prompt", required=True, help="Input prompt text.")
-    p.add_argument("--category", default="", help="Prompt category for formatting (math, coding, reasoning, …).")
+    p.add_argument(
+        "--category",
+        default="",
+        help="Prompt category for formatting (math, coding, reasoning, …).",
+    )
     p.add_argument(
         "--format_prompt",
         action="store_true",
         help="If set, wrap the prompt with the category-specific reasoning/coding template before sending to the model. "
         "Off by default — the prompt is used verbatim.",
     )
-    p.add_argument("--tlm_hf_path", default=None, help="Override TLM HF repo (required if mapping has None).")
+    p.add_argument(
+        "--tlm_hf_path",
+        default=None,
+        help="Override TLM HF repo (required if mapping has None).",
+    )
 
     # Optional pre-built QPCs (skip compilation)
     p.add_argument("--tlm_qpc", default=None, help="Pre-compiled TLM qpc dir (skip TLM compile).")
@@ -142,18 +160,34 @@ def main():
     logger.info(f"DLM qpc        : {dlm_qpc}")
 
     prompt_text = format_prompt(args.prompt, args.category) if args.format_prompt else args.prompt
-    metrics, tokenizer = run_text_inference(
-        prompt=prompt_text,
-        tlm_qpc=tlm_qpc,
-        dlm_qpc=dlm_qpc,
-        tlm_model_name=tlm_repo,
-        dlm_model_name=dlm_repo,
-        tlm_devices=args.tlm_devices,
-        dlm_devices=args.dlm_devices,
-        iteration=args.iteration,
+    tokenizer = AutoTokenizer.from_pretrained(tlm_repo, token=args.hf_token, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(dlm_repo, token=args.hf_token, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, args.tlm_devices, args.dlm_devices)
+    prompt_chunk_size = get_spd_prompt_chunk_size(tlm_session)
+    validate_spd_decode_specialization(tlm_session, config.block_size)
+
+    dflash_config = getattr(config, "dflash_config", None) or config.to_dict().get("dflash_config", {})
+    mask_token_id = dflash_config["mask_token_id"] if isinstance(dflash_config, dict) else dflash_config.mask_token_id
+    messages = [{"role": "user", "content": prompt_text}]
+    formatted_prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+    )
+    metrics = run_spd_inference_single(
+        prompt_text=formatted_prompt,
+        tokenizer=tokenizer,
+        dlm_session=dlm_session,
+        tlm_session=tlm_session,
+        mask_token_id=mask_token_id,
+        vocab_size=config.vocab_size,
+        prompt_chunk_size=prompt_chunk_size,
         ctx_len=args.ctx_len,
+        block_size=config.block_size,
+        max_iterations=args.iteration,
+        hidden_size=config.hidden_size,
         generation_len=args.generation_len,
-        hf_token=args.hf_token,
     )
 
     output_parts = ["Output: "]

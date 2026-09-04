@@ -5,15 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 """
-Full end-to-end DFlash speculative-decoding test on real QAIC hardware.
+DFlash speculative-decoding tests.
 
-Builds a tiny from-scratch TLM/DLM pair (fully random weights, no checkpoint
-downloads), compiles both to real QPCs, and drives them through
-``QEfficient.generation.dflash_generation.run_spd_inference_single`` -- the
-actual SPD decode loop used by the DFlash example scripts -- via two real
-``QAICInferenceSession``s. This validates the mechanism end to end (prefill,
-draft/target exchange, accept/reject bookkeeping); it does not assert
-numerical accuracy, since the weights are random.
+Includes a host-side regression test for generation-length enforcement and an
+end-to-end QAIC test that builds a tiny from-scratch TLM/DLM pair, compiles both
+to real QPCs, and drives them through the SPD decode loop.
 """
 
 import os
@@ -24,7 +20,11 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.generation.dflash_generation import run_spd_inference_single
+from QEfficient.generation.dflash_generation import (
+    SpecDecodingMetrics,
+    run_spd_inference_gemma4,
+    run_spd_inference_single,
+)
 
 VOCAB_SIZE = 64
 HIDDEN_SIZE = 64
@@ -64,6 +64,140 @@ class _FakeTokenizer:
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
+class _FakeTLMSession:
+    def __init__(self):
+        self.run_count = 0
+
+    def set_buffers(self, _buffers):
+        pass
+
+    def run(self, inputs):
+        self.run_count += 1
+        seq_len = inputs["input_ids"].shape[1]
+        hidden_states = np.zeros((1, seq_len, HIDDEN_SIZE), dtype=np.float32)
+        if self.run_count == 1:
+            logits = np.zeros((1, seq_len), dtype=np.int32)
+            logits[:, 1] = 5
+        else:
+            logits = np.array([[6, 7, 8, 9]], dtype=np.int32)
+        return {"logits": logits, "hidden_states": hidden_states}
+
+
+class _FakeDLMSession:
+    def set_buffers(self, _buffers):
+        pass
+
+    def run(self, _inputs):
+        logits = np.zeros((1, BLOCK_SIZE, VOCAB_SIZE), dtype=np.float32)
+        token_ids = np.array([5, 6, 7, 8])
+        logits[0, np.arange(BLOCK_SIZE), token_ids] = 1
+        return {"logits": logits}
+
+
+class _FakeGemmaTLMSession:
+    """Tracks static vision-buffer handling in the Gemma4 SPD path."""
+
+    class _Binding:
+        def __init__(self, name, index, dims, dtype="fp32"):
+            self.name = name
+            self.index = index
+            self.dims = dims
+            self.type = dtype
+
+    def __init__(self):
+        self.input_names = ["input_ids", "position_ids", "vision_embeds"]
+        self.output_names = ["logits", "hidden_states"]
+        self.bindings = [
+            self._Binding("input_ids", 0, [1, BLOCK_SIZE]),
+            self._Binding("position_ids", 1, [1, BLOCK_SIZE]),
+            self._Binding("vision_embeds", 2, [1, 2, HIDDEN_SIZE]),
+            self._Binding("logits", 3, [1, BLOCK_SIZE, VOCAB_SIZE]),
+            self._Binding("hidden_states", 4, [1, BLOCK_SIZE, HIDDEN_SIZE]),
+        ]
+        self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
+        self.allowed_shapes = [
+            [
+                (8, [1, BLOCK_SIZE]),
+                (8, [1, BLOCK_SIZE]),
+                (4, [1, 2, HIDDEN_SIZE]),
+                (4, [1, BLOCK_SIZE, VOCAB_SIZE]),
+                (4, [1, BLOCK_SIZE, HIDDEN_SIZE]),
+            ]
+        ]
+        self.aic_to_np_dtype_mapping = {"fp32": np.dtype(np.float32)}
+        self.vision_buffer_sets = 0
+        self.run_vision_feeds = 0
+        self.skipped_buffers = []
+
+    def set_buffers(self, buffers):
+        if "vision_embeds" in buffers:
+            self.vision_buffer_sets += 1
+
+    def skip_buffers(self, buffers):
+        self.skipped_buffers.extend(buffers)
+
+    def run(self, inputs):
+        self.run_vision_feeds += "vision_embeds" in inputs
+        seq_len = inputs["input_ids"].shape[1]
+        logits = np.zeros((1, seq_len, VOCAB_SIZE), dtype=np.float32)
+        token_ids = np.resize(np.array([5, 6, 7, 8]), seq_len)
+        logits[0, np.arange(seq_len), token_ids] = 1
+        return {
+            "logits": logits,
+            "hidden_states": np.zeros((1, seq_len, HIDDEN_SIZE), dtype=np.float32),
+        }
+
+
+def test_dflash_acceptance_rate_uses_accepted_tokens():
+    metrics = SpecDecodingMetrics(block_size=BLOCK_SIZE)
+    metrics.total_accepted_tokens = 6
+    metrics.total_generated_tokens = 9
+    metrics.num_total_iters = 3
+
+    assert metrics.acceptance_rate() == 2.0
+
+
+def test_dflash_generation_len_caps_partial_block():
+    metrics = run_spd_inference_single(
+        prompt_text="hi",
+        tokenizer=_FakeTokenizer(),
+        dlm_session=_FakeDLMSession(),
+        tlm_session=_FakeTLMSession(),
+        mask_token_id=MASK_TOKEN_ID,
+        vocab_size=VOCAB_SIZE,
+        prompt_chunk_size=PROMPT_CHUNK_SIZE,
+        ctx_len=CTX_LEN,
+        block_size=BLOCK_SIZE,
+        max_iterations=5,
+        hidden_size=HIDDEN_SIZE,
+        generation_len=1,
+    )
+
+    assert metrics.generated_ids == [6]
+    assert metrics.generated_sources == ["dlm"]
+    assert metrics.total_generated_tokens == 1
+    assert metrics.total_accepted_tokens == 1
+    assert metrics.num_total_iters == 1
+
+
+def test_dflash_rejects_padded_prompt_longer_than_context():
+    with pytest.raises(ValueError, match=r"ctx_len \(7\) must be greater than or equal to padded_len \(8\)"):
+        run_spd_inference_single(
+            prompt_text="hi",
+            tokenizer=_FakeTokenizer(),
+            dlm_session=_FakeDLMSession(),
+            tlm_session=_FakeTLMSession(),
+            mask_token_id=MASK_TOKEN_ID,
+            vocab_size=VOCAB_SIZE,
+            prompt_chunk_size=PROMPT_CHUNK_SIZE,
+            ctx_len=PROMPT_CHUNK_SIZE - 1,
+            block_size=BLOCK_SIZE,
+            max_iterations=5,
+            hidden_size=HIDDEN_SIZE,
+            generation_len=1,
+        )
+
+
 def _make_tiny_qwen3_config():
     return Qwen3Config(
         num_hidden_layers=2,
@@ -75,6 +209,30 @@ def _make_tiny_qwen3_config():
         max_position_embeddings=CTX_LEN,
         head_dim=32,
     )
+
+
+def test_gemma4_binds_vision_embeddings_once_and_skips_them_for_decode():
+    tlm_session = _FakeGemmaTLMSession()
+    run_spd_inference_gemma4(
+        prompt_text="ignored when input_ids are provided",
+        tokenizer=_FakeTokenizer(),
+        dlm_session=_FakeDLMSession(),
+        tlm_session=tlm_session,
+        mask_token_id=MASK_TOKEN_ID,
+        vocab_size=VOCAB_SIZE,
+        prompt_chunk_size=BLOCK_SIZE,
+        ctx_len=CTX_LEN,
+        block_size=BLOCK_SIZE,
+        max_iterations=1,
+        hidden_size=HIDDEN_SIZE,
+        generation_len=1,
+        input_ids=np.array([[3, 4]], dtype=np.int64),
+        vision_embeds=np.zeros((1, 2, HIDDEN_SIZE), dtype=np.float32),
+    )
+
+    assert tlm_session.vision_buffer_sets == 1
+    assert tlm_session.run_vision_feeds == 0
+    assert tlm_session.skipped_buffers == ["vision_embeds"]
 
 
 @pytest.mark.on_qaic
