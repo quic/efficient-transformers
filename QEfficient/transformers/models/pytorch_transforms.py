@@ -69,6 +69,15 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+from transformers.models.glm4_moe_lite.modeling_glm4_moe_lite import (
+    Glm4MoeLiteAttention,
+    Glm4MoeLiteDecoderLayer,
+    Glm4MoeLiteForCausalLM,
+    Glm4MoeLiteModel,
+    Glm4MoeLiteMoE,
+    Glm4MoeLiteRMSNorm,
+    Glm4MoeLiteRotaryEmbedding,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -378,6 +387,14 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeMoE,
     QEffGlm4MoeRotaryEmbedding,
     QEffGlm4MoeTopkRouter,
+)
+from QEfficient.transformers.models.glm4_moe_lite.modeling_glm4_moe_lite import (
+    QEffGlm4MoeLiteAttention,
+    QEffGlm4MoeLiteDecoderLayer,
+    QEffGlm4MoeLiteForCausalLM,
+    QEffGlm4MoeLiteModel,
+    QEffGlm4MoeLiteMoE,
+    QEffGlm4MoeLiteRotaryEmbedding,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -694,6 +711,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        Glm4MoeLiteRMSNorm: CustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -716,6 +734,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeAttention: QEffGlm4MoeAttention,
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
+        Glm4MoeLiteModel: QEffGlm4MoeLiteModel,
+        Glm4MoeLiteForCausalLM: QEffGlm4MoeLiteForCausalLM,
+        Glm4MoeLiteAttention: QEffGlm4MoeLiteAttention,
+        Glm4MoeLiteDecoderLayer: QEffGlm4MoeLiteDecoderLayer,
+        Glm4MoeLiteRotaryEmbedding: QEffGlm4MoeLiteRotaryEmbedding,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -1387,7 +1410,8 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
 
 
 class BlockingAttentionTransform:
-    _skip_classes = {}
+    # QEffGlm4MoeLiteAttention doesn't implement blocked decode yet.
+    _skip_classes = {QEffGlm4MoeLiteAttention}
 
     @classmethod
     def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
@@ -1490,6 +1514,8 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         # GLM4-MoE
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # glm4_moe_lite's TopkRouter needs no entry - no unsafe reduction there.
+        Glm4MoeLiteMoE: QEffGlm4MoeLiteMoE,
         # Llama4
         Llama4TextMoe: QEffLlama4TextMoe,
         Llama4TextExperts: QEffLlama4TextExperts,

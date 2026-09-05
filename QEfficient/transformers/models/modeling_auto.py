@@ -93,6 +93,7 @@ from QEfficient.utils import (
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.repeat_kv_utils import get_text_model, is_mla_model
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -4098,7 +4099,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
+        # MLA architectures need a retained-state shape from qk_nope/qk_rope/v_head_dim,
+        # not a single head_dim - hasattr gates get_text_model (which raises otherwise).
+        if hasattr(self.model, "get_dummy_pkv_cache") and is_mla_model(get_text_model(self.model)):
             if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
                 mla_absorption = self.model.qaic_config["mla_absorption"]
                 cache_compressed = mla_absorption.get("cache_compressed", False)
