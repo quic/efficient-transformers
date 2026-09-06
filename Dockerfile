@@ -1,4 +1,4 @@
-FROM docker-registry.qualcomm.com/library/ubuntu:24.04
+FROM docker-registry.qualcomm.com/qraniumtest/qranium:1.23.0.41-ubuntu22-x86_64
 
 RUN apt-get update && apt-get install -y \
     git \
@@ -9,22 +9,27 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# pip recognizes this variable
-ENV PIP_CACHE_DIR=/var/cache/pip
-
 WORKDIR /app
 
-RUN mkdir -p /app/qefficient-library
 COPY . /app/qefficient-library
 
-# Create Virtual Env for the docker image
 RUN python3.12 -m venv /app/llm_env
+
 ENV PATH="/app/llm_env/bin:$PATH"
 
 RUN pip install --upgrade pip
 
 WORKDIR /app/qefficient-library
+
 RUN python3.12 -m pip install .
-RUN pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+RUN pip install torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Entrypoint
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 CMD ["sleep", "infinity"]

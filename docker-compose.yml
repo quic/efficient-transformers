@@ -1,3 +1,5 @@
+name: ${SUDO_USER:-${USER}}-qefficient
+
 services:
   qefficient:
     build:
@@ -6,16 +8,31 @@ services:
 
     image: qefficient-library:latest
 
+    privileged: true
+
+    network_mode: host
+
+    security_opt:
+      - label=disable
+
     working_dir: /app/qefficient-library
+
+    env_file:
+      - .env
+
+    environment:
+      HOME: /workspace
 
     volumes:
       - .:/app/qefficient-library
       - ./_cache:/cache
 
-    env_file:
-      - .env
+      # persistent user workspace
+      - ${WORKSPACE_PATH}:/workspace
+
     stdin_open: true
     tty: true
+
     command:
       - sleep
       - infinity
