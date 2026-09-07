@@ -398,8 +398,8 @@ class TestQEffGemma4Architecture:
         text_model = qeff.lang_model.model.language_model
 
         for layer_type in ("full_attention", "sliding_attention"):
-            expected_head_dim = cfg.global_head_dim if layer_type == "full_attention" else cfg.head_dim
             for embedding_index, embedding_name in enumerate(("cos", "sin")):
+                expected_head_dim = expected_embeddings[layer_type][embedding_index].shape[-1]
                 cached_embedding = getattr(text_model, f"{layer_type}_{embedding_name}_cached")
                 assert cached_embedding.shape == (text_model.rotary_emb.original_max_seq_len, expected_head_dim)
                 torch.testing.assert_close(
