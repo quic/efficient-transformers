@@ -128,10 +128,10 @@ MOE Execution Flavour Support Matrix
      - No
      - No
      - Llama4 uses pre-scaled routing and explicitly disables ``decode_bmm``.
-   * - DeepSeek-V3
-     - Yes
+   * - DeepSeek-V3/KIMI language-only
      - Yes
      - No
+     - Yes
      - Yes
      - External string-mapper quicktests cover shared flavours; legacy FFN blocking is covered separately.
    * - Grok-1

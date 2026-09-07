@@ -46,7 +46,7 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     manual_cleanup(qeff_no_block.onnx_path)
     # Export with subfunctions, WITH KV blocking
     NUM_KV_BLOCKS = 2
-    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS)
+    qaic_config = dict(blocking_mode="kv", num_kv_blocks=NUM_KV_BLOCKS)
 
     model_kv_block = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config)
     qeff_kv_block = QEFFAutoModelForCausalLM(

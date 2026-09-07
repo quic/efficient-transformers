@@ -81,12 +81,22 @@ class VisionHandler:
         """
         return self._vision_session is not None and self._processor is not None
 
+    @staticmethod
+    def _load_image(image_source: Any) -> Image.Image:
+        if isinstance(image_source, Image.Image):
+            return image_source.convert("RGB")
+        if isinstance(image_source, str) and image_source.startswith(("http://", "https://")):
+            response = requests.get(image_source, stream=True)
+            response.raise_for_status()
+            return Image.open(BytesIO(response.content)).convert("RGB")
+        return Image.open(image_source).convert("RGB")
+
     def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             prompt: Text query to process with image
         """
         if not self._tokenizer:
@@ -94,8 +104,7 @@ class VisionHandler:
         pixel_values = []
         num_patches_list = []
         questions = []
-        img = requests.get(img_url, stream=True)
-        image = Image.open(BytesIO(img.content)).convert("RGB")
+        image = self._load_image(img_url)
 
         if self._image_height and self._image_width:
             image = image.resize((self._image_height, self._image_width))
@@ -148,7 +157,7 @@ class VisionHandler:
         """
         Download and preprocess image into model inputs
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query to process with image
         Returns:
             Dictionary of vision model inputs
@@ -160,11 +169,7 @@ class VisionHandler:
             raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
 
         try:
-            # Download image
-            if image_url.startswith(("http://", "https://")):
-                image = Image.open(requests.get(image_url, stream=True).raw)
-            else:
-                image = Image.open(image_url)
+            image = self._load_image(image_url)
             image = image.resize((constants.MOLMO_IMAGE_HEIGHT, constants.MOLMO_IMAGE_WIDTH))
             inputs = self._processor.process(images=[image], text=query)
             inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
@@ -204,7 +209,7 @@ class VisionHandler:
         Download and preprocess image into model inputs
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query to process with image
             prefill_seq_len: Padded sequence length for language model
 
@@ -219,11 +224,7 @@ class VisionHandler:
             raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
 
         try:
-            # Download image
-            if image_url.startswith(("http://", "https://")):
-                image = Image.open(requests.get(image_url, stream=True).raw)
-            else:
-                image = Image.open(image_url)
+            image = self._load_image(image_url)
 
             if self._image_height and self._image_width:
                 image = image.resize((self._image_width, self._image_height))
@@ -468,7 +469,7 @@ class VisionHandler:
         Complete pipeline: prepare inputs and run vision inference
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query
 
         Returns:
@@ -492,7 +493,7 @@ class VisionHandler:
         Process vision inputs and prepare language model inputs
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query
             padded_len: Padded sequence length for language model
 

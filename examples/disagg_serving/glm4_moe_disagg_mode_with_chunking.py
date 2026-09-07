@@ -40,7 +40,7 @@ decode_qpc_path = qeff_model.compile(
     offload_pt_weights=False,
     retain_full_kv=True,
     use_onnx_subfunctions=True,
-    qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
+    qaic_config={"blocking_mode": "kv", "num_kv_blocks": 2},
 )
 
 prefill_qpc_path = qeff_model.compile(
@@ -59,7 +59,6 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     use_onnx_subfunctions=True,
     qaic_config={
-        "enable_blocking": True,
         "blocking_mode": "kv",
         "num_kv_blocks": 2,
         "moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE},

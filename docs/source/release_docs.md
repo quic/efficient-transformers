@@ -51,7 +51,7 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 - **Causal Attention Blocking**
   - New KV, Q, Head, and Batch blocking strategies for CausalLM models
   - Supported architectures: Llama3, GPT-OSS, Gemma, Gemma2, Granite, GraniteMOE, Mistral
-  - Configurable via `qaic_config` with `enable_blocking: True`; disabled by default
+  - Configurable via `qaic_config` with `blocking_mode`; omit `blocking_mode` to disable it
   - Automatic blocking configurator with `skip_kv` enabled by default
   - Optimized nested loop implementation for attention blocking
 

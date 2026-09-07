@@ -18,6 +18,7 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import inspect
 import json
 import logging
 import os
@@ -581,7 +582,7 @@ def _tiny_qwen3_vl_config() -> Qwen3VLConfig:
     )
 
 
-def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
+def _tiny_qwen3_vl_moe_config(num_experts: int = 2) -> Qwen3VLMoeConfig:
     text_config = Qwen3VLMoeTextConfig(
         vocab_size=64,
         hidden_size=16,
@@ -592,7 +593,7 @@ def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
         num_key_value_heads=1,
         head_dim=8,
         max_position_embeddings=32,
-        num_experts=2,
+        num_experts=num_experts,
         num_experts_per_tok=1,
         decoder_sparse_step=1,
         mlp_only_layers=[],
@@ -2392,6 +2393,24 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
     assert all("vision_batch_size" not in spec for spec in lang_specs)
 
 
+def test_qwen3_vl_moe_batch_index_boundary_reorders_inputs_and_outputs():
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        _batch_index_gather,
+        _batch_index_scatter,
+    )
+
+    batch_index = torch.tensor([[2], [0], [3], [1]], dtype=torch.int64)
+    logical = torch.arange(4 * 3, dtype=torch.float32).reshape(4, 1, 3)
+    physical = _batch_index_scatter(logical, batch_index)
+
+    assert torch.equal(physical[batch_index.flatten()], logical)
+    assert torch.equal(_batch_index_gather(physical, batch_index), logical)
+
+    logical_positions = torch.arange(3 * 4, dtype=torch.int64).reshape(3, 4, 1)
+    physical_positions = _batch_index_scatter(logical_positions, batch_index, batch_dim=1)
+    assert torch.equal(physical_positions[:, batch_index.flatten()], logical_positions)
+
+
 def test_moe_prefill_transform_does_not_require_enable_chunking():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
     from QEfficient.transformers.models.pytorch_transforms import (
@@ -2422,6 +2441,283 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
         assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
         assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
         assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
+
+
+def _tiny_qwen3_vl_moe_sparse_block_pair(num_experts: int = 2):
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEMapperTransform,
+        OptimizedMoEWeightsTransform,
+    )
+
+    config = _tiny_qwen3_vl_moe_config(num_experts=num_experts).text_config
+    torch.manual_seed(0)
+    hf_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    with torch.no_grad():
+        hf_block.gate.weight.normal_(mean=0.0, std=0.02)
+        hf_block.experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        hf_block.experts.down_proj.normal_(mean=0.0, std=0.02)
+
+    qeff_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    return hf_block, qeff_block, config
+
+
+def test_qwen3_vl_moe_sparse_gather_bmm_matches_hf():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        qaic_config={"moe_config": {"flavour": "decode_bmm"}},
+    )
+    assert qeff_block._moe_flavour is MoEFlavour.DECODE_BMM
+    hidden_states = torch.randn(2, 3, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    (
+        "num_experts",
+        "num_devices",
+        "num_cores",
+        "cores_per_expert",
+        "tree_reduce",
+        "expected_experts_per_soc",
+    ),
+    [
+        pytest.param(2, 1, 2, 1, False, None, id="default-einsum"),
+        pytest.param(4, 2, 2, 1, False, 2, id="cross-soc-flat"),
+        pytest.param(4, 2, 2, 1, True, 2, id="cross-soc-tree"),
+        pytest.param(4, 2, 2, 2, False, 1, id="cores-per-expert-2"),
+    ],
+)
+def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(
+    num_experts,
+    num_devices,
+    num_cores,
+    cores_per_expert,
+    tree_reduce,
+    expected_experts_per_soc,
+):
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEExpertParallelWeightsTransform,
+        OptimizedMoEExportConfigTransform,
+    )
+    from QEfficient.transformers.moe import MoEFlavour
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=num_experts)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=num_devices,
+        num_cores=num_cores,
+        prefill_seq_len=4,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": cores_per_expert,
+                "tree_reduce": tree_reduce,
+                "expert_parallel_chunk_size": 2,
+            }
+        },
+    )
+    OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+    hidden_states = torch.randn(1, 4, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert qeff_block.total_avl_cores == num_devices * num_cores
+    assert qeff_block.cores_per_expert == cores_per_expert
+    assert qeff_block.experts_per_soc == expected_experts_per_soc
+    assert qeff_block.tree_reduce is tree_reduce
+    assert qeff_output.shape == hidden_states.shape
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    hash_params = {}
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=2,
+        num_cores=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 2,
+                "tree_reduce": True,
+                "expert_parallel_chunk_size": 3,
+            }
+        },
+        hash_params=hash_params,
+    )
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert qeff_block.expert_blocking_packed_chunk_size == 3
+    assert qeff_block.num_devices == 2
+    assert qeff_block.cores_per_expert == 2
+    assert qeff_block.total_avl_cores == 4
+    assert qeff_block.num_pipeline_stages == 2
+    assert qeff_block.num_parallelized_experts == 2
+    assert qeff_block.experts_per_soc == 1
+    assert qeff_block.tree_reduce is True
+    assert hash_params["moe_prefill_flavour"] == "expert_parallel"
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert hash_params["moe_prefill_total_avl_cores"] == 4
+    assert hash_params["moe_prefill_cores_per_expert"] == 2
+    assert hash_params["moe_prefill_tree_reduce"] is True
+    assert hash_params["moe_prefill_expert_parallel_chunk_size"] == 3
+    assert hash_params["moe_prefill_num_pipeline_stages"] == 2
+    assert hash_params["moe_prefill_num_parallelized_experts"] == 2
+    assert "moe_prefill_num_packed_chunks" in hash_params
+
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        num_devices=2,
+        num_cores=2,
+        qaic_config={"moe_config": {"flavour": "decode_bmm"}},
+        hash_params=hash_params,
+    )
+
+    assert qeff_block._moe_flavour is MoEFlavour.DECODE_BMM
+    assert hash_params["moe_prefill_flavour"] == "decode_bmm"
+    assert "moe_prefill_total_avl_cores" not in hash_params
+    assert "moe_prefill_cores_per_expert" not in hash_params
+    assert "moe_prefill_tree_reduce" not in hash_params
+    assert "moe_prefill_expert_parallel_chunk_size" not in hash_params
+    assert "moe_prefill_num_pipeline_stages" not in hash_params
+    assert "moe_prefill_num_parallelized_experts" not in hash_params
+    assert "moe_prefill_num_packed_chunks" not in hash_params
+
+    with torch.no_grad():
+        qeff_block(torch.randn(1, 2, config.hidden_size))
+
+
+def test_qwen3_vl_moe_sparse_configurator_rejects_invalid_core_layout():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    with pytest.raises(ValueError, match="total_avl_cores"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            num_devices=3,
+            num_cores=2,
+            qaic_config={
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "cores_per_expert": 1,
+                    "tree_reduce": False,
+                    "expert_parallel_chunk_size": 2,
+                }
+            },
+        )
+
+    with pytest.raises(TypeError, match="tree_reduce"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            num_devices=1,
+            num_cores=2,
+            qaic_config={
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "cores_per_expert": 1,
+                    "tree_reduce": "true",
+                    "expert_parallel_chunk_size": 2,
+                }
+            },
+        )
+
+
+def test_qwen3_vl_moe_sparse_expert_parallel_resolver_prefill_wins():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    # prefill_only=True with no explicit flavour selects expert_parallel
+    _, qeff_block_prefill, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(qeff_block_prefill, prefill_only=True, num_devices=1, num_cores=2)
+    assert qeff_block_prefill._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+    # prefill_only=False with explicit expert_parallel flavour selects expert_parallel
+    _, qeff_block_explicit, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block_explicit,
+        prefill_only=False,
+        num_devices=1,
+        num_cores=2,
+        qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+    )
+    assert qeff_block_explicit._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+    # prefill_only=False with no explicit flavour selects decode_bmm
+    _, qeff_block_decode, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(qeff_block_decode, prefill_only=False)
+    assert qeff_block_decode._moe_flavour is MoEFlavour.DECODE_BMM
+
+    # invalid tree_reduce type raises TypeError
+    _, qeff_block_err, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    with pytest.raises(TypeError, match="tree_reduce"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block_err,
+            prefill_only=True,
+            num_devices=1,
+            num_cores=2,
+            qaic_config={"moe_config": {"tree_reduce": "true"}},
+        )
+
+
+def test_qwen3_vl_moe_sparse_vlm_compile_signatures_expose_expert_parallel_args():
+    from QEfficient.transformers.models.modeling_auto import (
+        _QEffAutoModelForImageTextToTextDualQPC,
+        _QEFFAutoModelForImageTextToTextSingleQPC,
+    )
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    for wrapper_cls in (_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC):
+        params = inspect.signature(wrapper_cls.compile).parameters
+        assert "qaic_config" in params
+        assert params["qaic_config"].default is None
+
+    # Verify that qaic_config["moe_config"] is the accepted interface for expert-parallel
+    # configuration by applying all expected keys to a real block.
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=1,
+        num_cores=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 1,
+                "tree_reduce": False,
+                "expert_parallel_chunk_size": 2,
+            }
+        },
+    )
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
