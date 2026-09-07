@@ -22,20 +22,15 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-# DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-DEFAULT_PROMPTS = [
-    "Tell me about yourself.",
-    "What is the capital of France?",
-    "Explain photosynthesis in one sentence.",
-    "Name three primary colors.",
-] * 64
+DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+# DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+DEFAULT_PROMPTS = ["Tell me about yourself.", "What is the capital of France?"]
 DEFAULT_IMAGE_PROMPTS = [
     "Describe all the colors seen in the image",
     "What are the objects in the image?",
     "What is the main subject of the image?",
     "describe the image?",
-]
+] * 64
 DEFAULT_IMAGE_URLS = [
     "https://picsum.photos/id/237/536/354",
     "https://picsum.photos/id/230/536/354",
@@ -47,9 +42,9 @@ DEFAULT_CTX_LEN = 10240
 DEFAULT_GENERATION_LEN = 50
 DEFAULT_FULL_BATCH_SIZE = 256  # 1
 
-STAGES = 8
-PREFILL_NUM_DEVICES = 16
-DECODE_NUM_DEVICES = 16
+STAGES = 2  # 8
+PREFILL_NUM_DEVICES = 4  # 16
+DECODE_NUM_DEVICES = 2  # 16
 
 NUM_KV_BLOCKS = 4
 
@@ -79,29 +74,28 @@ def _build_config(model_id: str):
     config.torch_dtype = torch.float16
 
     # For faster execution user can run with fewer layers. For testing purposes only.
-    # config.vision_config.depth = 9
-    # config.text_config.num_hidden_layers = 2
-    # config.vision_config.deepstack_visual_indexes = [8]
+    config.vision_config.depth = 9
+    config.text_config.num_hidden_layers = 2
+    config.vision_config.deepstack_visual_indexes = [8]
     return config
 
 
 def _decode_qaic_config(ctx_len: int, num_kv_blocks: int) -> dict:
 
     return {
-        "blocking_mode": "kv",
+        "blocking_mode": "kv_batch_fold",
         "num_kv_blocks": num_kv_blocks,
-        "batch_fold": True,
         "ctx_len": ctx_len,
+        "moe_config": {"flavour": "expert_parallel", "tree_reduce": True, "cores_per_expert": 2},
     }
 
 
 def _prefill_qaic_config(ctx_len: int, num_kv_blocks: int, prefill_seq_len: int) -> dict:
 
     cfg = _decode_qaic_config(ctx_len, num_kv_blocks)
-    cfg.pop("batch_fold")
-    cfg["prefill_blocking_mode"] = PREFILL_BLOCKING_MODE
-    cfg["prefill_block_chunks"] = -(-prefill_seq_len // PREFILL_QL_CHUNK)  # ceil divide
-    cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
+    cfg["blocking_mode"] = f"prefill_{PREFILL_BLOCKING_MODE}"
+    cfg["num_q_blocks"] = -(-prefill_seq_len // PREFILL_QL_CHUNK)  # ceil divide
+    cfg["n_rep_chunk"] = PREFILL_N_REP_CHUNK
     cfg["moe_config"] = {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}
     return cfg
 
@@ -177,15 +171,12 @@ def run(
         mxint8_kv_cache=True,
         retain_full_kv=True,  # required for DMA slice writes into full KV
         user_tiled=True,
-        expert_parallel=True,  # This forces the model to use expert parallelism for the MoE layers
-        tree_reduce=True,  # This enables tree reduction for the MoE layers, which can improve performance when using multiple devices
-        cores_per_expert=2,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
         split_retained_state_io=True,
         split_model_io=True,
         mos=1,
         prefill_only=False,
         skip_vision=True,
-        # use_onnx_subfunctions=True,
+        use_onnx_subfunctions=True,
         layerwise=False,
         offload_pt_weights=False,
         qaic_config=_decode_qaic_config(ctx_len, num_kv_blocks),
@@ -212,7 +203,7 @@ def run(
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
-        # use_onnx_subfunctions=True,
+        use_onnx_subfunctions=True,
         layerwise=False,
         offload_pt_weights=True,
         qaic_config=_prefill_qaic_config(ctx_len, num_kv_blocks, prefill_seq_len),
