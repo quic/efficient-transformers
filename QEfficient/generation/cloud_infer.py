@@ -5,47 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import platform
 import sys
 from pathlib import Path
-from queue import Queue
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 from warnings import warn
 
 import numpy as np
-
-# Slicing-spec DimSpecs templates, chosen per KV binding's attention type.
-# The symbolic "batch_index" / "ctx_start" tokens are resolved at handoff time
-# from the (name, offset) pairs passed as `slicing_parameters`.
-FULL_ATTN_DIMSPEC = [
-    {"start": "batch_index"},
-    {"start": 0},
-    {"start": "ctx_start"},
-    {"start": 0},
-]
-LINEAR_ATTN_DIMSPEC = [
-    {"start": "batch_index"},
-    {"start": 0},
-    {"start": 0},
-]
-
-
-def _is_linear_state_name(name: str) -> bool:
-    """Return True for linear/recurrent (3-D) retained-state bindings."""
-    return name.startswith(("conv_state.", "recurrent_state."))
-
-
-def _kv_layer_sort_key(item: Tuple[str, int]) -> Tuple[int, str]:
-    """Order KV bindings by layer index, then name.
-
-    Standard attention sorts ``past_key`` before ``past_value``; MLA sorts
-    ``compressed_kv`` before ``k_pe``. The layer index is parsed from the first
-    dotted segment (``past_key.3`` -> 3); names without a dotted index sort as 0.
-    """
-    name = item[0]
-    part = name.split(".")[1] if "." in name else "0"
-    return int(part.split("_")[0]), name
 
 
 def _public_retained_state_name(output_name: str) -> Optional[str]:
@@ -54,11 +20,6 @@ def _public_retained_state_name(output_name: str) -> Optional[str]:
     if output_name.endswith(suffix):
         return output_name[: -len(suffix)] + "_RetainedState"
     return None
-
-
-def is_retained_state_name(name: str) -> bool:
-    """Return True when an I/O binding participates in retained-state cache flow."""
-    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
 
 
 def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
@@ -93,6 +54,12 @@ except ImportError:
     except ImportError:
         is_qaicrt_imported = False
 
+# Imported after the qaicrt/aicapi sys.path fallbacks above, so that
+# _kv_dma_handoff's own `import qaicrt` sees the same patched sys.path.
+# `is_retained_state_name` is re-exported here for existing external importers
+# (vlm_generation.py, text_generation_inference.py, modeling_auto.py).
+from QEfficient.generation._kv_dma_handoff import KvDmaHandoff, is_retained_state_name  # noqa: E402,F401
+
 
 class QAICInferenceSession:
     def __init__(
@@ -122,8 +89,8 @@ class QAICInferenceSession:
             inert and only the numpy-copy `run()` path is available.
         :stages: Optional[int]. Prefill pipeline depth; sizes the prefill execObj pool
             (`stages + 1`). Only used when `kv_dma_share=True`. Default=1.
-        :cluster_id: Optional[str]. One of "prefill", "decode", or None (combined).
-            Selects how the execObj pool is split. Only used when `kv_dma_share=True`.
+        :cluster_id: Optional[str]. Must be "prefill" or "decode" when `kv_dma_share=True`;
+            selects which exec-object pool this session allocates. Unused otherwise.
         :full_batch_size: int. Number of decode slots; `batch_index` offsets wrap
             modulo this value at prefill handoff. Only used when `kv_dma_share=True`.
         """
@@ -147,37 +114,14 @@ class QAICInferenceSession:
             aicapi.INT8_TYPE: np.dtype(np.int8),
         }
 
-        # KV-DMA-share configuration. When disabled, `queue_len == 1` and the
+        # KV-DMA-share configuration. When disabled, `_kv_dma` stays None and the
         # session keeps a single scalar execObj / qbuffers / buf_dims exactly as
-        # before; all handoff members below are skipped.
+        # before; all handoff state/logic lives in `self._kv_dma`.
         self.kv_dma_share = kv_dma_share
         self.stages = stages if stages is not None else 1
         self.cluster_id = cluster_id
         self.full_batch_size = full_batch_size
-        self.decode_execObj_idx: Optional[int] = None
-        if not kv_dma_share:
-            self.prefill_num_execObj = 0
-            self.decode_num_execObj = 0
-            self.queue_len = 1
-        elif cluster_id == "decode":
-            self.prefill_num_execObj = 0
-            self.decode_num_execObj = 1
-            self.decode_execObj_idx = 0
-            self.queue_len = 1
-        elif cluster_id == "prefill":
-            self.prefill_num_execObj = self.stages + 1
-            self.decode_num_execObj = 0
-            self.queue_len = self.prefill_num_execObj
-        else:  # combined prefill+decode in one session
-            self.prefill_num_execObj = self.stages + 1
-            self.decode_num_execObj = 1
-            self.decode_execObj_idx = 0
-            self.queue_len = self.prefill_num_execObj + self.decode_num_execObj
-        # Prefill exec slots follow the single decode slot (index 0) in the pool.
-        self.prefill_available_exec_objs: Queue = Queue()
-        if kv_dma_share:
-            for i in range(self.decode_num_execObj, self.decode_num_execObj + self.prefill_num_execObj):
-                self.prefill_available_exec_objs.put(i)
+        self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
 
         # Load QPC
         if device_ids is not None:
@@ -220,7 +164,7 @@ class QAICInferenceSession:
         if activate:
             self.activate()
             self.is_active = True
-        if not self.kv_dma_share:
+        if self._kv_dma is None:
             # Create input qbuffers and buf_dims (single-execObj `run()` path)
             self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
             self.buf_dims = qaicrt.BufferDimensionsVecRef(
@@ -229,7 +173,7 @@ class QAICInferenceSession:
         else:
             # Per-slot qbuffers / buf_dims for the pooled DMA-handoff path.
             self.qbuffers = [
-                [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings] for _ in range(self.queue_len)
+                [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings] for _ in range(self._queue_len)
             ]
             self.buf_dims = [
                 qaicrt.BufferDimensionsVecRef(
@@ -238,92 +182,29 @@ class QAICInferenceSession:
                         for binding in self.bindings
                     ]
                 )
-                for _ in range(self.queue_len)
+                for _ in range(self._queue_len)
             ]
-            self._init_kv_handoff()
+            self._kv_dma.init_buffer_maps()
 
-    def _init_kv_handoff(self):
-        """Build ordered buffer maps and the compiled KV slicing spec."""
-        self.decode_buff_map = [
-            (name, self.binding_index_map[name]) for name in self.input_names if is_retained_state_name(name)
-        ]
-        self.decode_buff_map.sort(key=_kv_layer_sort_key)
+    @property
+    def _queue_len(self) -> int:
+        return self._kv_dma.queue_len if self._kv_dma is not None else 1
 
-        # Decode KV *RetainedState output* bindings, in the same family order.
-        self.decode_rs_kv_only_buff_map = [
-            (name, self.binding_index_map[name])
-            for name in self.output_names
-            if name.endswith("_RetainedState") and is_retained_state_name(name)
-        ]
-        self.decode_rs_kv_only_buff_map.sort(key=_kv_layer_sort_key)
+    @property
+    def decode_execObj_idx(self) -> Optional[int]:
+        return self._kv_dma.decode_execObj_idx if self._kv_dma is not None else None
 
-        prefill_rs = [
-            (name.replace("_RetainedState", ""), self.binding_index_map[name])
-            for name in self.output_names
-            if name.endswith("_RetainedState") and is_retained_state_name(name)
-        ]
-        prefill_rs.sort(key=_kv_layer_sort_key)
-        self.decode_rs_full_buff_map = list(prefill_rs)
-        self.kv_only_buff_map = [item for item in prefill_rs if not _is_linear_state_name(item[0])]
+    @property
+    def kv_cache_info(self):
+        return self._kv_dma.kv_cache_info
 
-        # Per-slot KV geometry, in decode-input map order.
-        self.kv_cache_info: List[Tuple[tuple, np.dtype]] = []
-        for name, index in self.decode_buff_map:
-            binding = self.bindings[index]
-            self.kv_cache_info.append((tuple(binding.dims), self.aic_to_np_dtype_mapping[binding.type]))
+    @property
+    def decode_buff_map(self):
+        return self._kv_dma.decode_buff_map
 
-        # Hybrid iff more than one distinct (shape, dtype) KV family exists.
-        distinct = {(shape, dtype.str) for shape, dtype in self.kv_cache_info}
-        self.is_hybrid_kv = len(distinct) > 1
-
-        self.kv_slicing_spec_handle = None
-        if self.kv_cache_info:
-            spec_json = (
-                self._build_full_kv_slicing_json() if self.is_hybrid_kv else self._build_uniform_kv_slicing_json()
-            )
-            self.kv_slicing_spec_handle = self._create_slicing_spec_handle(spec_json)
-
-        self.readable_output_bindings = [
-            (name, self.binding_index_map[name]) for name in self.output_names if not name.endswith("_RetainedState")
-        ]
-        self.output_buffers: List[Dict[str, np.ndarray]] = [
-            {
-                name: np.zeros(
-                    tuple(self.bindings[index].dims),
-                    dtype=self.aic_to_np_dtype_mapping[self.bindings[index].type],
-                )
-                for name, index in self.readable_output_bindings
-            }
-            for _ in range(self.queue_len)
-        ]
-
-        self.persistent_inputs: Dict[str, np.ndarray] = {}
-
-    def _build_uniform_kv_slicing_json(self) -> str:
-        """One BufferSpec per KV name family; every KV shares shape/dtype."""
-        elem_size = self.kv_cache_info[0][1].itemsize
-        names = sorted({name.split(".")[0] for name, _ in self.kv_only_buff_map})
-        buffer_specs = [{"Name": f"{base}.*", "ElemSize": elem_size, "DimSpecs": FULL_ATTN_DIMSPEC} for base in names]
-        return json.dumps({"BufferSpecs": buffer_specs})
-
-    def _build_full_kv_slicing_json(self) -> str:
-        """One BufferSpec per RetainedState binding; DimSpecs chosen by ndim."""
-        buffer_specs = []
-        for binding in self.bindings:
-            name = binding.name
-            if not (name.endswith("_RetainedState") and is_retained_state_name(name)):
-                continue
-            base_name = name.replace("_RetainedState", "")
-            elem_size = self.aic_to_np_dtype_mapping[binding.type].itemsize
-            dim_spec = FULL_ATTN_DIMSPEC if len(binding.dims) == 4 else LINEAR_ATTN_DIMSPEC
-            buffer_specs.append({"Name": f"{base_name}(_.*)?", "ElemSize": elem_size, "DimSpecs": dim_spec})
-        return json.dumps({"BufferSpecs": buffer_specs})
-
-    def _create_slicing_spec_handle(self, buffer_spec_json: str):
-        status, slicing_spec_handle = self.program.createSlicingSpecHandle(buffer_spec_json)
-        if status != qaicrt.QStatus.QS_SUCCESS:
-            raise RuntimeError("Failed to create SlicingSpecHandle")
-        return slicing_spec_handle
+    @property
+    def decode_rs_kv_only_buff_map(self):
+        return self._kv_dma.decode_rs_kv_only_buff_map
 
     @property
     def input_names(self) -> List[str]:
@@ -337,8 +218,8 @@ class QAICInferenceSession:
         """Activate qpc"""
         if not self.is_active:
             self.program.activate()
-            if self.kv_dma_share:
-                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self.queue_len)]
+            if self._kv_dma is not None:
+                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
             else:
                 self.execObj = qaicrt.ExecObj(self.context, self.program)
             self.is_active = True
@@ -452,133 +333,26 @@ class QAICInferenceSession:
         return outputs
 
     # ------------------------------------------------------------------
-    # DMA-based KV handoff path (enabled only when kv_dma_share=True)
+    # DMA-based KV handoff path (enabled only when kv_dma_share=True);
+    # state/logic lives in QEfficient.generation._kv_dma_handoff.KvDmaHandoff.
     # ------------------------------------------------------------------
 
-    def _tuple_list_from_dict(self, inputs: Dict[str, np.ndarray]) -> List[tuple]:
-        """Map a name-keyed input dict to (binding_index, buffer) tuples."""
-        tuple_list = []
-        for name, buffer in inputs.items():
-            if name not in self.binding_index_map:
-                warn(f'Buffer: "{name}" not found')
-                continue
-            if buffer is None:
-                continue
-            tuple_list.append((self.binding_index_map[name], buffer))
-        return tuple_list
-
-    @staticmethod
-    def _make_inputs_contiguous(inputs: Dict[str, np.ndarray]) -> None:
-        for name, buffer in inputs.items():
-            inputs[name] = np.ascontiguousarray(buffer)
-
     def set_persistent_inputs(self, buffers: Dict[str, np.ndarray]) -> None:
-        for name, buffer in buffers.items():
-            if name not in self.binding_index_map:
-                warn(f'Buffer: "{name}" not found')
-                continue
-            self.persistent_inputs[name] = np.ascontiguousarray(buffer)
-
-    def _tuple_list_with_outputs(self, inputs: Dict[str, np.ndarray], exec_obj_idx: int) -> List[tuple]:
-        tuple_list = self._tuple_list_from_dict(inputs)
-        for name, buffer in self.persistent_inputs.items():
-            if name in inputs:
-                continue
-            tuple_list.append((self.binding_index_map[name], buffer))
-        for name, index in self.readable_output_bindings:
-            tuple_list.append((index, self.output_buffers[exec_obj_idx][name]))
-        return tuple_list
+        self._kv_dma.set_persistent_inputs(buffers)
 
     def set_data_for_kv_handoff(self, kv_cache_buffers, slicing_parameters, index=0, buff_map=None):
-        """Wire a sliced DMA descriptor so the runtime writes RetainedState
-        outputs directly into ``kv_cache_buffers`` at the ``slicing_parameters``
-        offsets. ``buff_map`` is a list of ``(name, binding_index)`` whose order
-        must match ``kv_cache_buffers``.
-        """
-        if buff_map is None:
-            raise ValueError("set_data_for_kv_handoff requires a buff_map")
-        if not (len(kv_cache_buffers) == len(buff_map) or len(kv_cache_buffers) + 1 == len(buff_map)):
-            raise ValueError(
-                f"KV buffer count mismatch: expected {len(buff_map)} (or {len(buff_map) - 1}), "
-                f"got {len(kv_cache_buffers)}"
-            )
-        slices = [(binding_index, buf) for (_, binding_index), buf in zip(buff_map, kv_cache_buffers)]
-        status, _ = self.execObj[index].setDataWithSlices(slices, self.kv_slicing_spec_handle, slicing_parameters)
-        if status != qaicrt.QStatus.QS_SUCCESS:
-            raise RuntimeError("Failed to setDataWithSlices")
-        return kv_cache_buffers
+        return self._kv_dma.set_data_for_kv_handoff(kv_cache_buffers, slicing_parameters, index, buff_map)
 
     def np_run(self, inputs: Dict[str, np.ndarray], slicing_parameters=None, is_prefill: bool = True) -> int:
-        if is_prefill:
-            exec_obj_idx = self.prefill_available_exec_objs.get()
-        else:
-            if self.decode_execObj_idx is None:
-                raise RuntimeError("No decode execObj configured for this session")
-            exec_obj_idx = self.decode_execObj_idx
-        self._make_inputs_contiguous(inputs)
-        tuple_list = self._tuple_list_with_outputs(inputs, exec_obj_idx)
-        if slicing_parameters is None:
-            status = self.execObj[exec_obj_idx].setData(tuple_list)
-        else:
-            status, _ = self.execObj[exec_obj_idx].setDataWithSlices(
-                tuple_list, self.kv_slicing_spec_handle, slicing_parameters
-            )
-        if status != qaicrt.QStatus.QS_SUCCESS:
-            raise MemoryError("Failed to setData")
-        if self.queue.enqueue(self.execObj[exec_obj_idx]) != qaicrt.QStatus.QS_SUCCESS:
-            raise MemoryError("Failed to enqueue")
-        return exec_obj_idx
+        return self._kv_dma.np_run(inputs, slicing_parameters, is_prefill)
 
     def np_run_pipeline(
         self, inputs: Dict[str, np.ndarray], slicing_parameters=None, last_chunk: bool = False, kv_cache_buffers=None
     ) -> int:
-        exec_obj_idx = self.prefill_available_exec_objs.get()
-        if last_chunk:
-            if kv_cache_buffers is None:
-                raise ValueError("last_chunk requires kv_cache_buffers to wire the handoff")
-            batch_index = int(inputs["batch_index"].item()) if "batch_index" in inputs else 0
-            buff_map = self.decode_rs_full_buff_map if self.is_hybrid_kv else self.kv_only_buff_map
-            self.set_data_for_kv_handoff(
-                kv_cache_buffers,
-                [("batch_index", batch_index % self.full_batch_size), ("ctx_start", 0)],
-                exec_obj_idx,
-                buff_map,
-            )
-        self._make_inputs_contiguous(inputs)
-        tuple_list = self._tuple_list_with_outputs(inputs, exec_obj_idx)
-        if slicing_parameters is None:
-            status = self.execObj[exec_obj_idx].setData(tuple_list)
-        else:
-            status, _ = self.execObj[exec_obj_idx].setDataWithSlices(
-                tuple_list, self.kv_slicing_spec_handle, slicing_parameters
-            )
-        if status != qaicrt.QStatus.QS_SUCCESS:
-            raise MemoryError("Failed to setData")
-        if self.queue.enqueue(self.execObj[exec_obj_idx]) != qaicrt.QStatus.QS_SUCCESS:
-            raise MemoryError("Failed to enqueue")
-        return exec_obj_idx
+        return self._kv_dma.np_run_pipeline(inputs, slicing_parameters, last_chunk, kv_cache_buffers)
 
     def complete_inf(self, index: int, is_prefill: bool) -> None:
-        """Block until execObj ``index`` finishes; release prefill slots back to
-        the pool.
-        """
-        if self.execObj[index].waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
-            raise ValueError(self._shape_mismatch_message(self.buf_dims[index]))
-        if is_prefill:
-            self.prefill_available_exec_objs.put(index)
+        self._kv_dma.complete_inf(index, is_prefill)
 
     def get_outputs(self, index: int) -> Dict[str, np.ndarray]:
-        """Return the readable (non-RetainedState) outputs of execObj ``index``.
-
-        On the pooled path the runtime DMA-writes these outputs into the per-slot
-        host arrays wired at enqueue, so we read straight from ``output_buffers``
-        (``getData`` returns empty for tuple-list enqueues). RetainedState KV goes
-        directly to the caller's shared arrays via the slicing spec and is not
-        surfaced here.
-        """
-        outputs: Dict[str, np.ndarray] = {}
-        for name, _ in self.readable_output_bindings:
-            output = self.output_buffers[index][name]
-            outputs[name] = output
-            outputs.setdefault(name.rsplit("/", 1)[-1], output)
-        return outputs
+        return self._kv_dma.get_outputs(index)

@@ -219,10 +219,16 @@ def run(
     )
 
     prefill_session = QAICInferenceSession(
-        prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True, full_batch_size=full_batch_size
+        prefill_qpc_path.get("lang_prefill_qpc_path"),
+        kv_dma_share=True,
+        full_batch_size=full_batch_size,
+        cluster_id="prefill",
     )
     decode_session = QAICInferenceSession(
-        decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True, full_batch_size=full_batch_size
+        decode_qpc_path.get("lang_decode_qpc_path"),
+        kv_dma_share=True,
+        full_batch_size=full_batch_size,
+        cluster_id="decode",
     )
 
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"

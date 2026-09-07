@@ -124,8 +124,12 @@ def _compile_sessions(
     )
     onnx_paths["prefill"] = _assert_onnx_path(qeff_model.onnx_path, "prefill")
 
-    prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE)
-    decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE)
+    prefill_session = QAICInferenceSession(
+        prefill_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE, cluster_id="prefill"
+    )
+    decode_session = QAICInferenceSession(
+        decode_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE, cluster_id="decode"
+    )
     return prefill_session, decode_session
 
 

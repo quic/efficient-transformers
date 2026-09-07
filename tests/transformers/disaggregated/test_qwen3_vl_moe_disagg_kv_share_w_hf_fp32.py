@@ -414,8 +414,12 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
-        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
+        prefill_session = QAICInferenceSession(
+            prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True, cluster_id="prefill"
+        )
+        decode_session = QAICInferenceSession(
+            decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True, cluster_id="decode"
+        )
         sessions.extend([vision_session, prefill_session, decode_session])
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(

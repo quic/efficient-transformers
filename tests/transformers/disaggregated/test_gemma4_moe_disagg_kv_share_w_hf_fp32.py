@@ -784,8 +784,8 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, night
         )
 
         vision_session = None if SKIP_VISION else QAICInferenceSession(vision_qpc_path)
-        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True)
-        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, cluster_id="prefill")
+        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, cluster_id="decode")
         sessions.extend(_active_sessions(vision_session, prefill_session, decode_session))
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
@@ -875,8 +875,8 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
         vision_session = None if SKIP_VISION else QAICInferenceSession(vision_qpc_path)
-        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True)
-        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, cluster_id="prefill")
+        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, cluster_id="decode")
         sessions.extend(_active_sessions(vision_session, prefill_session, decode_session))
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
@@ -1036,8 +1036,8 @@ def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
         compiled_onnx_paths.update(share_onnx)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
-        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True)
-        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, cluster_id="prefill")
+        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, cluster_id="decode")
         sessions.extend([prefill_session, decode_session])
 
         inputs = {

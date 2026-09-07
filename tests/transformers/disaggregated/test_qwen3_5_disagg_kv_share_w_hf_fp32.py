@@ -933,8 +933,12 @@ def _compile_disagg_sessions(
     print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
     vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-    prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
-    decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
+    prefill_session = QAICInferenceSession(
+        prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True, cluster_id="prefill"
+    )
+    decode_session = QAICInferenceSession(
+        decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True, cluster_id="decode"
+    )
     sessions.extend([vision_session, prefill_session, decode_session])
     return vision_session, prefill_session, decode_session
 
@@ -1031,8 +1035,8 @@ def _compile_disagg_qpcs(
 
 def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
     vision_session = QAICInferenceSession(qpc_paths["vision"])
-    prefill_session = QAICInferenceSession(qpc_paths["prefill"], kv_dma_share=True)
-    decode_session = QAICInferenceSession(qpc_paths["decode"], kv_dma_share=True)
+    prefill_session = QAICInferenceSession(qpc_paths["prefill"], kv_dma_share=True, cluster_id="prefill")
+    decode_session = QAICInferenceSession(qpc_paths["decode"], kv_dma_share=True, cluster_id="decode")
     sessions.extend([vision_session, prefill_session, decode_session])
     return vision_session, prefill_session, decode_session
 

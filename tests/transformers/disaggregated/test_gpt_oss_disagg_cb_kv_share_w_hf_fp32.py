@@ -545,8 +545,8 @@ def _compile_disagg_qpcs(
     compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.onnx_path, "prefill")
     print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
-    prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, stages=stages)
-    decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+    prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, stages=stages, cluster_id="prefill")
+    decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, cluster_id="decode")
     sessions.extend([prefill_session, decode_session])
     return prefill_session, decode_session
 
@@ -663,8 +663,12 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.onnx_path, "prefill")
         print(f"Disagg CB ONNX paths: {compiled_onnx_paths}")
 
-        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE)
-        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE)
+        prefill_session = QAICInferenceSession(
+            prefill_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE, cluster_id="prefill"
+        )
+        decode_session = QAICInferenceSession(
+            decode_qpc_path, kv_dma_share=True, full_batch_size=FULL_BATCH_SIZE, cluster_id="decode"
+        )
         sessions.extend([prefill_session, decode_session])
 
         assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"

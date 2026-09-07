@@ -92,9 +92,11 @@ def _compile_sessions(
         use_onnx_subfunctions=True,
     )
     prefill_session = QAICInferenceSession(
-        prefill_qpc_path, kv_dma_share=True, stages=stages, full_batch_size=full_batch_size
+        prefill_qpc_path, kv_dma_share=True, stages=stages, full_batch_size=full_batch_size, cluster_id="prefill"
     )
-    decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True, full_batch_size=full_batch_size)
+    decode_session = QAICInferenceSession(
+        decode_qpc_path, kv_dma_share=True, full_batch_size=full_batch_size, cluster_id="decode"
+    )
     return prefill_session, decode_session
 
 
