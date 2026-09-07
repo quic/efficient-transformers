@@ -68,6 +68,27 @@ _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
 )
 FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
 MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
+DIFFUSION_GEMMA_SAMPLER_OUTPUTS = {
+    "topk_logits",
+    "topk_indices",
+    "newly_accepted_mask",
+    "mean_entropy",
+    "new_canvas",
+}
+DIFFUSION_GEMMA_DISCRETE_SAMPLER_OUTPUTS = {
+    "topk_indices",
+    "newly_accepted_mask",
+    "new_canvas",
+}
+DIFFUSION_GEMMA_DISCRETE_SAMPLER_OPS = {
+    "ArgMax",
+    "GreaterOrEqual",
+    "LessOrEqual",
+    "ScatterElements",
+    "ScatterND",
+    "Shape",
+}
+
 
 def _write_unified_accum_npi(onnx_path):
     graph = onnx.load(onnx_path, load_external_data=False).graph
@@ -79,8 +100,7 @@ def _write_unified_accum_npi(onnx_path):
         return any(part in node_name for part in MOE_NODE_NAME_PARTS)
 
     def is_excluded_npi_node(node):
-        return "/lm_head/MatMul" in node.name
-        # return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
+        return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
 
     for node in graph.node:
         if is_moe_node(node) or is_excluded_npi_node(node):
@@ -104,8 +124,20 @@ def _write_unified_accum_npi(onnx_path):
             if input_name in producers:
                 backtrace(input_name, depth + 1)
 
-    if graph.output:
-        backtrace(graph.output[0].name)
+    sampler_outputs = [
+        output.name
+        for output in graph.output
+        if output.name.rsplit("/", maxsplit=1)[-1] in DIFFUSION_GEMMA_SAMPLER_OUTPUTS
+    ]
+    if sampler_outputs:
+        output_names = sampler_outputs
+    elif graph.output:
+        output_names = [graph.output[0].name]
+    else:
+        output_names = []
+    is_diffusion_gemma_sampler = bool(sampler_outputs)
+    for output_name in output_names:
+        backtrace(output_name)
 
     initializer_names = {initializer.name for initializer in graph.initializer}
 
@@ -125,8 +157,15 @@ def _write_unified_accum_npi(onnx_path):
     for node in keep_nodes:
         if is_moe_node(node) or is_excluded_npi_node(node):
             continue
-        for output_name in node.output:
+        for output_index, output_name in enumerate(node.output):
             if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
+                continue
+            output_basename = output_name.rsplit("/", maxsplit=1)[-1]
+            if is_diffusion_gemma_sampler and (
+                output_basename in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OUTPUTS
+                or node.op_type in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OPS
+                or (node.op_type == "TopK" and output_index == 1)
+            ):
                 continue
             if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
                 continue
@@ -780,9 +819,10 @@ class QEFFBaseModel(ABC):
             **compiler_options,
         )
 
-        extras = {"inputs": self.model.get_dummy_inputs(),
-        "output_names": self.model.get_output_names(),
-        "dynamic_axes": self.model.get_onnx_dynamic_axes()
+        extras = {
+            "inputs": self.model.get_dummy_inputs(),
+            "output_names": self.model.get_output_names(),
+            "dynamic_axes": self.model.get_onnx_dynamic_axes(),
         }
         kwargs.update(extras)
         with export_from_compile():
@@ -1248,7 +1288,7 @@ class QEFFBaseModel(ABC):
 
         npi_file_path = _write_unified_accum_npi(self.onnx_path)
         compiler_options.update({"node_precision_info": npi_file_path})
-        
+
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):

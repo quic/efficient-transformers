@@ -41,7 +41,7 @@ _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-SELF_CONDITIONING_TOP_K = 10000
+SELF_CONDITIONING_TOP_K = 128
 DEVICE_ENTROPY_BOUND = 0.1
 
 def _top_k_self_conditioning_embeddings(
@@ -532,7 +532,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             )
         hidden_states = language_model.norm(_clamp_to_fp16_range(hidden_states))
         temperature_logits = self.model._apply_logit_softcapping(self.model.lm_head(hidden_states).float())
-        temperature_logits = temperature_logits / temperature#.clamp_min(1e-6).view(-1, 1, 1)
+        temperature_logits = temperature_logits / temperature.clamp_min(1e-6).view(-1, 1, 1)
         log_probs = torch.nn.functional.log_softmax(temperature_logits, dim=-1, dtype=torch.float32)
         token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
         sorted_entropy, sorted_indices = torch.topk(

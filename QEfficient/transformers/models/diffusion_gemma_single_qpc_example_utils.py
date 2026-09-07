@@ -448,6 +448,7 @@ class DiffusionGemmaSingleQPCGenerator:
             if len(argmax_canvas_history) > stability_threshold:
                 argmax_canvas_history.pop(0)
             accepted_mask = accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
+            # accepted_mask = newly_accepted #accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
             canvas = np.where(
                 ~accepted_mask,
                 self.rng.randint(0, self.vocab_size, size=(1, self.canvas_length)).astype(np.int64),
@@ -539,7 +540,7 @@ class DiffusionGemmaSingleQPCGenerator:
         entropy_bound: float = 0.1,
         t_min: float = 0.4,
         t_max: float = 0.8,
-        stability_threshold: int = 2,
+        stability_threshold: int = 1,
         confidence_threshold: float = 0.005,
         ctx_len: Optional[int] = None,
         pad_token_id: int = 0,
