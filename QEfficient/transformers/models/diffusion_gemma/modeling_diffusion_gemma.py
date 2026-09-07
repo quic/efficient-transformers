@@ -41,14 +41,14 @@ _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-SELF_CONDITIONING_TOP_K = 128
+SELF_CONDITIONING_TOP_K = 10000
+DEVICE_ENTROPY_BOUND = 0.1
 
 def _top_k_self_conditioning_embeddings(
-    logits: torch.Tensor,
+    top_k_logits: torch.Tensor,
+    top_k_indices: torch.Tensor,
     embedding_weight: torch.Tensor,
 ) -> torch.Tensor:
-    top_k = min(SELF_CONDITIONING_TOP_K, logits.shape[-1])
-    top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
     top_k_probabilities = top_k_logits.softmax(dim=-1, dtype=torch.float32).to(embedding_weight.dtype)
     top_k_embeddings = torch.nn.functional.embedding(top_k_indices, embedding_weight)
     return torch.matmul(top_k_probabilities.unsqueeze(-2), top_k_embeddings).squeeze(-2)
@@ -465,7 +465,10 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         vision_embeds: Optional[torch.Tensor] = None,
         image_idx: Optional[torch.Tensor] = None,
         mm_token_type_ids: Optional[torch.Tensor] = None,
-        self_conditioning_logits: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_logits: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_indices: Optional[torch.LongTensor] = None,
+        sampling_uniforms: Optional[torch.FloatTensor] = None,
+        temperature: Optional[torch.FloatTensor] = None,
         is_encode: Optional[torch.LongTensor] = None,
         use_self_conditioning: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -483,16 +486,19 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             is_encode = torch.ones(1, dtype=torch.int64, device=input_ids.device)
         if use_self_conditioning is None:
             use_self_conditioning = torch.zeros(1, dtype=torch.int64, device=input_ids.device)
+        if temperature is None:
+            temperature = torch.ones((input_ids.shape[0], 1), dtype=torch.float32, device=input_ids.device)
 
         inputs_embeds, next_image_idx = self.model._inject_vision_embeds(input_ids, vision_embeds, image_idx)
         decoder = self.model.model.decoder
-        if self_conditioning_logits is None:
+        if self_conditioning_topk_logits is None or self_conditioning_topk_indices is None:
             soft_embeddings = torch.zeros_like(inputs_embeds)
         else:
             soft_embeddings = _top_k_self_conditioning_embeddings(
-                 self_conditioning_logits,
-                 decoder.embed_tokens.weight,
-             ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
+                self_conditioning_topk_logits,
+                self_conditioning_topk_indices,
+                decoder.embed_tokens.weight,
+            ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
         use_sc = use_self_conditioning.bool().view(1, 1, 1)
         soft_embeddings = torch.where(use_sc, soft_embeddings, torch.zeros_like(soft_embeddings))
         conditioned_embeds = decoder.self_conditioning(inputs_embeds, soft_embeddings)
@@ -524,14 +530,53 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
                 use_physical_kv=True,
                 mm_token_type_ids=mm_token_type_ids,
             )
-
         hidden_states = language_model.norm(_clamp_to_fp16_range(hidden_states))
-        canvas_logits = self.model._apply_logit_softcapping(self.model.lm_head(hidden_states).float())
+        temperature_logits = self.model._apply_logit_softcapping(self.model.lm_head(hidden_states).float())
+        temperature_logits = temperature_logits / temperature#.clamp_min(1e-6).view(-1, 1, 1)
+        log_probs = torch.nn.functional.log_softmax(temperature_logits, dim=-1, dtype=torch.float32)
+        token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
+        sorted_entropy, sorted_indices = torch.topk(
+            token_entropy,
+            k=token_entropy.shape[-1],
+            dim=-1,
+            largest=False,
+            sorted=True,
+        )
+        sorted_selection_mask = (
+            torch.cumsum(sorted_entropy, dim=1) - sorted_entropy
+        ) <= DEVICE_ENTROPY_BOUND
+        newly_accepted_mask = torch.zeros_like(sorted_selection_mask, dtype=torch.int32).scatter(
+            dim=-1,
+            index=sorted_indices,
+            src=sorted_selection_mask.to(torch.int32),
+        )
+        topk_logits, topk_indices = torch.topk(
+            temperature_logits,
+            k=SELF_CONDITIONING_TOP_K,
+            dim=-1,
+        )
+        if sampling_uniforms is None:
+            sampling_uniforms = torch.zeros(
+                (*input_ids.shape, 1),
+                dtype=temperature_logits.dtype,
+                device=input_ids.device,
+            )
+        cumulative_probabilities = log_probs.exp().cumsum(dim=2)
+        denoiser_canvas = (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1)
+        new_canvas = torch.where(newly_accepted_mask.bool(), denoiser_canvas, input_ids)
         pkv = [
             (past_key_values.layers[layer_index].keys, past_key_values.layers[layer_index].values)
             for layer_index in range(self.text_config.num_hidden_layers)
         ]
-        return canvas_logits, next_image_idx, pkv
+        return (
+            topk_logits,
+            topk_indices,
+            newly_accepted_mask,
+            token_entropy.mean(dim=-1, keepdim=True),
+            new_canvas,
+            next_image_idx,
+            pkv,
+        )
 
     def get_dummy_inputs(self, **kwargs):
         encoder = QEffDiffusionGemmaEncoderPrefillWrapper(self.model)
@@ -545,7 +590,6 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         sliding_kv_length = encoder_inputs["past_key_values"][
             next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "sliding_attention")
         ][0].shape[-2]
-        # breakpoint()
         return {
             **encoder_inputs,
             "cache_position_ids": encoder_inputs["position_ids"].clone(),
@@ -555,9 +599,14 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             "sliding_attention_mask": torch.zeros(
                 (batch_size, 1, block_length, sliding_kv_length + block_length), dtype=torch.float32
             ),
-            "self_conditioning_logits": torch.zeros(
-                (batch_size, block_length, text_config.vocab_size), dtype=torch.float32
+            "self_conditioning_topk_logits": torch.zeros(
+                (batch_size, block_length, SELF_CONDITIONING_TOP_K), dtype=torch.float32
             ),
+            "self_conditioning_topk_indices": torch.zeros(
+                (batch_size, block_length, SELF_CONDITIONING_TOP_K), dtype=torch.int64
+            ),
+            "sampling_uniforms": torch.zeros((batch_size, block_length, 1), dtype=torch.float32),
+            "temperature": torch.ones((batch_size, 1), dtype=torch.float32),
             "is_encode": torch.ones(1, dtype=torch.int64),
             "use_self_conditioning": torch.zeros(1, dtype=torch.int64),
         }
@@ -598,7 +647,10 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
             "full_attention_mask": {0: "batch_size", 2: "seq_len", 3: "full_kv_plus_seq_len"},
             "sliding_attention_mask": {0: "batch_size", 2: "seq_len", 3: "sliding_kv_plus_seq_len"},
-            "self_conditioning_logits": {0: "batch_size", 1: "seq_len"},
+            "self_conditioning_topk_logits": {0: "batch_size", 1: "seq_len"},
+            "self_conditioning_topk_indices": {0: "batch_size", 1: "seq_len"},
+            "sampling_uniforms": {0: "batch_size", 1: "seq_len"},
+            "temperature": {0: "batch_size"},
         }
         for layer_index, layer_type in enumerate(self.text_config.layer_types):
             ctx_axis = {0: "batch_size", 2: "sliding_window" if layer_type == "sliding_attention" else "ctx_len"}
@@ -607,7 +659,14 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         return axes
 
     def get_output_names(self, **kwargs):
-        names = ["canvas_logits", "image_idx_output"]
+        names = [
+            "topk_logits",
+            "topk_indices",
+            "newly_accepted_mask",
+            "mean_entropy",
+            "new_canvas",
+            "image_idx_output",
+        ]
         for layer_index in range(self.text_config.num_hidden_layers):
             for kv_name in ("key", "value"):
                 names.append(f"past_{kv_name}.{layer_index}_RetainedState")
