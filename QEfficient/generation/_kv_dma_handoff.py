@@ -86,36 +86,63 @@ class KvDmaHandoff:
         for i in range(self.decode_num_execObj, self.decode_num_execObj + self.prefill_num_execObj):
             self.prefill_available_exec_objs.put(i)
 
+    def _build_kv_bindings(self) -> List[Tuple[str, int, int]]:
+        """One canonical, validated ordering of KV retained-state bindings.
+
+        Every downstream buffer map is derived from this single list so they can
+        never drift out of sync with each other (e.g. from independently sorting
+        differently-shaped name sets). Cross-checks that every retained-state
+        input has a matching ``_RetainedState`` output and vice versa, failing
+        fast instead of silently zipping mismatched bindings together.
+
+        Returns a list of ``(base_name, input_index, output_index)``, ordered by
+        ``_kv_layer_sort_key``.
+        """
+        session = self.session
+        suffix = "_RetainedState"
+        input_map = {
+            name: session.binding_index_map[name] for name in session.input_names if is_retained_state_name(name)
+        }
+        output_map = {
+            name[: -len(suffix)]: session.binding_index_map[name]
+            for name in session.output_names
+            if name.endswith(suffix) and is_retained_state_name(name[: -len(suffix)])
+        }
+        if input_map.keys() != output_map.keys():
+            missing_output = sorted(input_map.keys() - output_map.keys())
+            missing_input = sorted(output_map.keys() - input_map.keys())
+            raise ValueError(
+                "Retained-state KV binding mismatch between decode inputs and outputs: "
+                f"inputs with no matching {suffix!r} output: {missing_output}; "
+                f"outputs with no matching input: {missing_input}"
+            )
+        ordered_names = sorted(input_map, key=lambda name: _kv_layer_sort_key((name, 0)))
+        return [(name, input_map[name], output_map[name]) for name in ordered_names]
+
     def init_buffer_maps(self):
         """Build ordered buffer maps and the compiled KV slicing spec."""
         session = self.session
-        self.decode_buff_map = [
-            (name, session.binding_index_map[name]) for name in session.input_names if is_retained_state_name(name)
-        ]
-        self.decode_buff_map.sort(key=_kv_layer_sort_key)
+        self.kv_bindings = self._build_kv_bindings()
 
-        # Decode KV *RetainedState output* bindings, in the same family order.
+        self.decode_buff_map = [(name, input_index) for name, input_index, _ in self.kv_bindings]
         self.decode_rs_kv_only_buff_map = [
-            (name, session.binding_index_map[name])
-            for name in session.output_names
-            if name.endswith("_RetainedState") and is_retained_state_name(name)
+            (f"{name}_RetainedState", output_index) for name, _, output_index in self.kv_bindings
         ]
-        self.decode_rs_kv_only_buff_map.sort(key=_kv_layer_sort_key)
-
-        prefill_rs = [
-            (name.replace("_RetainedState", ""), session.binding_index_map[name])
-            for name in session.output_names
-            if name.endswith("_RetainedState") and is_retained_state_name(name)
+        self.decode_rs_full_buff_map = [(name, output_index) for name, _, output_index in self.kv_bindings]
+        self.kv_only_buff_map = [
+            (name, output_index)
+            for name, output_index in self.decode_rs_full_buff_map
+            if not _is_linear_state_name(name)
         ]
-        prefill_rs.sort(key=_kv_layer_sort_key)
-        self.decode_rs_full_buff_map = list(prefill_rs)
-        self.kv_only_buff_map = [item for item in prefill_rs if not _is_linear_state_name(item[0])]
 
-        # Per-slot KV geometry, in decode-input map order.
-        self.kv_cache_info: List[Tuple[tuple, np.dtype]] = []
-        for name, index in self.decode_buff_map:
-            binding = session.bindings[index]
-            self.kv_cache_info.append((tuple(binding.dims), session.aic_to_np_dtype_mapping[binding.type]))
+        # Per-slot KV geometry, in canonical kv_bindings order.
+        self.kv_cache_info: List[Tuple[tuple, np.dtype]] = [
+            (
+                tuple(session.bindings[input_index].dims),
+                session.aic_to_np_dtype_mapping[session.bindings[input_index].type],
+            )
+            for _, input_index, _ in self.kv_bindings
+        ]
 
         # Hybrid iff more than one distinct (shape, dtype) KV family exists.
         distinct = {(shape, dtype.str) for shape, dtype in self.kv_cache_info}
@@ -223,7 +250,22 @@ class KvDmaHandoff:
                 f"KV buffer count mismatch: expected {len(buff_map)} (or {len(buff_map) - 1}), "
                 f"got {len(kv_cache_buffers)}"
             )
-        slices = [(binding_index, buf) for (_, binding_index), buf in zip(buff_map, kv_cache_buffers)]
+        slices = []
+        for (name, binding_index), buf in zip(buff_map, kv_cache_buffers):
+            binding = self.session.bindings[binding_index]
+            expected_shape = tuple(binding.dims)
+            if expected_shape != tuple(buf.shape):
+                raise ValueError(
+                    f"KV buffer shape mismatch for {name!r} (binding {binding_index}): "
+                    f"expected {expected_shape}, got {tuple(buf.shape)}"
+                )
+            expected_dtype = self.session.aic_to_np_dtype_mapping[binding.type]
+            if expected_dtype != buf.dtype:
+                raise ValueError(
+                    f"KV buffer dtype mismatch for {name!r} (binding {binding_index}): "
+                    f"expected {expected_dtype}, got {buf.dtype}"
+                )
+            slices.append((binding_index, buf))
         status, _ = self.session.execObj[index].setDataWithSlices(
             slices, self.kv_slicing_spec_handle, slicing_parameters
         )
