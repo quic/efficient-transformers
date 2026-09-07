@@ -20,30 +20,32 @@ Pass the options below to `qeff_model.compile()` together with `prefill_only=Tru
 
 | Option | Type | Description |
 |---|---|---|
-| `mdp_num_partitions` | `int` | Number of pipeline-parallel partitions. Values > 1 cause the compiler to generate a partition config. `mdp_ts_num_devices` must be evenly divisible by `mdp_num_partitions`; if it is not, floor-division is used to assign devices per partition and the remainder devices are unused/unassigned. |
-| `mdp_strategy` | `str` | Partitioning strategy: `"onnx"` derives cuts directly from the ONNX graph; `"intersection"` intersects ONNX graph nodes with a prior compiler dump to refine the cuts. |
-| `mdp_compiler_dump_path` | `str` | Path to the JSON produced by a prior compiler dump run. Required only when `mdp_strategy="intersection"`. |
+| `num_devices` | `int` | Total number of devices used across all pipeline stages. |
+| `mdp_num_partitions` | `int` | Number of pipeline-parallel partitions. Values > 1 cause QEfficient to generate an MDP partition config. |
+| `mdp_strategy` | `str` | Partitioning strategy: `"onnx"` derives cuts directly from the ONNX graph; `"intersection"` first generates a compiler dump, then intersects compiler node names with ONNX-derived partition cuts. |
+
+`mdp_ts_num_devices` is an internal `_compile()` argument. If passed to the public auto-model `compile()` API, it is ignored with a warning; use `num_devices` instead. Tensor-slice devices per MDP partition are calculated internally as `num_devices // mdp_num_partitions`.
+`mdp_compiler_dump_path` is deprecated and ignored if passed. QEfficient now generates the compiler dump automatically for `mdp_strategy="intersection"`.
 
 See [`qwen3_vl_mdp_compile.py`](qwen3_vl_mdp_compile.py) for a standalone compile-only script that validates MDP compilation for `Qwen/Qwen3-VL-30B-A3B-Instruct` using these options.
 
-### Example — ONNX strategy (recommended starting point)
+### Example - ONNX strategy
 ```python
 qeff_model.compile(
     prefill_only=True,
-    mdp_ts_num_devices=4,
+    num_devices=4,
     mdp_num_partitions=2,
     mdp_strategy="onnx",
 )
 ```
 
-### Example — intersection strategy (uses a prior compiler dump to refine partitions)
+### Example - intersection strategy
 ```python
 qeff_model.compile(
     prefill_only=True,
-    mdp_ts_num_devices=4,
+    num_devices=4,
     mdp_num_partitions=2,
     mdp_strategy="intersection",
-    mdp_compiler_dump_path="/path/to/compiler_dump.json",
 )
 ```
 
@@ -61,4 +63,3 @@ NOTE:
 * decode-only model currently fails compilation with `use_onnx_subfunctions=True` so avoid using it
 * 120B model needs NPI, there are two versions of NPI one with and without subfunction both are uploaded here, pass it as `node_precision_info=<path to file>`
 * It is advised to use `use_onnx_subfunctions=True` with prefill-only model, otherwise the compilation times are too high, with this the model is supposed to export and fail during compile as it needs assert sdk, so user is supposed to run this compilation manually by pasting the command printed in the error
-

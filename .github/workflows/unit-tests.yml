@@ -46,6 +46,7 @@ jobs:
           pip install \
             'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
             'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
+            'accelerate==1.9.0' \
             'compressed-tensors==0.17.0' \
             'onnxscript==0.6.2' \
             onnx_ir
@@ -56,5 +57,43 @@ jobs:
           HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pytest tests/dynamo/ \
+            -m "not on_qaic" \
+            -n auto -v
+
+  weight-free-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-weight-free-${{ hashFiles('pyproject.toml') }}-torch2.13
+          restore-keys: |
+            ${{ runner.os }}-pip-weight-free-
+
+      - name: Install package and test dependencies
+        run: |
+          pip install -e ".[test]"
+          pip install \
+            'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
+            'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
+            'accelerate==1.9.0' \
+            'compressed-tensors==0.17.0' \
+            'onnxscript==0.6.2' \
+            onnx_ir
+
+      - name: Run weight-free CPU tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pytest tests/weight_free/ \
             -m "not on_qaic" \
             -n auto -v

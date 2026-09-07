@@ -738,7 +738,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.get_sliding_window_len()
-                short_read_idx = torch.arange(past_key_values.layers[self.layer_idx].keys.shape[2])
+                short_read_idx = torch.arange(
+                    past_key_values.layers[self.layer_idx].keys.shape[2], device=position_ids.device
+                )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -963,8 +965,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
         layer_sliding_mask = sliding_mask
         if isinstance(self.layers[0].self_attn, QEffPrefillOnlyChunkedGptOssAttention):
             layer_sliding_mask = _prepare_gpt_oss_sliding_chunked_attention_mask(
@@ -1076,8 +1078,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
