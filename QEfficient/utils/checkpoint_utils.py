@@ -8,9 +8,9 @@
 import json
 import os
 import shutil
-from collections.abc import Sequence
-from functools import cache
+from functools import lru_cache
 from pathlib import Path
+from typing import Dict, List, Optional, Sequence
 
 import torch
 from safetensors import safe_open
@@ -18,24 +18,6 @@ from safetensors.torch import load_file, save_file
 
 from QEfficient.utils._utils import hf_download
 from QEfficient.utils.logging_utils import logger
-
-
-def load_checkpoint_weights(checkpoint_path: str, keys: set[str]) -> dict[str, torch.Tensor]:
-    """Read selected tensors from safetensors; pickle-backed PyTorch checkpoints are unsupported for security."""
-    path = Path(checkpoint_path)
-    if not path.is_dir():
-        path = Path(hf_download(repo_id=checkpoint_path, allow_patterns=["*.safetensors"]))
-    found: dict[str, torch.Tensor] = {}
-    safetensors_files = sorted(path.glob("*.safetensors"))
-    if not safetensors_files:
-        raise ValueError(
-            f"No safetensors checkpoint found in {path}. Pickle-backed PyTorch checkpoints are not supported."
-        )
-    for safetensors_file in safetensors_files:
-        with safe_open(str(safetensors_file), framework="pt", device="cpu") as checkpoint:
-            available_keys = set(checkpoint.keys())
-            found.update({key: checkpoint.get_tensor(key) for key in keys & available_keys})
-    return found
 
 
 def load_checkpoint(model, checkpoint: str, strict=False, post_process_func=None):
@@ -82,7 +64,7 @@ def cpu_count() -> int:
 # ---------------------------------------------------------------------------
 
 
-def safetensors_dtype_to_torch(dtype: str) -> torch.dtype | None:
+def safetensors_dtype_to_torch(dtype: str) -> Optional[torch.dtype]:
     """Map a safetensors dtype string to the matching torch dtype."""
     return {
         "BF16": torch.bfloat16,
@@ -92,19 +74,18 @@ def safetensors_dtype_to_torch(dtype: str) -> torch.dtype | None:
     }.get(dtype)
 
 
-def requires_dtype_conversion(src: Path, weight_map: dict[str, str], target_dtype: torch.dtype) -> bool:
+def requires_dtype_conversion(src: Path, weight_map: Dict[str, str], target_dtype: torch.dtype) -> bool:
     """Return True when any floating-point checkpoint tensor differs from ``target_dtype``."""
     for shard_name in sorted(set(weight_map.values())):
         with safe_open(str(src / shard_name), framework="pt") as handle:
-            keys = handle.keys()
-            for key in keys:
+            for key in handle.keys():
                 dtype = safetensors_dtype_to_torch(handle.get_slice(key).get_dtype())
                 if dtype is not None and dtype != target_dtype:
                     return True
     return False
 
 
-def read_weight_map(src: Path) -> dict[str, str]:
+def read_weight_map(src: Path) -> Dict[str, str]:
     """Return {tensor_key: shard_filename} from model.safetensors.index.json,
     or by scanning all *.safetensors for single-file checkpoints."""
     index_path = src / "model.safetensors.index.json"
@@ -114,16 +95,25 @@ def read_weight_map(src: Path) -> dict[str, str]:
     shard_files = sorted(src.glob("*.safetensors"))
     if not shard_files:
         raise FileNotFoundError(f"No safetensors files found in {src}")
-    weight_map: dict[str, str] = {}
+    weight_map: Dict[str, str] = {}
     for sf in shard_files:
         with safe_open(str(sf), framework="pt") as f:
-            keys = f.keys()
-            for k in keys:
+            for k in f.keys():
                 weight_map[k] = sf.name
     return weight_map
 
 
-@cache
+def checkpoint_files_complete(src: Path) -> bool:
+    """Return True when a checkpoint directory has all shards referenced by its weight map."""
+    try:
+        weight_map = read_weight_map(src)
+    except Exception:
+        return False
+
+    return all((src / shard_name).is_file() for shard_name in set(weight_map.values()))
+
+
+@lru_cache(maxsize=None)
 def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     """Resolve a local or remote model reference to a checkpoint directory.
 
@@ -172,7 +162,7 @@ def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     return Path(snapshot_dir)
 
 
-def resolve_checkpoint_files(model_id_or_path: str) -> list[str]:
+def resolve_checkpoint_files(model_id_or_path: str) -> List[str]:
     """Return safetensors checkpoint files for a model reference.
 
     Parameters
@@ -192,7 +182,7 @@ def resolve_checkpoint_files(model_id_or_path: str) -> list[str]:
     return checkpoint_files
 
 
-def checkpoint_root(model_id_or_path: str, checkpoint_files: Sequence[str]) -> Path | None:
+def checkpoint_root(model_id_or_path: str, checkpoint_files: Sequence[str]) -> Optional[Path]:
     """Return the root directory used for relative checkpoint file paths.
 
     Parameters
@@ -221,7 +211,7 @@ def checkpoint_root(model_id_or_path: str, checkpoint_files: Sequence[str]) -> P
     return first_checkpoint.parent
 
 
-def load_checkpoint_index(checkpoint_files: list[str]) -> dict[str, str]:
+def load_checkpoint_index(checkpoint_files: List[str]) -> Dict[str, str]:
     """Build a tensor-to-shard map by scanning safetensors checkpoint files.
 
     Parameters
@@ -237,20 +227,19 @@ def load_checkpoint_index(checkpoint_files: list[str]) -> dict[str, str]:
     tensor_to_file = {}
     for checkpoint_file in checkpoint_files:
         with safe_open(checkpoint_file, framework="pt") as handle:
-            keys = handle.keys()
-            for key in keys:
+            for key in handle.keys():
                 tensor_to_file[key] = checkpoint_file
     return tensor_to_file
 
 
-def atomic_save(tensors: dict[str, torch.Tensor], dst: Path) -> None:
+def atomic_save(tensors: Dict[str, torch.Tensor], dst: Path) -> None:
     """Write safetensors through a temporary file before replacing ``dst``."""
     tmp = dst.with_suffix(dst.suffix + ".tmp")
     save_file({k: v.contiguous() for k, v in tensors.items()}, str(tmp))
     tmp.replace(dst)
 
 
-def write_index(out: Path, weight_map: dict[str, str]) -> None:
+def write_index(out: Path, weight_map: Dict[str, str]) -> None:
     """Write ``model.safetensors.index.json`` for a prepared checkpoint."""
     files = set(weight_map.values())
     total_size = sum((out / f).stat().st_size for f in files if (out / f).exists())
@@ -295,8 +284,14 @@ def convert_bin_to_safetensors(src: Path, out: Path) -> None:
 
     from transformers import AutoConfig, AutoModelForCausalLM
 
-    if bool(list(out.glob("*.safetensors"))) or (out / "model.safetensors.index.json").exists():
+    if checkpoint_files_complete(out):
         return
+
+    if out.exists():
+        if out.is_dir():
+            shutil.rmtree(out)
+        else:
+            out.unlink()
 
     out.mkdir(parents=True, exist_ok=True)
     copy_checkpoint_aux_files(src, out)
@@ -311,4 +306,6 @@ def convert_bin_to_safetensors(src: Path, out: Path) -> None:
     model.save_pretrained(str(out), safe_serialization=True)
     del model
     gc.collect()
+    if not checkpoint_files_complete(out):
+        raise FileNotFoundError(f"Failed to create a complete safetensors checkpoint in {out}")
     logger.info(f"Conversion complete — safetensors files written to {out}")
