@@ -132,6 +132,7 @@ class TestTemporarilyEnableNestedCompileRegions:
     def test_patches_decoder_layers_and_restores(self):
         model_hf, _ = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model_hf)
+        qeff_model.transform()
         inner_model = qeff_model.model
 
         decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
@@ -159,6 +160,7 @@ class TestTemporarilyEnableNestedCompileRegions:
     def test_noop_when_already_wrapped(self):
         model_hf, _ = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model_hf)
+        qeff_model.transform()
         inner_model = qeff_model.model
 
         decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]

@@ -24,6 +24,11 @@ import pytest
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
+
+def get_pytorch_transform_pipeline(wrapper_cls):
+    return wrapper_cls.__new__(wrapper_cls)._all_pytorch_transforms()
+
+
 # ---------------------------------------------------------------------------
 # Tiny model factories
 # ---------------------------------------------------------------------------
@@ -417,14 +422,14 @@ class TestQEFFAutoModelRegistry:
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
         from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
 
-        assert KVCacheTransform in QEFFAutoModelForCausalLM._pytorch_transforms
+        assert KVCacheTransform in get_pytorch_transform_pipeline(QEFFAutoModelForCausalLM)
 
     def test_pytorch_transforms_contains_custom_ops_transform(self):
         """_pytorch_transforms must contain CustomOpsTransform."""
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
         from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 
-        assert CustomOpsTransform in QEFFAutoModelForCausalLM._pytorch_transforms
+        assert CustomOpsTransform in get_pytorch_transform_pipeline(QEFFAutoModelForCausalLM)
 
     def test_has_onnx_transforms_list(self):
         """QEFFAutoModelForCausalLM must have _onnx_transforms list."""

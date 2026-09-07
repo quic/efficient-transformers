@@ -344,8 +344,9 @@ class TestIsTLMFlag:
     def test_turbo_type_requires_pretrained_model_name(self):
         """speculative_model_type='turbo' without pretrained_model_name_or_path must raise KeyError."""
         model = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "turbo"})
         with pytest.raises(KeyError, match="pretrained_model_name_or_path"):
-            QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "turbo"})
+            qeff.transform()
 
     def test_cb_and_tlm_together_model_is_tlm(self):
         """continuous_batching=True with TLM: model must still be recognized as TLM."""

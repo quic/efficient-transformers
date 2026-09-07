@@ -21,6 +21,10 @@ All tests run on CPU only, no quantized model downloads required.
 """
 
 
+def get_pytorch_transform_pipeline(wrapper_cls):
+    return wrapper_cls.__new__(wrapper_cls)._all_pytorch_transforms()
+
+
 # ---------------------------------------------------------------------------
 # Tests: Quantization Transform Importability and Structure
 # ---------------------------------------------------------------------------
@@ -323,11 +327,11 @@ class TestQEFFAutoModelQuantizationIntegration:
         from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
         from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
 
-        transforms = QEFFAutoModelForCausalLM._pytorch_transforms
+        transforms = get_pytorch_transform_pipeline(QEFFAutoModelForCausalLM)
         awq_idx = next((i for i, t in enumerate(transforms) if t is AwqToMatmulNbitsTransform), None)
         kv_idx = next((i for i, t in enumerate(transforms) if t is KVCacheTransform), None)
-        assert awq_idx is not None, "AwqToMatmulNbitsTransform not found in _pytorch_transforms"
-        assert kv_idx is not None, "KVCacheTransform not found in _pytorch_transforms"
+        assert awq_idx is not None, "AwqToMatmulNbitsTransform not found in resolved pytorch transforms"
+        assert kv_idx is not None, "KVCacheTransform not found in resolved pytorch transforms"
         assert awq_idx < kv_idx, (
             f"AwqToMatmulNbitsTransform (idx={awq_idx}) must come before KVCacheTransform (idx={kv_idx})"
         )
@@ -341,7 +345,7 @@ class TestQEFFAutoModelQuantizationIntegration:
         from QEfficient.transformers.quantizers.quant_transforms import PackQuantizedInt4ToMatMulNBitsTransform
 
         for wrapper_cls in [QEffVisionEncoderForTextImageToTextModel, QEffCausalLMForTextImageToTextModel]:
-            transforms = wrapper_cls._pytorch_transforms
+            transforms = get_pytorch_transform_pipeline(wrapper_cls)
             pack_idx = transforms.index(PackQuantizedInt4ToMatMulNBitsTransform)
             custom_ops_idx = transforms.index(CustomOpsTransform)
             assert pack_idx < custom_ops_idx
