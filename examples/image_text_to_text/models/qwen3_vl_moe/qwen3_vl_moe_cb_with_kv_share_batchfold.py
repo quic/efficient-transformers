@@ -24,13 +24,18 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 # DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-DEFAULT_PROMPTS = ["Tell me about yourself.", "What is the capital of France?"]
+DEFAULT_PROMPTS = [
+    "Tell me about yourself.",
+    "What is the capital of France?",
+    "Who is the President of USA?",
+    "Explain quantum computing in simple terms?",
+] * 64
 DEFAULT_IMAGE_PROMPTS = [
     "Describe all the colors seen in the image",
     "What are the objects in the image?",
     "What is the main subject of the image?",
     "describe the image?",
-] * 64
+]
 DEFAULT_IMAGE_URLS = [
     "https://picsum.photos/id/237/536/354",
     "https://picsum.photos/id/230/536/354",
@@ -40,11 +45,11 @@ DEFAULT_IMAGE_URLS = [
 DEFAULT_PREFILL_SEQ_LEN = 1024
 DEFAULT_CTX_LEN = 10240
 DEFAULT_GENERATION_LEN = 50
-DEFAULT_FULL_BATCH_SIZE = 256  # 1
+DEFAULT_FULL_BATCH_SIZE = 256
 
 STAGES = 2  # 8
-PREFILL_NUM_DEVICES = 4  # 16
-DECODE_NUM_DEVICES = 2  # 16
+PREFILL_NUM_DEVICES = 2  # 16
+DECODE_NUM_DEVICES = 1  # 16
 
 NUM_KV_BLOCKS = 4
 
