@@ -9,7 +9,6 @@ import gc
 import inspect
 import logging
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -34,6 +33,7 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
+    autofix_mdp_partition_order_from_compiler_error,
     generate_disagg_mdp_config,
     generate_mdp_partition_config,
 )
@@ -63,31 +63,6 @@ from QEfficient.utils.export_utils import export_from_compile, export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
-
-_MDP_PARTITION_ORDER_ERR_RE = re.compile(r'Consumer node "([^"]+)" appears in partition before producer node "([^"]+)"')
-
-
-def _drop_mdp_nodes(mdp_json_path: Path, nodes_to_drop: set[str]) -> int:
-    """Drop specific nodes from MDP partition nodeLists and persist the JSON."""
-    if not nodes_to_drop:
-        return 0
-    mdp_json = load_json(str(mdp_json_path))
-    removed = 0
-    for partition in mdp_json.get("partitions", []):
-        node_list = partition.get("nodeList")
-        if not isinstance(node_list, list):
-            continue
-        filtered = [name for name in node_list if name not in nodes_to_drop]
-        removed += len(node_list) - len(filtered)
-        partition["nodeList"] = filtered
-    if removed:
-        create_json(str(mdp_json_path), mdp_json)
-    return removed
-
-
-def _is_decoder_layer_callsite(node_name: str) -> bool:
-    """Return True for decoder layer callsite names that must never be dropped."""
-    return "/language_model/layers." in node_name
 
 
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
@@ -1351,31 +1326,16 @@ class QEFFBaseModel(ABC):
             if can_autofix_mdp:
                 dropped_nodes: set[str] = set()
                 for _ in range(8):
-                    match = _MDP_PARTITION_ORDER_ERR_RE.search(latest_stderr)
-                    if not match:
-                        break
-                    consumer_node = match.group(1)
-                    producer_node = match.group(2)
-
-                    # Prefer removing producer alias bases like "/Gather_5" when
-                    # compiler reports producer "/Gather_5." under subfunctions.
-                    drop_candidates: List[str] = []
-                    if producer_node.endswith("."):
-                        drop_candidates.append(producer_node[:-1])
-                    drop_candidates.append(consumer_node)
-
-                    node_to_drop = None
-                    for candidate in drop_candidates:
-                        if not candidate or candidate in dropped_nodes:
-                            continue
-                        if _is_decoder_layer_callsite(candidate):
-                            continue
-                        node_to_drop = candidate
+                    removed, node_to_drop, consumer_node, producer_node = (
+                        autofix_mdp_partition_order_from_compiler_error(
+                            mdp_json_path=Path(mdp_ts_json_path),
+                            compiler_stderr=latest_stderr,
+                            dropped_nodes=dropped_nodes,
+                        )
+                    )
+                    if removed <= 0:
                         break
                     if node_to_drop is None:
-                        break
-                    removed = _drop_mdp_nodes(Path(mdp_ts_json_path), {node_to_drop})
-                    if removed <= 0:
                         break
                     dropped_nodes.add(node_to_drop)
                     logger.warning(
