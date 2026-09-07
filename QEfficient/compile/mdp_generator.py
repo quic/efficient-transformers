@@ -8,17 +8,19 @@
 
 import bisect
 import logging
+import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import onnx
 
-from QEfficient.utils import create_json
+from QEfficient.utils import create_json, load_json
 
 logger = logging.getLogger(__name__)
 
 _MAX_INLINABLE_NODES = 100
+_MDP_PARTITION_ORDER_ERR_RE = re.compile(r'Consumer node "([^"]+)" appears in partition before producer node "([^"]+)"')
 
 
 class MdpStrategy(str, Enum):
@@ -34,7 +36,157 @@ class MdpStrategy(str, Enum):
     INTERSECTION = "intersection"
 
 
-def _get_compiler_folded_nodes(graph) -> Set[str]:
+def _is_decoder_layer_callsite(node_name: str) -> bool:
+    """Return True for decoder layer callsite names that must never be dropped."""
+    return "/language_model/layers." in node_name
+
+
+def _drop_mdp_nodes_inplace(mdp_json: dict[str, Any], nodes_to_drop: set[str]) -> int:
+    """Drop node names from partition nodeLists in-memory."""
+    if not nodes_to_drop:
+        return 0
+    removed = 0
+    for partition in mdp_json.get("partitions", []):
+        node_list = partition.get("nodeList")
+        if not isinstance(node_list, list):
+            continue
+        filtered = [name for name in node_list if name not in nodes_to_drop]
+        removed += len(node_list) - len(filtered)
+        partition["nodeList"] = filtered
+    return removed
+
+
+def drop_mdp_nodes(mdp_json_path: Path, nodes_to_drop: set[str]) -> int:
+    """Drop specific nodes from MDP partition nodeLists and persist the JSON."""
+    if not nodes_to_drop:
+        return 0
+    mdp_json = load_json(str(mdp_json_path))
+    removed = _drop_mdp_nodes_inplace(mdp_json, nodes_to_drop)
+    if removed:
+        create_json(str(mdp_json_path), mdp_json)
+    return removed
+
+
+def autofix_mdp_partition_order_from_compiler_error(
+    mdp_json_path: Path,
+    compiler_stderr: str,
+    dropped_nodes: set[str] | None = None,
+) -> tuple[int, str | None, str | None, str | None]:
+    """Drop one offending node from MDP JSON by parsing compiler partition-order stderr.
+
+    Returns:
+        (removed_count, dropped_node, consumer_node, producer_node)
+    """
+    dropped_nodes = dropped_nodes or set()
+    match = _MDP_PARTITION_ORDER_ERR_RE.search(compiler_stderr or "")
+    if not match:
+        return 0, None, None, None
+
+    consumer_node = match.group(1)
+    producer_node = match.group(2)
+
+    # Prefer removing producer alias bases like "/Gather_5" when compiler
+    # reports producer "/Gather_5." under subfunctions.
+    drop_candidates: list[str] = []
+    if producer_node.endswith("."):
+        drop_candidates.append(producer_node[:-1])
+    drop_candidates.append(consumer_node)
+
+    node_to_drop = None
+    for candidate in drop_candidates:
+        if not candidate or candidate in dropped_nodes:
+            continue
+        if _is_decoder_layer_callsite(candidate):
+            continue
+        node_to_drop = candidate
+        break
+
+    if node_to_drop is None:
+        return 0, None, consumer_node, producer_node
+
+    removed = drop_mdp_nodes(Path(mdp_json_path), {node_to_drop})
+    if removed <= 0:
+        return 0, None, consumer_node, producer_node
+    return removed, node_to_drop, consumer_node, producer_node
+
+
+def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return (consumer, producer) pairs where MDP order violates ONNX dependencies."""
+    model = onnx.load(onnx_path, load_external_data=False)
+
+    producer_for_value: dict[str, str] = {}
+    deps: list[tuple[str, str]] = []
+    for node in model.graph.node:
+        if not node.name:
+            continue
+        for inp in node.input:
+            if inp and inp in producer_for_value:
+                deps.append((producer_for_value[inp], node.name))
+        for out in node.output:
+            if out:
+                producer_for_value[out] = node.name
+
+    node_rank: dict[str, tuple[int, int]] = {}
+    for partition_idx, partition in enumerate(mdp_json.get("partitions", [])):
+        node_list = partition.get("nodeList")
+        if not isinstance(node_list, list):
+            continue
+        for node_pos, node_name in enumerate(node_list):
+            if node_name and node_name not in node_rank:
+                node_rank[node_name] = (partition_idx, node_pos)
+
+    violations: list[tuple[str, str]] = []
+    for producer, consumer in deps:
+        producer_rank = node_rank.get(producer)
+        consumer_rank = node_rank.get(consumer)
+        if producer_rank is None or consumer_rank is None:
+            continue
+        if consumer_rank < producer_rank:
+            violations.append((consumer, producer))
+    return violations
+
+
+def precheck_and_autofix_mdp_partition_order(
+    onnx_path: str,
+    mdp_json: dict[str, Any],
+    max_rounds: int = 8,
+) -> int:
+    """Best-effort pre-check: remove nodes that violate ONNX producer->consumer order."""
+    removed_total = 0
+    dropped_nodes: set[str] = set()
+    for _ in range(max_rounds):
+        violations = _find_mdp_partition_order_violations(onnx_path=onnx_path, mdp_json=mdp_json)
+        if not violations:
+            break
+        consumer_node, producer_node = violations[0]
+
+        node_to_drop = None
+        for candidate in (consumer_node, producer_node):
+            if not candidate or candidate in dropped_nodes:
+                continue
+            if _is_decoder_layer_callsite(candidate):
+                continue
+            node_to_drop = candidate
+            break
+        if node_to_drop is None:
+            break
+
+        removed = _drop_mdp_nodes_inplace(mdp_json, {node_to_drop})
+        if removed <= 0:
+            break
+        dropped_nodes.add(node_to_drop)
+        removed_total += removed
+        logger.warning(
+            "Pre-check auto-fixed MDP partition order: removed node %r (consumer=%r producer=%r, %d occurrence(s))",
+            node_to_drop,
+            consumer_node,
+            producer_node,
+            removed,
+        )
+    return removed_total
+
+
+def _get_compiler_folded_nodes(graph) -> set[str]:
     """Return node names the compiler will fold away during ONNX import.
 
     Mirrors computeIsConstantFoldable() in ONNXModelLoader.cpp: a node is
@@ -46,7 +198,7 @@ def _get_compiler_folded_nodes(graph) -> Set[str]:
         Loop, Const, Identity, If, DequantizeLinear
     """
     # Seed with initializer names (weights/constants known at compile time).
-    const_values: Set[str] = {init.name for init in graph.initializer}
+    const_values: set[str] = {init.name for init in graph.initializer}
 
     # Constant op outputs are trivially compile-time constants.
     for node in graph.node:
@@ -57,7 +209,7 @@ def _get_compiler_folded_nodes(graph) -> Set[str]:
     _NEVER_FOLD = frozenset({"Loop", "Const", "Identity", "If", "DequantizeLinear"})
 
     # Keep marking nodes foldable until no new ones are found.
-    foldable_nodes: Set[str] = set()
+    foldable_nodes: set[str] = set()
     while True:
         changed = False
         for node in graph.node:
@@ -75,7 +227,7 @@ def _get_compiler_folded_nodes(graph) -> Set[str]:
     return foldable_nodes
 
 
-def _get_layer_num(node_name: str) -> Optional[int]:
+def _get_layer_num(node_name: str) -> int | None:
     """Return transformer layer index from node name, or None.
 
     Supports:
@@ -101,7 +253,7 @@ def _get_layer_num(node_name: str) -> Optional[int]:
     return None
 
 
-def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
+def _layer_partition_bounds(num_layers: int, num_partitions: int) -> list[int]:
     """Compute exclusive-upper-bound layer bounds for balanced pipeline partitioning.
 
     Remainder layers are spread to middle partitions first (indices 1..n-2),
@@ -115,7 +267,7 @@ def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
     """
     base = num_layers // num_partitions
     remainder = num_layers % num_partitions
-    sizes: List[int] = [base] * num_partitions
+    sizes: list[int] = [base] * num_partitions
 
     if remainder > 0 and num_partitions >= 2:
         if num_partitions == 2:
@@ -139,7 +291,7 @@ def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
                 sizes[0] += 1
 
     cumsum = 0
-    bounds: List[int] = []
+    bounds: list[int] = []
     for sz in sizes[:-1]:
         cumsum += sz
         bounds.append(cumsum)
@@ -173,8 +325,8 @@ def _get_inlined_node_map(model) -> tuple:
     local_functions = {f.name: f for f in model.functions}
     logger.info(f"Found {len(local_functions)} local function types: {set(local_functions.keys())}")
 
-    inlined_funcs: Set[str] = set()
-    non_inlined_funcs: Set[str] = set()
+    inlined_funcs: set[str] = set()
+    non_inlined_funcs: set[str] = set()
     for func_name, func in local_functions.items():
         if func_name in _KNOWN_CUSTOM_OPS or len(func.node) >= _MAX_INLINABLE_NODES:
             non_inlined_funcs.add(func_name)
@@ -183,7 +335,7 @@ def _get_inlined_node_map(model) -> tuple:
             inlined_funcs.add(func_name)
             logger.info(f"  {func_name}: {len(func.node)} nodes, will inline")
 
-    inlined_node_map: Dict[str, List[str]] = {}
+    inlined_node_map: dict[str, list[str]] = {}
     for node in model.graph.node:
         if node.op_type in inlined_funcs:
             func = local_functions[node.op_type]
@@ -193,7 +345,7 @@ def _get_inlined_node_map(model) -> tuple:
     return inlined_node_map, non_inlined_funcs
 
 
-def generate_mdp_partition_config(num_devices: int, num_cores: int) -> Dict[str, Any]:
+def generate_mdp_partition_config(num_devices: int, num_cores: int) -> dict[str, Any]:
     """Generate a template tensor-slice MDP partition config (single partition, all devices).
 
     All ``num_devices`` devices are placed in a single ``Partition0`` so the
@@ -227,7 +379,7 @@ def generate_disagg_mdp_partition_config(
     num_partitions: int,
     num_layers: int,
     num_cores: int = 16,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a pipeline-partitioned MDP config from an exported ONNX graph.
 
     Assigns ONNX nodes to partitions by transformer layer index using a balanced
@@ -265,17 +417,17 @@ def generate_disagg_mdp_partition_config(
 
     # Verify topological order (ONNX spec §3.3). Fails loudly on malformed exports.
     # Graph inputs and initializers are excluded — they are not produced by any node.
-    graph_input_names: Set[str] = {inp.name for inp in model.graph.input}
-    initializer_names: Set[str] = {init.name for init in model.graph.initializer}
-    external_names: Set[str] = graph_input_names | initializer_names
+    graph_input_names: set[str] = {inp.name for inp in model.graph.input}
+    initializer_names: set[str] = {init.name for init in model.graph.initializer}
+    external_names: set[str] = graph_input_names | initializer_names
 
-    output_to_node: Dict[str, str] = {}
+    output_to_node: dict[str, str] = {}
     for node in model.graph.node:
         for out in node.output:
             if out:  # "" marks optional unused outputs
                 output_to_node[out] = node.name
 
-    seen_outputs: Set[str] = set()
+    seen_outputs: set[str] = set()
     for node in model.graph.node:
         for inp in node.input:
             if not inp:
@@ -303,7 +455,7 @@ def generate_disagg_mdp_partition_config(
     # Single pass: assign main-graph nodes by layer index.  Inlined call-sites
     # are expanded in topological position so nodeList order matches the ONNX
     # topsort — required by the compiler's SplitPlanMerge.
-    partitions: List[List[str]] = [[] for _ in range(num_partitions)]
+    partitions: list[list[str]] = [[] for _ in range(num_partitions)]
     current_layer_partition = 0
     seen_first_layer = False
 
@@ -365,7 +517,7 @@ def generate_disagg_mdp_intersection_config(
     num_partitions: int,
     num_layers: int,
     num_cores: int = 16,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate an MDP config by intersecting the QEff MDP with the compiler dump.
 
     The QEff MDP (derived from the ONNX graph) is always a superset of the
@@ -430,7 +582,7 @@ def generate_disagg_mdp_intersection_config(
     with open(dump_path) as fh:
         dump = _json.load(fh)
 
-    compiler_nodes: Set[str] = set()
+    compiler_nodes: set[str] = set()
     for part in dump.get("partitions", []):
         for name in part.get("nodeList", []):
             if name:
@@ -485,10 +637,10 @@ def generate_disagg_mdp_config(
     mdp_ts_num_devices: int,
     mdp_num_partitions: int,
     mdp_strategy: MdpStrategy,
-    mdp_compiler_dump_path: Optional[str],
+    mdp_compiler_dump_path: str | None,
     num_cores: int,
     num_layers: int,
-) -> Tuple[Path, Dict[str, Any]]:
+) -> tuple[Path, dict[str, Any]]:
     """Dispatch to the appropriate disaggregated MDP generator and persist the result.
 
     Selects between the ONNX-based and intersection-based strategies, writes the
@@ -536,6 +688,17 @@ def generate_disagg_mdp_config(
             num_partitions=mdp_num_partitions,
             num_layers=num_layers,
             num_cores=num_cores,
+        )
+
+    # Best-effort pre-check for producer->consumer ordering in nodeList before compile.
+    precheck_removed = precheck_and_autofix_mdp_partition_order(
+        onnx_path=str(onnx_path),
+        mdp_json=mdp_ts_json,
+    )
+    if precheck_removed:
+        logger.warning(
+            "MDP pre-check removed %d node occurrence(s) before invoking compiler.",
+            precheck_removed,
         )
 
     mdp_ts_json_path = compile_dir / f"mdp_disagg_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
