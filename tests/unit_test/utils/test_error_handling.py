@@ -174,9 +174,10 @@ class TestCheckNumSpeculativeTokensErrorPaths:
     """check_and_get_num_speculative_tokens must raise for invalid TLM configurations."""
 
     def test_tlm_without_num_speculative_tokens_raises_type_error(self):
-        """TLM model without num_speculative_tokens must raise TypeError."""
+        """TLM model without num_speculative_tokens must raise TypeError after compile-time activation."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff._activate_qaic_config({"speculative_model_type": "target"})
         assert qeff.is_tlm is True
         with pytest.raises(TypeError, match="num_speculative_tokens"):
             qeff.check_and_get_num_speculative_tokens(num_speculative_tokens=None, prefill_seq_len=32)
@@ -184,7 +185,8 @@ class TestCheckNumSpeculativeTokensErrorPaths:
     def test_tlm_prefill_seq_len_too_short_raises_value_error(self):
         """TLM with prefill_seq_len < num_speculative_tokens+1 must raise ValueError."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff._activate_qaic_config({"speculative_model_type": "target"})
         assert qeff.is_tlm is True
         # num_speculative_tokens=5, so need prefill_seq_len >= 6
         with pytest.raises(ValueError, match="sequence length"):
@@ -196,7 +198,8 @@ class TestCheckNumSpeculativeTokensErrorPaths:
     def test_tlm_valid_num_speculative_tokens_does_not_raise(self):
         """TLM with valid num_speculative_tokens must not raise."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff._activate_qaic_config({"speculative_model_type": "target"})
         result = qeff.check_and_get_num_speculative_tokens(num_speculative_tokens=3, prefill_seq_len=32)
         assert result == 3
 
@@ -329,32 +332,31 @@ class TestIsTLMFlag:
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff.is_tlm is False
 
-    def test_is_tlm_false_with_empty_config(self):
-        """is_tlm must be False when qaic_config has no speculative_model_type."""
+    def test_is_tlm_false_with_empty_compile_config(self):
+        """is_tlm must be False when compile-time qaic_config has no speculative_model_type."""
         model = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={})
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff._activate_qaic_config({})
         assert qeff.is_tlm is False
 
-    def test_is_tlm_true_with_target_type(self):
-        """is_tlm must be True when speculative_model_type='target'."""
+    def test_is_tlm_true_with_compile_target_type(self):
+        """is_tlm must be True when compile-time speculative_model_type='target'."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff._activate_qaic_config({"speculative_model_type": "target"})
         assert qeff.is_tlm is True
 
     def test_turbo_type_requires_pretrained_model_name(self):
         """speculative_model_type='turbo' without pretrained_model_name_or_path must raise KeyError."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "turbo"})
+        qeff = QEFFAutoModelForCausalLM(model)
         with pytest.raises(KeyError, match="pretrained_model_name_or_path"):
-            qeff.transform()
+            qeff.transform(qaic_config={"speculative_model_type": "turbo"})
 
     def test_cb_and_tlm_together_model_is_tlm(self):
         """continuous_batching=True with TLM: model must still be recognized as TLM."""
         model = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(
-            model,
-            continuous_batching=True,
-            qaic_config={"speculative_model_type": "target"},
-        )
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff._activate_qaic_config({"speculative_model_type": "target"})
         # The model should be recognized as TLM regardless of CB flag
         assert qeff.is_tlm is True

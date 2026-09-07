@@ -68,14 +68,15 @@ def run_model(
     # - Dual QPC (kv_offload=True): Vision encoder and language model run in separate QPCs
     #   with outputs transferred via host for flexibility
 
+    qaic_config = {
+        "ccl_enabled": ccl_enabled,
+    }
+
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_name,
         token=hf_token,
         attn_implementation="eager",
         kv_offload=kv_offload,
-        qaic_config={
-            "ccl_enabled": ccl_enabled,
-        },
     )
 
     ## STEP 2: Export & Compile the Model
@@ -90,6 +91,7 @@ def run_model(
         mxfp6_matmul=False,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+        qaic_config=qaic_config,
     )
     print(f"Model compiled successfully to: {qpc_path}")
 

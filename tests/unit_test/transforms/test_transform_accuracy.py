@@ -256,7 +256,7 @@ class TestRepeatKVTransformFast:
             num_key_value_heads=num_key_value_heads,
             max_position_embeddings=64,
         )
-        return QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg), qaic_config={})
+        return QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg))
 
     def test_repeat_kv_dummy_causal_config(self):
         qeff_model = self._tiny_llama_qeff()
@@ -313,7 +313,7 @@ class TestRepeatKVTransformFast:
             vision_feature_layer=-1,
         )
         model_hf = AutoModelForImageTextToText.from_config(cfg)
-        qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=False, qaic_config={})
+        qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=False)
 
         text_model_before = get_text_model(qeff_model.model)
         attn_before = get_attention_module(text_model_before.layers[0])
@@ -410,7 +410,7 @@ class TestRepeatKVTransformFast:
             vision_feature_layer=-1,
         )
         model_hf = AutoModelForImageTextToText.from_config(cfg)
-        qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=True, qaic_config={})
+        qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=True)
         qeff_model.vision_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"replicate_kv_heads": True})
         assert not hasattr(qeff_model.vision_model.model, "config")
         assert qeff_model.vision_model.hash_params["num_replicate_kv_heads"] == 1

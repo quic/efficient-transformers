@@ -73,11 +73,10 @@ except Exception:
 warnings.formatwarning = custom_format_warning
 
 
-# Users can use QEfficient.export for exporting models to ONNX
+# Backward-compatible deprecated alias for exporting models to ONNX. Prefer .compile().
 export = qualcomm_efficient_converter
 __all__ = [
     "transform",
-    "export",
     "compile",
     "cloud_ai_100_exec_kv",
     "QEFFAutoModel",
