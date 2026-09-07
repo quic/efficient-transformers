@@ -48,6 +48,11 @@ BS = 1
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 
+qaic_config = {"qeff_chunk_size": PREFILL_SEQ_LEN}
+
+# Update qaic_config here for Blocking settings.
+# qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})
+
 # Compute-Context-Length (CCL) lists for prefill and decode. When both are None and
 # ccl_enabled=True, they are auto-generated from CTX_LEN.
 # comp_ctx_lengths_prefill = [2048]
@@ -70,9 +75,9 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
+        qaic_config=qaic_config,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-        # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
     if enable_blocking:
@@ -143,10 +148,10 @@ else:
         mxfp6_matmul=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
+        qaic_config=qaic_config,
         mos=1,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-        # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
     if enable_blocking:
