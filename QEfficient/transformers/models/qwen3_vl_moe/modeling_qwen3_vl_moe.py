@@ -212,8 +212,10 @@ class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
 
-        h_idxs_ceil = (h_idxs_floor + 1).clamp(max=self.num_grid_per_side - 1)
-        w_idxs_ceil = (w_idxs_floor + 1).clamp(max=self.num_grid_per_side - 1)
+        max_idx_h = torch.full_like(h_idxs_floor, self.num_grid_per_side - 1)
+        max_idx_w = torch.full_like(w_idxs_floor, self.num_grid_per_side - 1)
+        h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_idx_h)
+        w_idxs_ceil = torch.minimum(w_idxs_floor + 1, max_idx_w)
 
         dh = h_idxs - h_idxs_floor
         dw = w_idxs - w_idxs_floor

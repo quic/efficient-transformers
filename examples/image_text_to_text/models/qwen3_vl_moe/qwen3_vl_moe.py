@@ -26,7 +26,6 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     attn_implementation="eager",
     kv_offload=True,
     config=config,
-    weight_free=True,
     # For CCL activation
     # qaic_config={
     #     "ccl_enabled": True,
@@ -60,7 +59,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
@@ -107,7 +105,6 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )

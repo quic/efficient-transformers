@@ -113,7 +113,6 @@ def main():
         "aic_enable_depth_first": True,
         "mos": args.mos,
         "use_onnx_subfunctions": True,
-        "dynamo": True,
         "aic_hw_version": args.aic_hw_version,
     }
     if args.skip_vision:
