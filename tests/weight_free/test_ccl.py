@@ -48,9 +48,7 @@ def test_weight_free_ccl_compile_and_generate(model_type, model_id, tmp_export_d
     try:
         config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
         config.num_hidden_layers = 2
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-            model_id, config=config, weight_free=True, qaic_config={"ccl_enabled": True}
-        )
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
         tokenizer = load_tokenizer(model_id)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
@@ -72,6 +70,7 @@ def test_weight_free_ccl_compile_and_generate(model_type, model_id, tmp_export_d
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        qaic_config={"ccl_enabled": True},
     )
     output = qeff_model.generate(
         tokenizer=tokenizer,
@@ -91,6 +90,7 @@ def test_weight_free_ccl_compile_and_generate(model_type, model_id, tmp_export_d
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        qaic_config={"ccl_enabled": True},
     )
     output = qeff_model.generate(
         tokenizer=tokenizer,

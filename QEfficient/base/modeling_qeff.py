@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 import gc
 import inspect
 import logging
@@ -434,6 +435,7 @@ class QEFFBaseModel(ABC):
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
+        qaic_config = kwargs.pop("qaic_config", None)
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
@@ -452,6 +454,37 @@ class QEFFBaseModel(ABC):
         self.is_transformed: bool = False
 
         self._normalize_torch_dtype()
+        self._set_qaic_config(qaic_config)
+
+    def _copy_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        if qaic_config is None:
+            return None
+        if not isinstance(qaic_config, dict):
+            raise TypeError(f"`qaic_config` must be a dictionary, got {type(qaic_config).__name__}.")
+        return copy.deepcopy(qaic_config)
+
+    def _set_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        qaic_config = self._copy_qaic_config(qaic_config)
+        if not hasattr(self, "hash_params"):
+            self.hash_params = {}
+        if qaic_config is not None:
+            pretrained_model_name_or_path = getattr(self.model, "pretrained_path", None) or self.hash_params.get(
+                "pretrained_model_name_or_path", None
+            )
+            if pretrained_model_name_or_path is not None:
+                qaic_config.setdefault("pretrained_model_name_or_path", pretrained_model_name_or_path)
+        self._qaic_config = qaic_config
+        setattr(self.model, "qaic_config", qaic_config)
+        if qaic_config is None:
+            self.hash_params.pop("qaic_config", None)
+        else:
+            self.hash_params["qaic_config"] = qaic_config
+        return qaic_config
+
+    def _resolve_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        if qaic_config is None:
+            qaic_config = getattr(self, "_qaic_config", None)
+        return self._set_qaic_config(qaic_config)
 
     def _normalize_torch_dtype(self):
         """
@@ -1152,6 +1185,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
+        qaic_config = self._resolve_qaic_config(qaic_config)
         if not self.is_transformed:
             any_transformed = self._apply_pytorch_transforms()
             pooling = compiler_options.pop("pooling", getattr(self, "_pooling", None))
@@ -1160,12 +1194,12 @@ class QEFFBaseModel(ABC):
                 any_transformed = True
 
             any_transformed = self._post_pytorch_transform() or any_transformed
+            self._set_qaic_config(qaic_config)
 
-            qaic_config_for_transforms = qaic_config or getattr(self.model, "qaic_config", None)
             if self._supports_spd_transform():
                 self.model, spd_transformed = SpDTransform.apply(
                     self.model,
-                    qaic_config_for_transforms,
+                    qaic_config,
                     **compiler_options,
                 )
                 self.is_tlm = getattr(self, "is_tlm", False) or spd_transformed
@@ -1174,12 +1208,13 @@ class QEFFBaseModel(ABC):
             if self._supports_sampler_transform():
                 self.model, sampler_transformed = SamplerTransform.apply(
                     self.model,
-                    qaic_config_for_transforms,
+                    qaic_config,
                     **compiler_options,
                 )
                 any_transformed = any_transformed or sampler_transformed
-            if getattr(self, "is_tlm", False) and getattr(self.model, "qaic_config", None) is not None:
-                self.model.qaic_config["return_pdfs"] = True
+            if getattr(self, "is_tlm", False) and qaic_config is not None:
+                qaic_config["return_pdfs"] = True
+                setattr(self.model, "qaic_config", qaic_config)
 
             if not any_transformed:
                 warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
@@ -1217,6 +1252,8 @@ class QEFFBaseModel(ABC):
             self.hash_params.pop("blocking_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
+        else:
+            self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
@@ -1306,6 +1343,7 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        qaic_config = self._resolve_qaic_config(qaic_config)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:

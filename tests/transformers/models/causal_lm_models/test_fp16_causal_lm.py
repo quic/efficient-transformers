@@ -79,7 +79,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
 
     is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForCausalLM(
-        copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
+        copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name
     )
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
@@ -88,7 +88,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
-    qeff_model.export()
+    qeff_model.export(qaic_config=qaic_config)
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -100,6 +100,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
         prefill_only=prefill_only,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        qaic_config=qaic_config,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     gen_len = pytorch_kv_tokens.shape[-1]

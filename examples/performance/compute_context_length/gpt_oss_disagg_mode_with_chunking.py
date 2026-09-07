@@ -34,12 +34,11 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-    model_id,
-    qaic_config={
-        "ccl_enabled": True,
-    },
-)
+qaic_config = {
+    "ccl_enabled": True,
+}
+
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 
 comp_ctx_lengths_decode = [1024, 2048, 4096]
 
@@ -57,6 +56,7 @@ decode_qpc_path = qeff_model.compile(
     retain_full_kv=True,
     prefill_only=False,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    qaic_config=qaic_config,
     # # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
     # node_precision_info=non_subfunc_npi_file_path,
 )

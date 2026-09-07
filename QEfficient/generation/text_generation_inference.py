@@ -373,11 +373,12 @@ def cloud_ai_100_exec_kv(
     .. code-block:: python
 
         import transformers
-        import QEfficient
-        base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
-        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
+        from QEfficient import QEFFAutoModelForCausalLM
+
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+        qpc_path = qeff_model.compile(num_cores=14, num_devices=1)
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+        exec_info = qeff_model.generate(tokenizer=tokenizer, prompts=["Hi there!!"], device_id=[0])
 
     """
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)

@@ -76,7 +76,7 @@ def load_qeff_causal_lm_model(
     qaic_config: Dict = None,
     config: Optional[AutoConfig] = None,
 ):
-    kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config)
+    kwargs = dict(continuous_batching=continuous_batching)
     if config is None:
         if num_hidden_layers != -1:
             kwargs["num_hidden_layers"] = num_hidden_layers
@@ -84,6 +84,8 @@ def load_qeff_causal_lm_model(
     else:
         model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers, config)
         qeff_model = QEFFAutoModelForCausalLM(model_hf, **kwargs)
+    if qaic_config is not None:
+        qeff_model._set_qaic_config(qaic_config)
     return qeff_model
 
 
@@ -185,7 +187,6 @@ def load_qeff_vlm_model(
                 config=config,
                 kv_offload=kv_offload,
                 continuous_batching=continuous_batching,
-                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
                 ignore_mismatched_sizes=True,
                 trust_remote_code=True,
@@ -197,7 +198,6 @@ def load_qeff_vlm_model(
                 config=config,
                 kv_offload=kv_offload,
                 continuous_batching=continuous_batching,
-                qaic_config=qaic_config,
                 trust_remote_code=True,
                 ignore_mismatched_sizes=True,
                 torch_dtype=torch_dtype,
@@ -212,10 +212,11 @@ def load_qeff_vlm_model(
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
             trust_remote_code=True,
-            qaic_config=qaic_config,
             torch_dtype=torch_dtype,
         )
 
+    if qaic_config is not None:
+        qeff_model._set_qaic_config(qaic_config)
     return qeff_model
 
 

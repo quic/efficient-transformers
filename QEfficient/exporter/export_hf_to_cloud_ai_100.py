@@ -346,14 +346,14 @@ def qualcomm_efficient_converter(
     full_batch_size: Optional[int] = None,
 ) -> Tuple[str, str]:
     """
-    This method is an alias for ``QEfficient.export``.
+    Deprecated public API for exporting models through the legacy ``QEfficient.export`` alias.
 
     Usage 1: This method can be used by passing ``model_name`` and ``local_model_dir`` or ``cache_dir`` if required for loading from local dir.
     This will download the model from ``HuggingFace`` and export it to ``ONNX`` graph and returns generated files path check below.
 
     Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model`` to ``ONNX``
 
-    We will be deprecating this function and it will be replaced by ``QEFFAutoModelForCausalLM.export``.
+    This function is deprecated as a public API. Use ``QEFFAutoModelForCausalLM.from_pretrained(...).compile(...)`` instead.
 
     ``Mandatory`` Args:
         :model_name (str): The name of the model to be used.
@@ -373,12 +373,13 @@ def qualcomm_efficient_converter(
 
     .. code-block:: python
 
-        import QEfficient
-        base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
+        from QEfficient import QEFFAutoModelForCausalLM
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+        qpc_path = qeff_model.compile(num_cores=16)
 
     """
     warnings.warn(
-        "\033[93m`qualcomm_efficient_converter` method will be deprecated soon, use `QEFFAutoModelForCausalLM.export` instead\033[0m",
+        "\033[93m`qualcomm_efficient_converter`/`QEfficient.export` is deprecated as a public API. Use `QEFFAutoModelForCausalLM.from_pretrained(...).compile(...)` instead.\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )

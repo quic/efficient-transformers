@@ -56,11 +56,9 @@ def main(args, **kwargs):
     print("qaic_config:")
     pprint(qaic_config)
 
-    # Load model with On Device Sampler enabled
     qeff_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=args.model_name,
         continuous_batching=args.full_batch_size is not None,
-        qaic_config=qaic_config,
     )
     print(f"{args.model_name} optimized for AI 100 \n", qeff_model)
 
@@ -88,6 +86,7 @@ def main(args, **kwargs):
         mxfp6_matmul=args.mxfp6,
         mxint8_kv_cache=args.mxint8,
         num_speculative_tokens=0,
+        qaic_config=qaic_config,
         **kwargs,
     )
     print(f"Generated QPC file path: {generated_qpc_path}")

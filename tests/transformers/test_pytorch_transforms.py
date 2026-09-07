@@ -190,7 +190,7 @@ def run_kv_cache_transform_and_test(
     qaic_config = None
     if "num_logits_to_keep" in qaic_model_inputs:
         qaic_config = dict(speculative_model_type="target")
-    qeff_model = QEFFAutoModelForCausalLM(hf_model, qaic_config=qaic_config)
+    qeff_model = QEFFAutoModelForCausalLM(hf_model)
     ctx_len = qaic_model_inputs["past_key_values"][0][0].shape[2]
     qeff_model.transform(ctx_len=ctx_len, seq_len=input_len, bs=input_ids.shape[0], qaic_config=qaic_config)
     hf_model = qeff_model.model

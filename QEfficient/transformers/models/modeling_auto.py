@@ -8,6 +8,7 @@
 import math
 import os
 import warnings
+from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional, Union
@@ -135,6 +136,18 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
     # Keep the v5 alias in sync so HF from_pretrained and config see one dtype.
     if "dtype" in kwargs:
         kwargs["dtype"] = kwargs["torch_dtype"]
+
+
+def _pop_deprecated_from_pretrained_qaic_config(kwargs: dict) -> Optional[dict]:
+    qaic_config = kwargs.pop("qaic_config", None)
+    if qaic_config is not None:
+        warnings.warn(
+            "Passing `qaic_config` to `from_pretrained()` is deprecated and will be removed in a future "
+            "release. Pass `qaic_config` to `compile()` instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return qaic_config
 
 
 def _ignore_public_mdp_ts_num_devices(compiler_options: dict) -> None:
@@ -346,6 +359,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
+        _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -484,7 +498,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
 
         This is the recommended way to initialize a QEfficient transformer model. The interface is similar to
-        ``transformers.AutoModel.from_pretrained``. Once initialized, you can use methods such as ``export``, ``compile``, and ``generate``.
+        ``transformers.AutoModel.from_pretrained``. Once initialized, use ``compile`` to export/compile the model and ``generate`` to run it.
 
         Parameters
         ----------
@@ -511,6 +525,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
+        _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -894,6 +909,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         QEFFAutoModelForSequenceClassification
             An instance initialized with the pretrained weights.
         """
+        _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1260,26 +1276,27 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        self._qaic_config = qaic_config
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         if hasattr(model, "get_qeff_language_decoder"):
             self.model = model.get_qeff_language_decoder()
-        self.model.qaic_config = qaic_config
+        self._apply_qaic_config(qaic_config)
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
-        if qaic_config:
-            if mla_absorption := qaic_config.get("mla_absorption", None):
-                self.hash_params["mla_absorption"] = mla_absorption
-                if language_model := getattr(self.model, "language_model", None):
-                    setattr(language_model, "mla_absorption", mla_absorption)
+
+    def _apply_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        qaic_config = self._resolve_qaic_config(qaic_config)
+        if qaic_config and (mla_absorption := qaic_config.get("mla_absorption", None)):
+            self.hash_params["mla_absorption"] = mla_absorption
+            if language_model := getattr(self.model, "language_model", None):
+                setattr(language_model, "mla_absorption", mla_absorption)
+        else:
+            self.hash_params.pop("mla_absorption", None)
+        return qaic_config
 
     def _post_pytorch_transform(self) -> bool:
         if hasattr(self.model, "get_qeff_language_decoder"):
             self.model = self.model.get_qeff_language_decoder()
-            self.model.qaic_config = self._qaic_config
-            if self._qaic_config and (mla_absorption := self._qaic_config.get("mla_absorption", None)):
-                if language_model := getattr(self.model, "language_model", None):
-                    setattr(language_model, "mla_absorption", mla_absorption)
+            self._apply_qaic_config(self._qaic_config)
             return True
         return False
 
@@ -1321,7 +1338,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         """
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         skip_transform = kwargs.pop("_qeff_skip_transform", False)
-        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
+        qaic_config = self._apply_qaic_config(kwargs.pop("qaic_config", None))
         if not skip_transform:
             self.transform(
                 prefill_only=prefill_only,
@@ -1450,8 +1467,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ----------
         model : nn.Module
             The full HuggingFace multimodal model.
-        qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations.
         **kwargs :
             Additional keyword arguments.
         """
@@ -1467,15 +1482,28 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
-        self.ccl_enabled = False
-        if qaic_config:
-            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.ccl_enabled = bool(self.lang_model._qaic_config and self.lang_model._qaic_config.get("ccl_enabled", False))
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
 
+    def _resolve_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        if hasattr(self.lang_model, "_resolve_qaic_config"):
+            qaic_config = self.lang_model._resolve_qaic_config(qaic_config)
+        else:
+            if qaic_config is None:
+                qaic_config = getattr(self, "_qaic_config", None)
+            elif not isinstance(qaic_config, dict):
+                raise TypeError(f"`qaic_config` must be a dictionary, got {type(qaic_config).__name__}.")
+            else:
+                qaic_config = deepcopy(qaic_config)
+            setattr(self.lang_model, "_qaic_config", qaic_config)
+        self._qaic_config = qaic_config
+        self.ccl_enabled = bool(qaic_config and qaic_config.get("ccl_enabled", False))
+        return qaic_config
+
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
         """
         Load a QEfficient multimodal model for dual QPC from a pretrained HuggingFace model or local path.
 
@@ -1493,6 +1521,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         _QEffAutoModelForImageTextToTextDualQPC
             An instance initialized with the pretrained weights.
         """
+        qaic_config = _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1572,6 +1601,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        qaic_config = self._resolve_qaic_config(kwargs.pop("qaic_config", None))
         if layerwise:
             return self._run_layerwise_export(
                 export_dir=export_dir,
@@ -1583,11 +1613,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
+                qaic_config=qaic_config,
                 **kwargs,
             )
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         # TODO: move this to a DA Serving utility class
         if not kwargs.pop("_qeff_skip_transform", False):
             self.transform(
@@ -1910,6 +1940,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the language decoder. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        qaic_config : dict, optional
+            QAIC-specific transform configuration. Pass cache blocking, MLA, MoE, and related options here instead of to ``from_pretrained()``.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
             Use ``mdp_num_partitions`` to select the number of pipeline-parallel
@@ -1931,6 +1963,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        qaic_config = self._resolve_qaic_config(qaic_config)
 
         if layerwise:
             if skip_lang and not skip_vision:
@@ -2663,12 +2696,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-        if qaic_config is not None and qaic_config.pop("include_sampler", False):
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
 
-        super().__init__(model, **kwargs)
-
-        self.model.qaic_config = qaic_config
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
+        qaic_config = self._qaic_config
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -2681,16 +2713,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = False
-        if qaic_config:
-            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.ccl_enabled = bool(qaic_config and qaic_config.get("ccl_enabled", False))
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path,
-        qaic_config: Optional[dict] = None,
         *args,
         **kwargs,
     ):
@@ -2714,6 +2743,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         _QEFFAutoModelForImageTextToTextSingleQPC
             An instance initialized with the pretrained weights.
         """
+        qaic_config = _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -2768,13 +2798,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         """
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         skip_transform = kwargs.pop("_qeff_skip_transform", False)
+        qaic_config = self._resolve_qaic_config(kwargs.pop("qaic_config", None))
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
+            raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
         if not skip_transform:
             self.transform(
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
                 retain_full_kv=kwargs.get("retain_full_kv", False),
-                qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+                qaic_config=qaic_config,
             )
 
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
@@ -2848,6 +2881,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             Not supported for this model; must be None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        qaic_config : dict, optional
+            QAIC-specific transform configuration. Pass cache blocking, MLA, MoE, and related options here instead of to ``from_pretrained()``.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
             Use ``mdp_num_partitions`` to select the number of pipeline-parallel
@@ -2864,6 +2899,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
         """
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        qaic_config = self._resolve_qaic_config(qaic_config)
+        self.ccl_enabled = bool(qaic_config and qaic_config.get("ccl_enabled", False))
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
+            raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
@@ -3310,7 +3349,6 @@ class QEFFAutoModelForImageTextToText:
         pretrained_model_name_or_path: str,
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
-        qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         **kwargs,
     ):
@@ -3325,8 +3363,6 @@ class QEFFAutoModelForImageTextToText:
             If True, uses the dual QPC approach (vision encoder KV offloaded).
             If False, uses the single QPC approach (entire model in one QPC).
             If None, the default behavior of the internal classes is used (typically dual QPC).
-        qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations.
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
 
@@ -3343,6 +3379,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        qaic_config = _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
@@ -3468,16 +3505,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         continuous_batching : bool, optional
             If True, enables continuous batching mode for future compilation and execution.
             This setting must be consistent across `from_pretrained` and `compile` calls. Default is False.
-        qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations. Supported keys include:
-            - **speculative_model_type** (str): Specifies the type of Speculative Decoding model (e.g., "target").
-            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
-            - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
-              For Speculative Decoding Target Language Models, this is always True.
-            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
-            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
-              during decoding. Only works when include_sampler=True.
-            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
 
@@ -3510,19 +3537,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
-        self.model.qaic_config = qaic_config
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
-        self.is_tlm = bool(qaic_config and qaic_config.get("speculative_model_type") is not None)
+        self._activate_qaic_config(qaic_config)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = False
-        if qaic_config:
-            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
-            if mla_absorption := qaic_config.get("mla_absorption", None):
-                self.hash_params["mla_absorption"] = mla_absorption
-                setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
+
+    def _activate_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        qaic_config = self._resolve_qaic_config(qaic_config)
+        self.is_tlm = bool(qaic_config and qaic_config.get("speculative_model_type") is not None)
+        self.ccl_enabled = bool(qaic_config and qaic_config.get("ccl_enabled", False))
+        if qaic_config and (mla_absorption := qaic_config.get("mla_absorption", None)):
+            self.hash_params["mla_absorption"] = mla_absorption
+            setattr(self.model, "mla_absorption", mla_absorption)
+        else:
+            self.hash_params.pop("mla_absorption", None)
+        return qaic_config
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -3533,7 +3564,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         cls,
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
-        qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
         weight_free: bool = False,
@@ -3555,19 +3585,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Whether this model will be used for continuous batching in the future.
             If not set to True here, the model cannot be exported/compiled for
             continuous batching later. Default is False.
-        qaic_config : dict, optional
-            QAIC config dictionary. Supported keys include:
-
-            - **speculative_model_type** (str): Specify Speculative Decoding Target Language Models.
-            - **include_sampler** (bool): Enable/Disable sampling of next tokens.
-            - **return_pdfs** (bool): Return probability distributions along with sampled next tokens.
-              For Speculative Decoding Target Language Model, ``return_pdfs=True`` always.
-              Otherwise, ``return_pdfs=True`` for Speculative Decoding Draft Language Model
-              and ``return_pdfs=False`` for regular model.
-            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
-              The values provided in ``top_ks`` tensor must be less than this maximum limit.
-            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
-              during decoding. Only works when include_sampler=True.
         weight_free : bool, optional
             If True, builds the model on the meta device instead of loading real
             checkpoint weights — no weights are materialized into RAM. This is
@@ -3595,6 +3612,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        qaic_config = _pop_deprecated_from_pretrained_qaic_config(kwargs)
+
         if layerwise and weight_free:
             raise ValueError(
                 "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
@@ -3646,9 +3665,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        if qaic_config is not None:
-            qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
-
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
@@ -3801,7 +3817,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, prefill_only, kwargs.get("enable_chunking", False)
         )
         kwargs["enable_chunking"] = enable_chunking
-        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
+        qaic_config = self._activate_qaic_config(kwargs.pop("qaic_config", None))
         # Weight-free export always uses the dynamo (torch.export) path.
         # Must be set here — @export_wrapper reads dynamo from kwargs before _export() body runs.
         dynamo = dynamo or self._weight_free
@@ -3929,8 +3945,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 2: "ctx_len",
             }
         output_names = []
-        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            if self.model.qaic_config.get("return_pdfs", False):
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
+            if qaic_config.get("return_pdfs", False):
                 output_names.append("probs")
             output_names.append("next_tokens")
         else:
@@ -3979,8 +3995,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
-                mla_absorption = self.model.qaic_config["mla_absorption"]
+            if qaic_config is not None and qaic_config.get("mla_absorption", None) is not None:
+                mla_absorption = qaic_config["mla_absorption"]
                 cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
                 cache_compressed = False
@@ -4028,14 +4044,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
-        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
             example_inputs, output_names, dynamic_axes = get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.model.config.vocab_size,
-                qaic_config=self.model.qaic_config,
+                qaic_config=qaic_config,
             )
 
         # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
@@ -4266,6 +4282,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[Union[int, List[int]]] = None,
+        qaic_config: Optional[dict] = None,
         prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
@@ -4315,8 +4332,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A plain int K is treated as ``[K]`` (backward compatible).
             Each value K generates a decode specialization with seq_len=K+1 and
             num_logits_to_keep=K+1. Include 0 to compile a cheap single-token fallback
-            (e.g. ``[0, 3]`` for a fallback + full K=3 decode). Required if the model is
-            configured as a Target Language Model (``is_tlm=True``).
+            (e.g. ``[0, 3]`` for a fallback + full K=3 decode). Required when
+            ``qaic_config`` configures this model as a Target Language Model.
+        qaic_config : dict, optional
+            QAIC-specific transform configuration. Pass speculative decoding, sampler,
+            prefix/cache blocking, MLA, and MoE options here instead of to ``from_pretrained()``.
         prefill_only : bool, optional
             If True, compiles only for the prefill stage. If False, compiles only for
             the decode stage. If None, compiles for both stages. Default is None.
@@ -4361,6 +4381,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        qaic_config = self._activate_qaic_config(qaic_config)
         enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
         if layerwise:
             warnings.warn(
@@ -4391,19 +4412,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 offload_pt_weights=offload_pt_weights,
                 enable_chunking=enable_chunking,
                 retain_full_kv=retain_full_kv,
+                qaic_config=qaic_config,
                 kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
-        if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
-            mla_absorption = self.model.qaic_config["mla_absorption"]
+        if qaic_config is not None and qaic_config.get("mla_absorption", None) is not None:
+            mla_absorption = qaic_config["mla_absorption"]
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
             cache_compressed = False
-        if (
-            self.model.qaic_config is not None
-            and self.model.qaic_config.get("mla_absorption", None) is not None
-            and not cache_compressed
-        ):
+        if qaic_config is not None and qaic_config.get("mla_absorption", None) is not None and not cache_compressed:
             logger.warning("mla_absorption will be ignored as cache_compressed is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
@@ -4476,8 +4494,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 _decode_ks = [validated_k]
 
         if (
-            self.model.qaic_config is not None
-            and self.model.qaic_config.get("include_sampler", False)
+            qaic_config is not None
+            and qaic_config.get("include_sampler", False)
             and _decode_ks is not None
             and max(_decode_ks) > 0
         ):
@@ -4637,6 +4655,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            qaic_config=qaic_config,
             kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
@@ -5203,6 +5222,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
+        _pop_deprecated_from_pretrained_qaic_config(kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')

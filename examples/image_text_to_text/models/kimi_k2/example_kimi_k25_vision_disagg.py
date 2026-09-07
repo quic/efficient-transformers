@@ -352,7 +352,6 @@ def main():
         kv_offload=True,
         config=model.config,
         torch_dtype=torch.float32,
-        qaic_config=qaic_config,
         layerwise=False,
     )
 
