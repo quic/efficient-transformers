@@ -253,11 +253,21 @@ class KvDmaHandoff:
         slices = []
         for (name, binding_index), buf in zip(buff_map, kv_cache_buffers):
             binding = self.session.bindings[binding_index]
-            expected_shape = tuple(binding.dims)
-            if expected_shape != tuple(buf.shape):
+            binding_shape = tuple(binding.dims)
+            buf_shape = tuple(buf.shape)
+            # Dim 0 (batch) is sliced by "batch_index" in the DimSpec, so a buffer
+            # covering a single row (e.g. one prefill slot) legitimately has a
+            # smaller dim 0 than the binding's full compiled shape. Every other
+            # dim is written in full and must match exactly.
+            shape_ok = (
+                len(binding_shape) == len(buf_shape)
+                and binding_shape[1:] == buf_shape[1:]
+                and 1 <= buf_shape[0] <= binding_shape[0]
+            )
+            if not shape_ok:
                 raise ValueError(
                     f"KV buffer shape mismatch for {name!r} (binding {binding_index}): "
-                    f"expected {expected_shape}, got {tuple(buf.shape)}"
+                    f"expected {binding_shape} (or a smaller dim-0 slice of it), got {buf_shape}"
                 )
             expected_dtype = self.session.aic_to_np_dtype_mapping[binding.type]
             if expected_dtype != buf.dtype:
