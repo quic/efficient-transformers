@@ -32,6 +32,11 @@ from transformers.models.gemma4.modeling_gemma4 import (
     rotate_half,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -474,6 +479,23 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         token_key_states = None
         token_value_states = None
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        num_kv_shared_layers = int(getattr(self.config, "num_kv_shared_layers", 0) or 0)
+        disable_blocking_for_store_full_kv = self.store_full_length_kv and num_kv_shared_layers > 0
+        has_valid_blocking_mode = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        # KV-sharing layers reuse KV from an earlier layer, so they should not run a blocked KV update path.
+        is_regular_kv_layer = not self.is_kv_shared_layer
+        # When KV sharing is enabled, the "store full KV" source layer must keep the non-blocked cache semantics.
+        can_block_when_storing_full_kv = not disable_blocking_for_store_full_kv
+        # Sliding-window layers use distinct cache semantics; disable blocked attention variants on
+        # those layers to keep behavior consistent and avoid mode-specific cache update issues.
+        blocks_supported_for_layer_type = self.sliding_window is None
+        use_blocking = (
+            has_valid_blocking_mode
+            and is_regular_kv_layer
+            and can_block_when_storing_full_kv
+            and blocks_supported_for_layer_type
+        )
 
         cos, sin = position_embeddings
 
@@ -501,6 +523,46 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             value_states = self.v_norm(value_states)
             value_states = value_states.transpose(1, 2)
             token_key_states, token_value_states = key_states, value_states
+
+        if use_blocking:
+            if (
+                mm_token_type_ids is not None
+                and hidden_states.shape[1] != 1
+                and getattr(self.config, "use_bidirectional_attention", None) == "vision"
+            ):
+                attention_mask = _build_bidirectional_vision_attention_mask(
+                    position_ids=position_ids,
+                    mm_token_type_ids=mm_token_type_ids,
+                    target_length=key_states.shape[-2],
+                    dtype=query_states.dtype,
+                    sliding_window=self.sliding_window,
+                )
+
+            past_seen_tokens = (
+                int(past_key_values.get_seq_length(self.layer_idx))
+                if past_key_values is not None
+                else int(key_states.shape[-2])
+            )
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values,
+                blocking_config=blocking_config,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
+                sliding_window=self.sliding_window,
+                prefill_only=blocking_config.mode.is_prefill,
+            )
+            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+            attn_output = self.o_proj(attn_output)
+            return attn_output, attn_weights
 
         if past_key_values is not None:
             if comp_ctx_lengths is not None:
