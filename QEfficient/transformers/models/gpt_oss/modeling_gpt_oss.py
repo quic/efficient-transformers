@@ -336,7 +336,7 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
 
         # Apply routing weights AFTER expert computation (This is before on Llama4)
         experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
+        experts_out = experts_out.sum(dim=1)
 
         return experts_out, router_logits
 
