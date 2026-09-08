@@ -109,7 +109,7 @@ def _build_config(dtype: str = "float32", full_model: bool = False, model_name: 
     config.torch_dtype = getattr(torch, dtype)
     if not full_model:
         config.vision_config.depth = 9
-        config.text_config.num_hidden_layers = 4
+        config.text_config.num_hidden_layers = 2
         config.vision_config.deepstack_visual_indexes = [8]
     return _normalize_text_layer_types(config)
 
@@ -321,13 +321,16 @@ def _run_disagg_kv_share_qaic_generation(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3_vl_moe_tiny"))
+@pytest.mark.parametrize(
+    "dma_config", disagg_dma_configs("qwen3_vl_moe_tiny") + disagg_dma_configs("qwen3_vl_moe_reduced")
+)
 def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
+    skip_hf_reference = dma_config.get("skip_hf_reference", False)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -336,7 +339,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
 
     messages = _prepare_messages(image)
     common_inputs = _prepare_processor_inputs(processor, messages)
-    hf_tokens = _run_hf_torch_fp32(hf_model, processor, messages, common_inputs)
+    hf_tokens = None if skip_hf_reference else _run_hf_torch_fp32(hf_model, processor, messages, common_inputs)
     hf_model.config.dtype = "float32"
     hf_model.config.torch_dtype = torch.float32
     if hasattr(hf_model.config, "text_config"):
@@ -440,8 +443,15 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
         manual_cleanup([path for path in cleanup_paths if path is not None])
 
     assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
-    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(qaic_tokens.dtype, np.integer)
+    print(f"Disagg QAIC DMA tokens : {qaic_tokens.tolist()}")
+    print("QAIC ouptut tokens     : ")
+    print(processor.tokenizer.batch_decode(qaic_tokens))
+
+    if skip_hf_reference:
+        return
+
+    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(hf_tokens.dtype, np.integer)
 
     matches = hf_tokens == qaic_tokens
@@ -449,9 +459,6 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
     print(f"HF Torch fp32 tokens   : {hf_tokens.tolist()}")
     print("HF output token:")
     print(processor.tokenizer.batch_decode(hf_tokens))
-    print("QAIC ouptut tokens     : ")
-    print(processor.tokenizer.batch_decode(qaic_tokens))
-    print(f"Disagg QAIC DMA tokens : {qaic_tokens.tolist()}")
     print(f"Matched leading tokens : {num_matched}/{GENERATION_LEN}")
 
     if not matches.all():

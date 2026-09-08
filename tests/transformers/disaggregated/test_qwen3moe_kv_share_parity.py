@@ -20,10 +20,10 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_configs
 
 MODEL_ID = "yujiepan/qwen3-moe-tiny-random"
-# MODEL_ID = "Qwen/Qwen3-30B-A3B"
+TINY_RANDOM_MODEL_NAMES = {"yujiepan/qwen3-moe-tiny-random"}
 PROMPT = "Explain quantum computing in simple terms."
 PREFILL_SEQ_LEN = 256
 CTX_LEN = PREFILL_SEQ_LEN * 3
@@ -38,7 +38,7 @@ MOE_PREFILL_PACKED_CHUNK_SIZE = 128
 
 HF_COMPARE_TOKENS = int(os.environ.get("QEFF_QWEN3MOE_HF_COMPARE_TOKENS", NUM_TOKEN_MATCH))
 HF_MIN_LEADING_MATCH = int(os.environ.get("QEFF_QWEN3MOE_HF_MIN_MATCH", 20))
-NUM_HIDDEN_LAYERS = int(os.environ.get("QEFF_QWEN3MOE_NUM_HIDDEN_LAYERS", 4))
+NUM_HIDDEN_LAYERS = int(os.environ.get("QEFF_QWEN3MOE_NUM_HIDDEN_LAYERS", 2))
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -49,22 +49,22 @@ def _assert_onnx_path(onnx_path, label: str) -> Path:
     return onnx_path.resolve()
 
 
-def _build_config(num_hidden_layers: int | None):
-    if num_hidden_layers is None or MODEL_ID == "yujiepan/qwen3-moe-tiny-random":
+def _build_config(model_id: str, num_hidden_layers: int | None):
+    if num_hidden_layers is None or model_id in TINY_RANDOM_MODEL_NAMES:
         return None
-    config = AutoConfig.from_pretrained(MODEL_ID)
+    config = AutoConfig.from_pretrained(model_id)
     config.num_hidden_layers = num_hidden_layers
     return config
 
 
-def _run_hf_greedy_reference(compare_tokens: int) -> list:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+def _run_hf_greedy_reference(model_id: str, compare_tokens: int) -> list:
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-    config = _build_config(NUM_HIDDEN_LAYERS)
+    config = _build_config(model_id, NUM_HIDDEN_LAYERS)
     from_pretrained_kwargs = {"config": config} if config is not None else {}
 
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, attn_implementation="eager", torch_dtype=torch.float32, **from_pretrained_kwargs
+        model_id, attn_implementation="eager", torch_dtype=torch.float32, **from_pretrained_kwargs
     ).eval()
 
     inputs = tokenizer(PROMPT, return_tensors="pt")
@@ -99,7 +99,7 @@ def _compile_sessions(
         num_speculative_tokens=None,
         offload_pt_weights=False,
         split_retained_state_io=True,
-        retain_full_kv=True,  # required for DMA slice writes into full KV
+        retain_full_kv=True,
         use_onnx_subfunctions=True,
     )
     onnx_paths["decode"] = _assert_onnx_path(qeff_model.onnx_path, "decode")
@@ -222,7 +222,7 @@ def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
     without disturbing the prefill-written prefix.
     """
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    config = _build_config(NUM_HIDDEN_LAYERS)
+    config = _build_config(MODEL_ID, NUM_HIDDEN_LAYERS)
     from_pretrained_kwargs = {"config": config} if config is not None else {}
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(MODEL_ID, continuous_batching=True, **from_pretrained_kwargs)
 
@@ -291,16 +291,16 @@ def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup):
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3moe_tiny") + disagg_dma_configs("qwen3moe_reduced"))
+def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup, dma_config):
     compare_tokens = HF_COMPARE_TOKENS
-
-    dma_config = disagg_dma_config("qwen3moe_tiny")
     model_id = dma_config["model_id"]
+    skip_hf_reference = dma_config.get("skip_hf_reference", False)
 
-    hf_tokens = _run_hf_greedy_reference(compare_tokens)
+    hf_tokens = None if skip_hf_reference else _run_hf_greedy_reference(model_id, compare_tokens)
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    config = _build_config(NUM_HIDDEN_LAYERS)
+    config = _build_config(model_id, NUM_HIDDEN_LAYERS)
     from_pretrained_kwargs = {"config": config} if config is not None else {}
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True, **from_pretrained_kwargs)
 
@@ -323,6 +323,11 @@ def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup):
             session.deactivate()
         manual_cleanup([path for path in compiled_onnx_paths.values() if path is not None])
 
+    print(f"Disagg QAIC DMA tokens : {qaic_tokens}")
+
+    if skip_hf_reference:
+        return
+
     n = min(compare_tokens, len(hf_tokens), len(qaic_tokens))
     assert n > 0, "no tokens to compare"
 
@@ -334,7 +339,6 @@ def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup):
         matched += 1
 
     print(f"HF Torch fp32 tokens   : {hf_tokens}")
-    print(f"Disagg QAIC DMA tokens : {qaic_tokens}")
     print(f"Matched leading tokens : {matched}/{n}")
 
     assert qaic_tokens[0] == hf_tokens[0], f"first token mismatch: kv_share={qaic_tokens[0]} hf={hf_tokens[0]}"

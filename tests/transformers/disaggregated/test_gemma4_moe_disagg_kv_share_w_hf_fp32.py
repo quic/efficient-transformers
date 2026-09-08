@@ -368,12 +368,13 @@ def _run_disagg_kv_share_qaic_generation(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize("dma_config", disagg_dma_configs("gemma4_moe_tiny"))
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("gemma4_moe_tiny") + disagg_dma_configs("gemma4_moe_reduced"))
 def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     torch.manual_seed(42)
 
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
+    skip_hf_reference = dma_config.get("skip_hf_reference", False)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -384,7 +385,7 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
         messages = _prepare_messages(Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127)))
     chat_template = _resolve_chat_template(processor, processor.tokenizer)
     common_inputs = _prepare_processor_inputs(processor, chat_template, messages)
-    hf_tokens = _run_hf_torch_fp32(hf_model, common_inputs)
+    hf_tokens = None if skip_hf_reference else _run_hf_torch_fp32(hf_model, common_inputs)
 
     hf_model.config.dtype = "float32"
     hf_model.config.torch_dtype = torch.float32
@@ -445,18 +446,22 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
         manual_cleanup([path for path in cleanup_paths if path is not None])
 
     assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
-    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(qaic_tokens.dtype, np.integer)
+    qaic_text = processor.tokenizer.batch_decode(qaic_tokens, skip_special_tokens=True)
+    print(f"Disagg QAIC DMA tokens : {qaic_tokens.tolist()}")
+    print(f"Disagg QAIC DMA text   : {qaic_text}")
+
+    if skip_hf_reference:
+        return
+
+    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(hf_tokens.dtype, np.integer)
 
     matches = hf_tokens == qaic_tokens
     num_matched = int(matches.all(axis=0).cumprod().sum())  # leading run matched across all rows
     hf_text = processor.tokenizer.batch_decode(hf_tokens, skip_special_tokens=True)
-    qaic_text = processor.tokenizer.batch_decode(qaic_tokens, skip_special_tokens=True)
     print(f"HF Torch fp32 tokens   : {hf_tokens.tolist()}")
-    print(f"Disagg QAIC DMA tokens : {qaic_tokens.tolist()}")
     print(f"HF Torch fp32 text     : {hf_text}")
-    print(f"Disagg QAIC DMA text   : {qaic_text}")
     print(f"Matched leading tokens : {num_matched}/{GENERATION_LEN}")
 
     if not matches.all():
