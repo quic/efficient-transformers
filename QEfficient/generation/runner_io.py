@@ -5,6 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
+"""Utilities for writing replayable qaic-runner IO bundles.
+
+This module prepares one host-side inference invocation from exported ONNX
+metadata and compile artifacts. It serializes input tensors as raw files and
+writes an ``aic_batch_io.json`` descriptor that external harnesses can replay
+with ``qaic-runner``. The public helpers cover CausalLM, single-QPC VLM, and
+dual-QPC VLM artifact-only generation flows.
+"""
+
 import json
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Union

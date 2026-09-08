@@ -26,6 +26,7 @@ def run_model(
     img_size=336,
     num_cores=16,
     num_devices=1,
+    artifact_only=False,
 ):
     ## STEP 1: Load the Processor and Model
 
@@ -45,14 +46,39 @@ def run_model(
 
     ## STEP 2: Export & Compile the Model
 
-    model.compile(
+    qpc_path = model.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         img_size=img_size,
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        artifact_only=artifact_only,
     )
+
+    if not artifact_only:
+        print(f"Model compiled to: {qpc_path}")
+
+    if artifact_only:
+        artifact_inputs = {
+            "processor": processor,
+            "images": [image_url],
+            "prompts": [query],
+            "generation_len": generation_len,
+            "artifact_only": True,
+        }
+        if kv_offload:
+            print(f"Vision compiler artifacts written to: {model.vision_model.compile_artifacts_path}")
+            print(f"Language compiler artifacts written to: {model.lang_model.compile_artifacts_path}")
+            vision_io_dir = model.generate(skip_lang=True, **artifact_inputs)
+            language_io_dir = model.generate(skip_vision=True, **artifact_inputs)
+            print(f"Vision runner inputs: {vision_io_dir}")
+            print(f"Language runner inputs: {language_io_dir}")
+        else:
+            print(f"Compiler artifacts written to: {model.compile_artifacts_path}")
+            io_dir = model.generate(**artifact_inputs)
+            print(f"Runner inputs written to: {io_dir}")
+        return
 
     ## STEP 3: Load and Process the Inputs for Inference
     # Note: the message format would change for different model
@@ -115,6 +141,11 @@ def main():
     parser.add_argument("--img-size", type=int, default=336, help="Image size for processing")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of devices")
+    parser.add_argument(
+        "--artifact-only",
+        action="store_true",
+        help="Write compiler and runner artifacts without executing either tool",
+    )
     args = parser.parse_args()
 
     print(f"Running VLM inference with model: {args.model_name}")
@@ -131,6 +162,7 @@ def main():
         img_size=args.img_size,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
+        artifact_only=args.artifact_only,
     )
 
 
