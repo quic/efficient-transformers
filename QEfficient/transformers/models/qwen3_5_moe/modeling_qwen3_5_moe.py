@@ -417,7 +417,6 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
     # MIN_MASKED_ATTENTION_VALUE = -10000
     if attention_mask is not None:
         attn_weights = torch.where(
@@ -817,7 +816,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
         mask = mask_causal
 
-        #
         # chunk decay
         # g = g.cumsum(dim=-1)
 
@@ -827,7 +825,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         g = g @ mask_g.T
 
-        #
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
 
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
@@ -1105,7 +1102,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 eye=self._eye,
             )
 
-        #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
         # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)

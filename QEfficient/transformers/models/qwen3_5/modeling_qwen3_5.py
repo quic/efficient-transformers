@@ -804,7 +804,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
         mask = mask_causal
 
-        #
         # chunk decay
         # g = g.cumsum(dim=-1)
 
@@ -814,7 +813,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         g = g @ mask_g.T
 
-        #
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
 
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
@@ -1091,7 +1089,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 eye=self._eye,
             )
 
-        #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
         # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
