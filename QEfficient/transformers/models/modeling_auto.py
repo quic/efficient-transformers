@@ -8,10 +8,10 @@
 import math
 import os
 import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional, Union
-from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import onnx
@@ -109,6 +109,7 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
+
 
 def get_io_dir(onnx_path: str) -> str:
     """Return a timestamped io_dir path under the model's onnx directory.
@@ -2579,9 +2580,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
             if self._write_io_dir is not None:
-                write_io_files(
-                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
-                )
+                write_io_files(chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False)
 
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
@@ -3198,9 +3197,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             outputs = qpc_session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(
-                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
-                )
+                write_io_files(chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False)
 
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -3245,9 +3242,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
             outputs = qpc_session.run(inputs)
             if self._write_io_dir is not None:
-                write_io_files(
-                    inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False
-                )
+                write_io_files(inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False)
 
             # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -5233,9 +5228,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         for num_tokens in range(generation_len):
             outputs = self.qpc_session.run(inputs)
             if self._write_io_dir is not None:
-                write_io_files(
-                    inputs, outputs, self._write_io_dir, f"decode_{num_tokens}", "aic_batch_io", True, False
-                )
+                write_io_files(inputs, outputs, self._write_io_dir, f"decode_{num_tokens}", "aic_batch_io", True, False)
 
             logits = outputs["logits"]
             next_token = logits.argmax(-1)

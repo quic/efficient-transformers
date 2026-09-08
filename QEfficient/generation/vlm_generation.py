@@ -675,7 +675,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 chunk_outputs = self._vision_session.run(chunk_inputs)
                 if self._write_io_dir is not None:
                     write_io_files(
-                        chunk_inputs, chunk_outputs, self._write_io_dir, f"vision_frame_{i}", "aic_batch_io", True, False
+                        chunk_inputs,
+                        chunk_outputs,
+                        self._write_io_dir,
+                        f"vision_frame_{i}",
+                        "aic_batch_io",
+                        True,
+                        False,
                     )
                 if i == 0:
                     vision_outputs = chunk_outputs

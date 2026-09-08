@@ -848,9 +848,7 @@ class QEffTextGenerationBase:
             outputs = self._session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(
-                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
-                )
+                write_io_files(chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False)
         return (
             outputs,
             position_ids,
