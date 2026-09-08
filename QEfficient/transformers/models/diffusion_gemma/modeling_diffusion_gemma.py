@@ -19,8 +19,9 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     DiffusionGemmaEncoderTextModel,
     DiffusionGemmaForBlockDiffusion,
     DiffusionGemmaRMSNorm,
+    DiffusionGemmaTextRotaryEmbedding,
     DiffusionGemmaTextRouter,
-    apply_rotary_pos_emb,
+    rotate_half,
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
@@ -44,6 +45,7 @@ EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
 SELF_CONDITIONING_TOP_K = 128
 DEVICE_ENTROPY_BOUND = 0.1
 
+
 def _top_k_self_conditioning_embeddings(
     top_k_logits: torch.Tensor,
     top_k_indices: torch.Tensor,
@@ -52,6 +54,7 @@ def _top_k_self_conditioning_embeddings(
     top_k_probabilities = top_k_logits.softmax(dim=-1, dtype=torch.float32).to(embedding_weight.dtype)
     top_k_embeddings = torch.nn.functional.embedding(top_k_indices, embedding_weight)
     return torch.matmul(top_k_probabilities.unsqueeze(-2), top_k_embeddings).squeeze(-2)
+
 
 def _is_onnx_export() -> bool:
     return torch.onnx.is_in_onnx_export()
@@ -83,6 +86,28 @@ def _saturating_residual_add(residual: torch.Tensor, hidden_states: torch.Tensor
     if not _is_onnx_export():
         return residual + hidden_states
     return (residual.float() + hidden_states.float()).clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX).to(hidden_states.dtype)
+
+
+def _apply_rotary_pos_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    return ((hidden_states * cos) + (rotate_half(hidden_states) * sin)).to(hidden_states.dtype)
+
+
+class QEffDiffusionGemmaTextRotaryEmbedding(DiffusionGemmaTextRotaryEmbedding):
+    """DiffusionGemma rotary embeddings with static caches for each text attention type."""
+
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+
+        for layer_type in sorted(self.layer_types):
+            inv_freq = getattr(self, f"{layer_type}_inv_freq")
+            positions = torch.arange(self.original_max_seq_len, device=inv_freq.device, dtype=torch.int64).type_as(
+                inv_freq
+            )
+            frequencies = torch.outer(positions, inv_freq)
+            embeddings = torch.cat((frequencies, frequencies), dim=-1)
+
+            self.register_buffer(f"{layer_type}_cos_cached", embeddings.cos().to(config.dtype), persistent=False)
+            self.register_buffer(f"{layer_type}_sin_cached", embeddings.sin().to(config.dtype), persistent=False)
 
 
 class QEffDiffusionGemmaRMSNorm(DiffusionGemmaRMSNorm):
@@ -229,14 +254,14 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
         cos, sin = position_embeddings
         query_states = self.q_proj(hidden_states).view(hidden_shape)
         query_states = self.q_norm(query_states)
-        query_states = apply_rotary_pos_emb(query_states, cos, sin, unsqueeze_dim=2)
+        query_states = _apply_rotary_pos_emb(query_states, cos, sin)
         query_states = query_states.transpose(1, 2)
 
         key_states = self.k_proj(hidden_states).view(hidden_shape)
         value_states = self.v_proj(hidden_states).view(hidden_shape) if self.v_proj is not None else key_states
 
         key_states = self.k_norm(key_states)
-        key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2)
+        key_states = _apply_rotary_pos_emb(key_states, cos, sin)
         key_states = key_states.transpose(1, 2)
 
         value_states = self.v_norm(value_states)
@@ -352,26 +377,14 @@ class QEffDiffusionGemmaEncoderTextModel(DiffusionGemmaEncoderTextModel):
     uses QEffGemma4DynamicCache for the encoder KV cache.
     """
 
-    def _precomputed_rope_gather(self, position_ids: torch.Tensor, layer_type: str, dtype: torch.dtype):
-        """Gather-based RoPE for full_attention layers.
-
-        Precomputes the cos/sin table at max_position_embeddings once, then indexes
-        by position_ids via Gather. This avoids the runtime MatMul(inv_freq, positions)
-        which mis-compiles when inv_freq has trailing zeros (partial_rotary_factor < 1).
-        """
-        inv_freq = getattr(self.rotary_emb, f"{layer_type}_inv_freq")
-        attention_scaling = getattr(self.rotary_emb, f"{layer_type}_attention_scaling")
-        max_pos = min(self.config.max_position_embeddings, 4096)
-        all_pos = torch.arange(max_pos, device=inv_freq.device, dtype=torch.float32)
-        freqs = torch.outer(all_pos, inv_freq.float())  # [max_pos, D]
-        emb = torch.cat((freqs, freqs), dim=-1)  # [max_pos, 2D]
-        cos_table = (emb.cos() * attention_scaling).to(dtype)  # [max_pos, 2D]
-        sin_table = (emb.sin() * attention_scaling).to(dtype)
-        # Gather: position_ids [B, S] → cos [B, S, 2D]
-        pos_clamped = position_ids.clamp(min=0, max=max_pos - 1)
-        cos = cos_table[pos_clamped]  # [B, S, 2D]
-        sin = sin_table[pos_clamped]
-        return cos, sin
+    def __qeff_init__(self):
+        self.rotary_emb = QEffDiffusionGemmaTextRotaryEmbedding(config=self.config)
+        for layer_type in sorted(self.rotary_emb.layer_types):
+            attention_scaling = getattr(self.rotary_emb, f"{layer_type}_attention_scaling")
+            sin_cached = getattr(self.rotary_emb, f"{layer_type}_sin_cached") * attention_scaling
+            cos_cached = getattr(self.rotary_emb, f"{layer_type}_cos_cached") * attention_scaling
+            setattr(self, f"{layer_type}_sin_cached", nn.Parameter(sin_cached))
+            setattr(self, f"{layer_type}_cos_cached", nn.Parameter(cos_cached))
 
 
 class QEffDiffusionGemmaVisionEncoderWrapper(nn.Module):
@@ -506,13 +519,10 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
 
         language_model = self.model.model.encoder.language_model
         position_embeddings = {}
-        for layer_type in language_model.unique_layer_types:
-            if layer_type == "full_attention" and _is_onnx_export():
-                position_embeddings[layer_type] = language_model._precomputed_rope_gather(
-                    position_ids, layer_type, hidden_states.dtype
-                )
-            else:
-                position_embeddings[layer_type] = language_model.rotary_emb(hidden_states, position_ids, layer_type)
+        for layer_type in sorted(language_model.unique_layer_types):
+            cos = getattr(language_model, f"{layer_type}_cos_cached")[position_ids].unsqueeze(2)
+            sin = getattr(language_model, f"{layer_type}_sin_cached")[position_ids].unsqueeze(2)
+            position_embeddings[layer_type] = (cos, sin)
 
         for layer_index, encoder_layer in enumerate(language_model.layers[: self.text_config.num_hidden_layers]):
             layer_type = self.text_config.layer_types[layer_index]
@@ -542,9 +552,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             largest=False,
             sorted=True,
         )
-        sorted_selection_mask = (
-            torch.cumsum(sorted_entropy, dim=1) - sorted_entropy
-        ) <= DEVICE_ENTROPY_BOUND
+        sorted_selection_mask = (torch.cumsum(sorted_entropy, dim=1) - sorted_entropy) <= DEVICE_ENTROPY_BOUND
         newly_accepted_mask = torch.zeros_like(sorted_selection_mask, dtype=torch.int32).scatter(
             dim=-1,
             index=sorted_indices,
@@ -581,7 +589,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
     def get_dummy_inputs(self, **kwargs):
         encoder = QEffDiffusionGemmaEncoderPrefillWrapper(self.model)
         encoder_inputs = encoder.get_dummy_inputs()
-        
+
         batch_size, block_length = encoder_inputs["input_ids"].shape
         text_config = self.text_config
         full_kv_length = encoder_inputs["past_key_values"][
@@ -781,7 +789,7 @@ class QEffDiffusionGemmaEncoderPrefillWrapper(nn.Module):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         mm_tokens_per_image = self.model._get_mm_tokens_per_image()
         text_cfg = self.config.text_config
-        seq_len = 32#max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
+        seq_len = 32  # max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
 
         input_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
         mm_token_type_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
