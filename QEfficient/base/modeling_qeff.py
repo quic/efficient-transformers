@@ -102,8 +102,24 @@ def _write_unified_accum_npi(onnx_path):
     def is_excluded_npi_node(node):
         return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
 
+    def is_diffusion_gemma_model_body_node(node):
+        return node.name.startswith(("/layers.", "/norm/", "/self_conditioning/", "/decoder/"))
+
+    sampler_outputs = [
+        output.name
+        for output in graph.output
+        if output.name.rsplit("/", maxsplit=1)[-1] in DIFFUSION_GEMMA_SAMPLER_OUTPUTS
+    ]
+    is_diffusion_gemma_sampler = bool(sampler_outputs)
+
     for node in graph.node:
         if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        if is_diffusion_gemma_sampler:
+            if node.name.startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
+                keep_nodes.append(node)
+            elif not is_diffusion_gemma_model_body_node(node) and node.op_type in FP32_ACCUM_OPS:
+                keep_nodes.append(node)
             continue
         if node.op_type in FP32_ACCUM_OPS:
             keep_nodes.append(node)
@@ -119,23 +135,19 @@ def _write_unified_accum_npi(onnx_path):
         node = producers.get(tensor_name)
         if node is None or is_moe_node(node) or is_excluded_npi_node(node):
             return
+        if is_diffusion_gemma_sampler and is_diffusion_gemma_model_body_node(node):
+            return
         keep_nodes.append(node)
         for input_name in node.input:
             if input_name in producers:
                 backtrace(input_name, depth + 1)
 
-    sampler_outputs = [
-        output.name
-        for output in graph.output
-        if output.name.rsplit("/", maxsplit=1)[-1] in DIFFUSION_GEMMA_SAMPLER_OUTPUTS
-    ]
     if sampler_outputs:
         output_names = sampler_outputs
     elif graph.output:
         output_names = [graph.output[0].name]
     else:
         output_names = []
-    is_diffusion_gemma_sampler = bool(sampler_outputs)
     for output_name in output_names:
         backtrace(output_name)
 
