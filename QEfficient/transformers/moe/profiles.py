@@ -58,7 +58,7 @@ def gptoss_clamped_glu_mlp(
     W_d: torch.Tensor,
     b_g: torch.Tensor,
     b_u: torch.Tensor,
-    b_d: torch.Tensor,
+    b_d: Optional[torch.Tensor],
     *,
     limit: float,
     alpha: float,
@@ -66,11 +66,14 @@ def gptoss_clamped_glu_mlp(
     """GPT-OSS clamped GLU with per-expert biases: ``(up + 1) * gate * sigmoid(gate * alpha)``."""
     gate = (x @ W_g) + b_g.unsqueeze(-2)
     up = (x @ W_u) + b_u.unsqueeze(-2)
-    gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
-    up = up.clamp(min=-limit, max=limit)
+    _fp16_min = torch.tensor(torch.finfo(torch.float16).min, dtype=x.dtype, device=x.device)
+    _limit_t = torch.tensor(limit, dtype=x.dtype, device=x.device)
+    gate = torch.minimum(torch.maximum(gate, _fp16_min), _limit_t)
+    up = torch.minimum(torch.maximum(up, -_limit_t), _limit_t)
     glu = gate * torch.sigmoid(gate * alpha)
     intermediate = (up + 1) * glu
-    return (intermediate @ W_d) + b_d.unsqueeze(-2)
+    out = intermediate @ W_d
+    return out + b_d.unsqueeze(-2) if b_d is not None else out
 
 
 SILU_GLU_PROFILE = MoEProfile(expert_mlp=silu_glu_mlp, has_bias=False)
