@@ -79,12 +79,14 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_fu
         trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         **custom_config.get("additional_params", {}),
     )
+    prompt = "hello"
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=1,
         retain_full_kv=retain_full_kv,
         config=hf_config,
         manual_cleanup=manual_cleanup,
+        prompts=[prompt],
     )
 
 
@@ -143,6 +145,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain
         **custom_config.get("additional_params", {}),
     )
 
+    prompt = "hello"
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         continuous_batching=True,
@@ -150,4 +153,5 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain
         retain_full_kv=retain_full_kv,
         config=hf_config,
         manual_cleanup=manual_cleanup,
+        prompts=[prompt],
     )

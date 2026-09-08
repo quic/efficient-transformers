@@ -303,7 +303,7 @@ class QEffMistralModel(MistralModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         return_legacy_cache = False
-        if use_cache and not isinstance(past_key_values, Cache) and not self.training:
+        if use_cache and not isinstance(past_key_values, Cache):
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
             return_legacy_cache = True
 
@@ -326,8 +326,8 @@ class QEffMistralModel(MistralModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:

@@ -51,13 +51,13 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 - **Causal Attention Blocking**
   - New KV, Q, Head, and Batch blocking strategies for CausalLM models
   - Supported architectures: Llama3, GPT-OSS, Gemma, Gemma2, Granite, GraniteMOE, Mistral
-  - Configurable via `qaic_config` with `enable_blocking: True`; disabled by default
+  - Configurable via `qaic_config` with `blocking_mode`; omit `blocking_mode` to disable it
   - Automatic blocking configurator with `skip_kv` enabled by default
   - Optimized nested loop implementation for attention blocking
 
 - **NSP-Blocked Expert Dispatch for MoE Prefill**
   - Batched packed-prefix expert dispatch for Qwen3MOE and GPT-OSS chunked prefill
-  - Configurable via `num_cores` and `moe_prefill_packed_chunk_size` in compile API
+  - Configurable via `num_cores` and `qaic_config["moe_config"]["expert_parallel_chunk_size"]`
   - Replaces sequential per-expert loop for improved throughput
 
 - **First-Block Caching for Diffusers (Wan)**

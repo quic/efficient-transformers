@@ -17,14 +17,13 @@ num_hidden_layers = 2
 TS = 4
 mla_absorption = {"cache_compressed": False, "absorption": False, "online": False}
 # qaic_config = None # Full PKV Cache
-# qaic_config = {"enable_blocking": True, "blocking_mode": "h"} # Full PKV Cache with Head Blocking
+# qaic_config = {"blocking_mode": "h"} # Full PKV Cache with Head Blocking
 # qaic_config = {"mla_absorption": mla_absorption} # for No Blocking
 # qaic_config = {"mla_absorption": mla_absorption, "replicate_kv_heads": True}  # No blocking with kv head replication
-# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
-# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv", "replicate_kv_heads": True} # for KV blocking with kv head replication
+# qaic_config = {"mla_absorption": mla_absorption, "blocking_mode": "kv"}  # for KV blocking
+# qaic_config = {"mla_absorption": mla_absorption, "blocking_mode": "kv", "replicate_kv_heads": True} # for KV blocking with kv head replication
 qaic_config = {
     "mla_absorption": mla_absorption,
-    "enable_blocking": True,
     "blocking_mode": "h",
     "replicate_kv_heads": True,
 }

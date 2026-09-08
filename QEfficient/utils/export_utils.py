@@ -9,7 +9,8 @@ import copy
 import inspect
 import re
 import warnings
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict
 
@@ -34,11 +35,66 @@ from QEfficient.utils.constants import (
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
     temporarily_enable_nested_compile_regions,
     undo_torch_patches,
 )
+
+_EXPORT_FROM_COMPILE = ContextVar("export_from_compile", default=False)
+
+
+@contextmanager
+def export_from_compile():
+    """Suppress the direct-export deprecation warning during compilation."""
+    token = _EXPORT_FROM_COMPILE.set(True)
+    try:
+        yield
+    finally:
+        _EXPORT_FROM_COMPILE.reset(token)
+
+
+def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
+    """Reorder example_inputs (and optional dynamic_shapes) to match model.forward signature.
+
+    torch.export requires inputs and dynamic_shapes to follow the forward parameter order
+    so that each shape constraint binds to the correct input tensor.
+    """
+    sig_keys = list(inspect.signature(model.forward).parameters.keys())
+    sig_key_set = set(sig_keys)
+    ordered_inputs, ordered_shapes = {}, {}
+    for k in sig_keys:
+        if k in example_inputs:
+            ordered_inputs[k] = example_inputs[k]
+        if dynamic_shapes is not None and k in dynamic_shapes:
+            ordered_shapes[k] = dynamic_shapes[k]
+    reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
+    if dynamic_shapes is not None:
+        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+        return reordered_inputs, reordered_shapes
+    return reordered_inputs, None
+
+
+def build_dynamo_export_kwargs(export_kwargs):
+    """Prepare export kwargs for dynamo (torch.export) path.
+
+    Sets dynamo=True, default report/optimize flags, and injects DYNAMO_CUSTOM_OP_TABLE
+    into custom_translation_table. Returns a new dict; does not mutate the input.
+    """
+    from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
+    from QEfficient.utils import constants
+
+    kwargs = dict(export_kwargs)
+    kwargs.setdefault("report", False)
+    kwargs.setdefault("optimize", False)
+    kwargs["dynamo"] = True
+    kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
+    kwargs["custom_translation_table"] = {
+        **(kwargs.pop("custom_translation_table", None) or {}),
+        **DYNAMO_CUSTOM_OP_TABLE,
+    }
+    return kwargs
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
@@ -225,19 +281,21 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
+        if not _EXPORT_FROM_COMPILE.get():
+            warnings.warn(
+                "Direct .export() is deprecated. Use .compile() to export and compile with the complete configuration.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Extract flags
         dynamo = kwargs.get("dynamo", False)
+        if dynamo:
+            kwargs["dynamo"] = True
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
         if dynamo:
-            torch_version = torch.__version__
-            major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
-            if (major, minor) < (2, 13):
-                raise AssertionError(
-                    f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-                    "Please install the required dependencies:\n"
-                    "  pip install -r examples/dynamo/causal_lm/requirements.txt"
-                )
+            validate_dynamo_export_requirements("dynamo=True")
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.
             dynamic_axes = kwargs.get("dynamic_axes")
@@ -343,11 +401,9 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
     new_sig = inspect.Signature(params)
-    # Bind all arguments
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
@@ -375,6 +431,8 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "dynamo": all_args.get("dynamo", False),
         }
     )
+    if getattr(qeff_model, "_weight_free", False):
+        copy_of_hash_params["weight_free"] = True
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
         copy_of_hash_params["onnx_subfunction_version"] = 3
     # Generate hash from relevant parameters

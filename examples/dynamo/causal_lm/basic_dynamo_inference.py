@@ -16,6 +16,7 @@ import argparse
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils import constants
 
 
 def main():
@@ -23,14 +24,21 @@ def main():
         description="Dynamo-based export and inference for Causal LM models on Cloud AI 100.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="tiny-random/gpt-oss-mxfp4", help="HuggingFace model ID")
     parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Override number of hidden layers")
     parser.add_argument("--prompt", type=str, default="My name is", help="Input prompt for generation")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context (KV-cache) length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of new tokens to generate")
-    parser.add_argument("--num-cores", type=int, default=16, help="Number of AI 100 cores")
-    parser.add_argument("--aic-hw-version", type=str, default="ai100", help="AIC hardware version")
+    parser.add_argument("--num-cores", type=int, default=constants.DEFAULT_AIC_NUM_CORES, help="Number of AI 100 cores")
+    parser.add_argument(
+        "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="AIC hardware version"
+    )
+    parser.add_argument(
+        "--weight-free",
+        action="store_true",
+        help="Build the model on meta tensors and load weights at compile time",
+    )
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
@@ -39,14 +47,16 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load tokenizer and config
+    # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     config = AutoConfig.from_pretrained(args.model_name)
     if args.num_hidden_layers > 0:
         config.num_hidden_layers = args.num_hidden_layers
-
-    # Load model and apply QEff transforms
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        config=config,
+        weight_free=args.weight_free,
+    )
 
     # Export (via torch.export / dynamo) + compile to QPC
     qpc_path = model.compile(
