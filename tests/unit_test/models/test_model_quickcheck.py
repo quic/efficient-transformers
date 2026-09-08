@@ -3466,7 +3466,12 @@ def test_runtime_failure_releases_qaic_program(monkeypatch):
     from QEfficient.generation import cloud_infer
 
     success = object()
-    monkeypatch.setattr(cloud_infer, "qaicrt", SimpleNamespace(QStatus=SimpleNamespace(QS_SUCCESS=success)))
+    monkeypatch.setattr(
+        cloud_infer,
+        "qaicrt",
+        SimpleNamespace(QStatus=SimpleNamespace(QS_SUCCESS=success)),
+        raising=False,
+    )
 
     exec_obj = MagicMock()
     exec_obj.setData.return_value = success
