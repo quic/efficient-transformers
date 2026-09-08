@@ -34,7 +34,8 @@
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
         "stages": 2,
-        "skip_hf_reference": true
+        "skip_hf_reference": true,
+        "use_onnx_subfunctions": false
       }
     ]
   },
@@ -42,11 +43,12 @@
     "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "test_configs": [
       {
-        "id": "reduced_layers_vision1_prefill2_decode1_stages2",
+        "id": "reduced_layers_vision1_prefill2_decode1_stages2_mdp_intersection",
         "vision_num_devices": 1,
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
         "stages": 2,
+        "mdp_strategy": "intersection",
         "skip_hf_reference": true,
         "use_onnx_subfunctions": true
       }
@@ -99,7 +101,7 @@
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
         "stages": 2,
-        "use_onnx_subfunctions": true
+        "use_onnx_subfunctions": false
       }
     ]
   },

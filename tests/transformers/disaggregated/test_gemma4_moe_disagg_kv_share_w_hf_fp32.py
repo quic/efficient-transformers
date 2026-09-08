@@ -47,7 +47,7 @@ ORT_EXTRA_DIMS = {
 }
 TEXT_PROMPT = "Can you describe this image in detail?"
 # Set QEFF_GEMMA4_SKIP_VISION=1 to exercise only the language  path.
-SKIP_VISION = os.environ.get("QEFF_GEMMA4_SKIP_VISION", "1").strip().lower() in {"1", "true", "yes"}
+SKIP_VISION = os.environ.get("QEFF_GEMMA4_SKIP_VISION", "0").strip().lower() in {"1", "true", "yes"}
 
 PREFILL_NUM_DEVICES = 2
 DECODE_NUM_DEVICES = 2

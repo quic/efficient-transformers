@@ -331,6 +331,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
     skip_hf_reference = dma_config.get("skip_hf_reference", False)
+    mdp_strategy = dma_config.get("mdp_strategy", "onnx")
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -406,6 +407,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
             mos=1,
             aic_enable_depth_first=True,
             mdp_num_partitions=dma_config["stages"],
+            mdp_strategy=mdp_strategy,
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
