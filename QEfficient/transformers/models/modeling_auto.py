@@ -497,6 +497,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["pooling"] = pooling.__name__ if callable(pooling) else pooling
 
     @classmethod
     @with_replaced_quantizers
@@ -544,6 +545,10 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        # NomicBert loads the model in fp32 eventhough we pass the torch dtype param as fp16
+        if kwargs.get("torch_dtype") == torch.float16 and next(model.parameters()).dtype == torch.float32:
+            model.half()
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -738,7 +743,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids, dtype=dtype)
         # PyTorch runtime
         else:
             return self.pytorch_feature_generate(model=self.model, inputs=inputs)
@@ -773,18 +778,31 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        # Dynamic switching to closest seq_Len based on input_ids_len
+        # Dynamic switching to closest seq_len based on input_ids_len
         input_ids_len = inputs["input_ids"].shape[1]
 
-        for allowed_shape in self.qpc_session.allowed_shapes:
+        matched_spec_idx = None
+        for spec_idx, allowed_shape in enumerate(self.qpc_session.allowed_shapes):
             seq_len_allowed = allowed_shape[1][1][1]
-
             if seq_len_allowed >= input_ids_len:
                 self.seq_len = seq_len_allowed
+                matched_spec_idx = spec_idx
                 break
 
         # To handle single seq_len as we can't fetch allowed shapes for single seq_len
         self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
+
+        if matched_spec_idx is None and self.qpc_session.allowed_shapes:
+            max_compiled = max(s[1][1][1] for s in self.qpc_session.allowed_shapes)
+            raise ValueError(
+                f"Input length {input_ids_len} exceeds maximum compiled seq_len {max_compiled}. "
+                f"Recompile with a larger seq_len."
+            )
+        elif self.seq_len < input_ids_len:
+            raise ValueError(
+                f"Input length {input_ids_len} exceeds maximum compiled seq_len {self.seq_len}. "
+                f"Recompile with a larger seq_len."
+            )
 
         input_ids = np.array(
             torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
@@ -794,26 +812,23 @@ class QEFFAutoModel(QEFFTransformersBase):
                 inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
             )
         )
-
         inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
-        # TODO: Remove try and catch after compiler fix
-        try:
-            outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
-                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
-                ),
-            }
-            self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
-        except Exception:
-            outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
-                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
-                ),
-            }
-            self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
+        # Output buffer shape calculation
+        output_binding_idx = self.qpc_session.binding_index_map["output"]
+        binding_dims = list(self.qpc_session.bindings[output_binding_idx].dims)
+
+        # Multi seq_len: pick the shape from the matched specialization
+        if matched_spec_idx is not None:
+            output_buffer_shape = self.qpc_session.allowed_shapes[matched_spec_idx][output_binding_idx][1]
+
+        # Single seq_len: binding_dims is reliable
+        else:
+            output_buffer_shape = binding_dims
+
+        outputs = {"output": np.random.randn(*output_buffer_shape).astype(TORCH_TO_NUMPY_DTYPE_MAP[dtype])}
+        self.qpc_session.set_buffers(outputs)
+        outputs = self.qpc_session.run(inputs)
 
         if self._write_io_dir is not None:
             write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
