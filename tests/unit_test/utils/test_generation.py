@@ -1394,6 +1394,29 @@ def test_cross_qpc_output_shapes_follow_language_input_contract(tmp_path):
 
     assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}
 
+    lang_compile_dir = tmp_path / "lang-qpc"
+    lang_compile_dir.mkdir()
+    (lang_compile_dir / "specializations.json").write_text(
+        json.dumps(
+            {
+                "specializations": [
+                    {
+                        "name": "Prefill",
+                        "symbols": {
+                            "batch_size": "1",
+                            "seq_len": "128",
+                            "ctx_len": "3000",
+                            "vision_batch_size": "1",
+                            "vision_size": "187",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    model.lang_model.compile_artifacts_path = lang_compile_dir
+    assert _cross_qpc_output_shapes(model, {"batch_size": 1, "img_size": 336}) == {"vision_embeds": [1, 187, 8]}
+
     model.lang_model.onnx_path = None
     model.model = SimpleNamespace(config=SimpleNamespace(text_config=SimpleNamespace(hidden_size=8)))
     assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}

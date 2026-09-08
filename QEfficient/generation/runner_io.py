@@ -78,6 +78,19 @@ def _custom_io_item_sizes(compile_dir: Path) -> Dict[str, int]:
     }
 
 
+def _specialization_symbols(specialization: Mapping[str, int]) -> Dict[str, int]:
+    return {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
+
+
+def _component_prefill_symbols(component) -> Dict[str, int]:
+    try:
+        compile_dir = _get_compile_dir(component)
+        specialization = load_prefill_specialization(compile_dir)
+    except (FileNotFoundError, TypeError, ValueError):
+        return {}
+    return _specialization_symbols(specialization)
+
+
 def _apply_input_shapes(model: onnx.ModelProto, shape_overrides: Mapping[str, Sequence[int]]) -> None:
     for graph_input in model.graph.input:
         shape = shape_overrides.get(graph_input.name)
@@ -336,7 +349,7 @@ def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], p
 
 def _add_cross_qpc_placeholders(model, host_inputs: Dict[str, np.ndarray], specialization: Mapping[str, int]) -> None:
     graph = onnx.load(str(model.onnx_path), load_external_data=False).graph
-    symbols = {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
+    symbols = _specialization_symbols(specialization)
     custom_precisions = _custom_io_precisions(_get_compile_dir(model))
     precision_dtypes = {
         "bfloat16": np.uint16,
@@ -375,7 +388,10 @@ def _cross_qpc_output_shapes(model, specialization: Mapping[str, int]) -> Dict[s
     vision_outputs = {
         output.name for output in onnx.load(str(model.vision_model.onnx_path), load_external_data=False).graph.output
     }
-    symbols = {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
+    symbols = _specialization_symbols(specialization)
+    language_symbols = _component_prefill_symbols(getattr(model, "lang_model", None))
+    for name, value in language_symbols.items():
+        symbols.setdefault(name, value)
     if "batch_size" in symbols:
         symbols.setdefault("vision_batch_size", symbols["batch_size"])
 
