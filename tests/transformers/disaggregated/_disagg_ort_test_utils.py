@@ -37,30 +37,6 @@ def session_output_names(session) -> list:
     return [item.name for item in session.get_outputs()]
 
 
-def session_input_rank(session, name: str):
-    for item in session.get_inputs():
-        if item.name == name:
-            return len(item.shape)
-    return None
-
-
-def qeff_rank4_image_grid_thw(grid) -> np.ndarray:
-    arr = np.asarray(grid)
-    if arr.ndim != 2 or arr.shape[-1] != 3:
-        return arr
-    if arr.shape[0] != 1:
-        raise NotImplementedError(f"Rank-4 grid conversion supports one image, got {arr.shape}")
-    t, h, w = (int(v) for v in arr[0])
-    return np.zeros((arr.shape[0], t, h, w), dtype=arr.dtype)
-
-
-def vision_feed_for_ort(vision_inputs: dict, vision_session) -> dict:
-    feed = {k: v for k, v in vision_inputs.items() if k in session_input_names(vision_session)}
-    if "image_grid_thw" in feed and session_input_rank(vision_session, "image_grid_thw") == 4:
-        feed["image_grid_thw"] = qeff_rank4_image_grid_thw(feed["image_grid_thw"])
-    return feed
-
-
 def dtype_for_ort(type_name: str) -> np.dtype:
     if "float16" in type_name:
         return np.float16
