@@ -2072,6 +2072,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             bs=batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
+            dynamo=dynamo,
             aic_num_cores=num_cores,
             mdp_num_partitions=compiler_options.get("mdp_num_partitions", 1),
             prefill_only=prefill_only,

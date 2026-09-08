@@ -25,8 +25,10 @@ from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
     FP16ClipTransform,
+    InlineTorchSubgraphFunctionsTransform,
     OnnxTransformPipeline,
     RenameFunctionOutputsTransform,
+    StaticLoopInputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -609,6 +611,23 @@ class QEFFBaseModel(ABC):
             active_transforms = [
                 transform for transform in self._onnx_transforms if transform not in excluded_transforms
             ]
+            qaic_config_for_transforms = (
+                export_kwargs.get("qaic_config")
+                or self.hash_params.get("qaic_config")
+                or getattr(self.model, "qaic_config", None)
+                or {}
+            )
+            if (
+                dynamo
+                and qaic_config_for_transforms.get("blocking_mode") == "kv_headpar"
+                and qaic_config_for_transforms.get("use_kv_loop_op", True)
+                and not qaic_config_for_transforms.get("kv_loop_dynamic_trip_count", False)
+                and qaic_config_for_transforms.get("num_kv_blocks") is not None
+            ):
+                if getattr(self, "_use_onnx_subfunctions", False) and InlineTorchSubgraphFunctionsTransform not in active_transforms:
+                    active_transforms.append(InlineTorchSubgraphFunctionsTransform)
+                if StaticLoopInputsTransform not in active_transforms:
+                    active_transforms.append(StaticLoopInputsTransform)
             needs_external_tensor_data = any(
                 transform in active_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
             )
@@ -617,6 +636,7 @@ class QEFFBaseModel(ABC):
                 "model_name": self.model_name,
                 "dynamic_axes": None if dynamo else dynamic_axes,
                 "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
+                "num_kv_blocks": qaic_config_for_transforms.get("num_kv_blocks"),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -711,6 +731,7 @@ class QEFFBaseModel(ABC):
             bs=bs,
             num_devices=num_devices,
             qaic_config=qaic_config,
+            dynamo=dynamo,
             prefill_only=prefill_only,
             enable_chunking=enable_chunking,
             num_cores=kwargs.get("num_cores", compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)),

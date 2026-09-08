@@ -360,12 +360,17 @@ def build_transformer_blocking_config_for_transform(
     if blocking_mode == BlockingMode.KV_BATCH_FOLD:
         blocking_config.batch_fold = True
 
+    if blocking_mode == BlockingMode.KV_HEADPAR and compile_options.get("dynamo", False):
+        blocking_config.use_kv_loop_op = True
+
     # optional blocking parameters to set if given in qaic_config
     for param in (
         "skip_kv",
         "n_rep_chunk",
         "ctx_len",
         "kv_block_unroll",
+        "use_kv_loop_op",
+        "kv_loop_dynamic_trip_count",
     ):
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))

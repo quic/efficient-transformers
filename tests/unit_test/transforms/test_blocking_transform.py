@@ -395,3 +395,68 @@ class TestBlockingWrapperFallbackAndParity:
         assert torch.equal(original_token, transformed_token), (
             "Original and transformed model outputs diverged for same CPU input"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: Dynamo KV Loop config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.transforms
+class TestDynamoKVLoopBlockingConfig:
+    """Dynamo export should opt kv_headpar decode into the ONNX Loop implementation."""
+
+    def test_kv_headpar_dynamo_enables_loop_op(self):
+        from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+        cfg = make_tiny_llama().config
+        blocking_config = build_transformer_blocking_config_for_transform(
+            cfg,
+            ctx_len=CTX_LEN,
+            seq_len=1,
+            bs=1,
+            num_devices=1,
+            qaic_config={"blocking_mode": "kv_headpar", "num_kv_blocks": 4},
+            aic_num_cores=2,
+            dynamo=True,
+        )
+
+        assert blocking_config.mode == BlockingMode.KV_HEADPAR
+        assert blocking_config.use_kv_loop_op is True
+        assert blocking_config.kv_loop_dynamic_trip_count is False
+
+    def test_kv_headpar_legacy_keeps_loop_op_disabled(self):
+        from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+        cfg = make_tiny_llama().config
+        blocking_config = build_transformer_blocking_config_for_transform(
+            cfg,
+            ctx_len=CTX_LEN,
+            seq_len=1,
+            bs=1,
+            num_devices=1,
+            qaic_config={"blocking_mode": "kv_headpar", "num_kv_blocks": 4},
+            aic_num_cores=2,
+            dynamo=False,
+        )
+
+        assert blocking_config.mode == BlockingMode.KV_HEADPAR
+        assert blocking_config.use_kv_loop_op is False
+
+    def test_kv_headpar_dynamo_loop_op_can_be_disabled(self):
+        from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+        cfg = make_tiny_llama().config
+        blocking_config = build_transformer_blocking_config_for_transform(
+            cfg,
+            ctx_len=CTX_LEN,
+            seq_len=1,
+            bs=1,
+            num_devices=1,
+            qaic_config={"blocking_mode": "kv_headpar", "num_kv_blocks": 4, "use_kv_loop_op": False},
+            aic_num_cores=2,
+            dynamo=True,
+        )
+
+        assert blocking_config.mode == BlockingMode.KV_HEADPAR
+        assert blocking_config.use_kv_loop_op is False

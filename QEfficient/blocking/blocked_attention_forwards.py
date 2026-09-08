@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from transformers.cache_utils import Cache
 
+from QEfficient.customop import ctx_gather_blocked_kv
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import HEADPAR_MASKED_ATTENTION_VALUE, MIN_MASKED_ATTENTION_VALUE
 
@@ -357,6 +358,55 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     return attn_output.transpose(1, 2).contiguous(), None
 
 
+def _is_dynamo_compiling() -> bool:
+    dynamo = getattr(torch, "_dynamo", None)
+    if dynamo is None:
+        return False
+    try:
+        return bool(dynamo.is_compiling())
+    except Exception:
+        return False
+
+
+def _get_layer_cache_tensors(
+    past_key_value: Cache, layer_idx: int
+) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    if hasattr(past_key_value, "layers"):
+        layer = past_key_value.layers[layer_idx]
+        return getattr(layer, "keys", None), getattr(layer, "values", None)
+    if hasattr(past_key_value, "key_cache") and hasattr(past_key_value, "value_cache"):
+        return past_key_value.key_cache[layer_idx], past_key_value.value_cache[layer_idx]
+    try:
+        return past_key_value[layer_idx]
+    except Exception:
+        return None, None
+
+
+def _read_fixed_blocked_kv_for_loop(
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    start_index: torch.Tensor,
+    block_size: int,
+    position_ids: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    batch, num_kv_heads, ctx_len, head_dim = key_cache.shape
+    ctx_indices = (
+        start_index.to(dtype=position_ids.dtype)
+        + torch.arange(block_size, dtype=position_ids.dtype, device=position_ids.device)
+    )[None, None, ...]
+    gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
+    invalid_mask = (ctx_indices > gather_limit) | (ctx_indices >= ctx_len)
+    safe_indices = torch.where(invalid_mask, torch.zeros_like(ctx_indices), ctx_indices)
+    safe_indices = safe_indices.expand(batch, num_kv_heads, block_size)
+
+    key_block = ctx_gather_blocked_kv(key_cache, safe_indices)
+    value_block = ctx_gather_blocked_kv(value_cache, safe_indices)
+    value_block = torch.where(
+        invalid_mask.unsqueeze(-1), torch.zeros_like(value_block, dtype=value_block.dtype), value_block
+    )
+    return key_block, value_block, invalid_mask
+
+
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,
     query: torch.Tensor,
@@ -423,7 +473,7 @@ def blocked_kv_attention_forward_headpar_offline(
             block_len += pad_len
         split_block_len = block_len // split
 
-        key_5d = k_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
+        key_5d = torch.stack(torch.split(k_block, split_block_len, dim=2), dim=2)
         attn_weights_block = torch.matmul(query_5d, key_5d.transpose(-1, -2)) * scaling
 
         if pad_len > 0:
@@ -465,7 +515,7 @@ def blocked_kv_attention_forward_headpar_offline(
         v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
         if pad_len > 0:
             v_block = nn.functional.pad(v_block, (0, 0, 0, pad_len))
-        value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
+        value_5d = torch.stack(torch.split(v_block, split_block_len, dim=2), dim=2)
         sum_block = torch.einsum("bsgkn->bsgk", exp_block)
         out_block = torch.matmul(exp_block, value_5d)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -500,6 +550,219 @@ def blocked_kv_attention_forward_headpar_offline(
         scale_old = torch.exp(split_max - new_max)
         scale_sink = torch.exp(sink_logits - new_max)
 
+        split_sum = split_sum * scale_old + scale_sink
+        split_out = split_out * scale_old.unsqueeze(-1)
+        split_max = new_max
+
+    output = split_out / split_sum.unsqueeze(-1)
+    attn_output = output.view(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
+        batch_size, num_heads, seq_len, head_dim
+    )
+    return attn_output.transpose(1, 2).contiguous(), None
+
+
+def blocked_kv_attention_forward_headpar_offline_loop(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    ctx_len: int,
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    configured_split: Optional[int] = None,
+    kv_loop_dynamic_trip_count: bool = False,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Dynamo-only ONNX Loop variant of head-parallel decode KV blocking.
+
+    The eager/TorchScript path delegates to the established Python-for
+    implementation. During Dynamo export this uses ``torch.while_loop`` so the
+    KV-block iteration is represented as a structured ONNX Loop instead of being
+    unrolled into ``num_kv_blocks`` copies of the block body.
+    """
+    if not _is_dynamo_compiling():
+        return blocked_kv_attention_forward_headpar_offline(
+            module=module,
+            query=query,
+            key=key,
+            value=value,
+            attention_mask=attention_mask,
+            scaling=scaling,
+            num_kv_blocks=num_kv_blocks,
+            cache_kwargs=cache_kwargs,
+            layer_idx=layer_idx,
+            past_key_value=past_key_value,
+            ctx_len=ctx_len,
+            use_causal_mask=use_causal_mask,
+            sliding_window=sliding_window,
+            skip_kv=skip_kv,
+            position_bias=position_bias,
+            sinks=sinks,
+            configured_split=configured_split,
+            **kwargs,
+        )
+
+    def _fallback_to_python_for():
+        return blocked_kv_attention_forward_headpar_offline(
+            module=module,
+            query=query,
+            key=key,
+            value=value,
+            attention_mask=attention_mask,
+            scaling=scaling,
+            num_kv_blocks=num_kv_blocks,
+            cache_kwargs=cache_kwargs,
+            layer_idx=layer_idx,
+            past_key_value=past_key_value,
+            ctx_len=ctx_len,
+            use_causal_mask=use_causal_mask,
+            sliding_window=sliding_window,
+            skip_kv=skip_kv,
+            position_bias=position_bias,
+            sinks=sinks,
+            configured_split=configured_split,
+            **kwargs,
+        )
+
+    if (
+        sliding_window is not None
+        or position_bias is not None
+        or configured_split is None
+        or cache_kwargs.get("batch_index", None) is not None
+    ):
+        return _fallback_to_python_for()
+
+    key_cache, value_cache = _get_layer_cache_tensors(past_key_value, layer_idx)
+    if key_cache is None or value_cache is None:
+        return _fallback_to_python_for()
+
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    num_kv_groups = getattr(module, "num_key_value_groups", None)
+    if num_kv_groups is None:
+        return _fallback_to_python_for()
+
+    past_seen_tokens = ctx_len
+    position_ids = cache_kwargs.get("position_ids")
+    num_kv_heads = num_heads // num_kv_groups
+    split = int(configured_split)
+    num_kv_blocks = max(1, int(num_kv_blocks))
+    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+    if past_seen_tokens % num_kv_blocks != 0 or kv_block_size % split != 0:
+        return _fallback_to_python_for()
+    split_block_len = kv_block_size // split
+    current_position = position_ids.max(dim=-1).values
+
+    query_folded = query.reshape(batch_size, num_kv_heads, seq_len * num_kv_groups, head_dim)
+    query_5d = query_folded.unsqueeze(2).expand(batch_size, num_kv_heads, split, seq_len * num_kv_groups, head_dim)
+
+    initial_max = torch.full(
+        (batch_size, num_kv_heads, split, seq_len * num_kv_groups),
+        float(HEADPAR_MASKED_ATTENTION_VALUE),
+        dtype=query.dtype,
+        device=query.device,
+    )
+    running_sum = torch.zeros_like(initial_max)
+    running_out = torch.zeros(
+        batch_size,
+        num_kv_heads,
+        split,
+        seq_len * num_kv_groups,
+        head_dim,
+        dtype=query.dtype,
+        device=query.device,
+    )
+    block_index = torch.zeros((), dtype=torch.int64, device=query.device)
+    if kv_loop_dynamic_trip_count:
+        live_blocks = torch.div(current_position.max() + kv_block_size, kv_block_size, rounding_mode="floor")
+        loop_bound = torch.clamp(live_blocks, min=0, max=num_kv_blocks).to(torch.int64)
+    else:
+        loop_bound = num_kv_blocks
+
+    def cond_fn(
+        index: torch.Tensor,
+        block_max: torch.Tensor,
+        block_sum: torch.Tensor,
+        block_out: torch.Tensor,
+    ) -> torch.Tensor:
+        del block_max, block_sum, block_out
+        return index < loop_bound
+
+    def body_fn(
+        index: torch.Tensor,
+        block_max: torch.Tensor,
+        block_sum: torch.Tensor,
+        block_out: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        start_index = index * kv_block_size
+
+        k_block, v_block, invalid_mask = _read_fixed_blocked_kv_for_loop(
+            key_cache, value_cache, start_index, kv_block_size, position_ids
+        )
+        key_5d = k_block.unflatten(2, (split, split_block_len))
+        attn_weights_block = torch.matmul(query_5d, key_5d.transpose(-1, -2)) * scaling
+
+        split_offsets = torch.arange(split, dtype=position_ids.dtype, device=query.device).view(1, 1, split, 1, 1)
+        token_offsets = torch.arange(split_block_len, dtype=position_ids.dtype, device=query.device).view(
+            1, 1, 1, 1, split_block_len
+        )
+        kv_indices = start_index.to(dtype=position_ids.dtype) + split_offsets * split_block_len + token_offsets
+        query_indices = position_ids.unsqueeze(1).unsqueeze(2).unsqueeze(3).unsqueeze(-1)
+        query_indices = query_indices.expand(-1, 1, 1, num_kv_groups, -1, 1).flatten(3, 4)
+        causal_mask = kv_indices > query_indices
+        invalid_mask_5d = torch.stack(torch.split(invalid_mask, split_block_len, dim=2), dim=2).unsqueeze(3)
+        attn_weights_block = attn_weights_block.masked_fill(
+            causal_mask | invalid_mask_5d, HEADPAR_MASKED_ATTENTION_VALUE
+        )
+
+        candidate_max = attn_weights_block.max(dim=-1).values
+        exp_block = torch.exp(attn_weights_block - candidate_max.unsqueeze(-1))
+
+        value_5d = v_block.unflatten(2, (split, split_block_len))
+        candidate_sum = torch.einsum("bsgkn->bsgk", exp_block)
+        candidate_out = torch.matmul(exp_block, value_5d)
+
+        new_max = torch.maximum(block_max, candidate_max)
+        old_weight = torch.exp(block_max - new_max)
+        new_weight = torch.exp(candidate_max - new_max)
+        new_sum = block_sum * old_weight + candidate_sum * new_weight
+        new_out = block_out * old_weight.unsqueeze(-1) + candidate_out * new_weight.unsqueeze(-1)
+
+        if skip_kv and not kv_loop_dynamic_trip_count:
+            skip_future = (start_index > current_position).all()
+            new_max = torch.where(skip_future, block_max, new_max)
+            new_sum = torch.where(skip_future, block_sum, new_sum)
+            new_out = torch.where(skip_future, block_out, new_out)
+
+        return index + 1, new_max, new_sum, new_out
+
+    _, block_max, block_sum, block_out = torch.while_loop(
+        cond_fn,
+        body_fn,
+        (block_index, initial_max, running_sum, running_out),
+    )
+
+    split_max = block_max.max(dim=2).values
+    split_weight = torch.exp(block_max - split_max.unsqueeze(2))
+    split_sum = torch.einsum("bsgk->bsk", (split_weight * block_sum))
+    split_out = torch.einsum("bsgkv->bskv", (split_weight.unsqueeze(-1) * block_out))
+
+    if sinks is not None:
+        sinks_logits = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+        sinks_folded = sinks_logits.reshape(batch_size, num_kv_heads, seq_len * num_kv_groups, 1)
+        sink_logits = sinks_folded.squeeze(-1)
+        new_max = torch.maximum(split_max, sink_logits)
+        scale_old = torch.exp(split_max - new_max)
+        scale_sink = torch.exp(sink_logits - new_max)
         split_sum = split_sum * scale_old + scale_sink
         split_out = split_out * scale_old.unsqueeze(-1)
         split_max = new_max
@@ -612,8 +875,8 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
 
             k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
             v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
-            key_5d = k_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
-            value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
+            key_5d = k_block.unflatten(2, (split, split_block_len))
+            value_5d = v_block.unflatten(2, (split, split_block_len))
             K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
