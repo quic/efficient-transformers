@@ -48,6 +48,13 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+from QEfficient.customop.fp8_dequantize import (
+    FP8DequantizeBlockedFunc,
+    FP8DequantizePerAxisFunc,
+    FP8DequantizePerTensorFunc,
+)
+
+# from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.onnxscript_utils import get_onnxscript_func
 from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
@@ -118,6 +125,12 @@ class CustomOpTransform(BaseOnnxTransform):
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
         "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
         "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch),
+        # FP8 retained-weight ops emit standard DequantizeLinear from their
+        # TorchScript symbolics on the legacy path, so no ONNX function proto is
+        # appended here.
+        "FP8DequantizePerTensorFunc": (FP8DequantizePerTensorFunc, None),
+        "FP8DequantizePerAxisFunc": (FP8DequantizePerAxisFunc, None),
+        "FP8DequantizeBlockedFunc": (FP8DequantizeBlockedFunc, None),
     }
 
     @classmethod
@@ -137,6 +150,8 @@ class CustomOpTransform(BaseOnnxTransform):
         existing = {f.name for f in model.functions}
 
         for func_name, onnxscript_func in cls._custom_ops.values():
+            if onnxscript_func is None:
+                continue
             proto = get_onnxscript_func(onnxscript_func, onnx_export_opset).to_function_proto()
             if proto.name not in used_op_types:
                 continue

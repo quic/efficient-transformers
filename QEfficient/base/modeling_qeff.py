@@ -74,6 +74,35 @@ def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
 
 
+def _build_blocked_translation_table(model: "torch.nn.Module") -> dict:
+    """Walk *model* and collect all unique FP8 blocked-dequant block-size pairs.
+
+    Returns a dict mapping torch.ops.qefficient.fp8_dequantize_blocked.default
+    to the appropriate concrete onnxscript translation function for the dynamo
+    custom_translation_table.
+
+    Since onnxscript cannot use dynamic int parameters as Constant node values,
+    we use pre-written concrete functions for each (row_bs, col_bs) pair
+    (see QEfficient/customop/fp8_dequantize.py).  Returns an empty dict when the
+    model contains no FP8BlockWiseDequantLinear layers.
+    """
+    from QEfficient.customop.fp8_dequantize import get_blocked_fn
+    from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8BlockWiseDequantLinear
+
+    table = {}
+    for module in model.modules():
+        if isinstance(module, FP8BlockWiseDequantLinear):
+            row_bs, col_bs = module.weight_block_size
+            try:
+                fn = get_blocked_fn(row_bs, col_bs)
+                # Blocked functions are compiled directly for opset-21 (dynamo only),
+                # not via qeff_custom_op, so they are already the dynamo variant.
+                table[torch.ops.qefficient.fp8_dequantize_blocked.default] = fn
+            except ValueError:
+                pass  # unsupported size — TorchScript symbolic handles it
+    return table
+
+
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
     """Rename a graph value everywhere it can be referenced in an ONNX graph."""
     if old_name == new_name:
@@ -434,6 +463,88 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    def _export_via_legacy(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via TorchScript symbolic tracing (dynamo=False)."""
+        with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
+            torch.onnx.export(
+                self.model,
+                (),
+                str(onnx_path),
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                dynamo=False,
+                opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
+                **export_kwargs,
+            )
+
+    def _export_via_dynamo(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_shapes: Optional[Dict],
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via torch.export (dynamo=True) with custom op translation."""
+        # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
+        # which torch.export requires for dynamic_shapes to bind correctly.
+        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        sig_key_set = set(sig_keys)
+        ordered_inputs, ordered_shapes = {}, {}
+        for k in sig_keys:
+            if k in example_inputs:
+                ordered_inputs[k] = example_inputs[k]
+            if dynamic_shapes is not None and k in dynamic_shapes:
+                ordered_shapes[k] = dynamic_shapes[k]
+        example_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
+        if dynamic_shapes is not None:
+            dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+
+        export_kwargs = dict(export_kwargs)
+        export_kwargs.setdefault("report", False)
+        export_kwargs.setdefault("optimize", False)
+        export_kwargs["dynamo"] = True
+        export_kwargs["custom_translation_table"] = {
+            **(export_kwargs.pop("custom_translation_table", None) or {}),
+            **DYNAMO_CUSTOM_OP_TABLE,
+        }
+
+        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            onnx_program = torch.onnx.export(
+                self.model,
+                args=(),
+                f=None,
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=None,
+                dynamic_shapes=dynamic_shapes,
+                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
+                **export_kwargs,
+            )
+            if onnx_program is None:
+                raise RuntimeError("torch.onnx.export returned None for dynamo export")
+            PruneFakeInitializersTransform.apply(onnx_program)
+            onnx_program.save(str(onnx_path))
+        finally:
+            if prev_invoke_fallback is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+
     @export_wrapper
     def _export(
         self,
@@ -488,6 +599,8 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
+        # check if the model is in meta state or weights are offloaded
+        self._model_offloaded_check()
         export_dir.mkdir(parents=True, exist_ok=True)
 
         def _resolve_pkv_layers(pkv_obj):

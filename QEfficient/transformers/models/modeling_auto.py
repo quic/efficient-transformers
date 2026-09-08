@@ -77,8 +77,8 @@ from QEfficient.transformers.moe.flavours import MoEFlavour
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
-    FP8BlockWiseDequantLinearToLinearTransform,
     FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+    FP8BlockWiseDequantLinearToLinearTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
     Mxfp4GptOssExpertDequantizeTransform,
@@ -91,6 +91,7 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+from QEfficient.utils.dtype_utils import cast_non_quantized_tensors
 from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
@@ -108,6 +109,20 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
+
+_FP8_DEQUANT_TRANSFORMS = (
+    FP8DeQuantLinearToLinearTransform,
+    FP8BlockWiseDequantLinearToLinearTransform,
+    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+)
+
+
+def _without_fp8_dequant_transforms(transforms):
+    return [transform for transform in transforms if transform not in _FP8_DEQUANT_TRANSFORMS]
+
+
+def _pop_dequantize_fp8_weights(kwargs: dict) -> bool:
+    return kwargs.pop("dequantize_fp8_weights", False)
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -1116,6 +1131,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
+        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
@@ -1134,6 +1152,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        self._dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
+        if not self._dequantize_fp8_weights:
+            self._pytorch_transforms = _without_fp8_dequant_transforms(self._pytorch_transforms)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1275,6 +1296,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        self._dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
+        if not self._dequantize_fp8_weights:
+            self._pytorch_transforms = _without_fp8_dequant_transforms(self._pytorch_transforms)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -1486,6 +1510,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model = model
         self.config = model.config
         self._pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
+        self._dequantize_fp8_weights = _pop_dequantize_fp8_weights(dict(kwargs))
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
@@ -1522,6 +1547,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             An instance initialized with the pretrained weights.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
+        dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -1540,8 +1566,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["dequantize_fp8_weights"] = dequantize_fp8_weights
 
         return cls(
             model,
@@ -1767,6 +1795,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             "kv_offload": True,
             "torch_dtype": torch_dtype,
             "low_cpu_mem_usage": True,
+            "dequantize_fp8_weights": self._dequantize_fp8_weights,
         }
 
     def _build_layerwise_factory(self):
@@ -1795,6 +1824,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             "attn_implementation": "eager",
             "torch_dtype": torch_dtype,
             "low_cpu_mem_usage": True,
+            "dequantize_fp8_weights": self._dequantize_fp8_weights,
         }
         _resolve_torch_dtype(kwargs)
         self.config.torch_dtype = kwargs["torch_dtype"]
@@ -2667,6 +2697,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
+        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
@@ -2706,6 +2739,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
+        self._dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
+        if not self._dequantize_fp8_weights:
+            self._pytorch_transforms = _without_fp8_dequant_transforms(self._pytorch_transforms)
 
         super().__init__(model, **kwargs)
 
@@ -2756,6 +2792,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             An instance initialized with the pretrained weights.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
+        dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -2772,8 +2809,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["dequantize_fp8_weights"] = dequantize_fp8_weights
 
         return cls(
             model,
@@ -3425,6 +3464,7 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
+        dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
@@ -3434,9 +3474,11 @@ class QEFFAutoModelForImageTextToText:
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
+        kwargs["dequantize_fp8_weights"] = dequantize_fp8_weights
         instance = cls(
             model,
             kv_offload=kv_offload,
@@ -3596,6 +3638,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
+        self._dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
+        if not self._dequantize_fp8_weights:
+            self._pytorch_transforms = _without_fp8_dequant_transforms(self._pytorch_transforms)
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
@@ -3729,6 +3774,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         )
 
+        dequantize_fp8_weights = _pop_dequantize_fp8_weights(kwargs)
         _resolve_torch_dtype(kwargs)
         if layerwise:
             warnings.warn(
@@ -3750,11 +3796,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["dequantize_fp8_weights"] = dequantize_fp8_weights
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -3850,6 +3898,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 torch_dtype=torch_dtype,
                 continuous_batching=self.continuous_batching,
                 low_cpu_mem_usage=True,
+                dequantize_fp8_weights=self._dequantize_fp8_weights,
             )
 
         return _layerwise.run_layerwise(

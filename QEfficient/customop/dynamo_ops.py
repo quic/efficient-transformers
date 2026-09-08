@@ -367,6 +367,56 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
     return torch.empty_like(data)
 
 
+# ── FP8 DequantizeLinear custom ops ──────────────────────────────────────────
+# Three variants matching the three ONNX DequantizeLinear granularities.
+# Eager implementations dequantize in Python; ONNX translations live in
+# QEfficient/customop/fp8_dequantize.py and emit standard DequantizeLinear nodes.
+# Weights are NEVER cast — they stay in FP8 storage throughout.
+
+
+@torch.library.custom_op("qefficient::fp8_dequantize_per_tensor", mutates_args=())
+def fp8_dequantize_per_tensor_op(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Per-tensor FP8 dequantize: scale is a scalar (0-D tensor)."""
+    return weight.to(scale.dtype) * scale
+
+
+@fp8_dequantize_per_tensor_op.register_fake
+def _(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return torch.empty(weight.shape, dtype=scale.dtype, device=weight.device)
+
+
+@torch.library.custom_op("qefficient::fp8_dequantize_per_axis", mutates_args=())
+def fp8_dequantize_per_axis_op(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Per-axis (channel) FP8 dequantize: scale is (out_features,)."""
+    if scale.ndim == 1:
+        scale = scale.unsqueeze(-1)
+    return weight.to(scale.dtype) * scale
+
+
+@fp8_dequantize_per_axis_op.register_fake
+def _(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return torch.empty(weight.shape, dtype=scale.dtype, device=weight.device)
+
+
+@torch.library.custom_op("qefficient::fp8_dequantize_blocked", mutates_args=())
+def fp8_dequantize_blocked_op(
+    weight: torch.Tensor, scale: torch.Tensor, row_block_size: int, col_block_size: int
+) -> torch.Tensor:
+    """Blocked FP8 dequantize.
+    scale: compact (out_features // row_block_size, in_features // col_block_size).
+    Expands scale along both axes via repeat_interleave for eager correctness.
+    The ONNX symbolic emits Tile(scale,[row_bs,1]) + DequantizeLinear(axis=-1, block_size=col_bs).
+    """
+    scale_row = scale.repeat_interleave(row_block_size, dim=0)
+    scale_full = scale_row.repeat_interleave(col_block_size, dim=-1)
+    return weight.to(scale_full.dtype) * scale_full
+
+
+@fp8_dequantize_blocked_op.register_fake
+def _(weight: torch.Tensor, scale: torch.Tensor, row_block_size: int, col_block_size: int) -> torch.Tensor:
+    return torch.empty(weight.shape, dtype=scale.dtype, device=weight.device)
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
