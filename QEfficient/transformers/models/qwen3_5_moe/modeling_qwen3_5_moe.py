@@ -1305,7 +1305,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
-    def get_submodules_for_export(self) -> type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
 
     @staticmethod
@@ -1395,7 +1395,7 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: int | torch.Tensor = 0,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
         del logits_to_keep
@@ -1438,18 +1438,18 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        mm_token_type_ids: Optional[torch.IntTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
     ) -> tuple | Qwen3_5MoeModelOutputWithPast:
         r"""
@@ -1700,7 +1700,7 @@ class QEffQwen3_5MoeEncoderWrapper(nn.Module):
         self.model = model
         self.config = model.config
 
-    def get_submodules_for_export(self) -> type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
             return {self.model.model.visual.blocks[0].__class__}
         if hasattr(self.model.model, "vision_model") and hasattr(self.model.model.vision_model, "blocks"):
@@ -1730,7 +1730,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.language_model = self.model.model.language_model
         self.config = model.config
 
-    def get_submodules_for_export(self) -> type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> list[str]:
@@ -1849,19 +1849,19 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        mm_token_type_ids: Optional[torch.IntTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> tuple | Qwen3_5MoeCausalLMOutputWithPast:
@@ -1942,11 +1942,11 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        height: Optional[Union[int, List[int]]] = None,
-        width: Optional[Union[int, List[int]]] = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
         img_size=None,
         time: int = 1,
-        num_frames: int | list[int] = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
