@@ -27,8 +27,8 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
-from tests.utils.image_utils import load_test_image
 from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
+from tests.utils.image_utils import load_test_image
 
 NEW_GENERATION_TOKENS = 10
 

@@ -31,6 +31,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
 from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
@@ -39,7 +40,6 @@ from tests.utils.load_kimi_utils import (
     load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch_CB,
 )
-from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
 
 _session = requests.Session()
 _session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
