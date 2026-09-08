@@ -3482,6 +3482,46 @@ def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
 
 
 @pytest.mark.llm_model
+def test_dual_qpc_decode_only_continuous_batching_returns_decode_qpc_key(monkeypatch):
+    from QEfficient.transformers.models import modeling_auto
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model.continuous_batching = True
+    model.ccl_enabled = False
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.transform = lambda **kwargs: None
+    model.model = type(
+        "Model",
+        (),
+        {
+            "config": type("Config", (), {"torch_dtype": torch.float32, "model_type": "test"})(),
+            "get_output_names": lambda self, **kwargs: {"vision": [], "lang": []},
+            "get_specializations": lambda self, **kwargs: ({"vision": [], "lang": [{"seq_len": 1}]}, {}),
+        },
+    )()
+    model.lang_model = type(
+        "LanguageModel",
+        (),
+        {"onnx_path": "language.onnx", "_compile": staticmethod(lambda **kwargs: "decode.qpc")},
+    )()
+
+    monkeypatch.setattr(modeling_auto, "_filter_custom_io_for_onnx", lambda custom_io, onnx_path: custom_io)
+
+    result = model.compile(
+        prefill_seq_len=1,
+        ctx_len=16,
+        batch_size=1,
+        full_batch_size=4,
+        skip_vision=True,
+        lang_onnx_path="language.onnx",
+    )
+
+    assert result == {"lang_decode_qpc_path": "decode.qpc"}
+
+
+@pytest.mark.llm_model
 def test_layerwise_compile_rejects_unsupported_model():
     """End-to-end smoke: invoking layerwise=True on llama bubbles the guard error."""
     try:
