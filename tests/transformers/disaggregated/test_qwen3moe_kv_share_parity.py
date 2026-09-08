@@ -38,7 +38,7 @@ MOE_PREFILL_PACKED_CHUNK_SIZE = 128
 
 HF_COMPARE_TOKENS = int(os.environ.get("QEFF_QWEN3MOE_HF_COMPARE_TOKENS", NUM_TOKEN_MATCH))
 HF_MIN_LEADING_MATCH = int(os.environ.get("QEFF_QWEN3MOE_HF_MIN_MATCH", 20))
-NUM_HIDDEN_LAYERS = int(os.environ.get("QEFF_QWEN3MOE_NUM_HIDDEN_LAYERS", 2))
+NUM_HIDDEN_LAYERS = int(os.environ.get("QEFF_QWEN3MOE_NUM_HIDDEN_LAYERS", 4))
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
