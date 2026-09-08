@@ -73,6 +73,7 @@ from QEfficient.transformers.models.modeling_auto import (
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
+from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes, reorder_inputs_by_signature
 from QEfficient.utils.run_utils import ApiRunner
 
 ort.set_default_logger_severity(3)
@@ -3297,6 +3298,132 @@ def test_layerwise_merge_renames_decoder_function_variants_without_collisions():
         for node in merged.graph.node
         if (node.domain, node.op_type) in function_inputs
     )
+
+
+@pytest.mark.llm_model
+def test_qwen3_vl_moe_dynamo_dynamic_shapes_cover_vlm_axes():
+    qeff_model = _tiny_qwen_qeff_model("qwen3_vl_moe")
+    dynamic_axes = qeff_model.model.get_onnx_dynamic_axes(kv_offload=True)
+
+    vision_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes["vision"], qeff_model.config)
+    lang_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes["lang"], qeff_model.config)
+
+    batch_dim = vision_shapes["image_grid_thw"][0]
+    vision_size_dim = lang_shapes["vision_embeds"][1]
+
+    assert getattr(batch_dim, "min", None) == 1
+    assert getattr(batch_dim, "max", None) == 2
+    assert vision_shapes["image_grid_thw"][1].__name__ == "time"
+    assert vision_shapes["image_grid_thw"][2].__name__ == "grid_h"
+    assert vision_shapes["image_grid_thw"][3].__name__ == "grid_w"
+    assert vision_shapes["pixel_values"][0].__name__ == "grid_height"
+    assert vision_shapes["pixel_values"][1].__name__ == "grid_width"
+    assert getattr(lang_shapes["input_ids"][0], "min", None) == 1
+    assert getattr(lang_shapes["input_ids"][0], "max", None) == 2
+    assert getattr(lang_shapes["input_ids"][1], "min", None) == 1
+    assert lang_shapes["vision_embeds"][0].__name__ == "vision_batch_size"
+    assert 0 not in lang_shapes["deepstack_features"]
+    assert lang_shapes["deepstack_features"][1] is lang_shapes["vision_embeds"][0]
+    assert lang_shapes["deepstack_features"][2] is vision_size_dim
+    assert lang_shapes["past_key_values"][0][0][0] is lang_shapes["input_ids"][0]
+
+
+@pytest.mark.llm_model
+def test_dynamo_reorder_filters_output_only_dynamic_shapes():
+    class DummyModule(nn.Module):
+        def forward(self, input_ids, image_idx):
+            return input_ids
+
+    input_ids_shape = {0: torch.export.Dim("batch_size", min=1, max=4)}
+    dynamic_shapes = {
+        "input_ids": input_ids_shape,
+        "logits": {0: torch.export.Dim("batch_size", min=1, max=4)},
+    }
+    _, filtered_shapes = reorder_inputs_by_signature(
+        DummyModule(),
+        {"input_ids": torch.ones((1, 4), dtype=torch.int64), "image_idx": torch.zeros((1, 1), dtype=torch.int64)},
+        dynamic_shapes,
+    )
+
+    assert filtered_shapes == {"input_ids": input_ids_shape, "image_idx": None}
+
+
+@pytest.mark.llm_model
+def test_qwen3_vl_moe_dual_qpc_compile_weight_free_implies_dynamo_and_subfunctions(monkeypatch, tmp_path):
+    qeff_model = _tiny_qwen_qeff_model("qwen3_vl_moe")
+    qeff_model.config.torch_dtype = torch.float32
+    qeff_model._weight_free = True
+    qeff_model.vision_model._weight_free = True
+    qeff_model.lang_model._weight_free = True
+
+    export_kwargs = {}
+    compile_kwargs = {}
+
+    def fake_vision_export(*args, **kwargs):
+        export_kwargs["vision"] = kwargs
+        qeff_model.vision_model.onnx_path = tmp_path / "vision.onnx"
+        return qeff_model.vision_model.onnx_path
+
+    def fake_lang_export(*args, **kwargs):
+        export_kwargs["lang"] = kwargs
+        qeff_model.lang_model.onnx_path = tmp_path / "lang.onnx"
+        return qeff_model.lang_model.onnx_path
+
+    def fake_vision_compile(**kwargs):
+        compile_kwargs["vision"] = kwargs
+        return "vision-qpc"
+
+    def fake_lang_compile(**kwargs):
+        compile_kwargs["lang"] = kwargs
+        return "lang-qpc"
+
+    monkeypatch.setattr(qeff_model, "transform", lambda **kwargs: None)
+    monkeypatch.setattr(qeff_model.vision_model, "export", fake_vision_export)
+    monkeypatch.setattr(qeff_model.lang_model, "export", fake_lang_export)
+    monkeypatch.setattr(qeff_model.vision_model, "_compile", fake_vision_compile)
+    monkeypatch.setattr(qeff_model.lang_model, "_compile", fake_lang_compile)
+
+    qpc_paths = qeff_model.compile(
+        compile_dir=tmp_path,
+        batch_size=1,
+        prefill_seq_len=4,
+        ctx_len=128,
+        height=32,
+        width=32,
+        num_devices=1,
+        num_cores=1,
+    )
+
+    assert qpc_paths == {"vision_qpc_path": "vision-qpc", "lang_qpc_path": "lang-qpc"}
+    assert export_kwargs["vision"]["dynamo"] is True
+    assert export_kwargs["lang"]["dynamo"] is True
+    assert export_kwargs["vision"]["use_onnx_subfunctions"] is True
+    assert export_kwargs["lang"]["use_onnx_subfunctions"] is True
+    assert compile_kwargs["vision"]["dynamo"] is True
+    assert compile_kwargs["lang"]["dynamo"] is True
+    assert compile_kwargs["vision"]["use_onnx_subfunctions"] is True
+    assert compile_kwargs["lang"]["use_onnx_subfunctions"] is True
+
+
+@pytest.mark.llm_model
+def test_qwen3_vl_moe_weight_free_rejects_single_qpc_and_layerwise():
+    with pytest.raises(NotImplementedError, match="kv_offload=True"):
+        QEFFAutoModelForImageTextToText.from_pretrained("dummy", kv_offload=False, weight_free=True)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        QEFFAutoModelForImageTextToText.from_pretrained("dummy", kv_offload=True, layerwise=True, weight_free=True)
+
+    qeff_model = _tiny_qwen_qeff_model("qwen3_vl_moe")
+    qeff_model._weight_free = True
+    with pytest.raises(NotImplementedError, match="layerwise VLM compile"):
+        qeff_model.compile(
+            batch_size=1,
+            prefill_seq_len=4,
+            ctx_len=32,
+            height=32,
+            width=32,
+            layerwise=True,
+        )
 
 
 @pytest.mark.llm_model

@@ -17,9 +17,9 @@ model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only. Please ensure to use the configuration given below as random configurations may fail due to deepstack
-# config.vision_config.depth = 9
-# config.text_config.num_hidden_layers = 1
-# config.vision_config.deepstack_visual_indexes = [8]
+config.vision_config.depth = 9
+config.text_config.num_hidden_layers = 1
+config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
@@ -112,7 +112,12 @@ else:
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
 
-    image = Image.open(requests.get(image_url, stream=True).raw)
+    try:
+        response = requests.get(image_url, stream=True, timeout=30)
+        response.raise_for_status()
+        image = Image.open(response.raw).convert("RGB")
+    except Exception:
+        image = Image.new("RGB", (536, 354), color=(120, 70, 200))
 
     messages_1 = [
         {

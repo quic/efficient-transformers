@@ -69,6 +69,10 @@ _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
 )
 
 
+def _print_timing(label: str, start_time: float) -> None:
+    print(f"[QEfficient timing] {label} took {time.perf_counter() - start_time:.3f} sec", flush=True)
+
+
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
     if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
@@ -563,43 +567,55 @@ class QEFFBaseModel(ABC):
             if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
 
-                export_result = export_via_weightfree(
-                    self,
-                    onnx_path,
-                    example_inputs,
-                    input_names,
-                    output_names,
-                    dynamic_shapes,
-                    export_kwargs,
-                    onnx_transform_kwargs,
-                )
+                export_start_time = time.perf_counter()
+                try:
+                    export_result = export_via_weightfree(
+                        self,
+                        onnx_path,
+                        example_inputs,
+                        input_names,
+                        output_names,
+                        dynamic_shapes,
+                        export_kwargs,
+                        onnx_transform_kwargs,
+                    )
+                finally:
+                    _print_timing(f"{self.model_name} weight-free dynamo export", export_start_time)
             elif dynamo:
                 from QEfficient.exporter.onnx_exporter import export_via_dynamo
 
                 self._model_offloaded_check()
-                export_result = export_via_dynamo(
-                    self,
-                    onnx_path,
-                    example_inputs,
-                    input_names,
-                    output_names,
-                    dynamic_shapes,
-                    export_kwargs,
-                )
+                export_start_time = time.perf_counter()
+                try:
+                    export_result = export_via_dynamo(
+                        self,
+                        onnx_path,
+                        example_inputs,
+                        input_names,
+                        output_names,
+                        dynamic_shapes,
+                        export_kwargs,
+                    )
+                finally:
+                    _print_timing(f"{self.model_name} dynamo export", export_start_time)
                 self._offload_model_weights(offload_pt_weights)
             else:
                 from QEfficient.exporter.onnx_exporter import export_via_legacy
 
                 self._model_offloaded_check()
-                export_result = export_via_legacy(
-                    self,
-                    onnx_path,
-                    example_inputs,
-                    input_names,
-                    output_names,
-                    dynamic_axes,
-                    export_kwargs,
-                )
+                export_start_time = time.perf_counter()
+                try:
+                    export_result = export_via_legacy(
+                        self,
+                        onnx_path,
+                        example_inputs,
+                        input_names,
+                        output_names,
+                        dynamic_axes,
+                        export_kwargs,
+                    )
+                finally:
+                    _print_timing(f"{self.model_name} legacy export", export_start_time)
                 self._offload_model_weights(offload_pt_weights)
             logger.info("PyTorch export successful")
             self.weight_spec_path = str(export_result.weight_spec_path) if export_result.weight_spec_path else None
@@ -1304,7 +1320,11 @@ class QEFFBaseModel(ABC):
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:
-            subprocess.run(command, capture_output=True, check=True)
+            compile_start_time = time.perf_counter()
+            try:
+                subprocess.run(command, capture_output=True, check=True)
+            finally:
+                _print_timing(f"{self.model_name} qaic compile", compile_start_time)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 "\n".join(

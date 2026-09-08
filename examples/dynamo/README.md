@@ -10,6 +10,7 @@ export.
 | Example | Description |
 |---|---|
 | [causal_lm](causal_lm/) | Export, compile, and run text-only CausalLM models with dynamo. |
+| [image_text_to_text](image_text_to_text/) | Export, compile, and run dual-QPC VLM models with dynamo. |
 
 ## Prerequisites
 
@@ -23,6 +24,12 @@ Install the dependencies for the example you want to run. For CausalLM:
 
 ```bash
 pip install -r examples/dynamo/causal_lm/requirements.txt
+```
+
+For image-text-to-text VLMs:
+
+```bash
+pip install -r examples/dynamo/image_text_to_text/requirements.txt
 ```
 
 For private or gated Hugging Face models, export your token before running the
@@ -52,5 +59,15 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
     --prefill-seq-len 128 \
     --ctx-len 128 \
     --num-cores 16 \
-    --use-weight-free-export
+    --weight-free
 ```
+
+## Image-Text-To-Text Quick Start
+
+```bash
+python examples/dynamo/image_text_to_text/qwen3_vl_moe_dynamo_inference.py
+```
+
+The VLM example defaults to dual-QPC Qwen3-VL-MoE with weight-free export,
+ONNX subfunctions, and a reduced-layer bring-up config. See
+`examples/dynamo/image_text_to_text/README.md` for the full argument list.
