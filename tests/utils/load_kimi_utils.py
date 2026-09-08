@@ -184,12 +184,49 @@ def get_kimi_k25_test_config(model_name: str, model_config_dict):
     return config
 
 
+def _attach_fake_gptq_weight(linear: torch.nn.Linear, group_size: int = 16):
+    weight = linear.weight.detach().to(torch.float32)
+    out_features, in_features = weight.shape
+    if in_features % group_size != 0 or (in_features // group_size) % 2 != 0:
+        raise ValueError(f"Cannot pack shape {tuple(weight.shape)} with group_size={group_size}.")
+
+    weight_blocks = weight.view(out_features, in_features // group_size, group_size)
+    scales = weight_blocks.abs().amax(dim=-1).clamp_min(torch.finfo(torch.float32).eps) / 7
+    quantized = (weight_blocks / scales.unsqueeze(-1)).round().add(8).clamp(0, 15).to(torch.uint8)
+    dequantized = (quantized.to(torch.int8) - 8).to(torch.float32) * scales.unsqueeze(-1)
+    linear.weight.data.copy_(dequantized.view_as(weight).to(linear.weight.dtype))
+
+    quantized = quantized.view(out_features, in_features)
+    qweight = quantized[:, 0::2] | (quantized[:, 1::2] << 4)
+    zero_points = torch.full((out_features, in_features // group_size), 8, dtype=torch.uint8)
+    qzeros = zero_points[:, 0::2] | (zero_points[:, 1::2] << 4)
+
+    linear.bits = 4
+    linear.group_size = group_size
+    linear.act_order = False
+    linear.qweight = torch.nn.Parameter(qweight, requires_grad=False)
+    linear.scales = torch.nn.Parameter(scales, requires_grad=False)
+    linear.qzeros = torch.nn.Parameter(qzeros, requires_grad=False)
+    linear.g_idx = torch.nn.Parameter(torch.arange(in_features) // group_size, requires_grad=False)
+
+
+def _simulate_kimi_k25_quantized_experts(model):
+    for module in model.modules():
+        if module.__class__.__name__ != "DeepseekV3MoE":
+            continue
+        for expert in module.experts:
+            _attach_fake_gptq_weight(expert.gate_proj)
+            _attach_fake_gptq_weight(expert.up_proj)
+            _attach_fake_gptq_weight(expert.down_proj)
+
+
 def load_kimi_k25_model_from_config(config):
     kimi_cls = load_kimi_k25_class(config._name_or_path)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
         model = model.to(torch.float32)
+    _simulate_kimi_k25_quantized_experts(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)

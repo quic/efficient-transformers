@@ -208,7 +208,7 @@ Your implementation is validated through four stages:
 
 **Compilation failure (Stage 3→4):**
 - Reduce `num_cores` or model size
-- Check device availability: `get_available_device_id()`
+- Leave `device_id` / `device_ids` unset unless a test or example must pin a specific QAIC group.
 
 ---
 

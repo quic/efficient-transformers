@@ -288,7 +288,6 @@ def _run_disagg_generation(
 
 
 def _load_model(args):
-
     if args.full_model:
         config = prepare_config(args.model_path)
         kimi_cls = load_kimi_k25_class(args.model_path)

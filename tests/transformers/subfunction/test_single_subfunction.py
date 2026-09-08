@@ -11,7 +11,6 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.device_utils import get_available_device_id
 
 torch.manual_seed(42)
 
@@ -86,8 +85,6 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
 
     assert len(filtered) == 1, f"Expected a single decoder subfunction, found {len(filtered)}: {functions_names}"
 
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
     model_0_0.compile(onnx_path=with_sub_func_onnx, **compile_params, use_onnx_subfunctions=True)
 

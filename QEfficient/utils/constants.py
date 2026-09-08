@@ -6,9 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import os
-import re
-import subprocess
 from dataclasses import dataclass
+
+from QEfficient.utils.hardware_utils import (
+    get_default_aic_hw_version,
+    get_default_num_cores,
+    get_default_vtcm_size_threshold,
+)
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
@@ -29,6 +33,8 @@ ONNX_EXPORT_CTX_LEN = 1024
 DYNAMO_DIM_MAX_BATCH_SIZE = 1024
 DYNAMO_DIM_MIN_COMP_CTX_LENGTHS = 4
 
+DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
+
 NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
@@ -39,10 +45,10 @@ NPI_MAPPING = {
 }
 
 # Blocking defaults
-VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+VTCM_SIZE_THRESHOLD = get_default_vtcm_size_threshold(DEFAULT_AIC_HW_VERSION)
 
 # Compiler defaults
-DEFAULT_AIC_NUM_CORES = 16
+DEFAULT_AIC_NUM_CORES = get_default_num_cores(DEFAULT_AIC_HW_VERSION)
 DEFAULT_AIC_MXPF6_MATMUL = False
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16
@@ -62,6 +68,7 @@ KWARGS_INCLUSION_LIST = [
 
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
+HEADPAR_MASKED_ATTENTION_VALUE = -3.0e4
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
@@ -113,39 +120,6 @@ def get_onnx_export_opset(dynamo: bool = False) -> int:
 
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 
-
-def get_default_aic_hw_version() -> str:
-    """Detect the AIC hardware version from the first available device.
-
-    Runs ``qaic-util -q`` and inspects the ``FW IMAGE_VARIANT`` field of the
-    first device (QID 0) to determine whether the hardware is ``ai100`` or
-    ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
-    is unavailable.
-
-    Returns:
-        str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
-    """
-    qaic_util = "/opt/qti-aic/tools/qaic-util"
-    try:
-        result = subprocess.run(
-            [qaic_util, "-q"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stdout
-    except Exception:
-        return "ai100"
-
-    match = re.search(r"FW IMAGE_VARIANT\s*:\s*(\S+)", output)
-    if match:
-        variant = match.group(1).upper()
-        if "AIC200" in variant:
-            return "ai200"
-    return "ai100"
-
-
-DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
 # Generic config key aliases used across model families.

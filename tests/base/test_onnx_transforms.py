@@ -11,6 +11,7 @@ import onnx
 from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
     OnnxTransformPipeline,
+    RenameWsubNodesTransform,
     SplitTensorsTransform,
 )
 
@@ -73,6 +74,44 @@ def test_fp16clip_transform_external(tmp_path):
     transformed_onnx, transformed = onnx_transforms.apply(test_onnx, model_name="", onnx_base_dir=str(tmp_path))
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0
+
+
+def test_rename_wsub_nodes_transform():
+    weighted_ops = [
+        ("self_attn.q_proj", "MatMul"),
+        ("self_attn.k_proj", "MatMul"),
+        ("self_attn.v_proj", "MatMul"),
+        ("self_attn.o_proj", "MatMul"),
+        ("mlp.gate_proj", "MatMul"),
+        ("mlp.up_proj", "MatMul"),
+        ("mlp.down_proj", "MatMul"),
+        ("input_layernorm", "CustomRMSNorm"),
+    ]
+    weight_names = [f"model.layers.1.{role}.weight" for role, _ in weighted_ops]
+    nodes = [
+        onnx.helper.make_node(op_type, ["hidden", weight_name], [f"output_{index}"], name=f"{op_type}_{index}")
+        for index, ((_, op_type), weight_name) in enumerate(zip(weighted_ops, weight_names))
+    ]
+    function = onnx.helper.make_function(
+        "test",
+        "DecoderLayer",
+        ["hidden", *weight_names],
+        [nodes[-1].output[0]],
+        nodes,
+        [onnx.helper.make_opsetid("", 17)],
+    )
+    model = onnx.helper.make_model(
+        onnx.helper.make_graph([], "test", [], []),
+        functions=[function],
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+
+    assert RenameWsubNodesTransform.apply(model)
+    transformed_function = model.functions[0]
+    assert [node.name for node in transformed_function.node] == [
+        role.replace(".", "/") + "/" + op_type for role, op_type in weighted_ops
+    ]
+    assert not RenameWsubNodesTransform.apply(model)
 
 
 def test_split_tensors_transform(tmp_path):

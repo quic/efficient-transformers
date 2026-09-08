@@ -183,7 +183,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     hash_params["onnx_transform_version"] = 1
     hash_params["dynamo"] = False
     if subfunc:
-        hash_params["onnx_subfunction_version"] = 2
+        hash_params["onnx_subfunction_version"] = 3
 
     # Create parameters separately for hash creation
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -246,17 +246,14 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
 def test_prefill_only_specialized_models(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
-    if cb:
-        with pytest.raises(NotImplementedError):
-            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
-    else:
-        with pytest.raises(ValueError):
-            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
-        qeff_model.export(tmp_path, prefill_only=True, prefill_seq_len=256, offload_pt_weights=False)
-        first_export_hash = qeff_model.export_hash
-        qeff_model.export(tmp_path, prefill_only=False, offload_pt_weights=False)
-        second_export_hash = qeff_model.export_hash
-        assert first_export_hash != second_export_hash
+    qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
+    assert qeff_model.hash_params.get("chunking") is True
+    first_export_hash = qeff_model.export_hash
+
+    qeff_model.export(tmp_path, prefill_only=False, offload_pt_weights=False)
+    second_export_hash = qeff_model.export_hash
+
+    assert first_export_hash != second_export_hash
 
 
 @pytest.fixture

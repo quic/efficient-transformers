@@ -8,13 +8,11 @@
 import copy
 import json
 import os
-from io import BytesIO
 from typing import List, Optional
 
 import pytest
 import requests
 import torch
-from PIL import Image
 from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
@@ -36,9 +34,12 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
+    get_kimi_k25_test_config,
     is_kimi_k25,
     load_kimi_k25_layer_subset_model,
+    load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch,
 )
 
@@ -92,6 +93,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if is_kimi_k25(model_name) and config is None:
         model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
         config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif is_kimi_k25(model_name):
+        model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
@@ -183,9 +192,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = _session.get(img_url_list[i], stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((448, 448))
+            image = load_test_image(img_url_list[i], size=(448, 448), session=_session)
             pixel_value = processor.load_image(image, max_num=12)
             num_patches_list.append(pixel_value.shape[0])
             pixel_values.append(pixel_value)
@@ -217,9 +224,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = _session.get(img_url, stream=True)
-        image = Image.open(BytesIO(img.content)).convert("RGB")
-        image = image.resize((536, 354))
+        image = load_test_image(img_url, size=(536, 354), session=_session)
         inputs = processor.process(images=[image], text=query)
         inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
         generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
@@ -244,7 +249,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         compile_kwargs["img_size"] = img_size
 
     elif is_kimi_k25(model_name):
-        image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+        image = load_test_image(img_url, session=_session)
         conversation = [
             {
                 "role": "user",
@@ -272,7 +277,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(_session.get(img_url, stream=True).raw)
+        image = load_test_image(img_url, session=_session)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
         conversation = [
@@ -441,7 +446,12 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
 
     torch.manual_seed(42)
     hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+    if is_kimi_k25(model_name):
+        hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+        )
+    elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
         custom_config = model_config_dict[model_name].get("additional_params", {})
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)

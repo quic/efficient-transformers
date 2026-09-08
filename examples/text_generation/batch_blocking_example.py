@@ -67,7 +67,6 @@ def main():
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
     qaic_config = {
-        "enable_blocking": True,
         "blocking_mode": args.blocking_mode,
         "num_batch_blocks": 2,
         "num_kv_blocks": 2,

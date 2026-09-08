@@ -44,7 +44,6 @@ from ._helpers import (
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
@@ -79,7 +78,6 @@ def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
@@ -125,7 +123,6 @@ def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.dynamo_multi_device
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.parametrize(
     "model_type,model_id",
     list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
@@ -162,7 +159,6 @@ def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
@@ -198,7 +194,6 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=[0],
     )
     assert output is not None
     assert output.generated_texts is not None
@@ -206,7 +201,6 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
@@ -259,7 +253,6 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
     qaic_output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=[0],
     )
 
     assert qaic_output is not None, "QAIC generate returned None"
@@ -273,7 +266,6 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
@@ -282,10 +274,6 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
 )
 def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
     """Continuous-batching export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
-    # TODO: fix gpt_oss CB scatter op shape mismatch with dynamo subfunctions
-    # Compiler error: Concat input 1 dim 1 is 1, expected 8 (node_ctx_scatter_cb/n22, opset 18)
-    if model_type == "gpt_oss":
-        pytest.skip("gpt_oss CB scatter op has shape mismatch with dynamo subfunctions — pending fix")
 
     try:
         model_hf = load_hf_model(model_id)
@@ -315,7 +303,6 @@ def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=[0],
     )
     assert output is not None
     assert output.generated_texts is not None
