@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -102,7 +103,7 @@ class QEffQwen3_5DynamicCache(Cache):
     def from_legacy_cache(
         cls,
         config,
-        past_key_values: tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
+        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
     ) -> "QEffQwen3_5DynamicCache":
         cache = cls(config)
         if past_key_values is None:
@@ -144,7 +145,7 @@ class QEffQwen3_5DynamicCache(Cache):
     def __len__(self):
         return len(self.layer_types)
 
-    def __getitem__(self, layer_idx) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, layer_idx) -> Tuple[torch.Tensor, torch.Tensor]:
         if isinstance(layer_idx, slice):
             return tuple(self[idx] for idx in range(*layer_idx.indices(len(self.layer_types))))
         if not isinstance(layer_idx, int):
@@ -169,14 +170,14 @@ class QEffQwen3_5DynamicCache(Cache):
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
-        cache_kwargs: dict[str, torch.Tensor] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        cache_kwargs: Optional[dict[str, torch.Tensor]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.update(key_states, value_states, cache_kwargs)
 
-    def get_seq_length(self, layer_idx: int | None = 0, cache_position: torch.LongTensor | None = None) -> int:
+    def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
         del cache_position
         if not self.transformer_layers:
             return 0
@@ -185,7 +186,7 @@ class QEffQwen3_5DynamicCache(Cache):
         layer = self.kv_layers[layer_idx]
         return 0 if layer is None or layer.keys is None else layer.keys.shape[-2]
 
-    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> tuple[int, int]:
+    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> Tuple[int, int]:
         kv_offset = 0
         query_length = cache_position.shape[0]
         past_seen_tokens = self.get_seq_length(layer_idx)
@@ -236,7 +237,7 @@ class QEffQwen3_5DynamicCache(Cache):
                 self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx_device)
                 self.recurrent_states[layer_idx] = self.recurrent_states[layer_idx].index_select(0, beam_idx_device)
 
-    def to_legacy_cache(self) -> tuple[tuple[torch.Tensor, ...], ...]:
+    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, ...], ...]:
         legacy_cache = ()
         for layer_idx, layer_type in enumerate(self.layer_types):
             if layer_type == "full_attention":
@@ -395,7 +396,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: torch.Tensor | None,
+    attention_mask: Optional[torch.Tensor],
     scaling: float,
     **kwargs,
 ):
@@ -419,8 +420,8 @@ def qeff_torch_causal_conv1d_update(
     conv_state: torch.Tensor,
     weight: torch.Tensor,
     position_ids: torch.Tensor,
-    bias: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    bias: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
     grouped_conv_state = conv_state.ndim == 4
 
@@ -470,15 +471,15 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
-        attention_mask: torch.Tensor | None,
-        past_key_values: QEffQwen3_5DynamicCache | None = None,
-        position_ids: torch.LongTensor | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        cache_position: torch.LongTensor | None = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
@@ -603,7 +604,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
             attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        return attn + eye.to(dtype=attn.dtype, device=attn.device)
+        return attn + eye.to(dtype=attn.dtype)
 
     def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
         if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
@@ -646,7 +647,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
     ):
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         acc_dtype = attn.dtype
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         A64 = attn.masked_fill(mask, 0).to(acc_dtype)
         ns_iters = int(math.log2(chunk_size)) + 4
 
@@ -676,7 +677,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         attn_1 = attn.clone()
         acc_dtype = attn.dtype
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
         ns_iters = int(math.log2(chunk_size)) + 4
         As = 0.5 * A64
@@ -698,7 +699,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         return X.to(attn.dtype)
 
     def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
-        eye = eye.to(dtype=attn.dtype, device=attn.device)
+        eye = eye.to(dtype=attn.dtype)
         L = eye.clone()
         Apow = attn
         K = 32
@@ -711,7 +712,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         A = attn.masked_fill(mask, 0)
         acc_dtype = torch.float32
         A64 = A.to(acc_dtype)
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         K = chunk_size - 1
         S64 = I64.clone()
@@ -908,7 +909,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         cache_position=None,
         attention_mask=None,
         position_ids=None,
-        batch_index: torch.LongTensor | None = None,
+        batch_index: Optional[torch.LongTensor] = None,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -1116,14 +1117,14 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: QEffQwen3_5DynamicCache | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        use_cache: bool | None = None,
-        cache_position: torch.LongTensor | None = None,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> torch.FloatTensor:
         del use_cache
@@ -1177,16 +1178,16 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
     def forward(
         self,
-        input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: QEffQwen3_5DynamicCache | tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        use_cache: bool | None = None,
-        cache_position: torch.LongTensor | None = None,
-        output_hidden_states: bool | None = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[QEffQwen3_5DynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        output_hidden_states: Optional[bool] = None,
         **kwargs,
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -1367,16 +1368,16 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
 
     def forward(
         self,
-        input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: QEffQwen3_5DynamicCache | tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        use_cache: bool | None = None,
-        output_hidden_states: bool | None = None,
-        cache_position: torch.LongTensor | None = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[QEffQwen3_5DynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
@@ -1420,18 +1421,18 @@ class QEffQwen3_5Model(Qwen3_5Model):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: Cache | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
-        pixel_values_videos: torch.FloatTensor | None = None,
-        image_grid_thw: torch.LongTensor | None = None,
-        video_grid_thw: torch.LongTensor | None = None,
-        mm_token_type_ids: torch.IntTensor | None = None,
-        cache_position: torch.LongTensor | None = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        pixel_values: Optional[torch.Tensor] = None,
+        pixel_values_videos: Optional[torch.FloatTensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.IntTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> tuple | Qwen3_5ModelOutputWithPast:
         r"""
@@ -1626,8 +1627,8 @@ class QEffQwen3_5VisionAttention(Qwen3_5VisionAttention):
         self,
         hidden_states: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        rotary_pos_emb: torch.Tensor | None = None,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        rotary_pos_emb: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
@@ -1728,8 +1729,8 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         position_ids=None,
         image_idx=None,
         past_key_values=None,
-        batch_index: torch.LongTensor | None = None,
-        comp_ctx_lengths: list[int] | None = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         if inputs_embeds is None:
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
@@ -1828,19 +1829,19 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: Cache | None = None,
-        comp_ctx_lengths: torch.LongTensor | None = None,
-        batch_index: torch.LongTensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        labels: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
-        pixel_values_videos: torch.FloatTensor | None = None,
-        image_grid_thw: torch.LongTensor | None = None,
-        video_grid_thw: torch.LongTensor | None = None,
-        mm_token_type_ids: torch.IntTensor | None = None,
-        cache_position: torch.LongTensor | None = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        pixel_values: Optional[torch.Tensor] = None,
+        pixel_values_videos: Optional[torch.FloatTensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.IntTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> tuple | Qwen3_5CausalLMOutputWithPast:
@@ -1921,15 +1922,15 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        height: int | list[int] | None = None,
-        width: int | list[int] | None = None,
+        height: Optional[Union[int, List[int]]] = None,
+        width: Optional[Union[int, List[int]]] = None,
         img_size=None,
         time: int = 1,
         num_frames: int | list[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
-        kv_cache_batch_size: int | None = None,
-        full_batch_size: int | None = None,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
@@ -2050,7 +2051,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
@@ -2093,7 +2094,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
     def get_dummy_inputs(
         self,
-        comp_ctx_lengths: list[int] | None = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         **kwargs,
