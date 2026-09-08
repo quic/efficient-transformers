@@ -33,7 +33,6 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
-    autofix_mdp_partition_order_from_compiler_error,
     generate_disagg_mdp_config,
     generate_mdp_partition_config,
 )
@@ -1081,7 +1080,6 @@ class QEFFBaseModel(ABC):
                 compiler_options.pop(removed_option, None)
 
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
-        user_supplied_mdp = mdp_ts_json_path is not None
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
         mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
         if mdp_compiler_dump_path is not None:
@@ -1305,69 +1303,7 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
-        latest_error: Optional[subprocess.CalledProcessError] = None
-        latest_stderr = ""
-        try:
-            subprocess.run(command, capture_output=True, check=True)
-        except subprocess.CalledProcessError as e:
-            latest_error = e
-            latest_stderr = e.stderr.decode()
-
-            # Work around compiler partition-order failures that can happen with
-            # subfunctions + disaggregated prefill by pruning the offending
-            # consumer node(s) from generated nodeList entries and retrying.
-            can_autofix_mdp = (
-                use_onnx_subfunctions
-                and mdp_num_partitions > 1
-                and mdp_ts_json_path is not None
-                and not user_supplied_mdp
-                and "Invalid partition configuration file" in latest_stderr
-            )
-            if can_autofix_mdp:
-                dropped_nodes: set[str] = set()
-                for _ in range(8):
-                    removed, node_to_drop, consumer_node, producer_node = (
-                        autofix_mdp_partition_order_from_compiler_error(
-                            mdp_json_path=Path(mdp_ts_json_path),
-                            compiler_stderr=latest_stderr,
-                            dropped_nodes=dropped_nodes,
-                        )
-                    )
-                    if removed <= 0:
-                        break
-                    if node_to_drop is None:
-                        break
-                    dropped_nodes.add(node_to_drop)
-                    logger.warning(
-                        "Retrying compile after auto-fixing MDP partition order: removed node %r (consumer=%r producer=%r, %d occurrence(s)) from %s",
-                        node_to_drop,
-                        consumer_node,
-                        producer_node,
-                        removed,
-                        mdp_ts_json_path,
-                    )
-                    if qpc_path.is_dir():
-                        shutil.rmtree(qpc_path)
-                    try:
-                        subprocess.run(command, capture_output=True, check=True)
-                        latest_error = None
-                        break
-                    except subprocess.CalledProcessError as retry_error:
-                        latest_error = retry_error
-                        latest_stderr = retry_error.stderr.decode()
-
-        if latest_error is not None:
-            raise RuntimeError(
-                "\n".join(
-                    [
-                        "Compilation failed!",
-                        f"Compiler command: {latest_error.cmd}",
-                        f"Compiler exitcode: {latest_error.returncode}",
-                        "Compiler stderr:",
-                        latest_stderr,
-                    ]
-                )
-            )
+        subprocess.run(command, capture_output=True, check=True)
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)

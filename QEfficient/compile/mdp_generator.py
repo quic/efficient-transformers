@@ -146,28 +146,117 @@ def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: dict[str, Any
     return violations
 
 
+def _drop_alias_prone_top_level_nodes(onnx_path: str, mdp_json: dict[str, Any], dropped_nodes: set[str]) -> int:
+    """Drop alias-prone top-level nodes that conflict with /language_model siblings.
+
+    In some subfunction compile flows, compiler IR may materialize dotted aliases
+    (e.g. ``/Foo_1.``) for top-level nodes, then report partition-order failures
+    not visible in ONNX dependency edges. We proactively prune top-level nodes
+    when a sibling ``/language_model<name>`` exists and appears in an earlier
+    partition than ``<name>`` in the MDP nodeList ordering.
+    """
+    model = onnx.load(onnx_path, load_external_data=False)
+    name_to_node = {node.name: node for node in model.graph.node if node.name}
+    node_rank: dict[str, tuple[int, int]] = {}
+    for partition_idx, partition in enumerate(mdp_json.get("partitions", [])):
+        node_list = partition.get("nodeList")
+        if not isinstance(node_list, list):
+            continue
+        for node_pos, node_name in enumerate(node_list):
+            if node_name and node_name not in node_rank:
+                node_rank[node_name] = (partition_idx, node_pos)
+
+    removable_nodes: set[str] = set()
+    alias_pairs: list[tuple[str, str]] = []
+
+    for node_name in name_to_node:
+        if not node_name.startswith("/") or node_name.startswith("/language_model/"):
+            continue
+        if node_name in dropped_nodes:
+            continue
+        if _is_decoder_layer_callsite(node_name):
+            continue
+        language_model_peer = f"/language_model{node_name}"
+        if language_model_peer not in name_to_node:
+            continue
+        top_rank = node_rank.get(node_name)
+        peer_rank = node_rank.get(language_model_peer)
+        if top_rank is None or peer_rank is None:
+            continue
+        if top_rank <= peer_rank:
+            continue
+        removable_nodes.add(node_name)
+        alias_pairs.append((node_name, language_model_peer))
+
+    if not removable_nodes:
+        return 0
+
+    removed = _drop_mdp_nodes_inplace(mdp_json, removable_nodes)
+    if removed > 0:
+        for node_name in sorted(removable_nodes):
+            dropped_nodes.add(node_name)
+        logger.warning(
+            "Pre-check removed %d alias-prone top-level node occurrence(s): %s",
+            removed,
+            sorted(removable_nodes),
+        )
+        for top_name, peer_name in alias_pairs:
+            logger.warning(
+                "  alias-prone pair: top=%r peer=%r",
+                top_name,
+                peer_name,
+            )
+    return removed
+
+
 def precheck_and_autofix_mdp_partition_order(
     onnx_path: str,
     mdp_json: dict[str, Any],
     max_rounds: int = 8,
 ) -> int:
-    """Best-effort pre-check: remove nodes that violate ONNX producer->consumer order."""
+    """Best-effort pre-check: scan all violation pairs and auto-fix before compile."""
     removed_total = 0
     dropped_nodes: set[str] = set()
     for _ in range(max_rounds):
         violations = _find_mdp_partition_order_violations(onnx_path=onnx_path, mdp_json=mdp_json)
         if not violations:
-            break
-        consumer_node, producer_node = violations[0]
+            alias_removed = _drop_alias_prone_top_level_nodes(
+                onnx_path=onnx_path,
+                mdp_json=mdp_json,
+                dropped_nodes=dropped_nodes,
+            )
+            if alias_removed <= 0:
+                break
+            removed_total += alias_removed
+            continue
 
+        logger.warning(
+            "MDP pre-check found %d producer/consumer ordering violation pair(s) before compile.",
+            len(violations),
+        )
+        for idx, (consumer_node, producer_node) in enumerate(violations, start=1):
+            logger.warning(
+                "  violation %d/%d: consumer=%r producer=%r",
+                idx,
+                len(violations),
+                consumer_node,
+                producer_node,
+            )
+
+        # Pick one removable node considering all current pairs.
         node_to_drop = None
-        for candidate in (consumer_node, producer_node):
-            if not candidate or candidate in dropped_nodes:
-                continue
-            if _is_decoder_layer_callsite(candidate):
-                continue
-            node_to_drop = candidate
-            break
+        trigger_consumer, trigger_producer = violations[0]
+        for consumer_node, producer_node in violations:
+            for candidate in (consumer_node, producer_node):
+                if not candidate or candidate in dropped_nodes:
+                    continue
+                if _is_decoder_layer_callsite(candidate):
+                    continue
+                node_to_drop = candidate
+                trigger_consumer, trigger_producer = consumer_node, producer_node
+                break
+            if node_to_drop is not None:
+                break
         if node_to_drop is None:
             break
 
@@ -179,8 +268,8 @@ def precheck_and_autofix_mdp_partition_order(
         logger.warning(
             "Pre-check auto-fixed MDP partition order: removed node %r (consumer=%r producer=%r, %d occurrence(s))",
             node_to_drop,
-            consumer_node,
-            producer_node,
+            trigger_consumer,
+            trigger_producer,
             removed,
         )
     return removed_total
