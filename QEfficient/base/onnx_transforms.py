@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 import logging
 import os
 import re
@@ -561,6 +562,260 @@ class AdapterWeightsToInputsTransform(BaseOnnxTransform):
         return model, transformed
 
 
+class InlineTorchSubgraphFunctionsTransform(BaseOnnxTransform):
+    """Inline torch-export local subgraph functions before QAIC compilation.
+
+    QAIC currently rejects ONNX Loop nodes when they appear inside local
+    FunctionProto bodies because function-local values are not accepted as
+    compile-time constants for Loop control inputs. Dynamo subfunction export
+    emits decoder layers and while_loop body/condition helpers in the
+    ``pkg.torch.__subgraph__`` domain, so this transform inlines those generated
+    torch subgraphs back into their callers. QEfficient custom op function
+    prototypes are left untouched.
+    """
+
+    _TORCH_SUBGRAPH_DOMAIN = "pkg.torch.__subgraph__"
+
+    @classmethod
+    def apply(cls, model: ModelProto, **kwargs) -> bool:
+        functions_by_key = {(function.domain, function.name): function for function in model.functions}
+        function_keys_to_inline = {
+            key for key in functions_by_key if key[0] == cls._TORCH_SUBGRAPH_DOMAIN
+        }
+        if not function_keys_to_inline:
+            return False
+
+        def scoped_name(name: str, value_map: Dict[str, str], prefix: str) -> str:
+            if not name:
+                return name
+            return value_map.get(name, f"{prefix}/{name}")
+
+        def collect_graph_local_names(graph) -> set[str]:
+            local_names = {value.name for value in graph.input}
+            local_names.update(value.name for value in graph.output)
+            local_names.update(value.name for value in graph.value_info)
+            local_names.update(tensor.name for tensor in graph.initializer)
+            for node in graph.node:
+                local_names.update(output for output in node.output if output)
+            return local_names
+
+        def clone_graph(graph, parent_map: Dict[str, str], parent_prefix: str, graph_prefix: str):
+            cloned_graph = onnx.GraphProto()
+            cloned_graph.CopyFrom(graph)
+            cloned_graph.name = f"{graph_prefix}/{graph.name}" if graph.name else graph_prefix
+
+            local_names = collect_graph_local_names(graph)
+            local_map = dict(parent_map)
+            for name in local_names:
+                local_map[name] = f"{graph_prefix}/{name}"
+
+            def map_graph_input(name: str) -> str:
+                if not name:
+                    return name
+                if name in local_names:
+                    return local_map[name]
+                if name in parent_map:
+                    return parent_map[name]
+                return f"{parent_prefix}/{name}"
+
+            def map_graph_local(name: str) -> str:
+                return scoped_name(name, local_map, graph_prefix)
+
+            for graph_input in cloned_graph.input:
+                graph_input.name = map_graph_local(graph_input.name)
+            for graph_output in cloned_graph.output:
+                graph_output.name = map_graph_local(graph_output.name)
+            for value_info in cloned_graph.value_info:
+                value_info.name = map_graph_local(value_info.name)
+            for initializer in cloned_graph.initializer:
+                initializer.name = map_graph_local(initializer.name)
+            for sparse_initializer in cloned_graph.sparse_initializer:
+                if sparse_initializer.values.name:
+                    sparse_initializer.values.name = map_graph_local(sparse_initializer.values.name)
+                if sparse_initializer.indices.name:
+                    sparse_initializer.indices.name = map_graph_local(sparse_initializer.indices.name)
+
+            cloned_nodes = []
+            for node in graph.node:
+                cloned_node = clone_node(
+                    node,
+                    local_map,
+                    graph_prefix,
+                    input_mapper=map_graph_input,
+                )
+                cloned_nodes.extend(expand_node(cloned_node, graph_prefix))
+            del cloned_graph.node[:]
+            cloned_graph.node.extend(cloned_nodes)
+            return cloned_graph
+
+        def clone_attribute(attribute, value_map: Dict[str, str], parent_prefix: str, graph_prefix: str):
+            cloned_attribute = onnx.AttributeProto()
+            cloned_attribute.CopyFrom(attribute)
+            if attribute.HasField("g"):
+                cloned_attribute.g.CopyFrom(
+                    clone_graph(attribute.g, value_map, parent_prefix, f"{graph_prefix}/{attribute.name}")
+                )
+            if attribute.graphs:
+                del cloned_attribute.graphs[:]
+                for graph_index, graph in enumerate(attribute.graphs):
+                    cloned_attribute.graphs.append(
+                        clone_graph(graph, value_map, parent_prefix, f"{graph_prefix}/{attribute.name}_{graph_index}")
+                    )
+            return cloned_attribute
+
+        def clone_node(node, value_map: Dict[str, str], prefix: str, input_mapper=None):
+            cloned_node = onnx.NodeProto()
+            cloned_node.CopyFrom(node)
+            original_name = cloned_node.name or cloned_node.op_type
+            if cloned_node.name:
+                cloned_node.name = f"{prefix}/{cloned_node.name}"
+            if input_mapper is None:
+                input_mapper = lambda input_name: scoped_name(input_name, value_map, prefix)
+            cloned_node.input[:] = [input_mapper(input_name) for input_name in node.input]
+            cloned_node.output[:] = [scoped_name(output_name, value_map, prefix) for output_name in node.output]
+            attributes = list(node.attribute)
+            del cloned_node.attribute[:]
+            for attribute in attributes:
+                cloned_node.attribute.append(clone_attribute(attribute, value_map, prefix, f"{prefix}/{original_name}"))
+            return cloned_node
+
+        def expand_node(node, prefix: str) -> List[onnx.NodeProto]:
+            function = functions_by_key.get((node.domain, node.op_type))
+            if function is None or (function.domain, function.name) not in function_keys_to_inline:
+                return [node]
+
+            value_map = {formal: actual for formal, actual in zip(function.input, node.input)}
+            value_map.update({formal: actual for formal, actual in zip(function.output, node.output)})
+            expanded_nodes = []
+            for function_node in function.node:
+                cloned_node = clone_node(function_node, value_map, prefix)
+                expanded_nodes.extend(expand_node(cloned_node, prefix))
+            return expanded_nodes
+
+        expanded_graph_nodes = []
+        inlined_call_count = 0
+        for node_index, node in enumerate(model.graph.node):
+            expanded_nodes = expand_node(node, node.name or f"node_{node_index}")
+            if len(expanded_nodes) != 1 or expanded_nodes[0] is not node:
+                inlined_call_count += 1
+            expanded_graph_nodes.extend(expanded_nodes)
+
+        if inlined_call_count == 0:
+            return False
+
+        del model.graph.node[:]
+        model.graph.node.extend(expanded_graph_nodes)
+        remaining_functions = [
+            function for function in model.functions if (function.domain, function.name) not in function_keys_to_inline
+        ]
+        del model.functions[:]
+        model.functions.extend(remaining_functions)
+        return True
+
+
+class StaticLoopInputsTransform(BaseOnnxTransform):
+    """Rewrite exported ONNX Loop inputs to static constants for compiler unrolling.
+
+    torch.while_loop can export a Loop with dynamic graph-produced control
+    inputs. The current QAIC compiler expects those Loop control inputs to be
+    compile-time constants. For fixed-CL KV blocking models, ``num_kv_blocks``
+    is the static maximum trip count.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto, *, num_kv_blocks: Optional[int] = None, **kwargs) -> bool:
+        if num_kv_blocks is None:
+            return False
+
+        transformed = False
+        loop_index = 0
+
+        def next_names() -> Tuple[str, str]:
+            nonlocal loop_index
+            trip_name = f"qeff_static_loop_trip_count_{loop_index}"
+            cond_name = f"qeff_static_loop_cond_true_{loop_index}"
+            loop_index += 1
+            return trip_name, cond_name
+
+        def make_trip_tensor(name: str) -> TensorProto:
+            return onnx.helper.make_tensor(name, TensorProto.INT64, [], [int(num_kv_blocks)])
+
+        def make_cond_tensor(name: str) -> TensorProto:
+            return onnx.helper.make_tensor(name, TensorProto.BOOL, [], [True])
+
+        def rewrite_loop_node(node, trip_name: str, cond_name: str) -> bool:
+            if len(node.input) < 2:
+                logger.warning(
+                    "StaticLoopInputsTransform: Loop node '%s' has fewer than 2 inputs; skipping.", node.name
+                )
+                return False
+            node.input[0] = trip_name
+            node.input[1] = cond_name
+            return True
+
+        def rewrite_graph(graph) -> bool:
+            graph_changed = False
+            initializer_names = {initializer.name for initializer in graph.initializer}
+
+            def add_initializer_once(name: str, tensor: TensorProto) -> None:
+                if name not in initializer_names:
+                    graph.initializer.append(tensor)
+                    initializer_names.add(name)
+
+            for node in graph.node:
+                for attr in node.attribute:
+                    if attr.HasField("g"):
+                        graph_changed |= rewrite_graph(attr.g)
+                    for nested_graph in attr.graphs:
+                        graph_changed |= rewrite_graph(nested_graph)
+
+                if node.op_type != "Loop":
+                    continue
+                trip_name, cond_name = next_names()
+                add_initializer_once(trip_name, make_trip_tensor(trip_name))
+                add_initializer_once(cond_name, make_cond_tensor(cond_name))
+                graph_changed |= rewrite_loop_node(node, trip_name, cond_name)
+            return graph_changed
+
+        def rewrite_function(function) -> bool:
+            function_changed = False
+            constant_nodes = []
+            for node in function.node:
+                for attr in node.attribute:
+                    if attr.HasField("g"):
+                        function_changed |= rewrite_graph(attr.g)
+                    for nested_graph in attr.graphs:
+                        function_changed |= rewrite_graph(nested_graph)
+
+                if node.op_type != "Loop":
+                    continue
+                trip_name, cond_name = next_names()
+                constant_nodes.extend(
+                    [
+                        onnx.helper.make_node(
+                            "Constant", [], [trip_name], value=make_trip_tensor(f"{trip_name}_value")
+                        ),
+                        onnx.helper.make_node(
+                            "Constant", [], [cond_name], value=make_cond_tensor(f"{cond_name}_value")
+                        ),
+                    ]
+                )
+                function_changed |= rewrite_loop_node(node, trip_name, cond_name)
+
+            if constant_nodes:
+                existing_nodes = list(function.node)
+                del function.node[:]
+                function.node.extend(constant_nodes)
+                function.node.extend(existing_nodes)
+            return function_changed
+
+        transformed |= rewrite_graph(model.graph)
+        for function in model.functions:
+            transformed |= rewrite_function(function)
+
+        return transformed
+
+
 class PruneFakeInitializersTransform(BaseOnnxTransform):
     """Remove initializers backed by FakeTensors from a dynamo onnx_program before serialisation.
 
@@ -699,6 +954,12 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
+
+        if InlineTorchSubgraphFunctionsTransform in requested:
+            applied[InlineTorchSubgraphFunctionsTransform] = InlineTorchSubgraphFunctionsTransform.apply(model, **kwargs)
+
+        if StaticLoopInputsTransform in requested:
+            applied[StaticLoopInputsTransform] = StaticLoopInputsTransform.apply(model, **kwargs)
 
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")

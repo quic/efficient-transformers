@@ -54,8 +54,24 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
     --prefill-seq-len 128 \
     --ctx-len 128 \
     --num-cores 16 \
-    --use-weight-free-export
+    --weight-free
 ```
+
+**KV head-parallel blocking with ONNX Loop:**
+```bash
+python examples/dynamo/causal_lm/kv_blocking_loop_inference.py \
+    --model-name Qwen/Qwen2-1.5B-Instruct \
+    --prompt "My name is" \
+    --prefill-seq-len 32 \
+    --ctx-len 128 \
+    --num-kv-blocks 2 \
+    --num-cores 16
+```
+
+This example passes `qaic_config={"blocking_mode": "kv_headpar"}` and exports
+with `dynamo=True`. QEfficient enables the supported KV-block Loop path by
+default for this combination, so the KV-block loop is represented as an ONNX
+`Loop` instead of a Python-for-unrolled graph.
 
 **Parameters:**
 
@@ -69,13 +85,13 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 | `--num-cores` | `16` | Number of AI 100 cores |
 | `--aic-hw-version` | `ai100` | Hardware version |
 | `--num-hidden-layers` | `-1` | Override model depth (for debugging) |
-| `--use-weight-free-export` | `False` | Build a meta-device model and load weights during compile |
+| `--weight-free` | `False` | Build a meta-device model and load weights during compile |
 | `--device-group` | `None` | Device IDs, e.g. `[0,1]` |
 
 This example:
 - Loads the model normally by default
-- Builds the model with meta tensors when `--use-weight-free-export` is set
-- Exports using `torch.export` with ONNX subfunctions enabled
+- Builds the model with meta tensors when `--weight-free` is set
+- Exports using `torch.export`; ONNX subfunctions are opt-in with `--enable-onnx-subfunctions`
 - Compiles to a QPC binary for Cloud AI 100
 - Runs token generation and prints the output
 

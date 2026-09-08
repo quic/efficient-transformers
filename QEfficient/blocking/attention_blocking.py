@@ -22,6 +22,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_kv_attention_forward,
     blocked_kv_attention_forward_decode_headpar_batch,
     blocked_kv_attention_forward_headpar_offline,
+    blocked_kv_attention_forward_headpar_offline_loop,
     blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
@@ -138,6 +139,8 @@ class AttentionBlockingConfig:
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    use_kv_loop_op: Optional[bool] = False
+    kv_loop_dynamic_trip_count: Optional[bool] = False
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
@@ -243,9 +246,12 @@ def generic_blocked_attention_interface(
     prefill_only: bool = False,
     **kwargs,
 ):
-    strategy = _STRATEGIES[
-        BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
-    ]
+    mode = BlockingMode.get_final_mode(
+        blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs
+    )
+    strategy = _STRATEGIES[mode]
+    if mode == BlockingMode.KV_HEADPAR and blocking_config.use_kv_loop_op:
+        strategy = blocked_kv_attention_forward_headpar_offline_loop
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
@@ -261,8 +267,17 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
-            use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
+            use_kv_blocked_mode = (
+                mode == BlockingMode.KV
+                or mode == BlockingMode.KV_HEADPAR
+                or mode == BlockingMode.KV_BATCH_FOLD
+                or mode == BlockingMode.QKV
+                or mode == BlockingMode.HKV
+                or mode == BlockingMode.HQKV
+                or mode == BlockingMode.BHQKV
+            )
+            use_kv_blocked = use_kv_blocked_mode and supports_blocked_kv(past_key_value)
+            if mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
@@ -303,6 +318,7 @@ def generic_blocked_attention_interface(
         configured_split=blocking_config.headpar_split,
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
+        kv_loop_dynamic_trip_count=blocking_config.kv_loop_dynamic_trip_count or False,
         skip_kv=blocking_config.skip_kv or False,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
