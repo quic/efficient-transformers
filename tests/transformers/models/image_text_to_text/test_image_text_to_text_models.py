@@ -39,7 +39,6 @@ from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
     is_kimi_k25,
-    load_kimi_k25_layer_subset_model,
     load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch,
 )
@@ -164,17 +163,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         qaic_config = qaic_config or {}
         qaic_config["ccl_enabled"] = True
 
-    if is_kimi_k25(model_name) and config is None:
-        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
-        config = model_hf.config
-        qeff_model = QEFFAutoModelForImageTextToText(
-            copy.deepcopy(model_hf),
-            kv_offload=kv_offload,
-            config=model_hf.config,
-            qaic_config=qaic_config,
-            torch_dtype=torch_dtype,
-        )
-    elif is_kimi_k25(model_name):
+    if is_kimi_k25(model_name):
+        if config is None:
+            # Build the reduced Kimi architecture directly with random weights. Loading a
+            # checkpoint subset first would snapshot the complete ~595 GB model repository.
+            config = get_kimi_k25_test_config(model_name, model_config_dict)
         model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
