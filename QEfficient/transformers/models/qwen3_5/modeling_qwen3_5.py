@@ -823,7 +823,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, dtype=attn.dtype)
         attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
@@ -1297,7 +1297,7 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
             past_key_values.reorder_cache(beam_idx)
         return past_key_values
 
-    def _iter_retained_state_names(self) -> list[str]:
+    def _iter_retained_state_names(self) -> List[str]:
         names = []
         for layer_idx, layer_type in enumerate(self.config.layer_types):
             if layer_type == "full_attention":
@@ -1306,14 +1306,14 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
                 names.extend([f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"])
         return names
 
-    def get_retained_state_names(self) -> list[str]:
+    def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
 
     def get_onnx_retained_state_specs(
         self,
         batch_size: int,
         seq_len: int,
-        kv_cache_shape: list[int],
+        kv_cache_shape: List[int],
         continuous_batching: bool = False,
         retain_full_kv: bool = False,
     ) -> dict:
@@ -1716,7 +1716,7 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
-    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> list[str]:
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
         if self.config.text_config.layer_types[layer_idx] == "full_attention":
             return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
         return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
