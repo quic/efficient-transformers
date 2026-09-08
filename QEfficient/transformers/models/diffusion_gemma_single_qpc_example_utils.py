@@ -410,7 +410,7 @@ class DiffusionGemmaSingleQPCGenerator:
         argmax_canvas_history = []
 
         start = time.perf_counter()
-        # max_denoising_steps = 16
+        max_denoising_steps = 16
         for step in range(max_denoising_steps):
             current_step = max_denoising_steps - step
             temperature = t_min + (t_max - t_min) * current_step / max_denoising_steps
