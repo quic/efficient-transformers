@@ -4246,7 +4246,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 2: "kv_block_size",
             }
 
+        if self.model.config.model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
+            example_inputs["position_ids"] = example_inputs["position_ids"].unsqueeze(0).repeat(4, 1, 1)
+            dynamic_axes["position_ids"] = {1: "batch_size", 2: "seq_len"}
+
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
+        retained_state_specs = None
         if hasattr(self.model, "get_onnx_retained_state_specs"):
             retained_state_specs = self.model.get_onnx_retained_state_specs(
                 batch_size=fbs if self.continuous_batching else bs,
@@ -4256,6 +4261,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 retain_full_kv=kwargs.get("retain_full_kv", False)
                 or (prefill_only and kwargs.get("enable_chunking", False)),
             )
+
+        if retained_state_specs is not None:
             example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
             dynamic_axes.update(retained_state_specs["dynamic_axes"])
             output_names.extend(retained_state_specs["output_names"])
@@ -4940,18 +4947,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             retained_state_names = (
                 self.model.get_retained_state_names()
                 if hasattr(self.model, "get_retained_state_names")
-                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
+                else [
+                    f"past_{kv}.{i}"
+                    for i in range(self.num_layers)
+                    for kv in ("key", "value")
+                ]
             )
-            for state_name in retained_state_names:
-                output_name = _compile_io_name(
-                    f"{state_name}{kv_infix}_RetainedState",
-                    use_onnx_subfunctions=use_onnx_subfunctions,
-                )
+            for retained_state_name in retained_state_names:
                 _add_retained_state_custom_io(
                     custom_io,
-                    output_name,
+                    f"{retained_state_name}{kv_infix}_RetainedState",
                     dtype=kv_cache_dtype,
-                    use_onnx_subfunctions=False,
+                    use_onnx_subfunctions=use_onnx_subfunctions,
                 )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
