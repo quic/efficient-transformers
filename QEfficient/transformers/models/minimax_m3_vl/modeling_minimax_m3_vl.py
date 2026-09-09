@@ -5,10 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Type, Union
-from functools import partial
 import logging
-logging.getLogger("QEfficient").setLevel(logging.INFO)
+from functools import partial
+from typing import List, Optional, Tuple, Type, Union
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -26,22 +26,17 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLSparseMoeBlock,
     MiniMaxM3VLTextModel,
     MiniMaxM3VLTopKRouter,
-    dynamic_rope_update,
-    maybe_autocast,
     repeat_kv,
 )
 
-from QEfficient.transformers.cache_utils import (
-    QEffDynamicCache,
-    QEffMiniMaxSparseCache,
-    read_kv_cache_with_indices,
-    scatter_kv_into_cache,
-    update_and_read_index_key_cache,
-)
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
     generic_blocked_attention_interface,
+)
+from QEfficient.transformers.cache_utils import (
+    QEffDynamicCache,
+    QEffMiniMaxSparseCache,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
@@ -55,6 +50,9 @@ from QEfficient.transformers.moe import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+logging.getLogger("QEfficient").setLevel(logging.INFO)
+
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     first, second = x.chunk(2, dim=-1)
@@ -79,21 +77,25 @@ def qeff_apply_rotary_pos_emb(
     rotated_k = rotated_k * cos + rotate_half(rotated_k) * sin
     return torch.cat((rotated_q, passthrough_q), dim=-1), torch.cat((rotated_k, passthrough_k), dim=-1)
 
+
 class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
-    @torch.no_grad()
-    @dynamic_rope_update
-    def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        inv_freq = self.inv_freq.to(device=x.device, dtype=torch.float32)
-        position_ids_expanded = position_ids[..., None].float()
+    """MiniMax RoPE with static sin/cos tables suitable for ONNX export."""
 
-        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with maybe_autocast(device_type=device_type, enabled=False):
-            freqs = position_ids_expanded.float() * inv_freq.view(1, 1, -1)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * self.attention_scaling
-            sin = emb.sin() * self.attention_scaling
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len,
+            device=self.inv_freq.device,
+            dtype=config.torch_dtype,
+        )
 
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+    def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> None:
+        self.max_seq_len_cached = seq_len
+        positions = torch.arange(seq_len, device=device, dtype=torch.int64).type_as(self.inv_freq)
+        freqs = torch.outer(positions, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
 def qeff_eager_attention_forward(
@@ -110,14 +112,13 @@ def qeff_eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        if attention_mask.dtype == torch.bool:
-            attn_weights = torch.where(
-                attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
-                attn_weights,
-            )
-        else:
-            attn_weights = attn_weights + attention_mask
+        if attention_mask.dtype != torch.bool:
+            raise ValueError("MiniMax attention masks must be boolean.")
+        attn_weights = torch.where(
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE),
+            attn_weights,
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
@@ -235,7 +236,9 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
         cos, sin = position_embeddings
         # to do - don't use constant, should get from config
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, self.config.index_head_dim // 2)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, self.config.index_head_dim // 2
+        )
 
         cache_kwargs = {
             "position_ids": position_ids,
@@ -277,9 +280,15 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 )
             else:
                 if past_key_values is not None:
-                    key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+                    key_states, value_states = past_key_values.update(
+                        key_states, value_states, self.layer_idx, cache_kwargs
+                    )
                 attn_output, _ = qeff_eager_attention_forward(
-                    self, query_states, key_states, value_states, attention_mask,
+                    self,
+                    query_states,
+                    key_states,
+                    value_states,
+                    attention_mask,
                     dropout=0.0 if not self.training else self.attention_dropout,
                     scaling=self.scaling,
                 )
@@ -427,6 +436,11 @@ class QEffMiniMaxM3VLDecoderLayer(MiniMaxM3VLDecoderLayer):
 
 
 class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffMiniMaxM3VLRotaryEmbedding(config=self.config)
+        self.sin_cached = nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -468,7 +482,8 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
+        cos = self.cos_cached[position_ids].to(device=hidden_states.device)
+        sin = self.sin_cached[position_ids].to(device=hidden_states.device)
         for decoder_layer in self.layers:
             hidden_states = decoder_layer(
                 hidden_states,
@@ -476,7 +491,7 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 use_cache=use_cache,
-                position_embeddings=position_embeddings,
+                position_embeddings=(cos, sin),
                 **kwargs,
             )
         hidden_states = self.norm(hidden_states)
@@ -583,7 +598,7 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
         index_key_names = []
         for i in range(self.config.text_config.num_hidden_layers):
             if layer_types[i] == "minimax_m3_sparse":
-                index_key_names.append(f"index_key.{i}" )
+                index_key_names.append(f"index_key.{i}")
         return index_key_names
 
     def forward(
@@ -616,7 +631,9 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
                 # the meta device, so torch.tensor(1, device=input_ids.device) would create
                 # a dataless meta constant that torch.export lifts into the graph as-is,
                 # and ONNX serialization then fails ("Cannot copy out of meta tensor").
-                input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
+                input_ids.shape[1] == torch.tensor(1),
+                inputs_embeds,
+                image_input_embeds,
             )
             image_idx_output = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         else:
@@ -704,7 +721,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         inputs_embeds = torch.where(
             # See QEffMiniMaxM3VLDecoderWrapper.forward for why this constant must not be
             # created on input_ids.device.
-            input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
+            input_ids.shape[1] == torch.tensor(1),
+            inputs_embeds,
+            image_input_embeds,
         )
 
         if past_key_values is not None and not isinstance(past_key_values, Cache):
