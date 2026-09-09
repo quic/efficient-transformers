@@ -362,6 +362,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
         max_workers_scan: Optional[int] = None,
         max_workers_layers: Optional[int] = None,
         max_workers_base: Optional[int] = None,
@@ -376,10 +377,12 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        weight_map = read_weight_map(src)
-        shard_names = sorted(set(weight_map.values()))
+        if weight_map is None:
+            weight_map = read_weight_map(src)
 
-        # Phase 1: parallel key scan - no tensor data loaded.
+        # Build expert lookup tables from weight_map keys — no shard files opened.
+        # weight_map comes from model.safetensors.index.json which already has
+        # all key names; the old Phase 1 shard scan is eliminated.
         #
         # expert_entries[(layer_idx, expert_idx, kind)] = (shard_name, orig_key)
         # layer_prefix[layer_idx]                        = prefix up to .experts
@@ -387,35 +390,13 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         expert_entries: Dict[Tuple[int, int, str], Tuple[str, str]] = {}
         layer_prefix: Dict[int, str] = {}
         base_entries: Dict[str, str] = {}
-
-        def _scan(shard_name: str) -> Tuple[Dict, Dict, Dict]:
-            loc_e: Dict[Tuple[int, int, str], Tuple[str, str]] = {}
-            loc_p: Dict[int, str] = {}
-            loc_b: Dict[str, str] = {}
-            with safe_open(str(src / shard_name), framework="pt") as f:
-                for key in f.keys():
-                    m = cls.EXPERT_RE.match(key)
-                    if m:
-                        loc_e[(int(m.group(2)), int(m.group(3)), m.group(4))] = (shard_name, key)
-                        loc_p[int(m.group(2))] = m.group(1)
-                    else:
-                        loc_b[key] = shard_name
-            return loc_e, loc_p, loc_b
-
-        # Phase 1: I/O-bound — cap at 4× logical CPUs, no point exceeding shard count.
-        # Hard cap at 256: beyond that, OS scheduling overhead outweighs I/O gains.
-        n_workers_scan = (
-            max_workers_scan if max_workers_scan is not None else min(len(shard_names), cpu_count() * 4, 256)
-        )
-        logger.info(
-            f"MoEExpertStackingCheckpointTransform: scanning {len(shard_names)} shards "
-            f"(workers={n_workers_scan}, cpus={cpu_count()}, ram_avail={available_ram_gb():.1f} GB)..."
-        )
-        with ThreadPoolExecutor(max_workers=n_workers_scan) as ex:
-            for loc_e, loc_p, loc_b in ex.map(_scan, shard_names):
-                expert_entries.update(loc_e)
-                layer_prefix.update(loc_p)
-                base_entries.update(loc_b)
+        for key, shard_name in weight_map.items():
+            m = cls.EXPERT_RE.match(key)
+            if m:
+                expert_entries[(int(m.group(2)), int(m.group(3)), m.group(4))] = (shard_name, key)
+                layer_prefix[int(m.group(2))] = m.group(1)
+            else:
+                base_entries[key] = shard_name
 
         experts_per_layer: Dict[int, set] = {}
         for layer_idx, expert_idx, _ in expert_entries:
@@ -571,6 +552,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
         max_workers_scan: Optional[int] = None,
         max_workers_layers: Optional[int] = None,
         max_workers_base: Optional[int] = None,
@@ -585,14 +567,12 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        weight_map = read_weight_map(src)
-        shard_names = sorted(set(weight_map.values()))
+        if weight_map is None:
+            weight_map = read_weight_map(src)
 
-        # Phase 1: scan - collect expert tensor locations.
-        # expert_locs[(layer_idx, kind)] = (blocks_shard, blocks_key, scales_shard, scales_key)
-        # bias_locs[(layer_idx, kind)]   = (shard, key)   for gate_up_proj_bias / down_proj_bias
-        # layer_prefix[layer_idx]        = prefix up to .experts
-        # base_entries[orig_key]         = shard_name
+        # Build expert lookup tables from weight_map keys — no shard files opened.
+        # Phase 1 shard scan eliminated; model.safetensors.index.json already
+        # has all key names so we just classify each key by regex.
         _SCALES_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_scales$")
         _BIAS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_bias$")
 
@@ -601,46 +581,26 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         layer_prefix: Dict[int, str] = {}
         base_entries: Dict[str, str] = {}
 
-        def _scan(shard_name: str):
-            loc_e: Dict[Tuple[int, str], Dict] = {}
-            loc_b: Dict[Tuple[int, str], Tuple[str, str]] = {}
-            loc_p: Dict[int, str] = {}
-            loc_base: Dict[str, str] = {}
-            with safe_open(str(src / shard_name), framework="pt") as f:
-                for key in f.keys():
-                    m = cls._BLOCKS_RE.match(key)
-                    if m:
-                        li, kind = int(m.group(2)), m.group(3)
-                        loc_e.setdefault((li, kind), {})["blocks"] = (shard_name, key)
-                        loc_p[li] = m.group(1)
-                        continue
-                    m = _SCALES_RE.match(key)
-                    if m:
-                        li, kind = int(m.group(2)), m.group(3)
-                        loc_e.setdefault((li, kind), {})["scales"] = (shard_name, key)
-                        loc_p[li] = m.group(1)
-                        continue
-                    m = _BIAS_RE.match(key)
-                    if m:
-                        li, kind = int(m.group(2)), m.group(3)
-                        loc_b[(li, kind)] = (shard_name, key)
-                        loc_p[li] = m.group(1)
-                        continue
-                    loc_base[key] = shard_name
-            return loc_e, loc_b, loc_p, loc_base
-
-        n_scan = max_workers_scan if max_workers_scan is not None else min(len(shard_names), cpu_count() * 4, 256)
-        logger.info(
-            f"GptOssMxfp4ExpertDequantSplitCheckpointTransform: scanning {len(shard_names)} shards "
-            f"(workers={n_scan})..."
-        )
-        with ThreadPoolExecutor(max_workers=n_scan) as ex:
-            for loc_e, loc_b, loc_p, loc_base in ex.map(_scan, shard_names):
-                for k, v in loc_e.items():
-                    expert_locs.setdefault(k, {}).update(v)
-                bias_locs.update(loc_b)
-                layer_prefix.update(loc_p)
-                base_entries.update(loc_base)
+        for key, shard_name in weight_map.items():
+            m = cls._BLOCKS_RE.match(key)
+            if m:
+                li, kind = int(m.group(2)), m.group(3)
+                expert_locs.setdefault((li, kind), {})["blocks"] = (shard_name, key)
+                layer_prefix[li] = m.group(1)
+                continue
+            m = _SCALES_RE.match(key)
+            if m:
+                li, kind = int(m.group(2)), m.group(3)
+                expert_locs.setdefault((li, kind), {})["scales"] = (shard_name, key)
+                layer_prefix[li] = m.group(1)
+                continue
+            m = _BIAS_RE.match(key)
+            if m:
+                li, kind = int(m.group(2)), m.group(3)
+                bias_locs[(li, kind)] = (shard_name, key)
+                layer_prefix[li] = m.group(1)
+                continue
+            base_entries[key] = shard_name
 
         layer_indices = sorted({li for li, _ in expert_locs})
         logger.info(f"  Found {len(layer_indices)} MoE layers.")
@@ -780,6 +740,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
         **kwargs,
     ) -> bool:
         """Split fused MoE expert tensors and write a prepared checkpoint."""
@@ -788,20 +749,8 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             logger.info("MoEFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
             return False
 
-        index_path = src / "model.safetensors.index.json"
-        if index_path.exists():
-            weight_map: Dict[str, str] = json.loads(index_path.read_text())["weight_map"]
-        else:
-            # TODO(wf): Reuse read_weight_map() here instead of duplicating safetensors map resolution
-            # It does not make sense to rebuild weight_map from shards, error out if its not present.
-            shards = sorted(src.glob("*.safetensors"))
-            if not shards:
-                return False
-            weight_map = {}
-            for shard in shards:
-                with safe_open(str(shard), framework="pt") as f:
-                    for k in f.keys():
-                        weight_map[k] = shard.name
+        if weight_map is None:
+            weight_map = read_weight_map(src)
 
         if not cls.is_applicable(weight_map):
             return False
@@ -930,6 +879,7 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
         **kwargs,
     ) -> bool:
         """Split GraniteMoE fused expert tensors and write a prepared checkpoint."""
@@ -938,7 +888,8 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             logger.info("GraniteMoeFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
             return False
 
-        weight_map = read_weight_map(src)
+        if weight_map is None:
+            weight_map = read_weight_map(src)
         if not cls.is_applicable(weight_map):
             return False
 
