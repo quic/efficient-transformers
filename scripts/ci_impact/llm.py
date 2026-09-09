@@ -36,6 +36,8 @@ SYSTEM_PROMPT_PATH = Path(__file__).with_name("SYSTEM_PROMPT.md")
 QUERY_TOOL_PATH = Path(__file__).with_name("query.py")
 TOOL_POLICY_PATH = Path(__file__).with_name("tool_policy.py")
 HOOK_AUDIT_NAME = ".ci-impact-qgenie-audit.jsonl"
+
+
 class LLMStageError(RuntimeError):
     """Raised when mandatory LLM selection cannot be completed safely."""
 
