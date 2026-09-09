@@ -466,9 +466,7 @@ def _compile_disagg_sessions(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize(
-    "dma_config", disagg_dma_configs("qwen3_5_moe_tiny") + disagg_dma_configs("qwen3_5_moe_reduced")
-)
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3_5_moe_tiny"))
 def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)

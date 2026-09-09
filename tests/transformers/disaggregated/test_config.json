@@ -10,17 +10,6 @@
         "stages": 2,
         "use_onnx_subfunctions": true,
         "skip_hf_reference": true
-      },
-      {
-        "id": "reduced_layers_vision1_prefill1_decode1_with_blocking",
-        "vision_num_devices": 1,
-        "prefill_num_devices": 1,
-        "decode_num_devices": 1,
-        "use_onnx_subfunctions": true,
-        "skip_hf_reference": true,
-        "blocking_mode": "prefill_qkv",
-        "num_kv_blocks": 2,
-        "num_q_blocks": 2
       }
     ]
   },
@@ -29,6 +18,18 @@
     "test_configs": [
       {
         "id": "reduced_layers_prefill2_decode1_stages2",
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2,
+        "use_onnx_subfunctions": true
+      }
+    ]
+  },
+  "gpt_oss_tiny": {
+    "model_id": "tiny-random/gpt-oss",
+    "test_configs": [
+      {
+        "id": "tiny_model_prefill2_decode1_stages2",
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
         "stages": 2,
@@ -100,6 +101,16 @@
         "decode_num_devices": 1,
         "stages": 2,
         "use_onnx_subfunctions" :true
+      },
+      {
+        "id": "tiny_model_vision1_prefill1_decode1_with_blocking",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 1,
+        "decode_num_devices": 1,
+        "use_onnx_subfunctions": true,
+        "blocking_mode": "prefill_qkv",
+        "num_kv_blocks": 2,
+        "num_q_blocks": 2
       }
     ]
   },

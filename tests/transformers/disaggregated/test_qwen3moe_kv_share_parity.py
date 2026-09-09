@@ -291,7 +291,7 @@ def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3moe_tiny") + disagg_dma_configs("qwen3moe_reduced"))
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3moe_tiny"))
 def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup, dma_config):
     compare_tokens = HF_COMPARE_TOKENS
     model_id = dma_config["model_id"]

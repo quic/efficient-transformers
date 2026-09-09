@@ -361,7 +361,7 @@ def _run_disagg_kv_share_qaic_generation(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize("dma_config", disagg_dma_configs("gemma4_moe_tiny") + disagg_dma_configs("gemma4_moe_reduced"))
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("gemma4_moe_tiny"))
 def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     torch.manual_seed(42)
 

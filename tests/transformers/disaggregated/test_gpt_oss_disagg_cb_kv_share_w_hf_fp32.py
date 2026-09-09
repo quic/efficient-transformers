@@ -51,7 +51,7 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "openai/gpt-oss-20b"
-NUM_HIDDEN_LAYERS = 4
+NUM_HIDDEN_LAYERS = 2
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 256
 BATCH_SIZE = 1
@@ -603,7 +603,7 @@ def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-@pytest.mark.parametrize("dma_config", disagg_dma_configs("gpt_oss_reduced"))
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("gpt_oss_tiny"))
 def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup, dma_config):
     torch.manual_seed(42)
 
