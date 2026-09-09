@@ -60,6 +60,7 @@ from QEfficient.transformers.models.modeling_auto import (
 VOCAB_SIZE = 500
 CTX_LEN = 32
 SEQ_LEN = 8
+UNSUPPORTED_WEIGHT_FREE_WARNING = "weight_free=True is only supported for QEFFAutoModelForCausalLM"
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +224,61 @@ class TestQEFFTransformersBase:
         assert not hasattr(model.config, "quantization_config")
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff is not None
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_from_pretrained_disables_unsupported_weight_free(self, wrapper_cls, model_factory, monkeypatch, caplog):
+        """Non-CausalLM from_pretrained paths warn and do not forward weight_free."""
+        captured_kwargs = {}
+
+        def fake_from_pretrained(_model_id, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model_factory()[0]
+
+        monkeypatch.setattr(wrapper_cls._hf_auto_class, "from_pretrained", fake_from_pretrained)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls.from_pretrained("dummy-model", weight_free=True)
+
+        assert "weight_free" not in captured_kwargs
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_direct_init_disables_unsupported_weight_free(self, wrapper_cls, model_factory, caplog):
+        """Non-CausalLM direct construction must not enable the weight-free export path."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls(model_factory()[0], weight_free=True)
+
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    def test_causal_lm_direct_init_preserves_weight_free(self, caplog):
+        """CausalLM remains the only wrapper that accepts weight_free=True."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = QEFFAutoModelForCausalLM(make_tiny_llama()[0], weight_free=True)
+
+        assert qeff_model._weight_free is True
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING not in caplog.text
 
 
 # ---------------------------------------------------------------------------
