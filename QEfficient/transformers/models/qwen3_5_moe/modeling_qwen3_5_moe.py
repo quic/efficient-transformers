@@ -1154,7 +1154,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     last_recurrent_state.to(recurrent_state_all.dtype),
                 )
             else:
-                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
+                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state.to(recurrent_state_all.dtype)
 
         else:
             # No cache — prefill only, no state needed
