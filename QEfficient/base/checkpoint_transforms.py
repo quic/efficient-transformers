@@ -16,9 +16,11 @@ e.g. QEfficient/exporter/weight_free/checkpoint_transforms.py.
 """
 
 import json
+import re
 import shutil
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 import torch
 
@@ -37,37 +39,25 @@ def _checkpoint_files(root: Path) -> List[Path]:
     return sorted(files)
 
 
-def _checkpoint_file_fingerprint(root: Path, label: str) -> List[dict]:
-    fingerprint = []
-    for path in _checkpoint_files(root):
-        stat = path.stat()
-        fingerprint.append(
-            {
-                "label": label,
-                "path": path.name,
-                "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-            }
-        )
-    return fingerprint
+def _checkpoint_file_fingerprint(root: Path) -> List[dict]:
+    return [
+        {"path": p.name, "size": p.stat().st_size, "mtime_ns": p.stat().st_mtime_ns} for p in _checkpoint_files(root)
+    ]
 
 
 def _checkpoint_manifest(
     src: Path,
-    source_dir: Path,
     target_dtype: torch.dtype,
     transforms: List[Type["BaseCheckpointTransform"]],
+    active_group_id: str = "none",
 ) -> dict:
-    files = _checkpoint_file_fingerprint(source_dir, "source")
-    if source_dir != src:
-        files.extend(_checkpoint_file_fingerprint(src, "original"))
     return {
-        "version": 1,
-        "source": str(source_dir.resolve()),
-        "original_source": str(src.resolve()),
+        "version": 2,
+        "source": str(src.resolve()),
         "target_dtype": str(target_dtype),
-        "transforms": [f"{transform.__module__}.{transform.__name__}" for transform in transforms],
-        "files": files,
+        "active_group": active_group_id,
+        "transforms": [f"{t.__module__}.{t.__name__}" for t in transforms],
+        "files": _checkpoint_file_fingerprint(src),
     }
 
 
@@ -85,13 +75,89 @@ def _write_manifest(out: Path, manifest: dict) -> None:
     (out / CHECKPOINT_PREPARED_MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
 
-def _clear_stale_prepared_dir(out: Path, src: Path, source_dir: Path) -> None:
-    if not out.exists() or out in {src, source_dir}:
+def _clear_stale_prepared_dir(out: Path, src: Path) -> None:
+    if not out.exists() or out == src:
         return
     if out.is_dir():
         shutil.rmtree(out)
     else:
         out.unlink()
+
+
+def detect_group_transform_id(
+    config,
+    weight_map: Dict[str, str],
+    hash_params: Optional[Dict] = None,
+) -> str:
+    """Return a stable string ID for the group transform that applies to this checkpoint.
+
+    Used as part of the prepared-checkpoint cache key so that different model
+    flavours (decode vs expert_parallel, dense vs MoE, different quantizations)
+    always hash to different prepared directories and never overwrite each other.
+
+    The IDs returned here match the TRANSFORM_ID strings that will be declared
+    on each group transform class in the full pipeline redesign.
+
+    Parameters
+    ----------
+    config
+        HuggingFace model config.  ``num_local_experts`` / ``num_experts``
+        gates all MoE detection — absent means dense model.
+    weight_map
+        ``{tensor_key: shard_filename}`` from ``model.safetensors.index.json``.
+    hash_params
+        Model hash parameters (from ``qeff_model.hash_params``).  Used to
+        detect the ``expert_parallel`` prefill flavour which requires a
+        different weight layout than standard decode.
+
+    Returns
+    -------
+    str
+        One of the stable transform ID strings, or ``"none"`` for dense models.
+    """
+    if hash_params is None:
+        hash_params = {}
+
+    num_experts = None
+    if config is not None:
+        num_experts = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    if not num_experts:
+        return "none"
+
+    # Per-expert format: validate expert indices match config declaration.
+    # Keys look like: model.layers.0.block_sparse_moe.experts.0.w1.weight
+    expert_indices_per_layer: Dict[int, set] = defaultdict(set)
+    for k in weight_map:
+        m = re.search(r"\.layers\.(\d+)\..*\.experts\.(\d+)\.", k)
+        if m:
+            expert_indices_per_layer[int(m.group(1))].add(int(m.group(2)))
+
+    if expert_indices_per_layer:
+        expected = set(range(num_experts))
+        for layer_idx, found in expert_indices_per_layer.items():
+            if found != expected:
+                raise ValueError(
+                    f"Layer {layer_idx}: config declares {num_experts} experts "
+                    f"but checkpoint contains indices {sorted(found)}. "
+                    "The checkpoint may be incomplete or corrupted."
+                )
+        if hash_params.get("moe_prefill_flavour") == "expert_parallel":
+            return "moe_expert_parallel_stacking_v1"
+        return "moe_expert_stacking_v1"
+
+    # Pre-stacked formats detected purely from key patterns.
+    quant_config = getattr(config, "quantization_config", None) if config else None
+    if quant_config and any("_blocks" in k for k in weight_map):
+        return "gptoss_mxfp4_dequant_v1"
+
+    if any("input_linear.weight" in k and ".experts." not in k for k in weight_map):
+        return "granite_moe_fused_split_v1"
+
+    if any(".experts.gate_up_proj" in k for k in weight_map):
+        return "moe_fused_expert_split_v1"
+
+    # Config declares MoE but no known format found — treat as unknown.
+    return "none"
 
 
 class BaseCheckpointTransform:
@@ -167,12 +233,15 @@ class CheckpointTransformPipeline:
             )
 
         source_dir = src
-        expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
+        weight_map = read_weight_map(source_dir)
+        active_group_id = detect_group_transform_id(
+            kwargs.pop("config", None), weight_map, kwargs.pop("hash_params", None)
+        )
+        expected_manifest = _checkpoint_manifest(src, target_dtype, self.transforms, active_group_id)
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
             return out
-        _clear_stale_prepared_dir(out, src, source_dir)
+        _clear_stale_prepared_dir(out, src)
 
-        weight_map = read_weight_map(source_dir)
         for transform in self.transforms:
             if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
                 transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
