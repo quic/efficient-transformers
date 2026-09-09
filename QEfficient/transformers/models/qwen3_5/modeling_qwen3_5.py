@@ -65,9 +65,11 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
     def forward(self, hidden_states, gate):
         return (
             CustomRMSNormFunc.apply(
-                hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+                hidden_states,
+                self.weight.to(hidden_states.dtype),
+                self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
             )
-        ) * F.silu(gate.to(self.weight.dtype))
+        ) * F.silu(gate.to(hidden_states.dtype))
 
 
 class QEffQwen3_5DynamicCache(Cache):
@@ -574,18 +576,18 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # QAIC's LoadPad kernel only supports float32/int32/int64 inputs, so bf16/fp16
         # tensors are padded via torch.cat with a zero tensor instead of F.pad.
         query = torch.cat(
-            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype, device=query.device)],
+            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype)],
             dim=2,
         )
         key = torch.cat(
-            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype, device=key.device)], dim=2
+            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype)], dim=2
         )
         value = torch.cat(
-            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype, device=value.device)],
+            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype)],
             dim=2,
         )
-        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype, device=beta.device)], dim=2)
-        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype, device=g.device)], dim=2)
+        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype)], dim=2)
+        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype)], dim=2)
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (self.head_k_dim**0.5)
         query = query * scale
