@@ -18,6 +18,7 @@ from PIL import Image
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 from tests.utils.load_kimi_utils import (
     KIMI_K25_MODEL_NAME,
     get_kimi_k25_test_config,
@@ -262,12 +263,17 @@ def _run_disagg_qaic_generation(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-def test_kimi_k25_disagg_qaic_vs_hf_fp32():
+def test_kimi_k25_disagg_qaic_vs_hf_fp32(manual_cleanup):
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup)
     model, tokenizer, processor = _load_kimi_random_model()
     inputs, image_height, image_width = _prepare_inputs(processor)
     inputs = {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
-    hf_tokens = run_kimi_k25_hf_model_on_pytorch(
-        copy.deepcopy(model), processor, _clone_inputs(inputs), max_gen_len=GENERATION_LEN
+    hf_tokens = (
+        None
+        if compile_only
+        else run_kimi_k25_hf_model_on_pytorch(
+            copy.deepcopy(model), processor, _clone_inputs(inputs), max_gen_len=GENERATION_LEN
+        )
     )
 
     qeff_model = QEFFAutoModelForImageTextToText(
@@ -279,11 +285,15 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
     )
 
     compile_dims = _get_image_compile_dims(image_height, image_width)
-    vision_qpc_path, prefill_qpc_path, decode_qpc_path, compiled_onnx_paths = _compile_disagg_qpcs(
-        qeff_model,
-        compile_dims,
-    )
+    with model_export_compile_lock(KIMI_K25_MODEL_NAME):
+        vision_qpc_path, prefill_qpc_path, decode_qpc_path, compiled_onnx_paths = _compile_disagg_qpcs(
+            qeff_model,
+            compile_dims,
+        )
     print(f"Kimi-K2.5 disagg ONNX paths: {compiled_onnx_paths}")
+
+    if compile_only:
+        return
 
     sessions = []
     try:
@@ -300,7 +310,9 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
     finally:
         for session in sessions:
             session.deactivate()
+        manual_cleanup(list(compiled_onnx_paths.values()))
 
+    assert hf_tokens is not None
     print("HF:", _decode_tokens(tokenizer, hf_tokens), "\n", hf_tokens)
     print("Disagg QAIC:", _decode_tokens(tokenizer, torch.as_tensor(qaic_tokens)), "\n", qaic_tokens)
 

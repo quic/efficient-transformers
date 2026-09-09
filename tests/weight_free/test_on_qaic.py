@@ -32,7 +32,7 @@ from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     PROMPT_LEN,
-    WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
+    WEIGHT_FREE_QAIC_MODEL_PARAMS,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
@@ -42,13 +42,8 @@ from ._helpers import (
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end weight-free export -> compile -> generate on real QAIC hardware."""
     try:
@@ -85,13 +80,8 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
     """HF PT tokens == weight-free QAIC FP16 tokens (exact equality)."""
     from QEfficient.utils.run_utils import ApiRunner
@@ -153,13 +143,8 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir):
     """Weight-free-compiled and legacy dynamo-compiled QPCs produce identical tokens on QAIC."""
     try:

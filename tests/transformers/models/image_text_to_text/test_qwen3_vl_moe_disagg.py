@@ -16,6 +16,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 
 MODEL_NAME = "tiny-random/qwen3-vl-moe"
 PREFILL_SEQ_LEN = 64
@@ -247,6 +248,7 @@ def _run_disagg_qaic_generation(
 def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32")).to(dtype=torch.float32)
     processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
@@ -254,7 +256,7 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
     messages = _prepare_messages(image)
     common_inputs = _prepare_processor_inputs(processor, messages)
-    hf_tokens = _run_hf_torch_fp32(hf_model, processor, messages)
+    hf_tokens = None if compile_only else _run_hf_torch_fp32(hf_model, processor, messages)
 
     hf_model.config.dtype = "float32"
     hf_model.config.torch_dtype = torch.float32
@@ -272,65 +274,69 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
     sessions = []
     compiled_onnx_paths = {}
     try:
-        vision_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
-            num_cores=DISAGG_NUM_CORES,
-            num_devices=1,
-            mos=1,
-            aic_enable_depth_first=True,
-            skip_vision=False,
-            split_model_io=True,
-            skip_lang=True,
-            use_onnx_subfunctions=True,
-            layerwise=False,
-        )
-        compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+        with model_export_compile_lock(MODEL_NAME):
+            vision_qpc_path = qeff_model.compile(
+                batch_size=BATCH_SIZE,
+                prefill_seq_len=PREFILL_SEQ_LEN,
+                ctx_len=CTX_LEN,
+                height=image.height,
+                width=image.width,
+                num_cores=DISAGG_NUM_CORES,
+                num_devices=1,
+                mos=1,
+                aic_enable_depth_first=True,
+                skip_vision=False,
+                split_model_io=True,
+                skip_lang=True,
+                use_onnx_subfunctions=True,
+                layerwise=False,
+            )
+            compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
-        prefill_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
-            num_cores=DISAGG_NUM_CORES,
-            num_devices=1,
-            retain_full_kv=True,
-            split_model_io=True,
-            mos=1,
-            aic_enable_depth_first=True,
-            prefill_only=True,
-            enable_chunking=True,
-            skip_vision=True,
-            use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
-        )
-        compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
+            prefill_qpc_path = qeff_model.compile(
+                batch_size=BATCH_SIZE,
+                prefill_seq_len=PREFILL_SEQ_LEN,
+                ctx_len=CTX_LEN,
+                height=image.height,
+                width=image.width,
+                num_cores=DISAGG_NUM_CORES,
+                num_devices=1,
+                retain_full_kv=True,
+                split_model_io=True,
+                mos=1,
+                aic_enable_depth_first=True,
+                prefill_only=True,
+                enable_chunking=True,
+                skip_vision=True,
+                use_onnx_subfunctions=True,
+                layerwise=False,
+                layerwise_window_size=1,
+            )
+            compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
 
-        decode_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=1,
-            ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
-            num_cores=DISAGG_NUM_CORES,
-            num_devices=1,
-            split_model_io=True,
-            mos=1,
-            aic_enable_depth_first=True,
-            prefill_only=False,
-            skip_vision=True,
-            use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
-        )
-        compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
-        _assert_distinct_onnx_paths(compiled_onnx_paths)
-        print(f"Disagg ONNX paths: {compiled_onnx_paths}")
+            decode_qpc_path = qeff_model.compile(
+                batch_size=BATCH_SIZE,
+                prefill_seq_len=1,
+                ctx_len=CTX_LEN,
+                height=image.height,
+                width=image.width,
+                num_cores=DISAGG_NUM_CORES,
+                num_devices=1,
+                split_model_io=True,
+                mos=1,
+                aic_enable_depth_first=True,
+                prefill_only=False,
+                skip_vision=True,
+                use_onnx_subfunctions=True,
+                layerwise=False,
+                layerwise_window_size=1,
+            )
+            compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
+            _assert_distinct_onnx_paths(compiled_onnx_paths)
+            print(f"Disagg ONNX paths: {compiled_onnx_paths}")
+
+        if compile_only:
+            return
 
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
         prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
@@ -355,6 +361,7 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
         manual_cleanup([path for path in cleanup_paths if path is not None])
 
     assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
+    assert hf_tokens is not None
     assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(qaic_tokens.dtype, np.integer)
     assert np.issubdtype(hf_tokens.dtype, np.integer)

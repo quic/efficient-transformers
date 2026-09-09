@@ -23,7 +23,10 @@ if _xdist_worker and os.environ.get("QEFF_HOME") and not _two_phase_session:
     Path(os.environ["QEFF_HOME"]).mkdir(parents=True, exist_ok=True)
 
 from QEfficient.utils.cache import QEFF_HOME  # noqa: E402
-from QEfficient.utils.device_utils import get_qaic_mdp_device_groups  # noqa: E402
+from QEfficient.utils.device_utils import (  # noqa: E402
+    get_qaic_mdp_device_groups,
+    parse_qaic_device_groups,
+)
 from QEfficient.utils.logging_utils import logger  # noqa: E402
 from tests.two_phase import is_compile_warm_phase, is_two_phase_session  # noqa: E402
 
@@ -209,6 +212,11 @@ def _qaic_device_for_xdist_worker():
     "2,3" sees device ids 0,1 -- absolute ids must never be passed as device_ids
     alongside a mask.
 
+    QEFF_QAIC_DEVICE_GROUPS takes precedence when set by the CI stage. It assigns
+    an explicit semicolon-delimited group to each worker during pytest_configure,
+    before this fixture runs. Both paths fail instead of wrapping worker indexes,
+    so two workers can never silently receive the same device slice.
+
     QEFF_QAIC_CARD_OFFSET allows two stages to run simultaneously on non-
     overlapping card slices. E.g. stage A sets QEFF_NUM_QAIC_CARDS=2 + offset=0
     -> cards 0,1; stage B sets QEFF_NUM_QAIC_CARDS=2 + offset=2 -> cards 2,3.
@@ -225,8 +233,13 @@ def _qaic_device_for_xdist_worker():
     cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
     offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
     per_worker = max(1, int(os.environ.get("QEFF_QAIC_CARDS_PER_WORKER", 1)))
-    slots = max(1, cards // per_worker)
-    base = offset + (idx % slots) * per_worker
+    slots = cards // per_worker
+    if idx >= slots:
+        raise pytest.UsageError(
+            f"QAIC worker gw{idx} has no exclusive {per_worker}-device slice; "
+            f"only {slots} slices are available from {cards} devices"
+        )
+    base = offset + idx * per_worker
     os.environ["QAIC_VISIBLE_DEVICES"] = ",".join(str(base + i) for i in range(per_worker))
 
 
@@ -320,12 +333,29 @@ def pytest_sessionstart(session):
 
 def pytest_configure(config):
     """Register custom markers for test categorization."""
-    if _xdist_worker and os.environ.get("QEFF_ISOLATE_QAIC_WORKERS") == "1":
-        device_groups = get_qaic_mdp_device_groups()
+    explicit_device_groups = os.environ.get("QEFF_QAIC_DEVICE_GROUPS")
+    if _xdist_worker and (explicit_device_groups or os.environ.get("QEFF_ISOLATE_QAIC_WORKERS") == "1"):
+        try:
+            devices_per_worker = int(os.environ.get("QEFF_QAIC_DEVICES_PER_WORKER", 4))
+            if devices_per_worker < 1:
+                raise ValueError(f"QEFF_QAIC_DEVICES_PER_WORKER must be positive, got {devices_per_worker}")
+            device_groups = (
+                parse_qaic_device_groups(explicit_device_groups)
+                if explicit_device_groups
+                else get_qaic_mdp_device_groups(devices_per_group=devices_per_worker)
+            )
+        except ValueError as exc:
+            raise pytest.UsageError(str(exc)) from exc
+        invalid_groups = [device_ids for device_ids in device_groups if len(device_ids) != devices_per_worker]
+        if invalid_groups:
+            raise pytest.UsageError(
+                f"Every QAIC worker must have exactly {devices_per_worker} devices; invalid groups: {invalid_groups}"
+            )
         worker_index = int(_xdist_worker.removeprefix("gw"))
         if worker_index >= len(device_groups):
             raise pytest.UsageError(
-                f"QAIC worker {_xdist_worker} has no isolated 4-device group; found {len(device_groups)} groups"
+                f"QAIC worker {_xdist_worker} has no isolated {devices_per_worker}-device group; "
+                f"found {len(device_groups)} groups"
             )
         os.environ["QAIC_VISIBLE_DEVICES"] = ",".join(map(str, device_groups[worker_index]))
         logger.info("Assigned %s to QAIC devices %s", _xdist_worker, os.environ["QAIC_VISIBLE_DEVICES"])
