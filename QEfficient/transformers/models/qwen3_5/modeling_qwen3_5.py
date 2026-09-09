@@ -451,7 +451,7 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
@@ -863,7 +863,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     last_recurrent_state.to(recurrent_state_all.dtype),
                 )
             else:
-                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
+                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state.to(recurrent_state_all.dtype)
 
         else:
             # No cache — prefill only, no state needed
