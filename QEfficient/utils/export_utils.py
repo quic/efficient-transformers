@@ -86,7 +86,7 @@ def build_dynamo_export_kwargs(export_kwargs):
     from QEfficient.utils import constants
 
     kwargs = dict(export_kwargs)
-    kwargs.setdefault("report", False)
+    kwargs.setdefault("report", True)
     kwargs.setdefault("optimize", False)
     kwargs["dynamo"] = True
     kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
@@ -125,9 +125,24 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    max_seq_len = getattr(
+        model_config,
+        "max_position_embeddings",
+        getattr(getattr(model_config, "text_config", None), "max_position_embeddings", 1024),
+    )
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
+
+    # MiniMax's sparse-attention indexer reshapes ctx_len into (num_blocks, index_block_size)
+    # blocks and requires num_blocks >= 2 to export: torch.export inserts a broadcast-safety
+    # guard at the num_blocks==1 boundary that a single dynamic_shapes Dim can't satisfy across
+    # a range straddling it. ctx_len values <= index_block_size always give num_blocks == 1, so
+    # raise ctx_len's min past that boundary for this model only.
+    ctx_len_min = 2
+    if model_type == "minimax_m3_vl":
+        index_block_size = getattr(getattr(model_config, "text_config", None), "index_block_size", None)
+        if index_block_size is not None:
+            ctx_len_min = index_block_size + 1
 
     dim_registry: Dict[str, Any] = {}
 
@@ -143,7 +158,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
-                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                dim_registry[dim_name] = Dim("ctx_len", min=ctx_len_min, max=max_seq_len)
             elif "sliding_window" in dim_name:
                 dim_registry[dim_name] = Dim(
                     "sliding_window",
@@ -151,7 +166,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
                     max=getattr(model_config, "sliding_window", max_seq_len),
                 )
             else:
-                dim_registry[dim_name] = Dim.DYNAMIC
+                dim_registry[dim_name] = dim_name
         return dim_registry[dim_name]
 
     dynamic_shapes: Dict[str, Any] = {}
@@ -159,6 +174,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     past_values: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
+    index_key_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -170,6 +186,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
             k_pe_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("index_key."):
+            index_key_layers[int(input_name.split(".")[1])] = resolved
         else:
             dynamic_shapes[input_name] = resolved
 
@@ -184,6 +202,13 @@ def convert_dynamic_axes_to_dynamic_shapes(
         dynamic_shapes["compressed_kvs"] = [
             (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
         ]
+
+    if index_key_layers:
+        # index_key.N only exists for sparse-attention layers (a subset of all decoder
+        # layers), so unlike past_key_values there is no gap-filling by full layer range —
+        # the aggregated list must match the compact "index_keys" list order from
+        # get_dummy_index_keys (ascending original layer index, sparse layers only).
+        dynamic_shapes["index_keys"] = [index_key_layers[i] for i in sorted(index_key_layers)]
 
     return dynamic_shapes
 

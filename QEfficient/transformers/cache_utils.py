@@ -25,6 +25,7 @@ from QEfficient.customop import (
     ctx_scatter_3d,
     ctx_scatter_cb,
     ctx_scatter_cb_3d,
+    m3_ctx_scatter,
 )
 
 
@@ -78,6 +79,51 @@ def _remainder_with_symbolic_divisor(value: torch.Tensor, divisor) -> torch.Tens
     else:
         divisor_tensor = torch.scalar_tensor(divisor, dtype=value.dtype, device=value.device)
     return torch.remainder(value, divisor_tensor)
+
+
+def read_kv_cache_with_indices(
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    token_indices: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Gather selected key/value slices from a flat [batch, heads, ctx_len, head_dim] cache.
+
+    token_indices: int32 tensor of shape [batch, heads, n_tokens] where invalid entries are 0.
+    Returns selected_k, selected_v both of shape [batch, heads, n_tokens, head_dim].
+    """
+    return ctx_gather_blocked_kv(key_cache, token_indices), ctx_gather_blocked_kv(value_cache, token_indices)
+
+
+def update_and_read_index_key_cache(
+    index_key_cache: torch.Tensor,
+    position_ids: torch.Tensor,
+    idx_k: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Scatter idx_k into index_key_cache at position_ids, then read all ctx_len index keys.
+
+    Future positions (beyond max position_id) are masked with INT32_MAX (ONNX export) or 0 (eager).
+    Returns (gathered_index_keys [batch, 1, ctx_len, head_dim], updated_index_key_cache).
+    """
+    index_key_cache = m3_ctx_scatter(index_key_cache, position_ids.to(torch.int32), idx_k)
+    batch, _, ctx_len, _ = index_key_cache.shape
+    ctx_indices = torch.arange(ctx_len, device=index_key_cache.device)[None, None, :]
+    gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+    invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+    ctx_indices = torch.where(ctx_indices > gather_limit, invalid_idx, ctx_indices).to(torch.int32)
+    ctx_indices = ctx_indices.expand(batch, 1, ctx_len)
+    return ctx_gather_blocked_kv(index_key_cache, ctx_indices), index_key_cache
+
+
+def scatter_kv_into_cache(
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    position_ids: torch.Tensor,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Write key_states and value_states into the flat KV cache at position_ids."""
+    pid = position_ids.to(torch.int32)
+    return ctx_scatter(key_cache, pid, key_states), ctx_scatter(value_cache, pid, value_states)
 
 
 class QEffDynamicLayer(CacheLayerMixin):
@@ -234,7 +280,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = k_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(start=start_index, end=end_index, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
@@ -303,7 +349,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             k_out = folded_cache
         T_block = end_index - start_index
 
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(start=start_index, end=end_index, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
         gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
         invalid_mask = ctx_indices > gather_limit
@@ -339,7 +385,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = v_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(start=start_index, end=end_index, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
@@ -385,7 +431,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         else:
             v_out = folded_cache
         T_block = end_index - start_index
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(start=start_index, end=end_index, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
         gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
         invalid_mask = ctx_indices > gather_limit
@@ -1073,6 +1119,89 @@ class QEffDynamicCache(Cache):
         return cache
 
 
+class QEffMiniMaxSparseCache(QEffDynamicCache):
+    """
+    QEffDynamicCache extended with per-layer index key caches for MiniMax-M3 sparse attention.
+
+    Dense layers use the inherited write_only() / update() interface unchanged.
+    Sparse layers additionally use update_index_key_cache() and read_kv_with_block_indices().
+    """
+
+    def __init__(self, ddp_cache_data=None, *args, **kwargs):
+        super().__init__(ddp_cache_data, *args, **kwargs)
+        self.index_keys: dict[int, Optional[torch.Tensor]] = {}
+
+    def update_index_key_cache(
+        self,
+        idx_k: torch.Tensor,
+        layer_idx: int,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Scatter idx_k into the index key cache and return all ctx_len gathered index keys."""
+        gathered, updated = update_and_read_index_key_cache(
+            self.index_keys.get(layer_idx), position_ids, idx_k
+        )
+        self.index_keys[layer_idx] = updated
+        return gathered
+
+    def read_kv_with_block_indices(
+        self,
+        layer_idx: int,
+        token_indices: torch.Tensor,
+        token_valid: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Gather K/V by block-sparse token indices. Returns (selected_k, selected_v, flat_valid)."""
+        flat_indices = token_indices.flatten(-2)
+        flat_valid = token_valid.flatten(-2)
+        layer = self.layers[layer_idx]
+        selected_k, selected_v = read_kv_cache_with_indices(layer.keys, layer.values, flat_indices)
+        return selected_k, selected_v, flat_valid
+
+    @classmethod
+    def from_legacy_cache(
+        cls,
+        past_key_values: Optional[Tuple] = None,
+        index_keys: Optional[dict] = None,
+    ) -> "QEffMiniMaxSparseCache":
+        """Build from a per-layer tuple cache.
+
+        Each layer entry is either a 2-tuple ``(key, value)`` for dense layers or a
+        3-tuple ``(key, value, index_key)`` for sparse layers.  The legacy
+        ``index_keys`` dict is accepted for backward-compat but the inline
+        3-tuple form takes precedence.
+        """
+        cache = cls()
+        if past_key_values is not None:
+            for i, layer_tuple in enumerate(past_key_values):
+                if len(layer_tuple) == 3:
+                    key_states, value_states, index_key = layer_tuple
+                    cache.index_keys[i] = index_key
+                else:
+                    key_states, value_states = layer_tuple
+                cache.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+        if index_keys is not None:
+            cache.index_keys.update(index_keys)
+        return cache
+
+    def to_legacy_cache(self) -> Tuple:
+        """Return per-layer tuples; sparse layers carry a 3-tuple ``(key, value, index_key)``."""
+        layers = []
+        for i, layer in enumerate(self.layers):
+            if i in self.index_keys and self.index_keys[i] is not None:
+                layers.append((layer.keys, layer.values, self.index_keys[i]))
+            else:
+                layers.append((layer.keys, layer.values))
+        return tuple(layers)
+
+    def to_kv_only_cache(self) -> Tuple:
+        """Return per-layer 2-tuples ``(key, value)`` only, without index keys."""
+        return tuple((layer.keys, layer.values) for layer in self.layers)
+
+    def get_index_keys_tuple(self) -> Tuple:
+        """Return index keys as a flat tuple ordered by layer index."""
+        return tuple(self.index_keys[i] for i in sorted(self.index_keys.keys()))
+
+
 class QEffEncoderDecoderCache(EncoderDecoderCache):
     """
     Updated the `EncoderDecoderCache` to use the `QEffDynamicCache` for both self-attention and cross-attention caches.
@@ -1613,7 +1742,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
 
         batch, num_kv_heads, _, _ = k_out.shape
 
-        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        ctx_indices = torch.arange(start=start_idx, end=end_idx, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
         if torch.onnx.is_in_onnx_export():
@@ -1644,7 +1773,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
 
         batch, num_kv_heads, _, _ = v_out.shape
 
-        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        ctx_indices = torch.arange(start=start_idx, end=end_idx, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
         if torch.onnx.is_in_onnx_export():

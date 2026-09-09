@@ -63,6 +63,7 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
     Qwen3VLMoeVisionConfig,
 )
 
+from QEfficient.transformers.models.minimax_m3_vl import MiniMaxM3VLForCausalLM, MiniMaxM3VLTextConfig
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -190,6 +191,33 @@ TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS = {
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
+
+
+def _tiny_minimax_m3_text_config(dtype=torch.float32) -> MiniMaxM3VLTextConfig:
+    config = MiniMaxM3VLTextConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=16,
+        dense_intermediate_size=64,
+        shared_intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=32,
+        num_local_experts=4,
+        num_experts_per_tok=2,
+        routed_scaling_factor=1.0,
+        layer_types=["sparse", "full_attention"],
+        mlp_layer_types=["sparse", "dense"],
+        index_n_heads=2,
+        index_head_dim=8,
+        index_block_size=4,
+        index_topk_blocks=2,
+        index_local_blocks=1,
+    )
+    config.torch_dtype = dtype
+    return config
 
 
 def _per_test_thread_budget() -> int:
@@ -1091,6 +1119,113 @@ def test_causal_lm_cpu_runtime_parity_with_api_runner(model_type, model_id, tmp_
     assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
     assert np.array_equal(kv_tokens, ort_tokens)
 
+
+@pytest.mark.llm_model
+def test_minimax_m3_text_config_derived_pt_and_onnx_runtime_parity(tmp_path):
+    torch.manual_seed(7)
+    config = _tiny_minimax_m3_text_config()
+    model_hf = MiniMaxM3VLForCausalLM(config).eval()
+    input_ids = torch.arange(4, dtype=torch.int64).view(1, 4) % config.vocab_size
+    position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
+
+    with torch.no_grad():
+        hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids, use_cache=False).logits[:, -1:, :]
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    with torch.no_grad():
+        qeff_logits = qeff_model.model(input_ids=input_ids, position_ids=position_ids, use_cache=False).logits
+
+    assert torch.allclose(hf_logits, qeff_logits, atol=1e-5, rtol=1e-5)
+
+    past_key_values = tuple(
+        (
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+        )
+        for _ in range(config.num_hidden_layers)
+    )
+    past_key_values = tuple(
+        (
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+        )
+        for _ in range(1, config.num_hidden_layers)
+    )
+    index_past_key_values = [
+        torch.zeros((1, 1, input_ids.shape[1], config.index_head_dim))
+        for lt in config.layer_types
+        if lt == "sparse"
+    ]
+    with torch.no_grad():
+        qeff_cached_logits = qeff_model.model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            index_keys=index_past_key_values,
+            use_cache=True,
+        ).logits
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "minimax-m3-text", prefill_seq_len=4))
+    session = _ort_session(onnx_path)
+    ort_inputs = {}
+    for input_meta in session.get_inputs():
+        shape = [1 if not isinstance(dim, int) else dim for dim in input_meta.shape]
+        if input_meta.name == "input_ids":
+            ort_inputs[input_meta.name] = input_ids.numpy()
+        elif input_meta.name == "position_ids":
+            ort_inputs[input_meta.name] = position_ids.numpy()
+        elif input_meta.name.startswith(("past_key.", "past_value.")):
+            ort_inputs[input_meta.name] = np.zeros(
+                (1, config.num_key_value_heads, input_ids.shape[1], config.head_dim), dtype=np.float32
+            )
+        elif inputs_met.name.startswith("index_keys"):
+            ort_inputs[input_meta.name] = np.zeros(
+                (1, 1, input_ids.shape[1], config.head_dim), dtype=np.float32
+            )
+        else:
+            dtype = np.int64 if input_meta.type == "tensor(int64)" else np.float32
+            ort_inputs[input_meta.name] = np.zeros(shape, dtype=dtype)
+
+    ort_logits = session.run(None, ort_inputs)[0]
+    assert ort_logits.shape == (1, 1, config.vocab_size)
+    assert np.allclose(ort_logits, qeff_cached_logits.detach().numpy(), atol=1e-4, rtol=1e-4)
+
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    output_names = {output.name for output in onnx_model.graph.output}
+    assert any(name.startswith("past_key.") and name.endswith("_RetainedState") for name in output_names)
+
+
+@pytest.mark.llm_model
+def test_minimax_m3_text_hf_qeff_pytorch_parity():
+    torch.manual_seed(7)
+    config = _tiny_minimax_m3_text_config()
+    model_hf = MiniMaxM3VLForCausalLM(config).eval()
+    # Preserve the original HF model before transforms mutate it in-place.
+    model_hf_orig = deepcopy(model_hf)
+
+    input_ids = torch.arange(4, dtype=torch.int64).view(1, 4) % config.vocab_size
+    position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
+    seq_len = input_ids.shape[1]
+
+    with torch.no_grad():
+        hf_logits_no_cache = model_hf(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            use_cache=False,
+        ).logits[:, -1:]
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    with torch.no_grad():
+        qeff_logits_no_cache = qeff_model.model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            use_cache=False,
+        ).logits
+
+    assert torch.allclose(hf_logits_no_cache, qeff_logits_no_cache, atol=1e-5, rtol=1e-5), (
+        f"HF vs QEff logit mismatch on no-cache prefill: "
+        f"max_diff={(hf_logits_no_cache - qeff_logits_no_cache).abs().max().item():.6f}"
+    )
 
 @pytest.mark.llm_model
 def test_vlm_text_side_runtime_parity_and_full_export(tmp_path):

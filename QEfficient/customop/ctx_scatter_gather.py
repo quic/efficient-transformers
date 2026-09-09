@@ -393,3 +393,47 @@ class CtxGatherFuncBlockedKVBatch(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKVBatch, data, ctx_indices).setTypeAs(data)
+
+
+# ---------------------------------------------------------------------------
+# MiniMax-M3 indexer scatter
+# Identical semantics to CtxScatter but casts position_ids to INT64 before
+# building ScatterND indices so that all three index tensors (batch_idx,
+# head_idx, ctx_idx) share the same INT64 element type.  Without this cast
+# ctx_idx stays INT32 while batch_idx/head_idx are INT64 (derived from
+# Shape → Gather), producing a mixed-type Concat that triggers the QAIC
+# compiler assertion "sameSameShapeExceptDim: Different types".
+# ---------------------------------------------------------------------------
+@qeff_custom_op("com.qualcomm.cloud", 1)
+def M3CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
+    batch_size = ops.Gather(ops.Shape(data), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    exp_shape = ops.Concat(batch_size, num_heads, seq_len, one, axis=0)
+    batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    ctx_idx = ops.Expand(ops.Unsqueeze(ops.Cast(position_ids, to=onnxscript.INT64.dtype), [1, 3]), exp_shape)
+    indices = ops.Concat(batch_idx, head_idx, ctx_idx, axis=3)
+    return ops.ScatterND(data, indices, updates)
+
+
+class M3CtxScatterFunc(torch.autograd.Function):
+    """Scatter idx_k into the MiniMax-M3 index-key cache at position_ids."""
+
+    @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
+        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_idx = position_ids.unsqueeze(1)
+        data[batch_idx, head_idx, ctx_idx] = updates
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(M3CtxScatter, data, position_ids, updates).setTypeAs(data)

@@ -546,6 +546,14 @@ class QEFFBaseModel(ABC):
                                 f"k_pe.{i}",
                             ]
                         )
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
 
@@ -897,6 +905,14 @@ class QEFFBaseModel(ABC):
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
                         input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
