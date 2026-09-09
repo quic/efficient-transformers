@@ -61,7 +61,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 
 | Parameter | Default | Description |
 |---|---|---|
-| `--model-name` | `tiny-random/gpt-oss-mxfp4` | HuggingFace model ID |
+| `--model-name` | `Qwen/Qwen2-1.5B-Instruct` | HuggingFace model ID |
 | `--prompt` | `"My name is"` | Input prompt |
 | `--prefill-seq-len` | `32` | Prefill sequence length |
 | `--ctx-len` | `128` | KV-cache context length |
