@@ -22,9 +22,9 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .core import SCHEMA_VERSION, STAGES, ImpactPlan, TestCase
+from .core import SCHEMA_VERSION, STAGES, ImpactPlan, TestCase, is_hard_full_path
 
-DEFAULT_MODEL = "azure::gpt-5.5"
+DEFAULT_MODEL = "gpt5.6-terra"
 DEFAULT_REASONING_EFFORT = "high"
 MAX_PROMPT_BYTES = 400_000
 MAX_RESPONSE_BYTES = 1_000_000
@@ -36,15 +36,6 @@ SYSTEM_PROMPT_PATH = Path(__file__).with_name("SYSTEM_PROMPT.md")
 QUERY_TOOL_PATH = Path(__file__).with_name("query.py")
 TOOL_POLICY_PATH = Path(__file__).with_name("tool_policy.py")
 HOOK_AUDIT_NAME = ".ci-impact-qgenie-audit.jsonl"
-LLM_REFINABLE_FULL_REASONS = (
-    "global pytest behavior changed:",
-    "source snapshot generation failed",
-    "unsafe static analysis for ",
-    "unclassified production/configuration changes",
-    "unparsable model inventory:",
-)
-
-
 class LLMStageError(RuntimeError):
     """Raised when mandatory LLM selection cannot be completed safely."""
 
@@ -700,11 +691,7 @@ def merge_selection(
             plan.stages[stage]["enabled"] = True
         return plan
 
-    if (
-        plan.mode == "full"
-        and plan.reasons
-        and all(reason.startswith(LLM_REFINABLE_FULL_REASONS) for reason in plan.reasons)
-    ):
+    if plan.mode == "full" and not any(is_hard_full_path(path) for path in plan.changed_files):
         for stage in STAGES:
             plan.stages[stage]["enabled"] = False
         plan.reasons.append("LLM bounded a deterministic static-analysis full-CI fallback")
