@@ -31,7 +31,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
-from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
@@ -53,21 +53,13 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 NEW_GENERATION_TOKENS = 10
 
 
-def _xfail_if_known_parity_issue(model_name):
-    """Opt a model out of the greedy HF-vs-QAIC token assert when its on-device argmax is
-    fp16-marginal, via a ``known_runtime_parity_issue`` entry in ``image_text_model_configs.json``.
-    Mirrors ``test_image_text_to_text_models.py`` and the causal suite. Centralized in the shared
-    CB check below (every CB route -- plain CB and prefix caching -- is a device-parity run) so
-    the xfail cannot be forgotten on a per-test basis; it flips to xpass the day parity is
-    recovered.
-
-    Inert in the two-phase compile-warm phase, which stops after compile and never reaches the
-    assert: the model still has to build its QPC there so the execute phase finds a warm cache.
-    """
-    if is_compile_warm_phase():
+def _assert_runtime_token_parity(reference_tokens, qpc_tokens, message, parity_issue=None):
+    """Compare HF and QAIC tokens, xfail only a configured numerical parity mismatch."""
+    if (reference_tokens == qpc_tokens).all():
         return
-    if parity_issue := model_config_dict[model_name].get("known_runtime_parity_issue"):
+    if parity_issue:
         pytest.xfail(parity_issue)
+    pytest.fail(message)
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
@@ -81,12 +73,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     config: Optional[AutoConfig] = None,
     kv_cache_batch_size: Optional[int] = None,
     compile_only: bool = False,
+    known_runtime_parity_issue: Optional[str] = None,
 ):
     # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
     # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
     # warm QPCs) and force compile-only in the warm phase. A no-op in normal runs.
     manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
-    _xfail_if_known_parity_issue(model_name)
+    parity_issue = known_runtime_parity_issue or model_config_dict[model_name].get("known_runtime_parity_issue")
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
@@ -103,7 +96,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     # The image/prompt lists below are tiled to full_batch_size, so they follow along.
     if kv_cache_batch_size is not None:
         full_batch_size = kv_cache_batch_size
-    max_gen_len = NEW_GENERATION_TOKENS
+    max_gen_len = model_config_dict[model_name].get("generation_len", NEW_GENERATION_TOKENS)
 
     if is_kimi_k25(model_name):
         if config is None:
@@ -328,8 +321,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     print("QPC Outputs (QAIC) for Continuous Batching with same prompt:")
     print(exec_info.generated_texts)
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
+        _assert_runtime_token_parity(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            f"Tokens don't match for prompt {i} between HF and QPC output for same prompts",
+            parity_issue,
         )
     # The distinct-prompt leg runs full_batch_size prompts. Prefix caching bumps
     # full_batch_size above the config's 2-entry prompt/image lists, so tile them to
@@ -368,8 +364,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     print("QPC Outputs (QAIC) for Continuous Batching with different prompt:")
     print(exec_info.generated_texts)
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for different prompts"
+        _assert_runtime_token_parity(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            f"Tokens don't match for prompt {i} between HF and QPC output for different prompts",
+            parity_issue,
         )
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
 
@@ -431,7 +430,11 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
     if is_kimi_k25(model_name):
         hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
@@ -439,7 +442,11 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
         hf_config.name_or_path = model_name
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
@@ -490,6 +497,7 @@ def test_dummy_image_text_to_text_prefix_caching_cb(model_name, kv_offload, manu
             config=hf_config,
             manual_cleanup=manual_cleanup,
             kv_cache_batch_size=PREFIX_CACHING_KV_CACHE_BATCH_SIZE,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(

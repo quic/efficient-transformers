@@ -34,7 +34,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
-from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
@@ -61,20 +61,13 @@ test_mm_blocking_models = [model["model_name"] for model in multimodal_models if
 NEW_GENERATION_TOKENS = 10
 
 
-def _xfail_if_known_parity_issue(model_name):
-    """Opt a model out of the greedy HF-vs-QAIC token assert when its on-device argmax is
-    fp16-marginal, via a ``known_runtime_parity_issue`` entry in ``image_text_model_configs.json``.
-    Mirrors the causal suite: the model stays an xfail across the token-parity tests -- keeping
-    the ``*_compile_only`` export/compile cases and every non-parity VLM test live -- instead of
-    disappearing into ``SKIPPED_MODELS``, and flips to xpass the day parity is recovered.
-
-    Inert in the two-phase compile-warm phase, which stops before the token assert: the model
-    still has to build its QPC there so the execute phase finds a warm cache to run against.
-    """
-    if is_compile_warm_phase():
+def _assert_runtime_token_parity(reference_tokens, qpc_tokens, parity_issue=None):
+    """Compare HF and QAIC tokens, xfail only a configured numerical parity mismatch."""
+    if (reference_tokens == qpc_tokens).all():
         return
-    if parity_issue := model_config_dict[model_name].get("known_runtime_parity_issue"):
+    if parity_issue:
         pytest.xfail(parity_issue)
+    pytest.fail("Tokens don't match for pytorch HF output and QPC output")
 
 
 def _resolve_vlm_hf_golden(
@@ -138,6 +131,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     comp_ctx_lengths_prefill: Optional[List[int]] = None,
     comp_ctx_lengths_decode: Optional[List[int]] = None,
     ccl_enabled: bool = False,
+    known_runtime_parity_issue: Optional[str] = None,
 ):
     # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
     # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
@@ -150,7 +144,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     query = model_config_dict[model_name]["text_prompt"]
     batch_size = model_config_dict[model_name]["batch_size"]
 
-    max_gen_len = NEW_GENERATION_TOKENS
+    max_gen_len = model_config_dict[model_name].get("generation_len", NEW_GENERATION_TOKENS)
     pytorch_hf_tokens = None
     pytorch_kv_tokens = None
     ort_tokens = None
@@ -456,10 +450,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
-    exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    exec_info = qeff_model.generate(inputs=inputs, generation_len=max_gen_len, streamer=streamer)
     print(exec_info)
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
-    assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    parity_issue = known_runtime_parity_issue or model_config_dict[model_name].get("known_runtime_parity_issue")
+    _assert_runtime_token_parity(pytorch_hf_tokens, cloud_ai_100_tokens, parity_issue)
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
@@ -484,8 +479,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
@@ -504,8 +497,6 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_of
 def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
@@ -545,14 +536,16 @@ def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, ma
 def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     torch.manual_seed(42)
     hf_config = None
     if is_kimi_k25(model_name):
         hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
@@ -560,7 +553,11 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
         hf_config.name_or_path = model_name
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -604,6 +601,9 @@ def _run_dummy_dual_qpc_case(model_name, manual_cleanup, layer_types=None, **kwa
         hf_config.text_config.num_hidden_layers = len(layer_types)
         hf_config.text_config.layer_types = layer_types
     hf_config.name_or_path = model_name
+    kwargs.setdefault(
+        "known_runtime_parity_issue", model_config_dict[model_name].get("known_dummy_runtime_parity_issue")
+    )
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         kv_offload=True,
@@ -616,24 +616,7 @@ def _run_dummy_dual_qpc_case(model_name, manual_cleanup, layer_types=None, **kwa
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        pytest.param(
-            m,
-            marks=pytest.mark.xfail(
-                reason="Pre-existing dummy-layer parity/config gap unrelated to CCL.",
-                strict=False,
-            ),
-        )
-        if m
-        in {
-            "Qwen/Qwen2.5-VL-3B-Instruct",
-        }
-        else m
-        for m in test_mm_models
-    ],
-)
+@pytest.mark.parametrize("model_name", test_mm_models)
 def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     """Compute-context-length (CCL) parity for every VLM, dual QPC only.
 
@@ -658,13 +641,10 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     the QPC flips into a different top-K member on those steps.
     """
     ccl_forced = {
-        "Qwen/Qwen2.5-VL-3B-Instruct",
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     }
     if model_name in ModelConfig.SKIPPED_MODELS and model_name not in ccl_forced:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     torch.manual_seed(42)
     comp_ctx_lengths_decode = model_config_dict[model_name].get("comp_ctx_lengths_decode")
 
@@ -703,13 +683,11 @@ def test_dummy_image_text_to_text_blocking_dual_qpc(model_name, manual_cleanup):
     """
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     torch.manual_seed(42)
     _run_dummy_dual_qpc_case(
         model_name,
         manual_cleanup,
-        qaic_config={"enable_blocking": True, "num_kv_blocks": 2},
+        qaic_config={"blocking_mode": "kv", "num_kv_blocks": 2},
     )
 
 
@@ -760,8 +738,6 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    _xfail_if_known_parity_issue(model_name)
-
     if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
         hf_config = None
         if model_name in ModelConfig.STANDARD_VLM_MODELS:
@@ -778,6 +754,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
                 qaic_config={},
                 test_kv_replicate=True,
                 manual_cleanup=manual_cleanup,
+                known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
             )
         else:
             check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -814,7 +791,6 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
         "moonshotai/Kimi-K2.5",
     ]:
         pytest.skip("QNN is not supported for these models yet.")
-
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 

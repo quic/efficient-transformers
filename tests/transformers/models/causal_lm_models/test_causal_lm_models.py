@@ -107,6 +107,11 @@ def _run_per_pr_causal_text_case(
     # compile-only so it never touches a device. See tests/two_phase.py.
     manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
 
+    # CCL must be enabled before export so comp_ctx_lengths remains an ONNX input.
+    if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+        qaic_config = dict(qaic_config or {})
+        qaic_config["ccl_enabled"] = True
+
     if model_config.get("known_export_or_compile_issue"):
         pytest.xfail(model_config["known_export_or_compile_issue"])
     if model_config.get("known_runtime_parity_issue") and not compile_only:
