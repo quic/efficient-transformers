@@ -38,13 +38,6 @@ BATCH_SIZE = 1
 GENERATION_LEN = 30
 IMAGE_SIZE = (536, 354)
 VISION_SIZE = 280
-ORT_EXTRA_DIMS = {
-    "vision_size": VISION_SIZE,
-    "height": IMAGE_SIZE[1],
-    "image_height": IMAGE_SIZE[1],
-    "width": IMAGE_SIZE[0],
-    "image_width": IMAGE_SIZE[0],
-}
 TEXT_PROMPT = "Can you describe this image in detail?"
 # Set QEFF_GEMMA4_SKIP_VISION=1 to exercise only the language  path.
 SKIP_VISION = os.environ.get("QEFF_GEMMA4_SKIP_VISION", "0").strip().lower() in {"1", "true", "yes"}
@@ -375,6 +368,9 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
     skip_hf_reference = dma_config.get("skip_hf_reference", False)
+    blocking_mode = dma_config.get("blocking_mode")
+    num_kv_blocks = dma_config.get("num_kv_blocks")
+    num_q_blocks = dma_config.get("num_q_blocks")
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -418,8 +414,11 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
             moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
             prefill_num_devices=dma_config["prefill_num_devices"],
             decode_num_devices=dma_config["decode_num_devices"],
-            mdp_num_partitions=dma_config["stages"],
+            mdp_num_partitions=dma_config.get("stages"),
             use_onnx_subfunctions=use_onnx_subfunctions,
+            blocking_mode=blocking_mode,
+            num_kv_blocks=num_kv_blocks,
+            num_q_blocks=num_q_blocks,
         )
         compiled_onnx_paths.update(lang_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
@@ -516,27 +515,38 @@ def _compile_kv_share_lang(
     moe_prefill_packed_chunk_size: int | None = None,
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
-    mdp_num_partitions: int = PREFILL_MDP_PARTITIONS,
+    mdp_num_partitions: int | None = PREFILL_MDP_PARTITIONS,
     use_onnx_subfunctions: bool = True,
+    blocking_mode: str | None = None,
+    num_kv_blocks: int | None = None,
+    num_q_blocks: int | None = None,
 ) -> tuple[str, str, dict]:
     onnx_paths = {}
-    decode_qpc_path = qeff_model.compile(
-        batch_size=BATCH_SIZE,
-        prefill_seq_len=1,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        num_devices=decode_num_devices,
-        retain_full_kv=True,  # required for DMA slice writes into full KV
-        split_retained_state_io=True,
-        mos=1,
-        mxfp6_matmul=False,
-        mxint8_kv_cache=False,
-        aic_enable_depth_first=True,
-        prefill_only=False,
-        skip_vision=True,
-        use_onnx_subfunctions=use_onnx_subfunctions,
-        offload_pt_weights=False,
-    )
+    decode_compile_kwargs = {
+        "batch_size": BATCH_SIZE,
+        "prefill_seq_len": 1,
+        "ctx_len": CTX_LEN,
+        "num_cores": 16,
+        "num_devices": decode_num_devices,
+        "retain_full_kv": True,  # required for DMA slice writes into full KV
+        "split_retained_state_io": True,
+        "mos": 1,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
+        "aic_enable_depth_first": True,
+        "prefill_only": False,
+        "skip_vision": True,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
+        "offload_pt_weights": False,
+    }
+    if blocking_mode is not None:
+        decode_compile_kwargs["qaic_config"] = {
+            "blocking_mode": "qkv",
+            "num_kv_blocks": num_kv_blocks,
+            "num_q_blocks": num_q_blocks,
+            "ctx_len": CTX_LEN,
+        }
+    decode_qpc_path = qeff_model.compile(**decode_compile_kwargs)
     onnx_paths["kv_share_decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share decode")
 
     prefill_compile_kwargs = {
@@ -551,17 +561,28 @@ def _compile_kv_share_lang(
         "mxfp6_matmul": False,
         "mxint8_kv_cache": False,
         "aic_enable_depth_first": True,
-        "mdp_num_partitions": mdp_num_partitions,
         "prefill_only": True,
         "enable_chunking": True,
         "skip_vision": True,
         "use_onnx_subfunctions": use_onnx_subfunctions,
         "offload_pt_weights": False,
     }
+    if mdp_num_partitions is not None:
+        prefill_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
+    prefill_qaic_config = {}
     if moe_prefill_packed_chunk_size is not None:
-        prefill_compile_kwargs["qaic_config"] = {
-            "moe_config": {"expert_parallel_chunk_size": moe_prefill_packed_chunk_size}
-        }
+        prefill_qaic_config["moe_config"] = {"expert_parallel_chunk_size": moe_prefill_packed_chunk_size}
+    if blocking_mode is not None:
+        prefill_qaic_config.update(
+            {
+                "blocking_mode": blocking_mode,
+                "num_kv_blocks": num_kv_blocks,
+                "num_q_blocks": num_q_blocks,
+                "ctx_len": CTX_LEN,
+            }
+        )
+    if prefill_qaic_config:
+        prefill_compile_kwargs["qaic_config"] = prefill_qaic_config
     prefill_qpc_path = qeff_model.compile(**prefill_compile_kwargs)
     onnx_paths["kv_share_prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share prefill")
     return prefill_qpc_path.get("lang_prefill_qpc_path"), decode_qpc_path.get("lang_decode_qpc_path"), onnx_paths

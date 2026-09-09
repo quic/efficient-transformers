@@ -7,6 +7,8 @@
 
 """Continuous-batching disaggregated prefill/decode for Qwen3.5-MoE — DMA KV handoff."""
 
+# TODO: unified sample script for all VLMs/LLMs with efficient disagg infra
+
 import argparse
 from collections import deque
 from time import perf_counter
