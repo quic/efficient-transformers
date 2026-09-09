@@ -35,9 +35,7 @@ def main():
         "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="AIC hardware version"
     )
     parser.add_argument(
-        "--use-weight-free-export",
         "--weight-free",
-        dest="weight_free",
         action="store_true",
         help="Build the model on meta tensors and load weights at compile time",
     )
