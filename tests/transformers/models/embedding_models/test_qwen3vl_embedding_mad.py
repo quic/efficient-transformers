@@ -23,6 +23,7 @@ from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
     resolve_model_source,
 )
 from QEfficient.utils.test_utils import load_vlm_model
+from tests.utils.image_utils import load_test_image
 
 CONFIG_PATH = "tests/configs/image_text_model_configs.json"
 
@@ -32,6 +33,16 @@ with open(CONFIG_PATH, "r") as f:
 
 test_embedding_models = [model_config["model_name"] for model_config in embedding_models]
 embedding_model_config_dict = {model["model_name"]: model for model in embedding_models}
+
+
+def _load_embedding_test_images(model_inputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    loaded_inputs = []
+    for entry in model_inputs:
+        loaded_entry = dict(entry)
+        if "image" in loaded_entry:
+            loaded_entry["image"] = load_test_image(loaded_entry["image"])
+        loaded_inputs.append(loaded_entry)
+    return loaded_inputs
 
 
 def _compute_cpu_embeddings(model_hf, embedder, model_inputs: List[Dict[str, Any]]) -> torch.Tensor:
@@ -105,7 +116,7 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
         model=qeff_model,
     )
 
-    model_inputs = EXAMPLE_QUERIES + EXAMPLE_DOCUMENTS
+    model_inputs = _load_embedding_test_images(EXAMPLE_QUERIES + EXAMPLE_DOCUMENTS)
     compile_specs = embedder.get_compile_specs(
         inputs=model_inputs,
         ctx_len=model_cfg["ctx_len"],

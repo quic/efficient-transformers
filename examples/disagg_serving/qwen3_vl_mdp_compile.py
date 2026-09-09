@@ -17,19 +17,16 @@ hardware configuration before integrating the QPC into a serving stack.
 The script exports and compiles the language-prefill partition of
 Qwen/Qwen3-VL-30B-A3B-Instruct for disaggregated serving.  It uses:
 
-  - ``mdp_ts_num_devices``  -- total number of AIC-100 devices across all
+  - ``num_devices``         -- total number of AIC-100 devices across all
                                pipeline stages (default: 4).
   - ``mdp_num_partitions``  -- number of pipeline-parallel stages the model is
                                split into for prefill (default: 2).
   - ``mdp_strategy``        -- MDP partition-config generation strategy:
-                               ``onnx`` (default) enumerates every ONNX node;
-                               ``intersection`` requires a prior
-                               ``qaic-compile -mdp-dump-partition-config`` run
-                               and produces a compact JSON.
-  - ``mdp_compiler_dump_path`` -- path to the compiler-dump directory produced
-                               by the prior ``intersection`` run.  Required when
-                               ``--mdp_strategy intersection`` is chosen; the
-                               argparse validator below enforces this.
+                               ``intersection`` (default) generates a compiler
+                               dump first, then produces a compact MDP JSON
+                               from the ONNX/compiler-node intersection;
+                               ``onnx`` enumerates every ONNX graph node.
+  - ``expert_parallel``     -- enables the MoE expert-parallel prefill path.
 
 Running this script will **load / download the HF model weights** and invoke
 the QEfficient export + compile pipeline.  Make sure:
@@ -51,6 +48,9 @@ import torch
 from transformers import AutoConfig
 
 from QEfficient import QEFFAutoModelForImageTextToText
+
+NUM_LAYERS = 2
+VISION_DEPTH = 9
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,13 +75,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mos", type=int, default=1, help="Memory-over-subscription factor.")
 
     parser.add_argument(
-        "--mdp_ts_num_devices",
+        "--num_devices",
         type=int,
         default=4,
-        help=(
-            "Total AIC-100 devices used across all pipeline stages. "
-            "Each stage receives mdp_ts_num_devices // mdp_num_partitions devices."
-        ),
+        help="Total AIC-100 devices used across all pipeline stages.",
     )
     parser.add_argument(
         "--mdp_num_partitions",
@@ -92,34 +89,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mdp_strategy",
         choices=["onnx", "intersection"],
-        default="onnx",
+        default="intersection",
         help=(
             "MDP partition-config generation strategy. "
             "'onnx' enumerates every ONNX graph node (~19 MB JSON). "
-            "'intersection' filters to exact Glow IR names and requires "
-            "--mdp_compiler_dump_path."
+            "'intersection' first generates a compiler dump, then filters "
+            "to exact Glow IR names."
         ),
     )
     parser.add_argument(
-        "--mdp_compiler_dump_path",
-        default=None,
-        help=(
-            "Path to the directory produced by a prior "
-            "'qaic-compile -mdp-dump-partition-config' run. "
-            "Required when --mdp_strategy intersection is chosen."
-        ),
+        "--expert_parallel",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable MoE expert-parallel prefill compile options.",
+    )
+    parser.add_argument(
+        "--expert_parallel_chunk_size",
+        type=int,
+        default=256,
+        help="Packed chunk size used by the MoE expert-parallel prefill path.",
     )
 
-    args = parser.parse_args()
-
-    if args.mdp_strategy == "intersection" and not args.mdp_compiler_dump_path:
-        parser.error(
-            "--mdp_compiler_dump_path is required when --mdp_strategy intersection is used. "
-            "Run 'qaic-compile -mdp-dump-partition-config' first to produce the dump directory, "
-            "then pass that path with --mdp_compiler_dump_path."
-        )
-
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:
@@ -133,6 +124,9 @@ def main() -> None:
 
     config = AutoConfig.from_pretrained(args.model_id)
     config.dtype = "float16"
+    config.vision_config.depth = VISION_DEPTH
+    config.text_config.num_hidden_layers = NUM_LAYERS
+    config.vision_config.deepstack_visual_indexes = [VISION_DEPTH - 1]
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_id,
@@ -143,18 +137,27 @@ def main() -> None:
         layerwise=False,
     )
 
+    qaic_config = None
+    if args.expert_parallel:
+        qaic_config = {
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
+            }
+        }
+
     prefill_qpc_path = qeff_model.compile(
         batch_size=args.batch_size,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         height=args.height,
         width=args.width,
+        num_devices=args.num_devices,  # total devices spread across all pipeline stages
         num_cores=args.num_cores,
         mos=args.mos,
-        mdp_ts_num_devices=args.mdp_ts_num_devices,  # total devices spread across all pipeline stages
         mdp_num_partitions=args.mdp_num_partitions,  # number of pipeline-parallel stages (partitions)
-        mdp_strategy=args.mdp_strategy,  # "onnx" (default) or "intersection" (needs compiler dump)
-        mdp_compiler_dump_path=args.mdp_compiler_dump_path,  # required only for intersection strategy
+        mdp_strategy=args.mdp_strategy,  # "intersection" auto-generates the compiler dump
+        qaic_config=qaic_config,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         retain_full_kv=True,
