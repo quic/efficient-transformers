@@ -244,7 +244,7 @@ class CheckpointTransformPipeline:
 
         for transform in self.transforms:
             if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
-                transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
+                transform.apply(source_dir, out, target_dtype=target_dtype, weight_map=weight_map, **kwargs)
                 if (out / CHECKPOINT_PREPARED_SENTINEL).exists():
                     _write_manifest(out, expected_manifest)
                 return out
