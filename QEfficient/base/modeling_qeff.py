@@ -88,11 +88,24 @@ DIFFUSION_GEMMA_DISCRETE_SAMPLER_OPS = {
     "ScatterND",
     "Shape",
 }
+FLOATING_POINT_TENSOR_TYPES = {
+    onnx.TensorProto.BFLOAT16,
+    onnx.TensorProto.DOUBLE,
+    onnx.TensorProto.FLOAT,
+    onnx.TensorProto.FLOAT16,
+}
 
 
 def _write_unified_accum_npi(onnx_path):
-    graph = onnx.load(onnx_path, load_external_data=False).graph
+    model = onnx.load(onnx_path, load_external_data=False)
+    model = onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False)
+    graph = model.graph
     producers = {output_name: node for node in graph.node for output_name in node.output}
+    tensor_dtypes = {
+        value_info.name: value_info.type.tensor_type.elem_type
+        for value_info in list(graph.input) + list(graph.output) + list(graph.value_info)
+        if value_info.type.HasField("tensor_type") and value_info.type.tensor_type.HasField("elem_type")
+    }
     keep_nodes = []
 
     def is_moe_node(node):
@@ -186,6 +199,10 @@ def _write_unified_accum_npi(onnx_path):
                 output_basename in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OUTPUTS
                 or node.op_type in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OPS
                 or (node.op_type == "TopK" and output_index == 1)
+                or (
+                    output_name in tensor_dtypes
+                    and tensor_dtypes[output_name] not in FLOATING_POINT_TENSOR_TYPES
+                )
             ):
                 continue
             if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
