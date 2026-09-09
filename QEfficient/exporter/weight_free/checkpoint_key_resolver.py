@@ -38,6 +38,10 @@ _COMPUTED_INITIALIZER_NAMES = {
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "_mask_causal",
+    "_mask_strict",
+    "_ones_lower",
+    "_eye",
 }
 
 
@@ -125,7 +129,9 @@ def find_checkpoint_key(
         candidates.append(f"{prefix}.{stripped}")
 
     if prefix and stripped.startswith(f"{prefix}."):
-        candidates.append(stripped[len(f"{prefix}.") :])
+        unprefixed = stripped[len(f"{prefix}.") :]
+        candidates.append(unprefixed)
+        candidates.append(f"{prefix}.language_model.{unprefixed}")
 
     if ".mlp." in stripped:
         candidates.append(stripped.replace(".mlp.", ".block_sparse_moe."))
@@ -162,6 +168,8 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     parameter_names = {name for name, _ in qeff_model.model.named_parameters()}
     buffer_names = {name for name, _ in qeff_model.model.named_buffers()}
     model_names = parameter_names | buffer_names
+    for model_name in list(model_names):
+        model_names.update(_moe_weight_aliases(model_name))
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
     # (e.g. lm_head.weight when tie_word_embeddings=True) is absent from model_names even

@@ -45,6 +45,7 @@ from QEfficient.customop import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
@@ -64,7 +65,7 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
 
     def forward(self, hidden_states, gate):
         return (
-            CustomRMSNormFunc.apply(
+            select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
                 hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
             )
         ) * F.silu(gate.to(torch.float32))
@@ -272,7 +273,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
-    flat_pos = safe_position_ids.reshape(-1)
+    flat_pos = safe_position_ids.reshape(-1).to(cos.device)
     cos = cos.index_select(0, flat_pos).reshape(*safe_position_ids.shape, cos.shape[-1])
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
@@ -326,6 +327,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, mrope_section=N
 
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
     k_rot, k_pass = k[:, :, :, :rotary_dim], k[:, :, :, rotary_dim:]
 
@@ -596,7 +599,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
         # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
-        mask = mask_causal
+        mask = mask_causal.to(device=g.device) if mask_causal is not None else None
+        mask_strict = mask_strict.to(device=g.device) if mask_strict is not None else None
 
         #
         # chunk decay
@@ -1070,6 +1074,11 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
 
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
+
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def get_onnx_retained_state_specs(
         self,

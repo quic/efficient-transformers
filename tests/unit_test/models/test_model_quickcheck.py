@@ -1591,6 +1591,34 @@ def test_subfunction_export_restores_onnx_transforms_on_failure():
     assert InvalidIndexProvider.SUBFUNC_ENABLED is False
 
 
+def test_dynamo_dynamic_shapes_nest_qwen3_5_hybrid_retained_states():
+    from types import SimpleNamespace
+
+    from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes
+
+    dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
+        {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "past_key.0": {0: "batch_size", 2: "ctx_len"},
+            "past_value.0": {0: "batch_size", 2: "ctx_len"},
+            "conv_state.1": {0: "batch_size"},
+            "recurrent_state.1": {0: "batch_size"},
+        },
+        model_config=SimpleNamespace(model_type="qwen3_5_moe_text", max_position_embeddings=32),
+    )
+
+    assert "past_key.0" not in dynamic_shapes
+    assert "past_value.0" not in dynamic_shapes
+    assert "conv_state.1" not in dynamic_shapes
+    assert "recurrent_state.1" not in dynamic_shapes
+    assert "past_key_values" in dynamic_shapes
+    assert len(dynamic_shapes["past_key_values"]) == 2
+    assert set(dynamic_shapes["past_key_values"][0][0]) == {0, 2}
+    assert set(dynamic_shapes["past_key_values"][0][1]) == {0, 2}
+    assert set(dynamic_shapes["past_key_values"][1][0]) == {0}
+    assert set(dynamic_shapes["past_key_values"][1][1]) == {0}
+
+
 @pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -2335,10 +2363,14 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     causal_lm = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
     causal_lm.config = SimpleNamespace(layer_types=["full_attention", "linear_attention"])
     assert causal_lm.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+    assert causal_lm.get_onnx_past_key_value_names(0) == ["past_key.0", "past_value.0"]
+    assert causal_lm.get_onnx_past_key_value_names(1) == ["conv_state.1", "recurrent_state.1"]
 
     wrapper = QEffQwen3_5MoeDecoderWrapper.__new__(QEffQwen3_5MoeDecoderWrapper)
     wrapper.config = SimpleNamespace(text_config=SimpleNamespace(layer_types=["full_attention", "linear_attention"]))
     assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+    assert wrapper.get_onnx_past_key_value_names(0) == ["past_key.0", "past_value.0"]
+    assert wrapper.get_onnx_past_key_value_names(1) == ["conv_state.1", "recurrent_state.1"]
 
 
 def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
@@ -3442,6 +3474,14 @@ def test_subfunction_compile_io_names_use_internal_retained_state():
 
     assert output_name == "past_value.1_InternalRetainedState"
     assert _state_input_name(output_name) == "past_value.1"
+    assert (
+        _compile_io_name("conv_state.2_RetainedState", use_onnx_subfunctions=True)
+        == "conv_state.2_InternalRetainedState"
+    )
+    assert (
+        _compile_io_name("recurrent_state.2_RetainedState", use_onnx_subfunctions=True)
+        == "recurrent_state.2_InternalRetainedState"
+    )
     assert _compile_io_name("vision_embeds_RetainedState", use_onnx_subfunctions=True) == "vision_embeds_RetainedState"
 
 
@@ -3818,6 +3858,55 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
     assert "kv_cache_prefix" not in implicit_compiler_options, (
         "kv_cache_prefix leaked into compiler_options — would produce an invalid compiler flag"
     )
+
+
+def test_qwen3_5_moe_compile_custom_io_covers_linear_attention_states(tmp_path, monkeypatch):
+    """Hybrid Qwen3.5-MoE decode compile must retain both KV and linear-attention states."""
+    from types import SimpleNamespace
+
+    qeff_model = object.__new__(QEFFAutoModelForCausalLM)
+    qeff_model.model = SimpleNamespace(
+        config=SimpleNamespace(model_type="qwen3_5_moe_text", num_hidden_layers=2, torch_dtype=torch.float32),
+        qaic_config=None,
+        get_retained_state_names=lambda: [
+            "past_key.0",
+            "past_value.0",
+            "conv_state.1",
+            "recurrent_state.1",
+        ],
+    )
+    qeff_model.num_layers = 2
+    qeff_model.continuous_batching = False
+    qeff_model.ccl_enabled = False
+    qeff_model.is_tlm = False
+    qeff_model.comp_ctx_lengths_prefill = None
+    qeff_model.comp_ctx_lengths_decode = None
+    qeff_model.build_prefill_specialization = lambda **_: {"batch_size": 1, "seq_len": 1}
+    captured = {}
+
+    def fake_compile(**kwargs):
+        captured.update(kwargs)
+        return tmp_path / "qpc"
+
+    monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+    qeff_model.compile(
+        prefill_seq_len=1,
+        ctx_len=32,
+        compile_dir=str(tmp_path),
+        kv_cache_prefix="VLLM",
+        use_onnx_subfunctions=True,
+    )
+
+    custom_io = captured["custom_io"]
+    assert "past_key.0_VLLM" in custom_io
+    assert "past_key.0_VLLM_InternalRetainedState" in custom_io
+    assert "past_value.0_VLLM" in custom_io
+    assert "past_value.0_VLLM_InternalRetainedState" in custom_io
+    assert "conv_state.1_VLLM" in custom_io
+    assert "conv_state.1_VLLM_InternalRetainedState" in custom_io
+    assert "recurrent_state.1_VLLM" in custom_io
+    assert "recurrent_state.1_VLLM_InternalRetainedState" in custom_io
+    assert captured["use_onnx_subfunctions"] is True
 
 
 @pytest.mark.llm_model

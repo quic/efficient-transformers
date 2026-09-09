@@ -314,6 +314,23 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
 
+    def test_resolver_accepts_language_model_checkpoint_prefix(self):
+        checkpoint_index = {
+            "model.language_model.embed_tokens.weight": "model.safetensors",
+            "model.language_model.layers.0.input_layernorm.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.embed_tokens.weight", checkpoint_index, backbone)
+            == "model.language_model.embed_tokens.weight"
+        )
+        assert (
+            find_checkpoint_key("model.layers.0.input_layernorm.weight", checkpoint_index, backbone)
+            == "model.language_model.layers.0.input_layernorm.weight"
+        )
+
     def test_resolver_rejects_ambiguous_moe_weight_aliases(self):
         checkpoint_index = {
             "model.layers.0.mlp.experts.moe_weights.gate": "model.safetensors",
@@ -381,6 +398,10 @@ class TestWeightFreeCheckpointTransforms:
             ("buffer", "model.embed_tokens.embed_scale"),
             ("parameter", "model.sin_cached"),
             ("parameter", "model.cos_cached"),
+            ("buffer", "model.layers.0.linear_attn._mask_causal"),
+            ("buffer", "model.layers.0.linear_attn._mask_strict"),
+            ("buffer", "model.layers.0.linear_attn._ones_lower"),
+            ("buffer", "model.layers.0.linear_attn._eye"),
         ],
     )
     def test_promote_initializers_keeps_computed_state_embedded(self, tmp_path, monkeypatch, state_kind, state_name):
@@ -461,6 +482,44 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+
+    def test_promotes_moe_alias_initializer(self, tmp_path, monkeypatch):
+        src = tmp_path / "src"
+        src.mkdir()
+        weight = torch.ones(2, 3, 4)
+        _write_safetensors_checkpoint(src, {"model.layers.0.mlp.moe_weights.gate": weight})
+
+        class MoEAliasModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.layers = torch.nn.ModuleList([torch.nn.Module()])
+                self.model.layers[0].mlp = torch.nn.Module()
+                self.model.layers[0].mlp.experts = torch.nn.Module()
+                self.model.layers[0].mlp.experts.moe_weights = torch.nn.ParameterDict(
+                    {"gate": torch.nn.Parameter(weight)}
+                )
+
+        initializer = SimpleNamespace(shape=weight.shape, dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={"model.layers.0.mlp.moe_weights.gate": initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-moe-alias",
+            qeff_model=SimpleNamespace(model=MoEAliasModel()),
+        )
+
+        assert "model.layers.0.mlp.moe_weights.gate" not in graph.initializers
+        assert [v.name for v in graph.inputs] == ["model.layers.0.mlp.moe_weights.gate"]
+        assert spec.inputs[0].name == "model.layers.0.mlp.moe_weights.gate"
+        assert spec.inputs[0].location.key == "model.layers.0.mlp.moe_weights.gate"
 
 
 def _fake_export(
