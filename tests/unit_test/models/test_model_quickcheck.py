@@ -2411,6 +2411,134 @@ def test_qwen3_vl_moe_batch_index_boundary_reorders_inputs_and_outputs():
     assert torch.equal(physical_positions[:, batch_index.flatten()], logical_positions)
 
 
+@pytest.mark.parametrize("grouped_state", [False, True])
+def test_qwen3_5_moe_conv_decode_slice_matches_gather_reference(grouped_state):
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    flat_state = torch.randn(batch_size, hidden_size, state_len)
+    conv_state = flat_state.reshape(batch_size, 2, 4, state_len) if grouped_state else flat_state
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    state_input = flat_state
+    hidden_states_new = torch.cat([state_input, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = state_input[2]
+    expected_state = expected_state.reshape_as(conv_state)
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+        use_decode_slice=True,
+    )
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+        use_decode_slice=True,
+    )
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_moe_decode_expert_parallel_selection():
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEExpertParallelWeightsTransform,
+        OptimizedMoEExportConfigTransform,
+        OptimizedMoEMapperTransform,
+        OptimizedMoEWeightsTransform,
+    )
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeSparseMoeBlock
+    from QEfficient.transformers.moe import MoEFlavour
+
+    config = Qwen3_5MoeTextConfig(
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        vocab_size=128,
+        max_position_embeddings=128,
+        head_dim=32,
+        moe_intermediate_size=64,
+        shared_expert_intermediate_size=64,
+        num_experts=4,
+        num_experts_per_tok=2,
+        layer_types=["full_attention", "linear_attention"],
+    )
+    torch.manual_seed(2)
+    hf_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed and isinstance(qeff_block, QEffQwen3_5MoeSparseMoeBlock)
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        num_devices=1,
+        num_cores=2,
+        prefill_seq_len=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 1,
+                "tree_reduce": False,
+                "expert_parallel_chunk_size": 1,
+            }
+        },
+    )
+    OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+
 def test_moe_prefill_transform_does_not_require_enable_chunking():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
     from QEfficient.transformers.models.pytorch_transforms import (
