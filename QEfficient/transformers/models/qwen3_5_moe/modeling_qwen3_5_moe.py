@@ -57,6 +57,7 @@ from QEfficient.customop import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
@@ -113,12 +114,13 @@ class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states, gate):
-        normed = CustomRMSNormFunc.apply(
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        normed = rms_interface(
             hidden_states,
             self.weight.to(hidden_states.dtype),
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
         )
-        return normed * F.silu(gate.to(normed.dtype))
+        return normed * F.silu(gate.to(torch.float32)).to(normed.dtype)
 
 
 class QEffQwen3_5MoeDynamicCache(Cache):
@@ -405,7 +407,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
-    flat_pos = safe_position_ids.reshape(-1)
+    flat_pos = safe_position_ids.reshape(-1).to(cos.device)
     cos = cos.index_select(0, flat_pos).reshape(*safe_position_ids.shape, cos.shape[-1])
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
@@ -459,6 +461,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, mrope_section=N
 
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
     k_rot, k_pass = k[:, :, :, :rotary_dim], k[:, :, :, rotary_dim:]
 
@@ -893,7 +897,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal
+        mask = mask_causal.to(device=g.device) if mask_causal is not None else None
+        mask_strict = mask_strict.to(device=g.device) if mask_strict is not None else None
 
         # chunk decay
         # g = g.cumsum(dim=-1)
@@ -1316,6 +1321,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
+        elif not is_layerwise_active():
+            target_length = past_seen_tokens
         else:
             pos_max = 0
             pos_max = int(text_position_ids.max().item()) + 1

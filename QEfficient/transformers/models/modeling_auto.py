@@ -4256,7 +4256,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 2: "kv_block_size",
             }
 
+        if self.model.config.model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
+            example_inputs["position_ids"] = example_inputs["position_ids"].unsqueeze(0).repeat(4, 1, 1)
+            dynamic_axes["position_ids"] = {1: "batch_size", 2: "seq_len"}
+
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
+        retained_state_specs = None
         if is_deepseek_v4:
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config,
@@ -4335,6 +4340,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 retain_full_kv=kwargs.get("retain_full_kv", False)
                 or (prefill_only and kwargs.get("enable_chunking", False)),
             )
+
+        if retained_state_specs is not None:
             example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
             dynamic_axes.update(retained_state_specs["dynamic_axes"])
             output_names.extend(retained_state_specs["output_names"])
