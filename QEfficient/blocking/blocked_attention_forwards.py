@@ -126,7 +126,7 @@ def _read_kv_block(
     layer_idx: int,
     kv_block_size: int,
     paged_attention: bool,
-    j: int,
+    kv_block_idx: int,
     block_table: Optional[torch.Tensor],
     cache_kwargs: Dict[str, Any],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -137,8 +137,8 @@ def _read_kv_block(
     """
     if paged_attention:
         position_ids = cache_kwargs.get("position_ids")
-        block_index = block_table[:, j]
-        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
+        block_index = block_table[:, kv_block_idx]
+        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == kv_block_idx
         return past_key_value.read_only_paged_attention(block_index, updated, layer_idx, cache_kwargs)
     return past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
 
@@ -208,9 +208,9 @@ def blocked_kv_attention_forward(
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = ctx_len - start_index
         else:
             kv_len_block = kv_block_size
@@ -231,7 +231,7 @@ def blocked_kv_attention_forward(
             layer_idx=layer_idx,
             kv_block_size=kv_block_size,
             paged_attention=paged_attention,
-            j=j,
+            kv_block_idx=kv_block_idx,
             block_table=block_table,
             cache_kwargs=cache_kwargs,
         )
@@ -327,9 +327,9 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     out_blocks: list = []
     key_cache_folded, value_cache_folded = past_key_value.get_batch_folded_kv(layer_idx)
 
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        kv_len_block = (ctx_len - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
         end_index = start_index + kv_len_block
 
         skip_future = None
@@ -458,9 +458,9 @@ def blocked_kv_attention_forward_headpar_offline(
     sum_blocks = []
     out_blocks = []
 
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
@@ -657,9 +657,9 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
                 }
             )
 
-        for j in range(num_kv_blocks):
-            start_index = j * kv_block_size
-            kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+        for kv_block_idx in range(num_kv_blocks):
+            start_index = kv_block_idx * kv_block_size
+            kv_len_block = (ctx_len - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
             end_index = start_index + kv_len_block
             split_block_len = kv_len_block // split
 
@@ -811,9 +811,9 @@ def blocked_qkv_attention_forward_prefill_online(
                 }
             )
 
-        for j in range(num_kv_blocks):
-            start_index = j * kv_block_size
-            kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+        for kv_block_idx in range(num_kv_blocks):
+            start_index = kv_block_idx * kv_block_size
+            kv_len_block = (ctx_len - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
             end_index = start_index + kv_len_block
 
             skip_future = None
@@ -901,9 +901,9 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     sum_buf: list = []
     out_buf: list = []
 
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        kv_len_block = ctx_len - start_index if j == num_kv_blocks - 1 else kv_block_size
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        kv_len_block = ctx_len - start_index if kv_block_idx == num_kv_blocks - 1 else kv_block_size
         end_index = start_index + kv_len_block
         T_orig = kv_len_block
 
@@ -1158,12 +1158,12 @@ def blocked_qkv_attention_forward(
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
-    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `kv_block_idx`,
     # not on q_block_idx, so hoist the read out of the q-block loop below.
     kv_blocks = []
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
@@ -1184,7 +1184,7 @@ def blocked_qkv_attention_forward(
             layer_idx=layer_idx,
             kv_block_size=kv_block_size,
             paged_attention=paged_attention,
-            j=j,
+            kv_block_idx=kv_block_idx,
             block_table=block_table,
             cache_kwargs=cache_kwargs,
         )
@@ -1323,12 +1323,12 @@ def blocked_hqkv_attention_forward(
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
-    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `kv_block_idx`,
     # not on head_block_idx/q_block_idx, so hoist the read out of the loops below.
     kv_blocks = []
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
@@ -1349,7 +1349,7 @@ def blocked_hqkv_attention_forward(
             layer_idx=layer_idx,
             kv_block_size=kv_block_size,
             paged_attention=paged_attention,
-            j=j,
+            kv_block_idx=kv_block_idx,
             block_table=block_table,
             cache_kwargs=cache_kwargs,
         )
@@ -1514,12 +1514,12 @@ def blocked_bhqkv_attention_forward(
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
-    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `j`,
+    # Gather each KV block once: block_index/updated/cache_kwargs only depend on `kv_block_idx`,
     # not on head_block_idx/q_block_idx/b_block_idx, so hoist the read out of the loops below.
     kv_blocks = []
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
@@ -1540,7 +1540,7 @@ def blocked_bhqkv_attention_forward(
             layer_idx=layer_idx,
             kv_block_size=kv_block_size,
             paged_attention=paged_attention,
-            j=j,
+            kv_block_idx=kv_block_idx,
             block_table=block_table,
             cache_kwargs=cache_kwargs,
         )
@@ -1841,9 +1841,9 @@ def blocked_kv_mla_attention_forward(
     position_ids = cache_kwargs.get("position_ids")
     current_position = position_ids.max(dim=-1).values
 
-    for j in range(num_kv_blocks):
-        start_index = j * kv_block_size
-        if j == num_kv_blocks - 1:
+    for kv_block_idx in range(num_kv_blocks):
+        start_index = kv_block_idx * kv_block_size
+        if kv_block_idx == num_kv_blocks - 1:
             kv_len_block = ctx_len - start_index
         else:
             kv_len_block = kv_block_size
