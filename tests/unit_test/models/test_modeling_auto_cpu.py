@@ -24,6 +24,7 @@ All tests run on CPU only and are safe for parallel execution.
 Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 """
 
+import inspect
 import logging
 import os
 from unittest.mock import MagicMock
@@ -49,6 +50,7 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
+    QEFFAutoModelForImageTextToText,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
 )
@@ -273,6 +275,40 @@ class TestQEFFAutoModelForCausalLMLogic:
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff.num_layers == 2
+
+    def test_from_pretrained_signature_omits_qaic_config(self):
+        """from_pretrained no longer exposes qaic_config; compile owns it."""
+        causal_from_pretrained_signature = inspect.signature(QEFFAutoModelForCausalLM.from_pretrained)
+        causal_compile_signature = inspect.signature(QEFFAutoModelForCausalLM.compile)
+        vlm_from_pretrained_signature = inspect.signature(QEFFAutoModelForImageTextToText.from_pretrained)
+
+        assert "qaic_config" not in causal_from_pretrained_signature.parameters
+        assert "qaic_config" in causal_compile_signature.parameters
+        assert "qaic_config" not in vlm_from_pretrained_signature.parameters
+
+    def test_from_pretrained_qaic_config_warns_and_is_not_passed_to_hf(self, monkeypatch):
+        """Legacy from_pretrained(qaic_config=...) warns and keeps HF loading clean."""
+        model, _ = make_tiny_llama()
+        captured_kwargs = {}
+
+        def fake_from_pretrained(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model
+
+        monkeypatch.setattr(
+            QEFFAutoModelForCausalLM._hf_auto_class,
+            "from_pretrained",
+            staticmethod(fake_from_pretrained),
+        )
+
+        with pytest.warns(DeprecationWarning, match=r"Pass `qaic_config` to `compile\(\)`"):
+            qeff = QEFFAutoModelForCausalLM.from_pretrained(
+                "local-model",
+                qaic_config={"speculative_model_type": "target"},
+            )
+
+        assert "qaic_config" not in captured_kwargs
+        assert qeff.model.qaic_config["speculative_model_type"] == "target"
 
     def test_init_raises_type_error_for_non_causal_lm(self):
         """__init__ raises TypeError when model is not a CausalLM or LMHeadModel."""
@@ -1203,7 +1239,7 @@ class TestTLMMultiSpecSpecializations:
         from unittest.mock import patch
 
         model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
         captured = {}
 
         with patch.object(
@@ -1213,19 +1249,27 @@ class TestTLMMultiSpecSpecializations:
                 captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
             ),
         ):
-            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[0, 3])
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=128,
+                num_speculative_tokens=[0, 3],
+                qaic_config={"speculative_model_type": "target"},
+            )
 
         assert captured.get("specializations") is not None, "_compile was not reached"
+        assert qeff.is_tlm is True
+        assert qeff.model.qaic_config["speculative_model_type"] == "target"
         specs = captured["specializations"]
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 2, f"Expected 2 decode specs, got {len(decode_specs)}: {specs}"
+        assert [s["seq_len"] for s in decode_specs] == [1, 4]
 
     def test_compile_deduplication(self):
         """compile(num_speculative_tokens=[3, 3, 3]) → only one decode spec for K=3."""
         from unittest.mock import patch
 
         model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
         captured = {}
 
         with patch.object(
@@ -1235,7 +1279,12 @@ class TestTLMMultiSpecSpecializations:
                 captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
             ),
         ):
-            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 3, 3])
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=128,
+                num_speculative_tokens=[3, 3, 3],
+                qaic_config={"speculative_model_type": "target"},
+            )
 
         assert captured.get("specializations") is not None, "_compile was not reached"
         specs = captured["specializations"]
@@ -1248,7 +1297,7 @@ class TestTLMMultiSpecSpecializations:
         from unittest.mock import patch
 
         model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
         captured = {}
 
         with patch.object(
@@ -1258,7 +1307,12 @@ class TestTLMMultiSpecSpecializations:
                 captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
             ),
         ):
-            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 1, 2])
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=128,
+                num_speculative_tokens=[3, 1, 2],
+                qaic_config={"speculative_model_type": "target"},
+            )
 
         assert captured.get("specializations") is not None, "_compile was not reached"
         specs = captured["specializations"]
@@ -1272,7 +1326,7 @@ class TestTLMMultiSpecSpecializations:
         from unittest.mock import patch
 
         model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
         captured = {}
 
         with patch.object(
@@ -1282,7 +1336,12 @@ class TestTLMMultiSpecSpecializations:
                 captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
             ),
         ):
-            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=3)
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=128,
+                num_speculative_tokens=3,
+                qaic_config={"speculative_model_type": "target"},
+            )
 
         assert captured.get("specializations") is not None, "_compile was not reached"
         specs = captured["specializations"]
@@ -1295,7 +1354,7 @@ class TestTLMMultiSpecSpecializations:
         from unittest.mock import patch
 
         model, _ = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        qeff = QEFFAutoModelForCausalLM(model)
         captured = {}
 
         with patch.object(
@@ -1305,7 +1364,12 @@ class TestTLMMultiSpecSpecializations:
                 captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
             ),
         ):
-            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=0)
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=128,
+                num_speculative_tokens=0,
+                qaic_config={"speculative_model_type": "target"},
+            )
 
         assert captured.get("specializations") is not None, "_compile was not reached"
         specs = captured["specializations"]

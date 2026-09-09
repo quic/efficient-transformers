@@ -108,7 +108,6 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
         kv_offload=True,
         trust_remote_code=True,
         config=qeff_config,
-        qaic_config={"export_embedding": True},
     )
 
     embedder = QEffQwen3VLEmbedder(
@@ -131,6 +130,7 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
         num_devices=1,
         num_cores=16,
         mxfp6_matmul=False,
+        qaic_config={"export_embedding": True},
     )
 
     cpu_embeddings = _compute_cpu_embeddings(model_hf=model_hf, embedder=embedder, model_inputs=model_inputs)

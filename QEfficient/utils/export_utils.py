@@ -283,7 +283,7 @@ def export_wrapper(func):
     def wrapper(self, *args, **kwargs):
         if not _EXPORT_FROM_COMPILE.get():
             warnings.warn(
-                "Direct .export() is deprecated. Use .compile() to export and compile with the complete configuration.",
+                "Direct .export() is deprecated as a public API. Use .compile() to export and compile with the complete configuration.",
                 DeprecationWarning,
                 stacklevel=2,
             )

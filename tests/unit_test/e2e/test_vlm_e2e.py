@@ -20,6 +20,11 @@ All tests run on CPU , using tiny in-memory configs where possible.
 
 import pytest
 
+
+def get_pytorch_transform_pipeline(wrapper_cls):
+    return wrapper_cls.__new__(wrapper_cls)._all_pytorch_transforms()
+
+
 # ---------------------------------------------------------------------------
 # Tests: QEFFAutoModelForImageTextToText class structure
 # ---------------------------------------------------------------------------
@@ -315,8 +320,8 @@ class TestQEFFAutoModelForCTCStructure:
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCTC
         from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 
-        assert CustomOpsTransform in QEFFAutoModelForCTC._pytorch_transforms, (
-            "CustomOpsTransform not in QEFFAutoModelForCTC._pytorch_transforms"
+        assert CustomOpsTransform in get_pytorch_transform_pipeline(QEFFAutoModelForCTC), (
+            "CustomOpsTransform not in QEFFAutoModelForCTC resolved pytorch transforms"
         )
 
     def test_onnx_transforms_include_fp16_clip(self):
@@ -372,8 +377,8 @@ class TestVlmKVOffloadTransforms:
         from QEfficient.transformers.models.modeling_auto import _QEFFAutoModelForImageTextToTextSingleQPC
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
 
-        assert VlmNoKVOffloadTransform in _QEFFAutoModelForImageTextToTextSingleQPC._pytorch_transforms, (
-            "VlmNoKVOffloadTransform not in SingleQPC._pytorch_transforms"
+        assert VlmNoKVOffloadTransform in get_pytorch_transform_pipeline(_QEFFAutoModelForImageTextToTextSingleQPC), (
+            "VlmNoKVOffloadTransform not in SingleQPC resolved pytorch transforms"
         )
 
     def test_single_qpc_pytorch_transforms_include_no_kv_offload(self):
@@ -381,6 +386,6 @@ class TestVlmKVOffloadTransforms:
         from QEfficient.transformers.models.modeling_auto import _QEFFAutoModelForImageTextToTextSingleQPC
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
 
-        assert VlmNoKVOffloadTransform in _QEFFAutoModelForImageTextToTextSingleQPC._pytorch_transforms, (
-            "VlmNoKVOffloadTransform not in SingleQPC._pytorch_transforms"
+        assert VlmNoKVOffloadTransform in get_pytorch_transform_pipeline(_QEFFAutoModelForImageTextToTextSingleQPC), (
+            "VlmNoKVOffloadTransform not in SingleQPC resolved pytorch transforms"
         )

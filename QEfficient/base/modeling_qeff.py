@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 import gc
 import inspect
 import logging
@@ -41,8 +42,24 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    CustomOpsTransform,
+    KVCacheExternalModuleMapperTransform,
+    KVCacheTransform,
     OptimizedMoETransform,
+    PoolingTransform,
+    PrefillOnlyChunkedTransform,
+    PrefillOnlyExternalModuleMapperTransform,
+    PrefillOnlyTransform,
     ReplicateKVHeadTransform,
+    RevertPrefillKeepAttentionTransform,
+    RevertPrefillOnlyExternalModuleMapperTransform,
+    RevertPrefillOnlyTransform,
+    SamplerTransform,
+    SimpleDecodeMoeTransform,
+    SpDTransform,
+    TextClassificationTransform,
+    VlmKVOffloadTransform,
+    VlmNoKVOffloadTransform,
 )
 from QEfficient.utils import (
     align_kv_input_names_to_retained_outputs,
@@ -67,6 +84,47 @@ logger = logging.getLogger(__name__)
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
     "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
+
+_SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25", "gemma4"}
+
+_MODELING_AUTO_PYTORCH_TRANSFORMS = {
+    "QEFFAutoModel": ((CustomOpsTransform,), ()),
+    "QEFFAutoModelForSequenceClassification": ((CustomOpsTransform, TextClassificationTransform), ()),
+    "QEffVisionEncoderForTextImageToTextModel": (
+        (),
+        (CustomOpsTransform, KVCacheTransform, KVCacheExternalModuleMapperTransform),
+    ),
+    "QEffCausalLMForTextImageToTextModel": (
+        (),
+        (CustomOpsTransform, KVCacheTransform, VlmKVOffloadTransform, SimpleDecodeMoeTransform),
+    ),
+    "_QEFFAutoModelForImageTextToTextSingleQPC": (
+        (),
+        (
+            CustomOpsTransform,
+            KVCacheTransform,
+            KVCacheExternalModuleMapperTransform,
+            VlmNoKVOffloadTransform,
+            SimpleDecodeMoeTransform,
+        ),
+    ),
+    "QEFFAutoModelForCausalLM": (
+        (),
+        (CustomOpsTransform, KVCacheTransform, KVCacheExternalModuleMapperTransform, SimpleDecodeMoeTransform),
+    ),
+    "QEFFAutoModelForSpeechSeq2Seq": ((CustomOpsTransform,), (KVCacheTransform,)),
+    "QEFFAutoModelForCTC": ((CustomOpsTransform,), ()),
+}
+
+_PREFILL_TRANSFORM_MODEL_CLASSES = {
+    "QEFFAutoModelForCausalLM",
+    "QEffCausalLMForTextImageToTextModel",
+    "_QEFFAutoModelForImageTextToTextSingleQPC",
+}
+
+_SPD_TRANSFORM_MODEL_CLASSES = {"QEFFAutoModelForCausalLM"}
+
+_SAMPLER_TRANSFORM_MODEL_CLASSES = {"QEFFAutoModelForCausalLM", "QEffCausalLMForTextImageToTextModel"}
 
 
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
@@ -188,7 +246,7 @@ class QEFFBaseModel(ABC):
     Provides certain utility methods to be used by child classes.
 
     Class variables:
-    :_pytorch_transforms: Pytorch transformations to be applied after initialization.
+    :_pytorch_transforms: Pytorch transformations to be applied before export/compile.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
 
@@ -196,12 +254,153 @@ class QEFFBaseModel(ABC):
     _end = 0
     _total_layers = None
     _layerwise_active = False
-    _pytorch_transforms: List[PytorchTransform]
+    _pytorch_transforms: List[PytorchTransform] = []
     _onnx_transforms = [BaseOnnxTransform]
     _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = []
 
     def _transform_names(self) -> List[str]:
-        return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
+        return [x.__name__ for x in self._all_pytorch_transforms() + self._onnx_transforms]
+
+    def _modeling_auto_pytorch_transform_groups(self):
+        for cls in type(self).mro():
+            if transforms := _MODELING_AUTO_PYTORCH_TRANSFORMS.get(cls.__name__):
+                pre_quant_transforms, post_quant_transforms = transforms
+                return list(pre_quant_transforms), list(post_quant_transforms)
+        return [], []
+
+    def _all_pytorch_transforms(self) -> List[PytorchTransform]:
+        pre_quant_transforms, post_quant_transforms = self._modeling_auto_pytorch_transform_groups()
+        class_transforms = []
+        proxy_transforms = []
+        for transform in self._pytorch_transforms:
+            if transform.__name__ == "QeffProxyModuleTransform":
+                proxy_transforms.append(transform)
+            else:
+                class_transforms.append(transform)
+        transforms = []
+        for transform in pre_quant_transforms + class_transforms + post_quant_transforms + proxy_transforms:
+            if transform not in transforms:
+                transforms.append(transform)
+        return transforms
+
+    def _apply_pytorch_transforms(self) -> bool:
+        any_transformed = False
+        for transform in self._all_pytorch_transforms():
+            self.model, transformed = transform.apply(self.model)
+            any_transformed = any_transformed or transformed
+        return any_transformed
+
+    def _post_pytorch_transform(self) -> bool:
+        return False
+
+    def _apply_pooling_transform(self, pooling=None) -> None:
+        if pooling:
+            self.model, _ = PoolingTransform.apply(self.model, pooling)
+
+    def _apply_prefill_transform(
+        self,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+        use_external_module_mapper: Optional[bool] = False,
+    ) -> None:
+        if enable:
+            if use_external_module_mapper:
+                self.model, _ = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            if enable_chunking:
+                self.model, _ = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, _ = PrefillOnlyTransform.apply(self.model)
+        else:
+            if use_external_module_mapper:
+                self.model, _ = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            if retain_full_kv:
+                self.model, _ = RevertPrefillKeepAttentionTransform.apply(self.model)
+            else:
+                self.model, _ = RevertPrefillOnlyTransform.apply(self.model)
+
+    def _uses_external_prefill_mapper(self) -> bool:
+        return KVCacheExternalModuleMapperTransform in self._all_pytorch_transforms()
+
+    def _supports_prefill_transform_options(self) -> bool:
+        return any(cls.__name__ in _PREFILL_TRANSFORM_MODEL_CLASSES for cls in type(self).mro())
+
+    def _should_apply_prefill_transform_from_options(self) -> bool:
+        class_names = {cls.__name__ for cls in type(self).mro()}
+        if "_QEFFAutoModelForImageTextToTextSingleQPC" in class_names:
+            return True
+        model_type = getattr(getattr(self, "config", None), "model_type", None) or getattr(
+            getattr(self.model, "config", None), "model_type", None
+        )
+        return model_type in _SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+
+    def _supports_spd_transform(self) -> bool:
+        return any(cls.__name__ in _SPD_TRANSFORM_MODEL_CLASSES for cls in type(self).mro())
+
+    def _supports_sampler_transform(self) -> bool:
+        return any(cls.__name__ in _SAMPLER_TRANSFORM_MODEL_CLASSES for cls in type(self).mro())
+
+    def _update_prefill_hash_params(
+        self,
+        *,
+        prefill_only: Optional[bool],
+        enable_chunking: Optional[bool],
+        retain_full_kv: Optional[bool],
+    ) -> None:
+        model_type = getattr(getattr(self.model, "config", None), "model_type", None)
+        architectures = getattr(getattr(self.model, "config", None), "architectures", None) or []
+
+        if model_type in _SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only and "DeepseekV3ForCausalLM" not in architectures:
+                self.hash_params.pop("retain_full_kv", None)
+                self.hash_params["prefill_only"] = True
+                if enable_chunking:
+                    self.hash_params["chunking"] = True
+            else:
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                self.hash_params.pop("chunking_seq_len", None)
+                if retain_full_kv:
+                    self.hash_params["retain_full_kv"] = True
+                else:
+                    self.hash_params.pop("retain_full_kv", None)
+        elif prefill_only is not None:
+            self.hash_params["prefill_only"] = bool(prefill_only)
+
+    def _apply_prefill_transform_from_options(
+        self,
+        *,
+        prefill_only: Optional[bool] = False,
+        prefill_seq_len: Optional[int] = None,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ) -> None:
+        if prefill_only:
+            assert prefill_seq_len is None or prefill_seq_len > 1
+            if not enable_chunking and getattr(self, "continuous_batching", False):
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self._apply_prefill_transform(
+                enable=True,
+                enable_chunking=enable_chunking,
+                use_external_module_mapper=self._uses_external_prefill_mapper(),
+            )
+        else:
+            self._apply_prefill_transform(
+                enable=False,
+                retain_full_kv=retain_full_kv,
+                use_external_module_mapper=self._uses_external_prefill_mapper(),
+            )
+
+        self._update_prefill_hash_params(
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            retain_full_kv=retain_full_kv,
+        )
 
     def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
         if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
@@ -236,6 +435,7 @@ class QEFFBaseModel(ABC):
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
+        qaic_config = kwargs.pop("qaic_config", None)
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
@@ -254,16 +454,37 @@ class QEFFBaseModel(ABC):
         self.is_transformed: bool = False
 
         self._normalize_torch_dtype()
-        # Apply the transformations
-        any_transformed = False
-        for transform in self._pytorch_transforms:
-            self.model, transformed = transform.apply(self.model)
-            any_transformed = any_transformed or transformed
+        self._set_qaic_config(qaic_config)
 
-        if not any_transformed:
-            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+    def _copy_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        if qaic_config is None:
+            return None
+        if not isinstance(qaic_config, dict):
+            raise TypeError(f"`qaic_config` must be a dictionary, got {type(qaic_config).__name__}.")
+        return copy.deepcopy(qaic_config)
+
+    def _set_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        qaic_config = self._copy_qaic_config(qaic_config)
+        if not hasattr(self, "hash_params"):
+            self.hash_params = {}
+        if qaic_config is not None:
+            pretrained_model_name_or_path = getattr(self.model, "pretrained_path", None) or self.hash_params.get(
+                "pretrained_model_name_or_path", None
+            )
+            if pretrained_model_name_or_path is not None:
+                qaic_config.setdefault("pretrained_model_name_or_path", pretrained_model_name_or_path)
+        self._qaic_config = qaic_config
+        setattr(self.model, "qaic_config", qaic_config)
+        if qaic_config is None:
+            self.hash_params.pop("qaic_config", None)
         else:
-            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+            self.hash_params["qaic_config"] = qaic_config
+        return qaic_config
+
+    def _resolve_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
+        if qaic_config is None:
+            qaic_config = getattr(self, "_qaic_config", None)
+        return self._set_qaic_config(qaic_config)
 
     def _normalize_torch_dtype(self):
         """
@@ -713,10 +934,12 @@ class QEFFBaseModel(ABC):
             qaic_config=qaic_config,
             prefill_only=prefill_only,
             enable_chunking=enable_chunking,
+            retain_full_kv=retain_full_kv,
             num_cores=kwargs.get("num_cores", compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)),
             prefill_seq_len=kwargs.get("prefill_seq_len"),
             **compiler_options,
         )
+        kwargs["_qeff_skip_transform"] = True
 
         with export_from_compile():
             self.export(**kwargs)
@@ -962,6 +1185,43 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
+        qaic_config = self._resolve_qaic_config(qaic_config)
+        if not self.is_transformed:
+            any_transformed = self._apply_pytorch_transforms()
+            pooling = compiler_options.pop("pooling", getattr(self, "_pooling", None))
+            if pooling:
+                self._apply_pooling_transform(pooling)
+                any_transformed = True
+
+            any_transformed = self._post_pytorch_transform() or any_transformed
+            self._set_qaic_config(qaic_config)
+
+            if self._supports_spd_transform():
+                self.model, spd_transformed = SpDTransform.apply(
+                    self.model,
+                    qaic_config,
+                    **compiler_options,
+                )
+                self.is_tlm = getattr(self, "is_tlm", False) or spd_transformed
+                any_transformed = any_transformed or spd_transformed
+
+            if self._supports_sampler_transform():
+                self.model, sampler_transformed = SamplerTransform.apply(
+                    self.model,
+                    qaic_config,
+                    **compiler_options,
+                )
+                any_transformed = any_transformed or sampler_transformed
+            if getattr(self, "is_tlm", False) and qaic_config is not None:
+                qaic_config["return_pdfs"] = True
+                setattr(self.model, "qaic_config", qaic_config)
+
+            if not any_transformed:
+                warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+            else:
+                logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+            self.is_transformed = True
+
         # Apply the transformations that are dependent on compilation parameters
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
@@ -992,6 +1252,8 @@ class QEFFBaseModel(ABC):
             self.hash_params.pop("blocking_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
+        else:
+            self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
@@ -1017,6 +1279,14 @@ class QEFFBaseModel(ABC):
             prefill_seq_len=prefill_seq_len,
             hash_params=self.hash_params,
         )
+
+        if self._supports_prefill_transform_options() and self._should_apply_prefill_transform_from_options():
+            self._apply_prefill_transform_from_options(
+                prefill_only=compiler_options.get("prefill_only", False),
+                prefill_seq_len=compiler_options.get("prefill_seq_len", seq_len),
+                enable_chunking=compiler_options.get("enable_chunking", False),
+                retain_full_kv=compiler_options.get("retain_full_kv", False),
+            )
 
     @dump_qconfig
     def _compile(
@@ -1073,6 +1343,7 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        qaic_config = self._resolve_qaic_config(qaic_config)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
