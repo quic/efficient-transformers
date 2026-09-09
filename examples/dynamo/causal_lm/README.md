@@ -61,7 +61,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 
 | Parameter | Default | Description |
 |---|---|---|
-| `--model-name` | `Qwen/Qwen2-1.5B-Instruct` | HuggingFace model ID |
+| `--model-name` | `tiny-random/gpt-oss-mxfp4` | HuggingFace model ID |
 | `--prompt` | `"My name is"` | Input prompt |
 | `--prefill-seq-len` | `32` | Prefill sequence length |
 | `--ctx-len` | `128` | KV-cache context length |
@@ -69,7 +69,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 | `--num-cores` | `16` | Number of AI 100 cores |
 | `--aic-hw-version` | `ai100` | Hardware version |
 | `--num-hidden-layers` | `-1` | Override model depth (for debugging) |
-| `--use-weight-free-export` | `False` | Build a meta-device model and load weights during compile |
+| `--use-weight-free-export` | `False` | Build a meta-device model and load weights during compile. Alias: `--weight-free` |
 | `--device-group` | `None` | Device IDs, e.g. `[0,1]` |
 
 This example:
