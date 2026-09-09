@@ -28,6 +28,15 @@ def qaicWorkerCount(String mode, String profile) {
 }
 
 
+def qaicDeviceGroupCount(Object value) {
+    def groups = value?.toString()?.split(';')?.collect { it.trim() }?.findAll { it }
+    if (!groups) {
+        error('At least one QAIC device group must be configured')
+    }
+    return groups.size().toString()
+}
+
+
 def noopMarkerFilter() {
     return '(not qeff_ci_noop_marker)'
 }
@@ -120,8 +129,18 @@ pipeline {
         booleanParam(name: 'RUN_WEIGHT_FREE_QAIC', defaultValue: true, description: 'Run weight-free on-QAIC export/compile/generate tests (torch 2.13)')
         string(
             name: 'MM_COMPILE_WORKERS',
-            defaultValue: '8',
+            defaultValue: '12',
             description: 'Worker count for the host-only multimodal compile-warm pass'
+        )
+        string(
+            name: 'MM_QAIC_DEVICE_GROUPS',
+            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15;16,17,18,19',
+            description: 'Exclusive four-device groups per multimodal worker; Kimi disagg keeps three QPCs resident'
+        )
+        string(
+            name: 'WEIGHT_FREE_QAIC_DEVICE_GROUPS',
+            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15;16,17,18,19',
+            description: 'Exclusive four-device QAIC groups per weight-free worker, separated by semicolons'
         )
     }
 
@@ -132,6 +151,8 @@ pipeline {
         CI_SELECTIVE_LAYER_FILTER = noopMarkerFilter()
         CI_QAIC_WORKERS = '3'
         MM_COMPILE_N = "${params.MM_COMPILE_WORKERS}"
+        MM_EXEC_N = qaicDeviceGroupCount(params.MM_QAIC_DEVICE_GROUPS)
+        WEIGHT_FREE_EXEC_N = qaicDeviceGroupCount(params.WEIGHT_FREE_QAIC_DEVICE_GROUPS)
         MODEL_TIER = "${params.MODEL_TIER}"
     }
 
@@ -429,18 +450,15 @@ pipeline {
                             rm -f tests/tests_log6.xml &&
                             if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
                             python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
-                            test_status=\$?;
+                            test_status=\\$?;
                             junitparser merge tests/tests_log6.xml tests/tests_log.xml;
-                            merge_status=\$?;
+                            merge_status=\\$?;
                             deactivate;
-                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
-                            exit \$test_status"
+                            if [ \\"\\$test_status\\" -ne 0 ]; then exit \\"\\$test_status\\"; fi;
+                            exit \\"\\$merge_status\\""
                             '''
                         }
                     } else {
-                        env.MM_EXEC_N = Math.max(
-                            1, Math.floorDiv(Integer.parseInt(env.CI_QAIC_WORKERS), 2)
-                        ).toString()
                         timeout(time: 90, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
@@ -448,25 +466,25 @@ pipeline {
                             rm -rf /efficient-transformers/Non_cli_qaic_multimodal && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                             export QEFF_PER_PR_COMPILE_WARM_ONLY=1 &&
-                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --ignore tests/transformers/models/image_text_to_text/test_qwen3_vl_moe_disagg.py -n ${MM_COMPILE_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --durations=10 || true &&
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_COMPILE_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --durations=10 &&
                             deactivate"
                             '''
                         }
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal -e QEFF_QAIC_DEVICE_GROUPS="${MM_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
-                            export QEFF_PER_PR_SHARED_HOME=1 && export QEFF_NUM_QAIC_CARDS=${CI_QAIC_WORKERS} && export QEFF_QAIC_CARDS_PER_WORKER=2 &&
+                            export QEFF_PER_PR_SHARED_HOME=1 &&
                             rm -f tests/tests_log6.xml &&
                             if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
                             python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
-                            test_status=\$?;
+                            test_status=\\$?;
                             junitparser merge tests/tests_log6.xml tests/tests_log.xml;
-                            merge_status=\$?;
+                            merge_status=\\$?;
                             deactivate;
-                            if [ \$merge_status -ne 0 ]; then exit \$merge_status; fi;
-                            exit \$test_status"
+                            if [ \\"\\$test_status\\" -ne 0 ]; then exit \\"\\$test_status\\"; fi;
+                            exit \\"\\$merge_status\\""
                             '''
                         }
                     }
@@ -567,11 +585,11 @@ pipeline {
             steps {
                 timeout(time: 360, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic -e QEFF_QAIC_DEVICE_GROUPS="${WEIGHT_FREE_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
                     cd /efficient-transformers && . preflight_qeff/bin/activate && pip install -r examples/dynamo/causal_lm/requirements.txt &&
                     mkdir -p /efficient-transformers/weight_free_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/weight_free_qaic &&
                     export HF_HUB_CACHE=/huggingface_hub && export HF_HUB_ENABLE_HF_TRANSFER=1 &&
-                    python -m pytest tests/weight_free -m '(on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --dist loadgroup -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=weight_free_qaic --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
+                    python -m pytest tests/weight_free -m '(on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --dist loadgroup -n ${WEIGHT_FREE_EXEC_N} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=weight_free_qaic --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_weight_free_qaic.xml tests/tests_log.xml && deactivate"
                     '''
                 }

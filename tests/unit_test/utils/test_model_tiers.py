@@ -394,6 +394,55 @@ def test_xdist_worker_gets_isolated_qeff_home_and_tmpdir(tmp_path, monkeypatch):
     assert export_module.QEFF_HOME == worker_home
 
 
+@pytest.mark.cpu_only
+def test_xdist_worker_gets_exclusive_qaic_device_slice(monkeypatch):
+    import tests.conftest as test_config
+
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw1")
+    monkeypatch.setenv("QEFF_NUM_QAIC_CARDS", "4")
+    monkeypatch.setenv("QEFF_QAIC_CARDS_PER_WORKER", "2")
+    monkeypatch.delenv("QAIC_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("QEFF_PER_PR_COMPILE_WARM_ONLY", raising=False)
+
+    test_config._qaic_device_for_xdist_worker.__wrapped__()
+
+    assert os.environ["QAIC_VISIBLE_DEVICES"] == "2,3"
+
+
+@pytest.mark.cpu_only
+def test_xdist_worker_rejects_overlapping_qaic_device_slice(monkeypatch):
+    import tests.conftest as test_config
+
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw2")
+    monkeypatch.setenv("QEFF_NUM_QAIC_CARDS", "4")
+    monkeypatch.setenv("QEFF_QAIC_CARDS_PER_WORKER", "2")
+    monkeypatch.delenv("QAIC_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("QEFF_PER_PR_COMPILE_WARM_ONLY", raising=False)
+
+    with pytest.raises(pytest.UsageError, match="no exclusive 2-device slice"):
+        test_config._qaic_device_for_xdist_worker.__wrapped__()
+
+
+@pytest.mark.cpu_only
+def test_explicit_qaic_device_group_is_assigned_to_worker(monkeypatch):
+    import tests.conftest as test_config
+
+    class Config:
+        @staticmethod
+        def addinivalue_line(*args):
+            return None
+
+    monkeypatch.setattr(test_config, "_xdist_worker", "gw1")
+    monkeypatch.setenv("QEFF_QAIC_DEVICE_GROUPS", "0,1,2,3;4,5,6,7")
+    monkeypatch.setenv("QEFF_QAIC_DEVICES_PER_WORKER", "4")
+    monkeypatch.setenv("QEFF_MODEL_TIER", "all")
+    monkeypatch.delenv("QAIC_VISIBLE_DEVICES", raising=False)
+
+    test_config.pytest_configure(Config())
+
+    assert os.environ["QAIC_VISIBLE_DEVICES"] == "4,5,6,7"
+
+
 # --------------------------------------------------------------------------- #
 # Tier classification
 # --------------------------------------------------------------------------- #

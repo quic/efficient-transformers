@@ -18,7 +18,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 
 from ._helpers import (
     BATCH_SIZE,
-    WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
+    WEIGHT_FREE_QAIC_MODEL_PARAMS,
     exported_onnx_path,
     load_tokenizer,
     skip_on_model_fetch_error,
@@ -36,13 +36,8 @@ CCL_LENGTHS = [1024, 2048]
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_ccl_compile_and_generate(model_type, model_id, tmp_export_dir):
     """Export once, compile twice (normal and with explicit CCL), generate on each QPC."""
     try:
