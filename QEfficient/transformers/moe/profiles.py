@@ -73,4 +73,28 @@ def gptoss_clamped_glu_mlp(
     return (intermediate @ W_d) + b_d.unsqueeze(-2)
 
 
+def minimax_clamped_glu_mlp(
+    x: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    b_g: Optional[torch.Tensor] = None,
+    b_u: Optional[torch.Tensor] = None,
+    b_d: Optional[torch.Tensor] = None,
+    *,
+    limit: float,
+    alpha: float,
+) -> torch.Tensor:
+    """MiniMax-M3 clamped GLU (no biases): ``(up + 1) * gate * sigmoid(gate * alpha)``.
+
+    Same gating formula as GPT-OSS but MiniMax's experts have no bias terms and
+    the gate clamp has no explicit lower bound (only an upper bound at ``limit``).
+    """
+    gate = (x @ W_g).clamp(max=limit)
+    up = (x @ W_u).clamp(min=-limit, max=limit)
+    glu = gate * torch.sigmoid(gate * alpha)
+    intermediate = (up + 1.0) * glu
+    return intermediate @ W_d
+
+
 SILU_GLU_PROFILE = MoEProfile(expert_mlp=silu_glu_mlp, has_bias=False)

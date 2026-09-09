@@ -335,13 +335,21 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
     matching the derived parameter layout that OptimizedMoETransform
     creates, so promote_initializers_and_build_spec finds an exact key match.
-    Non-expert keys receive dtype conversion in the same pass.
+
+    Non-expert keys receive dtype conversion in the same pass. Some of those
+    non-expert keys are themselves split gate_proj/up_proj pairs (dense MLP
+    layers, and MoE shared_experts sub-modules) whose QEff wrapper module
+    (e.g. MiniMax's MiniMaxM3VLDenseMLP) declares a single fused gate_up_proj
+    nn.Linear instead — those pairs are fused into one gate_up_proj tensor
+    (torch.cat([gate, up], dim=0), matching gate_up_proj(x).chunk(2, dim=-1)
+    splitting the output into gate-then-up) rather than copied through as-is.
 
     Parallelism:
 
     - Phase 1 (scan):  one thread per shard, reads keys only (I/O bound, cheap).
     - Phase 2 (stack): one thread per layer, loads and stacks its experts.
-    - Phase 3 (base):  one thread per shard, converts non-expert keys.
+    - Phase 3 (base):  one thread per shard, converts non-expert keys and
+      fuses any split gate_proj/up_proj pairs found among them.
 
     Phases 2 and 3 run concurrently once phase 1 completes.
     """
@@ -350,6 +358,11 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         r"^(.+\.layers\.(\d+)\..+?\.experts)\.(\d+)\."
         r"(gate_proj|up_proj|down_proj|linear|linear_v|linear_1|w1|w2|w3)\.weight$"
     )
+    # Split gate_proj/up_proj pair *not* under a numbered .experts.{idx}. path (those
+    # are handled by EXPERT_RE/stacking above) — dense MLP layers and MoE
+    # shared_experts sub-modules, whose QEff wrapper module expects one fused
+    # gate_up_proj tensor instead of two separate ones.
+    FUSABLE_GATE_UP_RE = re.compile(r"^(.+?)\.(gate_proj|up_proj)\.weight$")
 
     @classmethod
     def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
@@ -496,10 +509,30 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
         def _convert_base(shard_name: str, keys: List[str]) -> None:
             tensors: Dict[str, torch.Tensor] = {}
+            fusable: Dict[str, Dict[str, torch.Tensor]] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in keys:
+                    fuse_m = cls.FUSABLE_GATE_UP_RE.match(key)
                     t = f.get_tensor(key)
-                    tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
+                    t = t.to(target_dtype) if t.is_floating_point() else t
+                    if fuse_m:
+                        prefix, kind = fuse_m.group(1), fuse_m.group(2)
+                        fusable.setdefault(prefix, {})[kind] = t
+                    else:
+                        tensors[key] = t
+
+            for prefix, parts in fusable.items():
+                gate, up = parts.get("gate_proj"), parts.get("up_proj")
+                if gate is not None and up is not None:
+                    # gate_up_proj(x).chunk(2, dim=-1) splits the *output* into gate-then-up,
+                    # so the fused weight's output rows (dim 0) must be gate rows then up rows.
+                    tensors[f"{prefix}.gate_up_proj.weight"] = torch.cat([gate, up], dim=0)
+                else:
+                    # Only one half present under this prefix (not a fusable pair after all,
+                    # e.g. a coincidental name match) — keep it under its original key.
+                    for kind, t in parts.items():
+                        tensors[f"{prefix}.{kind}.weight"] = t
+
             atomic_save(tensors, out / new_base_name_for[shard_name])
 
         # Phase 3: mixed I/O + memory — one thread per shard, capped at CPU count.
@@ -513,8 +546,21 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
                 for fut in as_completed(futures_base):
                     fut.result()
 
+        fused_prefixes: set = set()
+        for key in base_entries:
+            fuse_m = cls.FUSABLE_GATE_UP_RE.match(key)
+            if fuse_m:
+                prefix = fuse_m.group(1)
+                sibling = f"{prefix}.{'up_proj' if fuse_m.group(2) == 'gate_proj' else 'gate_proj'}.weight"
+                if sibling in base_entries:
+                    fused_prefixes.add(prefix)
+
         for key, shard_name in base_entries.items():
-            new_weight_map[key] = new_base_name_for[shard_name]
+            fuse_m = cls.FUSABLE_GATE_UP_RE.match(key)
+            if fuse_m and fuse_m.group(1) in fused_prefixes:
+                new_weight_map[f"{fuse_m.group(1)}.gate_up_proj.weight"] = new_base_name_for[shard_name]
+            else:
+                new_weight_map[key] = new_base_name_for[shard_name]
 
         write_index(out, new_weight_map)
         sentinel.touch()

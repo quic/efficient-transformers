@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -39,6 +40,10 @@ _COMPUTED_INITIALIZER_NAMES = {
     "embed_positions",
     "embed_scale",
 }
+
+# MiniMax-M3's sparse-attention indexer: nested "indexer.<name>" submodule in this HF
+# port vs. flat "index_<name>" checkpoint leaves — see find_checkpoint_key.
+_INDEXER_RE = re.compile(r"\.indexer\.(q_proj|k_proj|q_norm|k_norm)\.weight$")
 
 
 def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
@@ -127,14 +132,57 @@ def find_checkpoint_key(
     if prefix and stripped.startswith(f"{prefix}."):
         candidates.append(stripped[len(f"{prefix}.") :])
 
-    if ".mlp." in stripped:
-        candidates.append(stripped.replace(".mlp.", ".block_sparse_moe."))
+    # MiniMax-M3's published checkpoint wraps the whole text stack as a top-level
+    # "language_model.*" container (language_model.model.layers.N..., including MoE
+    # expert/gate/norm weights), the reverse of this HF port's module tree (text
+    # stack nested under model.language_model.*). This swap applies uniformly across
+    # every text-side weight — not just per-layer ones — so match it generically on
+    # any ONNX name containing "model.language_model." rather than per-key-suffix.
+    lang_model_swap = re.search(r"^(.*?)model\.language_model\.(.*)$", stripped)
+    swapped = "language_model.model." + lang_model_swap.group(2) if lang_model_swap else None
+    if swapped:
+        candidates.append(swapped)
 
-    if stripped.endswith(".mlp.gate.weight"):
-        candidates.append(stripped[: -len(".gate.weight")] + ".router.weight")
+    # The rules below (.mlp./.block_sparse_moe. renaming, gate/router aliasing, the
+    # sparse-attention indexer flattening, e_score_correction_bias flattening) are all
+    # independent of the language_model/model prefix swap above, so apply each to both
+    # the un-swapped and swapped forms — the checkpoint key may need any combination of
+    # these rewrites simultaneously.
+    for base in (stripped, swapped):
+        if base is None:
+            continue
 
-    if stripped.endswith(".mlp.router.weight"):
-        candidates.append(stripped[: -len(".router.weight")] + ".gate.weight")
+        renamed_variants = [base]
+        if ".mlp." in base:
+            renamed = base.replace(".mlp.", ".block_sparse_moe.")
+            candidates.append(renamed)
+            renamed_variants.append(renamed)
+
+        if base.endswith(".mlp.gate.weight"):
+            candidates.append(base[: -len(".gate.weight")] + ".router.weight")
+
+        if base.endswith(".mlp.router.weight"):
+            candidates.append(base[: -len(".router.weight")] + ".gate.weight")
+
+        # MiniMax-M3's sparse-attention indexer is a nested "self_attn.indexer.<name>"
+        # submodule in this HF port, but the checkpoint stores those four tensors as
+        # flat "self_attn.index_<name>" leaves with no separate indexer container.
+        flattened = _INDEXER_RE.sub(r".index_\1.weight", base)
+        if flattened != base:
+            candidates.append(flattened)
+
+        # MiniMax-M3's router correction bias is a buffer nested under the
+        # "mlp.gate"/"block_sparse_moe.gate" router submodule in this HF port, but the
+        # checkpoint stores it one level up, directly on the MoE block (no "gate"
+        # segment). Apply to both the pre- and post-block_sparse_moe-rename forms.
+        for variant in renamed_variants:
+            if variant.endswith(".gate.e_score_correction_bias"):
+                candidates.append(variant[: -len(".gate.e_score_correction_bias")] + ".e_score_correction_bias")
+
+    # lm_head sits directly on the outer model (no "language_model" segment in its
+    # own ONNX name), so it needs a separate rule from the swap above.
+    if stripped == "lm_head.weight" or stripped.endswith(".lm_head.weight"):
+        candidates.append("language_model.lm_head.weight")
 
     return _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
 

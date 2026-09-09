@@ -408,7 +408,13 @@ def blocked_kv_attention_forward_headpar_offline(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # start_index is a plain Python int; comparing it directly (rather than via
+            # torch.tensor(start_index, device=query.device)) traces to a scalar-comparison
+            # op with the constant baked in as an attribute, not a separate lifted tensor
+            # placeholder -- avoids creating a device-bound constant that ends up on the
+            # meta device (and fails ONNX serialization) when query is a meta tensor, as
+            # it is for weight-free export.
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
             if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                 if skip_future.item():
