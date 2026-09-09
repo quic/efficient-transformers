@@ -520,8 +520,8 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         "compile_kwargs",
         [
             pytest.param({"prefill_only": True, "prefill_seq_len": 32}, id="prefill-only"),
-            pytest.param({"prefill_only": False, "prefill_seq_len": 32}, id="decode-only"),
             pytest.param({"prefill_seq_len": 1}, id="implicit-decode"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 1}, id="explicit-decode"),
         ],
     )
     def test_weight_free_compile_rejects_disaggregated_modes(self, compile_kwargs):
@@ -532,8 +532,17 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         with pytest.raises(NotImplementedError, match=UNSUPPORTED_WEIGHT_FREE_DISAGG_COMPILE):
             qeff.compile(ctx_len=128, **compile_kwargs)
 
-    def test_weight_free_compile_allows_combined_prefill_decode_mode(self, tmp_path, monkeypatch):
-        """weight_free=True still allows normal combined prefill/decode compile."""
+    @pytest.mark.parametrize(
+        ("compile_kwargs", "expected_graph_names"),
+        [
+            pytest.param({"prefill_seq_len": 32}, ["Prefill", "Decode"], id="combined"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 32}, ["Decode"], id="explicit-decode-nonunit"),
+        ],
+    )
+    def test_weight_free_compile_allows_supported_modes(
+        self, tmp_path, monkeypatch, compile_kwargs, expected_graph_names
+    ):
+        """weight_free=True allows compile modes outside the unsupported disaggregated boundary."""
         model, _ = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
         onnx_path = tmp_path / "model.onnx"
@@ -549,14 +558,13 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         qpc_path = qeff.compile(
             onnx_path=str(onnx_path),
             compile_dir=str(tmp_path),
-            prefill_seq_len=32,
             ctx_len=128,
+            **compile_kwargs,
         )
 
         assert qpc_path == tmp_path / "qpc"
-        assert captured_kwargs["prefill_only"] is None
-        assert captured_kwargs["specializations"][0]["_graph_name"] == "Prefill"
-        assert captured_kwargs["specializations"][1]["_graph_name"] == "Decode"
+        assert captured_kwargs["prefill_only"] == compile_kwargs.get("prefill_only")
+        assert [spec["_graph_name"] for spec in captured_kwargs["specializations"]] == expected_graph_names
 
     def test_compile_prefill_only_true_continuous_batching_requires_kv_cache_batch_size(self):
         """compile raises ValueError when prefill_only=True + continuous_batching=True + no kv_cache_batch_size."""

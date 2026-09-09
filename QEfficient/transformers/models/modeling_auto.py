@@ -4597,10 +4597,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
 
-        if self._weight_free and (prefill_only is not None or prefill_seq_len == 1):
+        if self._weight_free and (prefill_only is True or prefill_seq_len == 1):
             raise NotImplementedError(
                 "weight_free=True is not supported with disaggregated compile "
-                "(prefill_only=True/False or prefill_seq_len=1)."
+                "(prefill_only=True or prefill_seq_len=1)."
             )
 
         _decode_ks = (
