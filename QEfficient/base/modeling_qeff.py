@@ -118,8 +118,6 @@ def _write_unified_accum_npi(onnx_path):
         if is_diffusion_gemma_sampler:
             if node.name.startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
                 keep_nodes.append(node)
-            elif not is_diffusion_gemma_model_body_node(node) and node.op_type in FP32_ACCUM_OPS:
-                keep_nodes.append(node)
             continue
         if node.op_type in FP32_ACCUM_OPS:
             keep_nodes.append(node)
@@ -143,7 +141,18 @@ def _write_unified_accum_npi(onnx_path):
                 backtrace(input_name, depth + 1)
 
     if sampler_outputs:
-        output_names = sampler_outputs
+        output_names = [
+            node.output[0]
+            for node in graph.node
+            if (
+                node.op_type == "TopK"
+                and node.output
+                and node.output[0]
+                and not is_moe_node(node)
+                and not is_excluded_npi_node(node)
+                and not is_diffusion_gemma_model_body_node(node)
+            )
+        ]
     elif graph.output:
         output_names = [graph.output[0].name]
     else:
