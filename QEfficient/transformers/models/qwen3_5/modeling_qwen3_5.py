@@ -579,9 +579,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype)],
             dim=2,
         )
-        key = torch.cat(
-            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype)], dim=2
-        )
+        key = torch.cat([key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype)], dim=2)
         value = torch.cat(
             [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype)],
             dim=2,
