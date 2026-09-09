@@ -61,6 +61,7 @@ VOCAB_SIZE = 500
 CTX_LEN = 32
 SEQ_LEN = 8
 UNSUPPORTED_WEIGHT_FREE_WARNING = "weight_free=True is only supported for QEFFAutoModelForCausalLM"
+UNSUPPORTED_WEIGHT_FREE_DISAGG_COMPILE = "weight_free=True is not supported with disaggregated compile"
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +515,48 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         qeff = QEFFAutoModelForCausalLM(model)
         with pytest.raises(TypeError, match="prefill_only"):
             qeff.compile(prefill_seq_len=32, ctx_len=128, prefill_only="yes")
+
+    @pytest.mark.parametrize(
+        "compile_kwargs",
+        [
+            pytest.param({"prefill_only": True, "prefill_seq_len": 32}, id="prefill-only"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 32}, id="decode-only"),
+            pytest.param({"prefill_seq_len": 1}, id="implicit-decode"),
+        ],
+    )
+    def test_weight_free_compile_rejects_disaggregated_modes(self, compile_kwargs):
+        """weight_free=True rejects disaggregated prefill/decode compile modes."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
+
+        with pytest.raises(NotImplementedError, match=UNSUPPORTED_WEIGHT_FREE_DISAGG_COMPILE):
+            qeff.compile(ctx_len=128, **compile_kwargs)
+
+    def test_weight_free_compile_allows_combined_prefill_decode_mode(self, tmp_path, monkeypatch):
+        """weight_free=True still allows normal combined prefill/decode compile."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+
+        qpc_path = qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=32,
+            ctx_len=128,
+        )
+
+        assert qpc_path == tmp_path / "qpc"
+        assert captured_kwargs["prefill_only"] is None
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Prefill"
+        assert captured_kwargs["specializations"][1]["_graph_name"] == "Decode"
 
     def test_compile_prefill_only_true_continuous_batching_requires_kv_cache_batch_size(self):
         """compile raises ValueError when prefill_only=True + continuous_batching=True + no kv_cache_batch_size."""
