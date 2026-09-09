@@ -22,7 +22,7 @@ from typing import Dict, List, Type
 
 import torch
 
-from QEfficient.utils.checkpoint_utils import convert_bin_to_safetensors, read_weight_map
+from QEfficient.utils.checkpoint_utils import read_weight_map
 
 # Marks a prepared checkpoint directory as complete, so re-runs can skip work.
 CHECKPOINT_PREPARED_SENTINEL = ".checkpoint_prepared"
@@ -159,14 +159,14 @@ class CheckpointTransformPipeline:
         """Apply the first matching transform and return the usable checkpoint directory."""
         src, out = Path(src), Path(out)
 
-        source_dir = src
-        has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
-        if not has_safetensors and list(src.glob("*.bin")):
-            # TODO(wf): rewriting bin into safetensors is not good idea,
-            # we better error out saying we don't support bin format or handle without the rewrite.
-            source_dir = out.with_name(out.name + "-source-safetensors")
-            convert_bin_to_safetensors(src, source_dir)
+        if list(src.glob("*.bin")):
+            raise ValueError(
+                f"Checkpoint at {src} contains .bin files. "
+                "Weight-free export requires safetensors format. "
+                "Convert the checkpoint to safetensors before exporting."
+            )
 
+        source_dir = src
         expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
             return out
