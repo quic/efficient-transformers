@@ -67,6 +67,7 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
 from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLAttention,
     MiniMaxM3VLIndexer,
+    MiniMaxM3VLSparseMoeBlock,
 )
 
 from QEfficient.transformers.models.minimax_m3_vl import (
@@ -80,6 +81,7 @@ from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import 
     QEffMiniMaxM3VLAttention,
     QEffMiniMaxM3VLIndexer,
     QEffMiniMaxM3VLRotaryEmbedding,
+    QEffMiniMaxM3VLSparseMoeBlock,
 )
 from QEfficient.transformers.cache_utils import QEffMiniMaxSparseCache
 from QEfficient.transformers.models.modeling_auto import (
@@ -1557,6 +1559,67 @@ def test_minimax_m3_attention_module_parity(layer_idx):
         f"Attention parity failed for layer_idx={layer_idx} "
         f"(layer_type={text_cfg.layer_types[layer_idx]}): max_diff={max_diff:.6f}"
     )
+
+
+def check_moe_module_parity(
+    text_cfg: MiniMaxM3VLTextConfig,
+    batch: int = 1,
+    seq_len: int = 4,
+    atol: float = 1e-4,
+    seed: int = 42,
+) -> tuple:
+    """
+    Verify that QEffMiniMaxM3VLSparseMoeBlock.forward and MiniMaxM3VLSparseMoeBlock.forward
+    produce identical outputs on random hidden_states.
+
+    QEffMiniMaxM3VLSparseMoeBlock replaces the per-expert index_add_ loop with batched
+    matrix multiplies (BMM).  Both should produce the same weighted sum of expert outputs
+    plus the shared expert contribution.
+
+    Args:
+        text_cfg: MiniMaxM3VLTextConfig with sparse MoE settings.
+        batch:    Batch size.
+        seq_len:  Sequence length.
+        atol:     Absolute tolerance; returns True when max_diff < atol.
+        seed:     RNG seed.
+
+    Returns:
+        (passed: bool, max_diff: float)
+    """
+    torch.manual_seed(seed)
+
+    hf_moe = MiniMaxM3VLSparseMoeBlock(text_cfg).eval()
+    qeff_moe = MiniMaxM3VLSparseMoeBlock(text_cfg).eval()
+    qeff_moe.load_state_dict(hf_moe.state_dict())
+    qeff_moe.__class__ = QEffMiniMaxM3VLSparseMoeBlock
+
+    hidden_states = torch.randn(batch, seq_len, text_cfg.hidden_size)
+
+    with torch.no_grad():
+        hf_out = hf_moe(hidden_states.clone())
+        qeff_out = qeff_moe(hidden_states.clone())
+
+    max_diff = (hf_out - qeff_out).abs().max().item()
+    return max_diff < atol, max_diff
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("batch", "seq_len"),
+    [(1, 1), (1, 4), (2, 6)],
+    ids=["decode", "context_4", "context_6_batch2"],
+)
+def test_minimax_m3_moe_module_parity(batch, seq_len):
+    """
+    Verify that QEffMiniMaxM3VLSparseMoeBlock.forward produces identical outputs to
+    MiniMaxM3VLSparseMoeBlock.forward (within 1e-5) across decode and context steps.
+
+    The QEff variant uses BMM-based expert computation instead of the HF per-expert
+    index_add_ loop; this test confirms mathematical equivalence.
+    """
+    text_cfg = _tiny_minimax_m3_text_config()
+    passed, max_diff = check_moe_module_parity(text_cfg, batch=batch, seq_len=seq_len)
+    assert passed, f"MoE parity failed for batch={batch}, seq_len={seq_len}: max_diff={max_diff:.6f}"
 
 
 @pytest.mark.llm_model

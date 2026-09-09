@@ -28,9 +28,12 @@ def _run_pytorch_parity_test(
     expert_parallel_chunk_size: int = 256,
     cores_per_expert: int = 2,
     tree_reduce: bool = True,
+    msa_indexer_dp: int = 1,
+    msa_attn_dp: int = 1,
+    indexer_n_head: int = 1,
+    num_cores_per_device: int = 16,
 ) -> None:
     """Compare HF PyTorch vs AIC on the last decode token of the prompt (prefill_seq_len=1)."""
-    # Load real model architecture with 4 layers for a fast test (random weights).
     full_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     full_config.text_config.num_hidden_layers = 4
 
@@ -39,7 +42,6 @@ def _run_pytorch_parity_test(
     model_dir = os.path.join(export_dir, "minimax-m3-parity")
     model_hf.save_pretrained(model_dir)
 
-    # Tokenize the real prompt and take the last token as the single decode input.
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
     messages = [[{"role": "user", "content": [{"type": "text", "text": prompt}]}]]
     inputs = processor.apply_chat_template(
@@ -55,9 +57,27 @@ def _run_pytorch_parity_test(
         hf_logits = model_hf.language_model(input_ids=last_token_ids, use_cache=False).logits[:, -1:, :]
     expected_token = int(hf_logits.argmax(-1)[0, 0])
 
+    qaic_config = {
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": expert_parallel_chunk_size,
+            "cores_per_expert": cores_per_expert,
+            "tree_reduce": tree_reduce,
+        }
+    }
+    if msa_indexer_dp > 1 or msa_attn_dp > 1:
+        qaic_config["blocking_mode"] = "kv_headpar"
+        qaic_config["num_kv_blocks"] = 2
+        if msa_indexer_dp > 1:
+            qaic_config["msa_indexer_dp"] = msa_indexer_dp
+            qaic_config["indexer_n_head"] = indexer_n_head
+            qaic_config["num_cores_per_device"] = num_cores_per_device
+        if msa_attn_dp > 1:
+            qaic_config["msa_attn_dp"] = msa_attn_dp
+
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, torch_dtype=torch.float32)
     qeff_model.compile(
-        batch_size=1,
+        batch_size=2,
         prefill_seq_len=1,
         ctx_len=ctx_len,
         num_cores=num_cores,
@@ -65,15 +85,8 @@ def _run_pytorch_parity_test(
         use_onnx_subfunctions=False,
         skip_vision=True,
         offload_pt_weights=False,
-        weight_free=True,
-        qaic_config={
-            "moe_config": {
-                "flavour": "expert_parallel",
-                "expert_parallel_chunk_size": expert_parallel_chunk_size,
-                "cores_per_expert": cores_per_expert,
-                "tree_reduce": tree_reduce,
-            }
-        },
+        weight_free=False,
+        qaic_config=qaic_config,
     )
 
     aic_inputs = qeff_model.model.prepare_inputs_for_generation(
@@ -86,9 +99,9 @@ def _run_pytorch_parity_test(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MiniMax-M3 text-only decode (PL=1).")
+    parser = argparse.ArgumentParser(description="MiniMax-M3 text-only decode (PL=1) with DP and GP enabled.")
     parser.add_argument("--model-id", default=MODEL_ID)
-    parser.add_argument("--ctx-len", type=int, default=1024)
+    parser.add_argument("--ctx-len", type=int, default=2048)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--generation-len", type=int, default=32)
@@ -115,6 +128,30 @@ def main():
         help="Disable tree-reduce for MoE expert-parallel dispatch.",
     )
     parser.add_argument(
+        "--msa-indexer-dp",
+        type=int,
+        default=2,
+        help="DP factor for the MSA sparse-attention indexer (_select_blocks_dp path).",
+    )
+    parser.add_argument(
+        "--msa-attn-dp",
+        type=int,
+        default=2,
+        help="DP factor for GP attention (_baseline_attention_gp path). Must divide batch_size.",
+    )
+    parser.add_argument(
+        "--indexer-n-head",
+        type=int,
+        default=1,
+        help="Number of KV heads used by the MSA indexer in the DP path.",
+    )
+    parser.add_argument(
+        "--num-cores-per-device",
+        type=int,
+        default=8,
+        help="Number of NSP cores per device for MSA indexer DP block-scoring.",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Run PyTorch vs ONNX parity check using a tiny random model.",
@@ -133,6 +170,10 @@ def main():
                 expert_parallel_chunk_size=args.expert_parallel_chunk_size,
                 cores_per_expert=args.cores_per_expert,
                 tree_reduce=args.tree_reduce,
+                msa_indexer_dp=args.msa_indexer_dp,
+                msa_attn_dp=args.msa_attn_dp,
+                indexer_n_head=args.indexer_n_head,
+                num_cores_per_device=args.num_cores_per_device,
             )
         return
 
@@ -148,7 +189,7 @@ def main():
 
     t0 = time.perf_counter()
     qpc_paths = qeff_model.compile(
-        batch_size=1,
+        batch_size=2,
         prefill_seq_len=1,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
@@ -162,6 +203,10 @@ def main():
         qaic_config={
             "blocking_mode": "kv_headpar",
             "num_kv_blocks": 2,
+            "msa_indexer_dp": args.msa_indexer_dp,
+            "msa_attn_dp": args.msa_attn_dp,
+            "indexer_n_head": args.indexer_n_head,
+            "num_cores_per_device": args.num_cores_per_device,
             "moe_config": {
                 "flavour": "expert_parallel",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,

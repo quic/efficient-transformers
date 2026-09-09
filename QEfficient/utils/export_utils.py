@@ -159,6 +159,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     past_values: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
+    index_key_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -170,6 +171,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
             k_pe_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("index_key."):
+            index_key_layers[int(input_name.split(".")[1])] = resolved
         else:
             dynamic_shapes[input_name] = resolved
 
@@ -183,6 +186,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
         max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
         dynamic_shapes["compressed_kvs"] = [
             (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
+        
+    if index_key_layers:
+        dynamic_shapes["index_keys"] = [
+            index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)
         ]
 
     return dynamic_shapes

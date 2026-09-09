@@ -7,6 +7,7 @@
 
 import math
 import os
+import time
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -1636,6 +1637,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
+        if qaic_config is not None and (qaic_config.get("msa_indexer_dp", 0) > 1 or qaic_config.get("msa_attn_dp", 0) > 1):
+            bs = bs * math.lcm(qaic_config.get("msa_indexer_dp"), qaic_config.get("msa_attn_dp"))
+            seq_len = 1
+        # Sync compile-time qaic_config onto the model so get_dummy_inputs / get_specializations
+        # can read DP/GP params (e.g. msa_indexer_dp) that arrive only at compile time.
+        if qaic_config is not None:
+            self.lang_model.model.qaic_config = qaic_config
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -1909,6 +1917,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        log_times: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2115,6 +2124,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         needs_lang_export = not skip_lang and lang_onnx_path is None
 
         if needs_vision_export or needs_lang_export:
+            _t0_export = time.perf_counter()
             with export_from_compile():
                 self.export(
                     use_onnx_subfunctions=use_onnx_subfunctions,
@@ -2129,6 +2139,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     kv_cache_prefix=kv_cache_prefix,
                     offload_pt_weights=offload_pt_weights,
                 )
+            if log_times:
+                print(f"[timing] export (ONNX):       {time.perf_counter() - _t0_export:.2f}s")
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
 
@@ -2153,6 +2165,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not skip_vision:
             compiler_options_vision = compiler_options.copy()
             compiler_options_vision["node_precision_info"] = False
+            _t0_compile_vision = time.perf_counter()
             vision_qpc_path = self.vision_model._compile(
                 onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
@@ -2167,6 +2180,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options_vision,
             )
+            if log_times:
+                print(f"[timing] compile vision (AIC): {time.perf_counter() - _t0_compile_vision:.2f}s")
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
         # Custom NPI file options
@@ -2215,6 +2230,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 specializations = lang_specs
                 qpc_key = "lang_qpc_path"
 
+            _t0_compile_lang = time.perf_counter()
             lang_qpc_path = self.lang_model._compile(
                 onnx_path=self.lang_model.onnx_path,
                 compile_dir=compile_dir,
@@ -2229,6 +2245,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
+            if log_times:
+                print(f"[timing] compile lang (AIC):  {time.perf_counter() - _t0_compile_lang:.2f}s")
             self.qpc_paths.update({qpc_key: lang_qpc_path})
         return self.qpc_paths
 
@@ -2930,6 +2948,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
                 f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
             )
+
+        # Sync compile-time qaic_config onto the model so get_specializations / get_dummy_inputs
+        # can read DP/GP params (e.g. msa_indexer_dp) that arrive only at compile time.
+        if qaic_config is not None:
+            self.model.qaic_config = qaic_config
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
