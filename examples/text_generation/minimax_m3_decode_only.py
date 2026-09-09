@@ -64,7 +64,6 @@ def _run_pytorch_parity_test(
         use_onnx_subfunctions=False,
         skip_vision=True,
         offload_pt_weights=False,
-        weight_free=True,
         qaic_config={
             "moe_config": {
                 "flavour": "expert_parallel",
@@ -87,9 +86,17 @@ def _run_pytorch_parity_test(
 def main():
     parser = argparse.ArgumentParser(description="MiniMax-M3 text-only decode (PL=1).")
     parser.add_argument("--model-id", default=MODEL_ID)
-    parser.add_argument("--ctx-len", type=int, default=1024)
+    parser.add_argument("--ctx-len", type=int, default=1000000)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
+    parser.add_argument(
+        "--device-ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Explicit QAIC device IDs to run generate() on (e.g. --device-ids 0 1 2 3). "
+        "Defaults to [0..num_devices-1]; set this if any device in that range is unhealthy.",
+    )
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--num-layers", type=int, default=None)
@@ -141,7 +148,7 @@ def main():
         config.text_config.num_hidden_layers = args.num_layers
         factory_kwargs["config"] = config
 
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id, **factory_kwargs)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id, weight_free=True,**factory_kwargs)
 
     qpc_paths = qeff_model.compile(
         batch_size=1,
@@ -154,11 +161,12 @@ def main():
         use_onnx_subfunctions=False,
         skip_vision=True,
         offload_pt_weights=False,
+        dynamo=True,
         qaic_config={
             "blocking_mode": "kv_headpar",
             "num_kv_blocks": 2,
             "moe_config": {
-                "flavour": "expert_parallel",
+                "flavour": "decode_bmm",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
                 "cores_per_expert": args.cores_per_expert,
                 "tree_reduce": args.tree_reduce,
@@ -188,10 +196,12 @@ def main():
         return_dict=True,
         return_tensors="pt",
     )
-    output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len)
+    device_ids = args.device_ids if args.device_ids is not None else list(range(args.num_devices))
+    output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len, device_ids=device_ids)
 
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
+    print(f"Generated: {output.generated_texts[0]}")
 
 
 if __name__ == "__main__":

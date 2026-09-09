@@ -6,7 +6,9 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional, Tuple, Type, Union
-
+from functools import partial
+import logging
+logging.getLogger("QEfficient").setLevel(logging.INFO)
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -17,6 +19,7 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLAttention,
     MiniMaxM3VLDecoderLayer,
     MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLExperts,
     MiniMaxM3VLForCausalLM,
     MiniMaxM3VLIndexer,
     MiniMaxM3VLRotaryEmbedding,
@@ -41,6 +44,14 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    minimax_clamped_glu_mlp,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -153,7 +164,10 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         block_scores = scores.view(batch, cfg.index_n_heads, seq_len, num_blocks, cfg.index_block_size).amax(dim=-1)
 
         block_ids = torch.arange(num_blocks, device=hidden_states.device).view(1, 1, 1, -1)
-        q_block = position_ids // cfg.index_block_size
+        # position_ids may be -1 (padding sentinel); floor_divide decomposes to a Sign node
+        # that AIC's Decode backend rejects (COMPILE_UNSUPPORTED_NODE_AFTER_OPTIMIZE). Trunc
+        # division avoids that op, and the -1 case is clamped to 0 immediately below either way.
+        q_block = torch.div(position_ids, cfg.index_block_size, rounding_mode="trunc")
         for local_offset in range(cfg.index_local_blocks):
             local_block = (q_block - local_offset).clamp(min=0)
             block_scores = torch.where(
@@ -161,8 +175,17 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                 torch.full_like(block_scores, 1.0e30),
                 block_scores,
             )
-
-        topk_scores, block_indices = torch.topk(block_scores, k=min(cfg.index_topk_blocks, num_blocks), dim=-1)
+        # torch.export requires topk's k to be a fixed constant, but the exact value of
+        # min(index_topk_blocks, num_blocks) depends on where the symbolic ctx_len falls
+        # relative to index_topk_blocks * index_block_size — torch.export can't keep that
+        # branch symbolic (min()/abs() force it to specialize to the trace-time shape).
+        # Instead, pad the block dimension up to at least index_topk_blocks (a one-directional,
+        # branch-free relation via sym_max) and always select a constant k=index_topk_blocks;
+        # the existing token_valid masking below already discards padding/out-of-range blocks.
+        target_blocks = torch.sym_max(cfg.index_topk_blocks, num_blocks)
+        block_scores = F.pad(block_scores, (0, target_blocks - num_blocks), value=-1.0e30)
+        k = cfg.index_topk_blocks
+        topk_scores, block_indices = torch.topk(block_scores, k=k, dim=-1)
         block_valid = topk_scores > -1.0e29
         offsets = torch.arange(cfg.index_block_size, device=hidden_states.device).view(1, 1, 1, 1, -1)
         token_indices = block_indices.unsqueeze(-1) * cfg.index_block_size + offsets
@@ -266,13 +289,11 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
 
 def _qeff_minimax_clamp(hidden_states: torch.Tensor, min_value=None, max_value=None) -> torch.Tensor:
-    if min_value is not None:
-        min_tensor = torch.tensor(min_value, dtype=hidden_states.dtype, device=hidden_states.device)
-        hidden_states = torch.maximum(hidden_states, min_tensor)
-    if max_value is not None:
-        max_tensor = torch.tensor(max_value, dtype=hidden_states.dtype, device=hidden_states.device)
-        hidden_states = torch.minimum(hidden_states, max_tensor)
-    return hidden_states
+    # torch.clamp accepts plain Python scalars directly, unlike torch.maximum/minimum
+    # against a torch.tensor(..., device=hidden_states.device) constant -- the latter
+    # becomes a dataless meta-device lifted tensor when hidden_states is a meta tensor
+    # (weight-free export), which fails ONNX serialization.
+    return hidden_states.clamp(min=min_value, max=max_value)
 
 
 class QEffMiniMaxM3VLDenseMLP(MiniMaxM3VLDenseMLP):
@@ -285,47 +306,96 @@ class QEffMiniMaxM3VLDenseMLP(MiniMaxM3VLDenseMLP):
         return self.down_proj((up + 1.0) * glu)
 
 
+class QEffMiniMaxM3VLExperts(MiniMaxM3VLExperts):
+    def __qeff_init__(self):
+        self.weights_transformed = False
+
+    def transform_weights(self):
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
+        )
+        delete_module_attrs(self, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
+
+
 class QEffMiniMaxM3VLTopKRouter(MiniMaxM3VLTopKRouter):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
         router_logits = nn.functional.linear(hidden_states.to(self.weight.dtype), self.weight)
         routing_weights = nn.functional.sigmoid(router_logits.float())
-        scores_for_choice = routing_weights + self.e_score_correction_bias
+        # e_score_correction_bias is a registered buffer, not a parameter; accelerate's
+        # init_empty_weights() (used for weight-free/meta export) doesn't move it to meta,
+        # so it can stay on cpu while routing_weights is on meta — move it explicitly.
+        scores_for_choice = routing_weights + self.e_score_correction_bias.to(device=routing_weights.device)
         _, top_k_index = torch.topk(scores_for_choice, self.top_k, dim=1, sorted=False)
         top_k_weights = routing_weights.gather(1, top_k_index)
         denom = torch.einsum("tk->t", top_k_weights)
         top_k_weights = top_k_weights / denom[:, None]
+        # routing_weights (and thus top_k_weights) is float32 from the sigmoid upcast above;
+        # cast back to the router's native dtype before returning, mirroring upstream HF's
+        # `current.to(final.dtype)` cast in MiniMaxM3VLExperts.forward. Without this, the
+        # float32 weight silently promotes moe_decode_bmm's output to float32 (via
+        # `experts_out = down * topk_weights`), which is invisible when the MoE layer is
+        # the last layer in a truncated model but fails ("expected float32 but found
+        # float16") the moment a later float16-weighted layer consumes it.
+        top_k_weights = top_k_weights.to(router_logits.dtype)
         return router_logits, top_k_weights, top_k_index
 
 
-class QEffMiniMaxM3VLSparseMoeBlock(MiniMaxM3VLSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        tokens = batch_size * sequence_length
-        hidden_states = hidden_states.view(tokens, hidden_dim)
+class QEffMiniMaxM3VLSparseMoeBlock(QEffMoEBlockMixin, MiniMaxM3VLSparseMoeBlock):
+    _moe_return_router_logits = False
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
 
-        shared_output = self.shared_experts(hidden_states)
-        _, top_k_weights, top_k_index = self.gate(hidden_states)
-        top_k = self.gate.top_k
+    def __qeff_init__(self):
+        super().__qeff_init__()
+        self.top_k = getattr(self.gate, "top_k", None)
 
-        expert_indices = top_k_index.flatten()
-        gate_up_proj = self.experts.gate_up_proj.transpose(1, 2).index_select(0, expert_indices)
-        down_proj = self.experts.down_proj.transpose(1, 2).index_select(0, expert_indices)
+    def transform_weights(self):
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        weights = self.experts.transform_weights()
+        # Plain attribute (bypassing nn.Module.__setattr__'s submodule registration) —
+        # `weights` is already registered as a submodule under self.experts.moe_weights.
+        # Re-registering the same MoEWeights instance under a second attribute path here
+        # would make torch.export/torch.onnx.export emit a duplicate set of gate/up/down
+        # initializers (one per FQN), and promote_initializers_and_build_spec (which dedups
+        # by named_parameters() identity) would only promote one of the two duplicate
+        # names, leaving the other as an un-promoted meta tensor that fails at ONNX save
+        # time ("Cannot copy out of meta tensor") — see QEffMiniMaxM3VLDecoderWrapper for
+        # the same failure mode with self.language_model.
+        object.__setattr__(self, "moe_weights", weights)
+        self.weights_transformed = True
+        return self.moe_weights
 
-        expert_in = hidden_states.unsqueeze(1).expand(-1, top_k, -1).contiguous().view(-1, 1, hidden_dim)
-        gate_up = torch.bmm(expert_in, gate_up_proj)
-        gate, up = gate_up.chunk(2, dim=-1)
-        gate = _qeff_minimax_clamp(gate, max_value=self.experts.swiglu_limit)
-        up = _qeff_minimax_clamp(up, min_value=-self.experts.swiglu_limit, max_value=self.experts.swiglu_limit)
-        intermediate = (up + 1.0) * (gate * torch.sigmoid(gate * self.experts.swiglu_alpha))
-        experts_out = torch.bmm(intermediate, down_proj)
-        experts_out = experts_out.view(tokens, top_k, hidden_dim)
-        experts_out = experts_out * top_k_weights.unsqueeze(-1).to(experts_out.dtype)
-        experts_out = torch.einsum("tkh->th", experts_out)
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(
+            expert_mlp=partial(
+                minimax_clamped_glu_mlp,
+                limit=self.experts.swiglu_limit,
+                alpha=self.experts.swiglu_alpha,
+            )
+        )
 
-        hidden_states = experts_out * self.routed_scaling_factor
-        hidden_states = hidden_states + shared_output
-        return hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+    def route(self, x: torch.Tensor):
+        router_logits, top_w, top_i = self.gate(x)
+        return (top_i, top_w), router_logits
+
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return out * self.routed_scaling_factor + self.shared_experts(residual)
 
 
 class QEffMiniMaxM3VLDecoderLayer(MiniMaxM3VLDecoderLayer):
@@ -488,7 +558,14 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.language_model = self.model.model.language_model
+        # Plain attribute (bypassing nn.Module.__setattr__'s submodule registration) —
+        # this is the same MiniMaxM3VLTextModel already reachable via self.model.model.language_model.
+        # Registering it as a second nn.Module attribute would make torch.export/torch.onnx.export
+        # emit a duplicate set of initializers under a second FQN for every text-model parameter,
+        # and promote_initializers_and_build_spec (which dedups by named_parameters() identity)
+        # would only promote one of the two duplicate initializer names, leaving the other as an
+        # un-promoted meta tensor that fails at ONNX save time ("Cannot copy out of meta tensor").
+        object.__setattr__(self, "language_model", self.model.model.language_model)
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -534,7 +611,12 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
             image_features_expanded = vision_embeds.reshape(-1, hidden_dim).unsqueeze(0)[indices0, indices1]
             image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
             inputs_embeds = torch.where(
-                input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+                # Plain scalar constant for the shape comparison — must not be created on
+                # input_ids.device: for weight-free export the traced example inputs are on
+                # the meta device, so torch.tensor(1, device=input_ids.device) would create
+                # a dataless meta constant that torch.export lifts into the graph as-is,
+                # and ONNX serialization then fails ("Cannot copy out of meta tensor").
+                input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
             )
             image_idx_output = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         else:
@@ -561,7 +643,7 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
         hidden_states = outputs.last_hidden_state[
             torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_index
         ]
-        logits = self.model.lm_head(hidden_states).float()
+        logits = self.model.lm_head(hidden_states.to(self.model.lm_head.weight.dtype)).float()
 
         result_cache = outputs.past_key_values
         if isinstance(result_cache, QEffMiniMaxSparseCache):
@@ -571,12 +653,14 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
             past_kv_out = tuple((t[0], t[1]) for t in result_cache)
             index_keys_out = tuple(t[2] for t in result_cache if len(t) == 3)
 
-        return logits, vision_embeds, image_idx_output, past_kv_out, index_keys_out
+        return logits, vision_embeds.clone(), image_idx_output, past_kv_out, index_keys_out
 
 
 class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalGeneration):
     def __qeff_init__(self):
-        self.language_model = self.model.language_model
+        # Plain attribute — see QEffMiniMaxM3VLDecoderWrapper.__init__ for why this must not
+        # be a second nn.Module registration of the same self.model.language_model submodule.
+        object.__setattr__(self, "language_model", self.model.language_model)
         self.config._attn_implementation = "eager"
         self.model.language_model.config._attn_implementation = "eager"
         self.model.vision_tower.config._attn_implementation = "eager"
@@ -618,7 +702,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         image_features_expanded = image_features.reshape(-1, hidden_dim).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(
-            input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+            # See QEffMiniMaxM3VLDecoderWrapper.forward for why this constant must not be
+            # created on input_ids.device.
+            input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
         )
 
         if past_key_values is not None and not isinstance(past_key_values, Cache):
@@ -634,7 +720,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         )
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).float()
+        logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
 
         present = outputs.past_key_values
@@ -735,6 +821,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
             "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
+            "image_idx": {},
         }
 
         lm_config = self.model.language_model.config
@@ -794,7 +881,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         for _ in range(config.num_hidden_layers):
             k = torch.zeros(kv_cache_shape, dtype=dtype)
             v = torch.zeros(kv_cache_shape, dtype=dtype)
-            past_key_values.append((k, v))
+            past_key_values.append([k, v])
         return past_key_values
 
     def get_dummy_index_keys(self, config, batch_size, seq_len, dtype=None):
@@ -819,7 +906,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
 
-        batch_size = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        batch_size = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         dtype = getattr(self.config, "torch_dtype", torch.float32) or torch.float32
 

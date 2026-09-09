@@ -156,6 +156,7 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLAttention,
     MiniMaxM3VLDecoderLayer,
     MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLExperts,
     MiniMaxM3VLForCausalLM,
     MiniMaxM3VLIndexer,
     MiniMaxM3VLRMSNorm,
@@ -506,6 +507,7 @@ from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import 
     QEffMiniMaxM3VLAttention,
     QEffMiniMaxM3VLDecoderLayer,
     QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLExperts,
     QEffMiniMaxM3VLForCausalLM,
     QEffMiniMaxM3VLIndexer,
     QEffMiniMaxM3VLRotaryEmbedding,
@@ -817,7 +819,6 @@ class KVCacheTransform(ModuleMappingTransform):
         MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
         MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
         MiniMaxM3VLRotaryEmbedding: QEffMiniMaxM3VLRotaryEmbedding,
-        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
         MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
         MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # Gemma2
@@ -1566,6 +1567,9 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         # Mixtral
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+        # MiniMaxM3VL
+        MiniMaxM3VLExperts: QEffMiniMaxM3VLExperts,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
     }
 
     @classmethod
