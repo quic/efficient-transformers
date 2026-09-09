@@ -397,7 +397,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 chunk_image_idx = outputs["image_idx_output"]
 
             if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+                write_io_files(chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False)
 
         # Prepare decode-time cross_attention_mask
         if "cross_attention_mask" in lang_inputs:
@@ -673,6 +673,16 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             for i in range(num_frames):
                 chunk_inputs["pixel_values"] = vision_inputs["pixel_values"][i * vision_size : (i + 1) * vision_size]
                 chunk_outputs = self._vision_session.run(chunk_inputs)
+                if self._write_io_dir is not None:
+                    write_io_files(
+                        chunk_inputs,
+                        chunk_outputs,
+                        self._write_io_dir,
+                        f"vision_frame_{i}",
+                        "aic_batch_io",
+                        True,
+                        False,
+                    )
                 if i == 0:
                     vision_outputs = chunk_outputs
                 else:
