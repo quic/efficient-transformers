@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import copy
+import gc
 import json
 from io import BytesIO
 from pathlib import Path
@@ -121,11 +122,8 @@ def _load_kimi_random_model():
     with CONFIG_PATH.open() as config_file:
         multimodal_models = json.load(config_file)["image_text_models"]
     model_config_dict = {model_config["model_name"]: model_config for model_config in multimodal_models}
-    config = get_kimi_k25_test_config(KIMI_K25_MODEL_NAME, model_config_dict)
-    model, tokenizer, processor = load_kimi_k25_model_from_config(config)
-    # Random logits can change argmax after the QAIC FP16 conversion. A zero head keeps token parity deterministic
-    # while the test still exercises the full vision, prefill, decode, and retained-state paths.
-    model.language_model.lm_head.weight.data.zero_()
+    config = get_kimi_k25_test_config(KIMI_K25_MODEL_NAME, model_config_dict, seed=1234)
+    model, tokenizer, processor = load_kimi_k25_model_from_config(config, seed=1234)
     return model.eval().to("cpu"), tokenizer, processor
 
 
@@ -183,9 +181,9 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
 
 def _run_disagg_qaic_generation(
     common_inputs: dict[str, torch.Tensor],
-    vision_session: QAICInferenceSession,
-    prefill_session: QAICInferenceSession,
-    decode_session: QAICInferenceSession,
+    vision_qpc_path,
+    prefill_qpc_path,
+    decode_qpc_path,
 ) -> np.ndarray:
     inputs = {name: _numpy(value) for name, value in _clone_inputs(common_inputs).items()}
     input_ids_length = inputs["input_ids"].shape[1]
@@ -211,8 +209,14 @@ def _run_disagg_qaic_generation(
         "h_shape": np.ones((h,), dtype=np.int64),
         "w_shape": np.ones((w,), dtype=np.int64),
     }
-    vision_outputs = vision_session.run(_filter_session_inputs(vision_session, vision_inputs))
-    vision_session.deactivate()
+    vision_session = QAICInferenceSession(vision_qpc_path)
+    try:
+        vision_outputs = vision_session.run(_filter_session_inputs(vision_session, vision_inputs))
+    finally:
+        vision_session.deactivate()
+        vision_session.program.unload()
+        del vision_session
+        gc.collect()
 
     vision_embeds = vision_outputs.get("vision_embeds")
     assert vision_embeds is not None, f"Vision QPC did not return vision_embeds. Outputs: {vision_outputs.keys()}"
@@ -224,20 +228,26 @@ def _run_disagg_qaic_generation(
         "image_idx": np.zeros((BATCH_SIZE, 1), dtype=np.int64),
     }
 
-    prefill_session.set_buffers(vision_outputs)
-    chunk_inputs = lang_inputs.copy()
-    prefill_outputs = None
-    for chunk_idx in range(num_chunks):
-        start = chunk_idx * PREFILL_SEQ_LEN
-        end = (chunk_idx + 1) * PREFILL_SEQ_LEN
-        chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, start:end]
-        chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, start:end]
-        prefill_outputs = prefill_session.run(_filter_session_inputs(prefill_session, chunk_inputs))
-        _update_retained_states(chunk_inputs, prefill_outputs)
-        if "image_idx_output" in prefill_outputs:
-            chunk_inputs["image_idx"] = prefill_outputs["image_idx_output"].astype(np.int64)
+    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    try:
+        prefill_session.set_buffers(vision_outputs)
+        chunk_inputs = lang_inputs.copy()
+        prefill_outputs = None
+        for chunk_idx in range(num_chunks):
+            start = chunk_idx * PREFILL_SEQ_LEN
+            end = (chunk_idx + 1) * PREFILL_SEQ_LEN
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, start:end]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, start:end]
+            prefill_outputs = prefill_session.run(_filter_session_inputs(prefill_session, chunk_inputs))
+            _update_retained_states(chunk_inputs, prefill_outputs)
+            if "image_idx_output" in prefill_outputs:
+                chunk_inputs["image_idx"] = prefill_outputs["image_idx_output"].astype(np.int64)
+    finally:
+        prefill_session.deactivate()
+        prefill_session.program.unload()
+        del prefill_session
+        gc.collect()
 
-    prefill_session.deactivate()
     assert prefill_outputs is not None, "QAIC prefill did not execute."
 
     generated_ids = [_get_next_token_ids(prefill_outputs["logits"])]
@@ -249,14 +259,21 @@ def _run_disagg_qaic_generation(
     }
     _update_retained_states(decode_inputs, prefill_outputs)
 
-    for _ in range(1, GENERATION_LEN):
-        decode_outputs = decode_session.run(_filter_session_inputs(decode_session, decode_inputs))
-        generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
-        decode_inputs["input_ids"] = generated_ids[-1]
-        decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
-        if "image_idx_output" in decode_outputs:
-            decode_inputs["image_idx"] = decode_outputs["image_idx_output"].astype(np.int64)
-        _update_retained_states(decode_inputs, decode_outputs)
+    decode_session = QAICInferenceSession(decode_qpc_path)
+    try:
+        for _ in range(1, GENERATION_LEN):
+            decode_outputs = decode_session.run(_filter_session_inputs(decode_session, decode_inputs))
+            generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
+            decode_inputs["input_ids"] = generated_ids[-1]
+            decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
+            if "image_idx_output" in decode_outputs:
+                decode_inputs["image_idx"] = decode_outputs["image_idx_output"].astype(np.int64)
+            _update_retained_states(decode_inputs, decode_outputs)
+    finally:
+        decode_session.deactivate()
+        decode_session.program.unload()
+        del decode_session
+        gc.collect()
 
     return np.concatenate(generated_ids, axis=1)[0]
 
@@ -295,21 +312,14 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32(manual_cleanup):
     if compile_only:
         return
 
-    sessions = []
     try:
-        vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
-        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
-        sessions.extend([vision_session, prefill_session, decode_session])
         qaic_tokens = _run_disagg_qaic_generation(
             common_inputs=inputs,
-            vision_session=vision_session,
-            prefill_session=prefill_session,
-            decode_session=decode_session,
+            vision_qpc_path=vision_qpc_path.get("vision_qpc_path"),
+            prefill_qpc_path=prefill_qpc_path.get("lang_prefill_qpc_path"),
+            decode_qpc_path=decode_qpc_path.get("lang_decode_qpc_path"),
         )
     finally:
-        for session in sessions:
-            session.deactivate()
         manual_cleanup(list(compiled_onnx_paths.values()))
 
     assert hf_tokens is not None
