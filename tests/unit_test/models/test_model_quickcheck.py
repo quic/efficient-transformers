@@ -2486,6 +2486,84 @@ def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
     torch.testing.assert_close(state, expected_state)
 
 
+def test_qwen3_5_conv_decode_slice_matches_gather_reference():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = conv_state[2]
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states, conv_state, weight, position_ids, bias, use_decode_slice=True
+    )
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states, conv_state, weight, position_ids, bias, use_decode_slice=True
+    )
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_batch_fold_dynamic_axes_separate_input_and_cache_batches():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5ForConditionalGeneration
+
+    model = QEffQwen3_5ForConditionalGeneration.__new__(QEffQwen3_5ForConditionalGeneration)
+    model.config = SimpleNamespace(
+        text_config=SimpleNamespace(num_hidden_layers=2, layer_types=["full_attention", "linear_attention"])
+    )
+
+    folded_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=True)
+    regular_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=False)
+
+    assert folded_axes["input_ids"][0] == "full_batch_size"
+    assert folded_axes["position_ids"][1] == "full_batch_size"
+    assert folded_axes["batch_index"][0] == "full_batch_size"
+    assert folded_axes["past_key.0"][0] == "full_batch_size"
+    assert regular_axes["input_ids"][0] == "batch_size"
+    assert regular_axes["batch_index"][0] == "batch_size"
+
+
 def test_qwen3_5_moe_decode_expert_parallel_selection():
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
 
