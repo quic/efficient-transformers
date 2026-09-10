@@ -31,28 +31,12 @@ from QEfficient.utils.logging_utils import logger
 # ─────────────────────────────────────────────────────────────────────────────
 MODEL_MAP = {
     "gemma-4-31B-it": ("google/gemma-4-31B-it", "z-lab/gemma-4-31B-it-DFlash"),
-    "gemma-4-26B-A4B-it": ("google/gemma-4-26B-A4B-it", "z-lab/gemma-4-26B-A4B-it-DFlash"),
-    "MiniMax-M2.7": ("MiniMaxAI/MiniMax-M2.7", "z-lab/MiniMax-M2.7-DFlash"),
-    "MiniMax-M2.5": ("MiniMaxAI/MiniMax-M2.5", "z-lab/MiniMax-M2.5-DFlash"),
-    "Kimi-K2.6": ("moonshotai/Kimi-K2.6", "z-lab/Kimi-K2.6-DFlash"),
-    "Kimi-K2.5": ("moonshotai/Kimi-K2.5", "z-lab/Kimi-K2.5-DFlash"),
-    "Qwen3.6-27B": ("Qwen/Qwen3.6-27B", "z-lab/Qwen3.6-27B-DFlash"),
-    "Qwen3.6-35B-A3B": ("Qwen/Qwen3.6-35B-A3B", "z-lab/Qwen3.6-35B-A3B-DFlash"),
-    "Qwen3.5-4B": ("Qwen/Qwen3.5-4B", "z-lab/Qwen3.5-4B-DFlash"),
-    "Qwen3.5-9B": ("Qwen/Qwen3.5-9B", "z-lab/Qwen3.5-9B-DFlash"),
-    "Qwen3.5-27B": ("Qwen/Qwen3.5-27B", "z-lab/Qwen3.5-27B-DFlash"),
-    "Qwen3.5-35B-A3B": ("Qwen/Qwen3.5-35B-A3B", "z-lab/Qwen3.5-35B-A3B-DFlash"),
-    "Qwen3.5-122B-A10B": ("Qwen/Qwen3.5-122B-A10B", "z-lab/Qwen3.5-122B-A10B-DFlash"),
-    "gpt-oss-20b": ("openai/gpt-oss-20b", "z-lab/gpt-oss-20b-DFlash"),
-    "gpt-oss-120b": ("openai/gpt-oss-120b", "z-lab/gpt-oss-120b-DFlash"),
-    "Qwen3-Coder-Next": ("Qwen/Qwen3-Coder-Next", "z-lab/Qwen3-Coder-Next-DFlash"),
     "Qwen3-4B": ("Qwen/Qwen3-4B", "z-lab/Qwen3-4B-DFlash-b16"),
     "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
-    "Qwen3-Coder-30B-A3B": ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "z-lab/Qwen3-Coder-30B-A3B-DFlash"),
     "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
     "Qwen3-VL-32B-Instruct": (
         "Qwen/Qwen3-VL-32B-Instruct",
-        "/local/mnt/workspace/vjanfaza/aisyssol_scratch/cache/DFlash-VLM/Qwen3-VL-32B-Instruct-DFlash",
+        "path_qwen3_vl_model",
     ),
 }
 
