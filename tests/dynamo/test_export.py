@@ -45,8 +45,6 @@ from ._helpers import (
 def test_dynamo_export_and_ort_parity(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, then validate
     ONNX structure and HF PT == ORT token parity in a single export pass."""
-    if model_type == "gpt_oss":
-        pytest.xfail()
 
     try:
         model_hf = load_hf_model(model_id)

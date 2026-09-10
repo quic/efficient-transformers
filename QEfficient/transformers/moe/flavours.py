@@ -19,10 +19,10 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 
 import torch
 
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
+from QEfficient.customop import (
+    ctx_gather_3d_generalized,
+    ctx_scatter_3d_generalized,
+    ctx_scatter_3d_int,
 )
 from QEfficient.transformers.moe.profiles import MoEProfile
 from QEfficient.transformers.moe.weights import MoEWeights, validate_expert_parallel_moe_weights
@@ -92,7 +92,7 @@ def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     # NOTE: expand_as(...) instead of torch.full_like(...) is the compiler-preferred
     # workaround for ConstantOfShape(INT32_MAX); both produce identical traced Ctx ops.
     matched_idx = int32_max_scalar.expand_as(token_idx)
-    matched_idx = CtxScatterFunc3DInt.apply(
+    matched_idx = ctx_scatter_3d_int(
         matched_idx.unsqueeze(-1),
         scatter_pos,
         token_idx.unsqueeze(-1),
@@ -135,12 +135,12 @@ def cumsum_scatter_gather_update_expert_blocked(
         row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
         down_chunk = expert_mlp(x_chunk, W_g, W_u, W_d, b_g, b_u, b_d)
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        expert_out_chunk = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
         chunk_valid_rows = torch.clamp(
@@ -151,7 +151,7 @@ def cumsum_scatter_gather_update_expert_blocked(
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 

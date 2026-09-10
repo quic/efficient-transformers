@@ -366,6 +366,42 @@ class TestQEffGemma4Architecture:
         qeff = _make_qeff_gemma4(model)
         assert not qeff.model.training
 
+    def test_text_rotary_caches_cover_supported_context_and_match_hf(self):
+        model, cfg = make_tiny_gemma4()
+        hf_text_model = model.model.language_model
+        position_ids = torch.tensor([[0, 1, 7, CTX_LEN - 1]], dtype=torch.long)
+        hidden_states = torch.zeros(1, position_ids.shape[1], cfg.hidden_size)
+        with torch.no_grad():
+            expected_embeddings = {
+                layer_type: hf_text_model.rotary_emb(hidden_states, position_ids, layer_type)
+                for layer_type in ("full_attention", "sliding_attention")
+            }
+
+        qeff = _make_qeff_gemma4(model)
+        text_model = qeff.lang_model.model.language_model
+
+        for layer_type in ("full_attention", "sliding_attention"):
+            expected_head_dim = cfg.global_head_dim if layer_type == "full_attention" else cfg.head_dim
+            for embedding_index, embedding_name in enumerate(("cos", "sin")):
+                cached_embedding = getattr(text_model, f"{layer_type}_{embedding_name}_cached")
+                assert cached_embedding.shape == (text_model.rotary_emb.original_max_seq_len, expected_head_dim)
+                torch.testing.assert_close(
+                    cached_embedding[position_ids],
+                    expected_embeddings[layer_type][embedding_index],
+                )
+
+    def test_text_forward_reuses_rotary_caches(self, mocker):
+        model, cfg = make_tiny_gemma4()
+        qeff = _make_qeff_gemma4(model)
+        text_model = qeff.lang_model.model.language_model
+        rotary_forward = mocker.spy(text_model.rotary_emb, "forward")
+        input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
+
+        with torch.no_grad():
+            _qeff_forward(qeff, **_prefill_inputs(input_ids, cfg))
+
+        rotary_forward.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEff Gemma4 logit shape (argmax-based extraction)

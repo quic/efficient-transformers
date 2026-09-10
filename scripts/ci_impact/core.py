@@ -34,13 +34,10 @@ STAGES = (
     "qaic_diffusion",
     "cli",
     "dynamo_qaic",
+    "weight_free_qaic",
 )
 
-HARD_FULL_FILES = {
-    "pyproject.toml",
-    "scripts/Jenkinsfile",
-    "scripts/JenkinsFileFullCi",
-}
+HARD_FULL_FILES = {"pyproject.toml", "scripts/Jenkinsfile", "scripts/JenkinsFileFullCi"}
 IGNORED_FILES = {
     ".gitignore",
     ".pre-commit-config.yaml",
@@ -491,6 +488,8 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
         return set()
     if path.startswith("tests/dynamo/"):
         return {"dynamo_qaic"} if "on_qaic" in markers and "nightly" not in markers else set()
+    if path.startswith("tests/weight_free/"):
+        return {"weight_free_qaic"} if "on_qaic" in markers else set()
     if path == "tests/transformers/models/reranker/test_reranker_mad.py":
         return {"qaic_reranker"}
     stages = set()
@@ -623,6 +622,11 @@ def _empty_plan(
     )
 
 
+def is_hard_full_path(path: str) -> bool:
+    """Return whether a changed path must bypass LLM test selection."""
+    return path in HARD_FULL_FILES or path.startswith("scripts/ci_impact/")
+
+
 def build_plan(repo: Path, base: str, head: str = "HEAD", force_full: bool = False) -> ImpactPlan:
     repo = repo.resolve()
     merge_base, head_sha, changes = resolve_changes(repo, base, head)
@@ -632,7 +636,7 @@ def build_plan(repo: Path, base: str, head: str = "HEAD", force_full: bool = Fal
         return _empty_plan("no_tests", merge_base, head_sha, changes, ["no changed files"], [])
 
     paths = {change.path for change in changes}
-    hard = sorted(path for path in paths if path in HARD_FULL_FILES or path.startswith("scripts/ci_impact/"))
+    hard = sorted(path for path in paths if is_hard_full_path(path))
     if hard:
         reasons = [f"unconditional full-CI path: {path}" for path in hard]
         return _empty_plan("full", merge_base, head_sha, changes, reasons, [])

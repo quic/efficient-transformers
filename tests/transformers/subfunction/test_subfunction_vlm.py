@@ -12,9 +12,7 @@ from typing import Optional
 
 import onnx
 import pytest
-import requests
 import torch
-from PIL import Image
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -29,6 +27,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.image_utils import load_test_image
 
 NEW_GENERATION_TOKENS = 10
 
@@ -124,7 +123,7 @@ def check_image_text_to_text_subfunction_core(
     }
 
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    image = Image.open(requests.get(img_url, stream=True).raw)
+    image = load_test_image(img_url)
     if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
         image = image.resize((1540, 1540))
     conversation = [
