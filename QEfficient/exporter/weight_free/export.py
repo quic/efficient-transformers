@@ -150,7 +150,7 @@ def _prepare_checkpoint_for_weight_free_export(
     str
         Path to the prepared checkpoint directory.
     """
-    from QEfficient.base.checkpoint_transforms import CheckpointTransformPipeline, detect_group_transform_id
+    from QEfficient.base.checkpoint_transforms import CheckpointTransformPipeline, detect_group_transform
     from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
     from QEfficient.utils.checkpoint_utils import read_weight_map
 
@@ -162,7 +162,13 @@ def _prepare_checkpoint_for_weight_free_export(
     # expert_parallel prefill) will hash to different prepared dirs and never
     # overwrite each other.
     weight_map = read_weight_map(source_dir)
-    active_group_id = detect_group_transform_id(getattr(qeff_model.model, "config", None), weight_map, hash_params)
+    active_transform = detect_group_transform(
+        getattr(qeff_model.model, "config", None),
+        weight_map,
+        hash_params,
+        qeff_model._checkpoint_transforms,
+    )
+    active_group_id = active_transform.TRANSFORM_ID if active_transform else "none"
     moe_prefill_flavour = hash_params.get("moe_prefill_flavour", "none")
 
     prepared_hash = _prepared_checkpoint_hash(
