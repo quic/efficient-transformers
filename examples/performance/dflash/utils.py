@@ -15,8 +15,9 @@ from datasets import Features, Sequence, Value, load_dataset
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
 from torch import nn
-from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
 
+from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import (
     QAICInferenceSession,
     is_retained_state_name,
@@ -289,9 +290,6 @@ def compile_gemma_vlm_qpcs(
 
     Currently exercised with the gemma4 VLM family; other VLMs can be added to MODEL_MAP.
     """
-    from transformers import AutoConfig
-
-    from QEfficient import QEFFAutoModelForImageTextToText
 
     state_dict, target_layer_ids, block_size = read_dlm_meta(dlm_repo, hf_token)
     tlm_target_ids = [i + 1 for i in target_layer_ids]
@@ -369,9 +367,6 @@ def compile_qwen3vl_vlm_qpcs(
     ``None``, they are omitted so ``get_specializations`` applies its own
     ``constants.QWEN3_VL_HEIGHT``/``WIDTH`` fallback.
     """
-    from transformers import AutoConfig
-
-    from QEfficient import QEFFAutoModelForImageTextToText
 
     state_dict, target_layer_ids, block_size = read_dlm_meta(dlm_repo, hf_token)
     tlm_target_ids = [i + 1 for i in target_layer_ids]
