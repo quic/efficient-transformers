@@ -146,16 +146,16 @@ def detect_group_transform(
         )
         return _find_transform_by_id(target_id, transforms)
 
-    # Pre-stacked formats detected purely from key patterns.
+    # Pre-stacked formats — delegate detection to each transform's is_applicable().
+    # FusedExpertSplitCheckpointTransform handles both Mixtral fused and GraniteMoE
+    # internally via _get_key_remap() — no hardcoded patterns needed here.
     quant_config = getattr(config, "quantization_config", None) if config else None
     if quant_config and any("_blocks" in k for k in weight_map):
         return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
 
-    if any("input_linear.weight" in k and ".experts." not in k for k in weight_map):
-        return _find_transform_by_id("granite_moe_fused_split_v1", transforms)
-
-    if any(".experts.gate_up_proj" in k for k in weight_map):
-        return _find_transform_by_id("moe_fused_expert_split_v1", transforms)
+    fused_cls = _find_transform_by_id("fused_expert_split_v1", transforms)
+    if fused_cls is not None and fused_cls.is_applicable(weight_map):
+        return fused_cls
 
     return None
 
@@ -171,17 +171,19 @@ def _find_transform_by_id(
                 return t
     # Fallback: import directly when transforms list not provided
     from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
+        DtypeConversionCheckpointTransform,
+        FusedExpertSplitCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-        GraniteMoeFusedExpertSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
-        MoEFusedExpertSplitCheckpointTransform,
     )
 
     _ID_MAP = {
-        "moe_expert_stacking_v1":    MoEExpertStackingCheckpointTransform,
-        "gptoss_mxfp4_dequant_v1":   GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-        "granite_moe_fused_split_v1": GraniteMoeFusedExpertSplitCheckpointTransform,
-        "moe_fused_expert_split_v1":  MoEFusedExpertSplitCheckpointTransform,
+        "moe_expert_stacking_v1":      MoEExpertStackingCheckpointTransform,
+        "gptoss_mxfp4_dequant_v1":     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        "fused_expert_split_v1":       FusedExpertSplitCheckpointTransform,
+        "moe_fused_expert_split_v1":   FusedExpertSplitCheckpointTransform,
+        "granite_moe_fused_split_v1":  FusedExpertSplitCheckpointTransform,
+        "dtype_conversion_v1":         DtypeConversionCheckpointTransform,
     }
     return _ID_MAP.get(transform_id)
 
