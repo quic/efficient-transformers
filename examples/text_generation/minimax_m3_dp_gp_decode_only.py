@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import math
 import os
 import tempfile
 import time
@@ -16,6 +17,21 @@ from transformers import AutoConfig, AutoProcessor, AutoTokenizer, AutoModelForI
 from QEfficient import QEFFAutoModelForImageTextToText
 
 MODEL_ID = "MiniMaxAI/MiniMax-M3"
+
+
+def _expand_batch(inputs, batch_size: int):
+    """Repeat single-prompt tokenizer tensors for the compiled execution batch."""
+    expanded = {}
+    for name, value in inputs.items():
+        if torch.is_tensor(value) and value.ndim > 0 and value.shape[0] == 1:
+            expanded[name] = value.repeat((batch_size,) + (1,) * (value.ndim - 1))
+        else:
+            expanded[name] = value
+    return expanded
+
+
+def _execution_batch_size(batch_size: int, msa_indexer_dp: int, msa_attn_dp: int) -> int:
+    return batch_size * math.lcm(msa_indexer_dp, msa_attn_dp)
 
 
 def _run_pytorch_parity_test(
@@ -32,6 +48,7 @@ def _run_pytorch_parity_test(
     msa_attn_dp: int = 1,
     indexer_n_head: int = 1,
     num_cores_per_device: int = 16,
+    batch_size: int = 1,
 ) -> None:
     """Compare HF PyTorch vs AIC on the last decode token of the prompt (prefill_seq_len=1)."""
     full_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
@@ -52,6 +69,8 @@ def _run_pytorch_parity_test(
         return_tensors="pt",
     )
     last_token_ids = inputs["input_ids"][:, -1:]
+    execution_batch_size = _execution_batch_size(batch_size, msa_indexer_dp, msa_attn_dp)
+    last_token_ids = last_token_ids.repeat(execution_batch_size, 1)
 
     with torch.no_grad():
         hf_logits = model_hf.language_model(input_ids=last_token_ids, use_cache=False).logits[:, -1:, :]
@@ -77,7 +96,7 @@ def _run_pytorch_parity_test(
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, torch_dtype=torch.float32)
     qeff_model.compile(
-        batch_size=2,
+        batch_size=execution_batch_size,
         prefill_seq_len=1,
         ctx_len=ctx_len,
         num_cores=num_cores,
@@ -90,7 +109,9 @@ def _run_pytorch_parity_test(
     )
 
     aic_inputs = qeff_model.model.prepare_inputs_for_generation(
-        inputs={"input_ids": last_token_ids}, prefill_seq_len=1, batch_size=1
+        inputs={"input_ids": last_token_ids},
+        prefill_seq_len=1,
+        batch_size=execution_batch_size,
     )
     output = qeff_model.generate(inputs=aic_inputs, generation_len=1)
     aic_token = int(output.generated_ids[0, 0])
@@ -105,6 +126,12 @@ def main():
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--generation-len", type=int, default=32)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Logical prompt batch size; QEfficient expands it by the DP LCM for execution.",
+    )
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--num-layers", type=int, default=None)
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
@@ -157,6 +184,9 @@ def main():
         help="Run PyTorch vs ONNX parity check using a tiny random model.",
     )
     args = parser.parse_args()
+    if args.batch_size < 1:
+        parser.error("--batch-size must be positive")
+    execution_batch_size = _execution_batch_size(args.batch_size, args.msa_indexer_dp, args.msa_attn_dp)
 
     if args.test:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -174,6 +204,7 @@ def main():
                 msa_attn_dp=args.msa_attn_dp,
                 indexer_n_head=args.indexer_n_head,
                 num_cores_per_device=args.num_cores_per_device,
+                batch_size=args.batch_size,
             )
         return
 
@@ -189,7 +220,7 @@ def main():
 
     t0 = time.perf_counter()
     qpc_paths = qeff_model.compile(
-        batch_size=2,
+        batch_size=execution_batch_size,
         prefill_seq_len=1,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
@@ -239,6 +270,7 @@ def main():
         return_dict=True,
         return_tensors="pt",
     )
+    inputs = _expand_batch(inputs, execution_batch_size)
     t0 = time.perf_counter()
     output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len)
     generate_time = time.perf_counter() - t0

@@ -598,7 +598,7 @@ def _set_block_gather_output_type(
     return output
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CtxPagedScatterDP(
     data: onnxscript.FLOAT,
     block_id: onnxscript.INT32,
@@ -653,7 +653,7 @@ class CtxPagedScatterFuncDP(torch.autograd.Function):
         return g.onnxscript_op(CtxPagedScatterDP, data, block_id, addr, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CtxGatherBlockedKVDP(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     return ops.GatherND(data, ops.Unsqueeze(ctx_indices, [-1]), batch_dims=2)
 
