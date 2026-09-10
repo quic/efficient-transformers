@@ -16,6 +16,7 @@ from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
     CtxGatherFuncBlockedKVBatch,
     CtxGatherFuncBlockedKVDP,
+    CtxPagedScatterFuncDP as CtxPagedScatterFunc,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -1131,6 +1132,53 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
     def __init__(self, ddp_cache_data=None, *args, **kwargs):
         super().__init__(ddp_cache_data, *args, **kwargs)
         self.index_keys: dict[int, Optional[torch.Tensor]] = {}
+
+    def write_only_sparse(self, key_states, value_states, layer_idx, cache_kwargs):
+        """Write sparse-layer KV states using paged block/address metadata.
+
+        When ``block_id`` and ``addr`` are present in ``cache_kwargs``, the
+        cache is expected to use the benchmark layout
+        ``[physical_blocks, rows, page_size, head_dim]`` and updates are
+        scattered with the paged cache custom op. Without paged metadata, the
+        inherited standard ``[batch, heads, ctx_len, head_dim]`` path is used.
+        """
+        self.append_new_layers(layer_idx)
+        layer = self.layers[layer_idx]
+        if layer.keys is None:
+            layer.keys = key_states
+            layer.values = value_states
+            layer._mark_initialized(layer.keys)
+        else:
+            layer._mark_initialized(layer.keys)
+            batch, _, query_len, head_dim = key_states.shape
+
+            position_ids = cache_kwargs.get("position_ids")
+            dp = cache_kwargs.get("dp")
+            batch_local = batch // dp
+            hkv = cache_kwargs.get("hkv")
+            rows = dp * hkv
+
+            key_states = key_states.reshape(batch_local, rows, query_len, head_dim)
+            value_states = value_states.reshape(batch_local, rows, query_len, head_dim)
+            layer.keys = layer.keys.reshape(batch_local, rows, -1, head_dim)
+            layer.values = layer.values.reshape(batch_local, rows, -1, head_dim)
+
+            batch_idx = torch.arange(batch_local, device=key_states.device).view(batch_local, 1, 1)
+            block_id = batch_idx.expand(batch_local, rows, query_len).to(torch.int32)
+            addr = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2).to(torch.int32)[:, :, None, :].expand(batch_local, dp, hkv, query_len).reshape(batch_local, rows, query_len)
+
+            if layer.keys.ndim != 4 or layer.values.ndim != 4:
+                raise ValueError("Paged sparse caches must have rank-4 key and value tensors.")
+            if key_states.ndim != 4 or value_states.ndim != 4:
+                raise ValueError("Paged sparse-cache updates must have rank-4 key and value tensors.")
+
+            block_id = block_id.to(dtype=torch.int32, device=layer.keys.device)
+            addr = addr.to(dtype=torch.int32, device=layer.keys.device)
+            layer.keys = CtxPagedScatterFunc.apply(layer.keys, block_id, addr, key_states)
+            layer.keys = layer.keys.reshape(batch, hkv, -1, head_dim)
+            layer.values = CtxPagedScatterFunc.apply(layer.values, block_id, addr, value_states)
+            layer.values = layer.values.reshape(batch, hkv, -1, head_dim)
+            layer._mark_initialized(layer.keys)
 
     def update_index_key_cache(
         self,

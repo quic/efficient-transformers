@@ -40,7 +40,7 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
-from QEfficient.customop import CtxGatherFuncBlockedKVDP, CtxPagedScatterFuncDP
+from QEfficient.customop.utils import ctx_gather_blocked_kv_dp, ctx_paged_scatter_dp
 
 MASKED_ATTENTION_LOGIT = -3.0e4
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -165,7 +165,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
         ctx_indices = torch.where(ctx_indices > gather_limit.unsqueeze(-1), invalid_idx, ctx_indices)
         ctx_indices = ctx_indices.to(torch.int32).expand(batch_local, rows, block_len)
-        return CtxGatherFuncBlockedKVDP.apply(index_key_cache, ctx_indices)
+        return ctx_gather_blocked_kv_dp(index_key_cache, ctx_indices)
 
     def _select_blocks(
         self,
@@ -401,7 +401,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         batch_id = torch.arange(batch_local, device=hidden_states.device).view(batch_local, 1, 1).expand(batch_local, rows, query_len)
         block_id = torch.where(row_live, batch_id, torch.iinfo(torch.int32).max).to(torch.int32)
         addr = (((logical_index_block // cp) * cfg.index_block_size + position_ids_dp % cfg.index_block_size).to(torch.int32)[:, :, None, None, :].expand(batch_local, dp, cp, hkv, query_len).reshape(batch_local, rows, query_len))
-        index_key_cache = CtxPagedScatterFuncDP.apply(
+        index_key_cache = ctx_paged_scatter_dp(
             index_key_cache, block_id, addr, k_updates
         )
 
@@ -647,75 +647,118 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
     def _baseline_attention_gp(
         self,
         query_states: torch.Tensor,
-        selected_k: torch.Tensor,
-        selected_v: torch.Tensor,
-        flat_valid: torch.Tensor,
+        token_indices: torch.Tensor,
+        token_valid: torch.Tensor,
+        key_cache: torch.Tensor,
+        value_cache: torch.Tensor,
         dp: int,
-    ) -> torch.Tensor:
-        """GP (group-parallel) attention: fuses the DP batch dimension into the head dimension.
+        blocking_config: Optional[AttentionBlockingConfig],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Run selected-token attention in group-parallel layout.
 
-        Reshapes [batch, heads, ...] → [B_local, dp*heads, ...] so that each local
-        batch item computes attention over dp×heads rows simultaneously, matching the
-        GP layout produced by _select_blocks_dp for the MSA indexer.
-
-        query_states:  [batch, num_attention_heads, seq_len, D]
-        selected_k/v:  [batch, num_kv_heads, topk, D]
-        flat_valid:    [batch, num_kv_heads, topk]
-        Returns:       [batch, num_kv_heads, num_kv_groups, seq_len, D]  (same as _baseline_attention)
+        ``key_cache`` and ``value_cache`` have already been updated by the
+        sparse cache writer and use ``[B_local, DP * Hkv, ctx_len, D]``. The
+        selected indices may be either that layout or the external
+        ``[batch, Hkv, blocks, block_size]`` layout returned by the indexer.
         """
-        batch, seq_len = query_states.shape[0], query_states.shape[2]
-        if batch % dp != 0:
-            raise ValueError(f"GP attention: batch size {batch} must be divisible by msa_attn_dp={dp}.")
-        B_local = batch // dp
-        num_kv_heads = self.config.num_key_value_heads
+        batch, _, query_len, head_dim = query_states.shape
+        hkv = self.config.num_key_value_heads
         num_kv_groups = self.num_key_value_groups
-        topk = selected_k.shape[-2]
+        rows = dp * hkv
 
-        # Reshape to GP layout: merge dp into head dim.
-        # query_states: [batch, num_kv_heads*num_kv_groups, seq_len, D]
-        #   → [dp, B_local, num_kv_heads, num_kv_groups, seq_len, D]
-        #   → [B_local, dp*num_kv_heads, num_kv_groups, seq_len, D]
+        if query_len != 1:
+            raise ValueError("MSA attention GP is decode-only; QL must be 1.")
+        if dp < 1 or batch % dp:
+            raise ValueError(f"MSA batch size {batch} must be divisible by msa_attn_dp={dp}.")
+
+        batch_local = batch // dp
+        if blocking_config is not None and blocking_config.msa_attn_cp not in (None, 1):
+            raise ValueError("MSA attention GP currently supports msa_attn_cp=1 only.")
+        if tuple(key_cache.shape[:2]) != (batch_local, rows):
+            raise ValueError(
+                f"GP key cache shape {tuple(key_cache.shape)} must start with "
+                f"({batch_local}, {rows})."
+            )
+        if tuple(value_cache.shape) != tuple(key_cache.shape):
+            raise ValueError("GP key and value cache shapes must match.")
+
+        selected_len: int
+        if token_indices.ndim == 4:
+            # External DP-major layout: [batch, Hkv, blocks, block_size].
+            selected_len = token_indices.shape[-2] * token_indices.shape[-1]
+            gather_idx = (
+                token_indices.reshape(dp, batch_local, hkv, selected_len)
+                .permute(1, 0, 2, 3)
+                .reshape(batch_local, rows, selected_len)
+            )
+            valid_idx = (
+                token_valid.reshape(dp, batch_local, hkv, selected_len)
+                .permute(1, 0, 2, 3)
+                .reshape(batch_local, rows, selected_len)
+            )
+        elif token_indices.ndim == 3:
+            selected_len = token_indices.shape[-1]
+            if tuple(token_indices.shape[:2]) == (batch_local, rows):
+                gather_idx = token_indices
+                valid_idx = token_valid
+            elif tuple(token_indices.shape[:2]) == (batch, hkv):
+                gather_idx = (
+                    token_indices.reshape(dp, batch_local, hkv, selected_len)
+                    .permute(1, 0, 2, 3)
+                    .reshape(batch_local, rows, selected_len)
+                )
+                valid_idx = (
+                    token_valid.reshape(dp, batch_local, hkv, selected_len)
+                    .permute(1, 0, 2, 3)
+                    .reshape(batch_local, rows, selected_len)
+                )
+            else:
+                raise ValueError(
+                    "MSA token indices must use [B_local, DP*Hkv, selected_len] "
+                    "or [batch, Hkv, selected_len]."
+                )
+        else:
+            raise ValueError("MSA token indices must be rank 3 or rank 4.")
+
+        if tuple(valid_idx.shape) != tuple(gather_idx.shape):
+            raise ValueError("MSA token_indices and token_valid shapes must match.")
+
+        selected_k = ctx_gather_blocked_kv_dp(key_cache, gather_idx.to(torch.int32))
+        selected_v = ctx_gather_blocked_kv_dp(value_cache, gather_idx.to(torch.int32))
+
+        num_cores = (
+            blocking_config.num_cores_per_device
+            if blocking_config is not None and blocking_config.num_cores_per_device
+            else 1
+        )
+        if num_kv_groups % num_cores:
+            raise ValueError(
+                f"MSA Q-head groups ({num_kv_groups}) must be divisible by "
+                f"num_cores_per_device ({num_cores})."
+            )
+        groups_per_core = num_kv_groups // num_cores
+
         q = (
-            query_states.view(dp, B_local, num_kv_heads, num_kv_groups, seq_len, self.head_dim)
+            query_states.reshape(dp, batch_local, hkv, num_kv_groups, query_len, head_dim)
             .permute(1, 0, 2, 3, 4, 5)
-            .reshape(B_local, dp * num_kv_heads, num_kv_groups, seq_len, self.head_dim)
+            .reshape(batch_local, rows, num_kv_groups, query_len, head_dim)
         )
+        q = q.reshape(batch_local, rows, num_cores, groups_per_core * query_len, head_dim)
+        selected_k = selected_k.unsqueeze(2).expand(-1, -1, num_cores, -1, -1)
+        selected_v = selected_v.unsqueeze(2).expand(-1, -1, num_cores, -1, -1)
+        valid = valid_idx.unsqueeze(2).expand(-1, -1, num_cores, -1)
 
-        # selected_k/v: [batch, num_kv_heads, topk, D]
-        #   → [B_local, dp*num_kv_heads, 1, topk, D]
-        k = (
-            selected_k.view(dp, B_local, num_kv_heads, topk, self.head_dim)
-            .permute(1, 0, 2, 3, 4)
-            .reshape(B_local, dp * num_kv_heads, topk, self.head_dim)
-            .unsqueeze(2)
-        )
-        v = (
-            selected_v.view(dp, B_local, num_kv_heads, topk, self.head_dim)
-            .permute(1, 0, 2, 3, 4)
-            .reshape(B_local, dp * num_kv_heads, topk, self.head_dim)
-            .unsqueeze(2)
-        )
-
-        # flat_valid: [batch, num_kv_heads, topk]
-        #   → [B_local, dp*num_kv_heads, topk]
-        valid_gp = (
-            flat_valid.view(dp, B_local, num_kv_heads, topk)
-            .permute(1, 0, 2, 3)
-            .reshape(B_local, dp * num_kv_heads, topk)
-        )
-
-        scores = torch.matmul(q.float(), k.transpose(-1, -2).float()) * (self.head_dim**-0.5)
-        scores = scores.masked_fill(~valid_gp[:, :, None, None, :], -1.0e30)
-        probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(v.dtype)
-        # out: [B_local, dp*num_kv_heads, num_kv_groups, seq_len, D]
-        out = torch.matmul(probs, v)
-
-        # Reshape back to standard layout: [batch, num_kv_heads, num_kv_groups, seq_len, D]
-        return (
-            out.view(B_local, dp, num_kv_heads, num_kv_groups, seq_len, self.head_dim)
+        scores = torch.matmul(q.float(), selected_k.float().transpose(-1, -2)) * (head_dim**-0.5)
+        scores = scores.masked_fill(~valid.unsqueeze(3), -1.0e30)
+        probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(selected_v.dtype)
+        out = torch.matmul(probs, selected_v)
+        out = (
+            out.reshape(batch_local, rows, num_kv_groups, query_len, head_dim)
+            .reshape(batch_local, dp, hkv, num_kv_groups, query_len, head_dim)
             .permute(1, 0, 2, 3, 4, 5)
-            .reshape(batch, num_kv_heads, num_kv_groups, seq_len, self.head_dim)
+            .reshape(batch, hkv * num_kv_groups, query_len, head_dim)
         )
+        return out, key_cache, value_cache
 
     def forward(
         self,
@@ -747,20 +790,34 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
         if self.indexer is not None and isinstance(past_key_values, QEffMiniMaxSparseCache):
             blocking_config = getattr(self, "attn_blocking_config", None)
-            past_key_values.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            if blocking_config:
+                cache_kwargs["dp"] = getattr(blocking_config, "msa_attn_dp", 1)
+                cache_kwargs["hkv"] =  self.config.num_key_value_heads
+
             token_indices, token_valid = self.indexer._select_blocks(
                 hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin,
                 blocking_config=blocking_config,
             )
-            selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
-                self.layer_idx, token_indices, token_valid
-            )
+
+            past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
             attn_dp = blocking_config.msa_attn_dp if (blocking_config and blocking_config.msa_attn_dp) else 1
             if attn_dp > 1:
-                attn_output = self._baseline_attention_gp(
-                    query_states, selected_k, selected_v, flat_valid, dp=attn_dp
+                dp = cache_kwargs["dp"]
+                batch = input_shape[0]
+                batch_local = batch // dp
+                hkv = self.config.num_key_value_heads
+                rows = dp * hkv
+                key_cache = past_key_values.layers[self.layer_idx].keys.reshape(batch_local, rows, -1, self.head_dim)
+                value_cache = past_key_values.layers[self.layer_idx].values.reshape(batch_local, rows, -1, self.head_dim)
+                attn_output, key_cache, value_cache = self._baseline_attention_gp(
+                    query_states, token_indices, token_valid, key_cache, value_cache, dp=attn_dp, blocking_config=blocking_config,
                 )
+                past_key_values.layers[self.layer_idx].keys = key_cache.reshape(batch, hkv, -1, self.head_dim)
+                past_key_values.layers[self.layer_idx].values = value_cache.reshape(batch, hkv, -1, self.head_dim)
             else:
+                selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
+                    self.layer_idx, token_indices, token_valid
+                )
                 attn_output = self._baseline_attention(query_states, selected_k, selected_v, flat_valid)
             attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
         else:
