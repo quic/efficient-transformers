@@ -283,8 +283,8 @@ def run_spd_inference_single(
     max_iterations: int = 300,
     hidden_size: int = 4096,
     generation_len: int = 256,
+    batch_size: int = 1,
 ) -> SpecDecodingMetrics:
-    batch_size = 1
     input_ids, position_ids = _prepare_text_inputs(tokenizer, prompt_text, prompt_chunk_size)
     generated_ids = _initialize_generated_ids(batch_size, ctx_len, input_ids.shape[1], tokenizer.pad_token_id)
     metrics = SpecDecodingMetrics(block_size=block_size)

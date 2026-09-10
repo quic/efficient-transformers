@@ -82,6 +82,7 @@ def parse_args():
     parser.add_argument("--hf_token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--precision", choices=["fp16", "fp6"], default="fp6", help="Model precision")
     return parser.parse_args()
 
 
