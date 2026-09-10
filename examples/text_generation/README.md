@@ -145,6 +145,23 @@ For pipeline-parallel prefill, use `--stage prefill --mdp-num-partitions N` or
 the complete `--disaggregated` recipe above. The prefill device count must be
 divisible by the number of MDP partitions.
 
+### Production validation matrix
+
+Run the full text-generation matrix (dense FP32/FP16/BF16 compile, ONNX
+subfunctions, CCL, continuous batching, tensor slicing, blocking modes, MDP,
+and GPT-OSS disaggregated serving) with:
+
+```bash
+bash scripts/test_text_generation_matrix.sh
+```
+
+The runner activates the `mainline` pyenv, uses
+`HF_HUB_CACHE=/home/huggingface_hub` and `QEFF_HOME=/home/rishinr/tmpdir`,
+continues after individual failures, and writes a final summary plus per-case
+logs. Set `SUITE=smoke` for the short contract/baseline subset or
+`CASE_FILTER='ccl|mdp'` to select case names. Set `DRY_RUN=1` to validate the
+entire command matrix without loading models or compiling.
+
 ### Speculative decoding (TLM side)
 
 ```bash

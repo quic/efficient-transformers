@@ -649,3 +649,55 @@ def test_disaggregated_text_example_rejects_non_divisible_pipeline_layout():
             "--mdp-num-partitions",
             "4",
         )
+
+
+def test_text_example_exposes_dtype_hardware_and_compile_only_controls():
+    from examples._common import args as example_args
+
+    namespace = _parse_text_example_args(
+        "--dtype",
+        "bfloat16",
+        "--aic-hw-version",
+        "ai200",
+        "--compile-only",
+    )
+
+    assert namespace.dtype == "bfloat16"
+    assert namespace.compile_only is True
+    assert example_args.compiler_options(namespace)["aic_hw_version"] == "ai200"
+
+
+def test_disaggregated_text_example_selects_ccl_specialization():
+    from examples.text_generation.basic_inference import _select_ccl_length
+
+    assert _select_ccl_length(None, 64, 256) is None
+    assert _select_ccl_length([128, 256], 64, 256) == 128
+    assert _select_ccl_length([128, 256], 129, 256) == 256
+
+
+def test_disaggregated_text_example_uses_compiler_normalized_ccl_lengths():
+    from examples.text_generation.basic_inference import compile_disaggregated
+
+    namespace = _parse_text_example_args(
+        "--disaggregated",
+        "--full-batch-size",
+        "2",
+        "--ccl-prefill",
+        "128",
+        "256",
+        "--ccl-decode",
+        "256",
+    )
+
+    class NormalizingModel:
+        def compile(self, **kwargs):
+            if kwargs["prefill_only"]:
+                self.comp_ctx_lengths_prefill = [256]
+                return "prefill-qpc"
+            self.comp_ctx_lengths_decode = [256]
+            return "decode-qpc"
+
+    compile_disaggregated(NormalizingModel(), namespace)
+
+    assert namespace.comp_ctx_lengths_prefill == [256]
+    assert namespace.comp_ctx_lengths_decode == [256]

@@ -134,6 +134,12 @@ def model_group() -> argparse.ArgumentParser:
             "whose upstream default would exceed device memory)."
         ),
     )
+    g.add_argument(
+        "--dtype",
+        choices=["float32", "float16", "bfloat16"],
+        default=None,
+        help="Model/export dtype. By default QEfficient selects a hardware-compatible dtype.",
+    )
     return p
 
 
@@ -152,6 +158,12 @@ def compile_group() -> argparse.ArgumentParser:
     )
     basic.add_argument("--generation-len", type=int, default=None)
     basic.add_argument("--num-cores", type=int, default=16)
+    basic.add_argument(
+        "--aic-hw-version",
+        choices=["ai100", "ai200"],
+        default=None,
+        help="Compiler target. BF16 execution requires AI200.",
+    )
     basic.add_argument(
         "--num-devices", type=int, default=None, help="Number of AI 100 SoCs. Defaults to len(--device-group) or 1."
     )
@@ -433,6 +445,7 @@ def meta_group() -> argparse.ArgumentParser:
         "--print-resolved", action="store_true", help="Print the resolved argparse namespace before running."
     )
     g.add_argument("--dry-run", action="store_true", help="Parse and print but don't compile or generate.")
+    g.add_argument("--compile-only", action="store_true", help="Compile requested QPCs without running inference.")
     g.add_argument(
         "--num-hidden-layers-override",
         type=int,
@@ -610,6 +623,8 @@ def compiler_options(ns: argparse.Namespace) -> Dict[str, Any]:
     opts: Dict[str, Any] = {}
     if ns.aic_enable_depth_first:
         opts["aic_enable_depth_first"] = True
+    if ns.aic_hw_version:
+        opts["aic_hw_version"] = ns.aic_hw_version
     if ns.allow_mxint8_mdp_io:
         opts["allow_mxint8_mdp_io"] = True
     if ns.mos != -1:
