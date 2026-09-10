@@ -57,6 +57,19 @@ from QEfficient.utils.logging_utils import logger
 QWEN3_5_ROPE_CACHE_EXPORT_CAP = 76800
 
 
+def _batch_index_scatter(tensor: torch.Tensor, batch_index: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
+    """Place logical request rows into their physical batch slots."""
+    batch_first = tensor if batch_dim == 0 else tensor.transpose(0, batch_dim)
+    slots = batch_index.reshape(-1).long()
+    batch_first = torch.zeros_like(batch_first).index_put((slots,), batch_first, accumulate=False)
+    return batch_first if batch_dim == 0 else batch_first.transpose(0, batch_dim)
+
+
+def _batch_index_gather(tensor: torch.Tensor, batch_index: torch.Tensor) -> torch.Tensor:
+    """Restore physical-slot rows to logical request order."""
+    return tensor.index_select(0, batch_index.reshape(-1).long())
+
+
 class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
     RMSNorm module that works by replacing the current module with compiler known custom-op.
@@ -160,11 +173,48 @@ class QEffQwen3_5DynamicCache(Cache):
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
 
+    def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_K(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_V(start_index, end_index, cache_kwargs)
+
+    def get_batch_folded_kv(self, layer_idx: int):
+        return self.kv_layers[layer_idx].get_batch_folded_kv()
+
+    def read_only_blocked_K_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        return self.kv_layers[layer_idx].read_only_blocked_K_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
+
+    def read_only_blocked_V_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        return self.kv_layers[layer_idx].read_only_blocked_V_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
+
     def write_only(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.write_only(key_states, value_states, cache_kwargs)
+
+    def write_only_batch(
+        self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict
+    ):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.write_only_batch(key_states, value_states, cache_kwargs)
 
     def has_previous_state(self, layer_idx=None) -> bool:
         if self.last_linear_layer is None:
@@ -370,24 +420,28 @@ def qeff_torch_causal_conv1d_update(
     weight: torch.Tensor,
     position_ids: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
+    use_decode_slice: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
     state_len = conv_state.shape[-1]
-    pos_ids = position_ids[0]
-    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
-    out = torch.cat([zeros, pos_ids], dim=1)
-    order = torch.argsort(out, dim=1)  # sorted positions per batch row
-    last_positions = order[:, -state_len:]  # (B, state_len)
-
-    # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
 
-    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
-    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
-    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
-    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
-    # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
-    # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
+    if use_decode_slice and seq_len == 1:
+        # Folded decode is a fixed shift. Avoid materializing a full channel-wise
+        # gather index; retain the old state for inactive physical batch slots.
+        shifted_conv_state = torch.cat([conv_state[..., 1:], hidden_states_new[..., -1:]], dim=-1)
+        valid_decode = (position_ids[0][:, -1:] >= 0).to(shifted_conv_state.dtype).reshape(-1, 1, 1)
+        updated_conv_state = shifted_conv_state * valid_decode + conv_state * (1 - valid_decode)
+    else:
+        # Prefill and non-folded execution retain the general valid-position
+        # gather because padding can be interleaved within a chunk.
+        pos_ids = position_ids[0]
+        zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+        order = torch.argsort(torch.cat([zeros, pos_ids], dim=1), dim=1)
+        last_positions = order[:, -state_len:]
+        ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+        updated_conv_state = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:]).to(hidden_states.dtype)
     return out, updated_conv_state
@@ -747,6 +801,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         attention_mask=None,
         position_ids=None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -786,6 +841,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 self.conv1d.weight.squeeze(1),
                 position_ids,
                 self.conv1d.bias,
+                use_decode_slice=batch_fold,
             )
             if batch_index is not None:
                 conv_batch_index = batch_index.to(conv_state_all.device)
@@ -911,6 +967,7 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
         past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -927,6 +984,7 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
+                batch_fold=batch_fold,
             )
         else:
             hidden_states, _ = self.self_attn(
@@ -968,6 +1026,7 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         past_key_values: Optional[Union[QEffQwen3_5DynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -1029,6 +1088,7 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
+                batch_fold=batch_fold,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -1464,6 +1524,14 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
+    def _uses_batch_folded_attention(self) -> bool:
+        for layer in getattr(self.language_model, "layers", ()):
+            attention = getattr(layer, "self_attn", None)
+            blocking_config = getattr(attention, "attn_blocking_config", None)
+            if blocking_config is not None:
+                return bool(blocking_config.batch_fold)
+        return False
+
     def forward(
         self,
         input_ids,
@@ -1474,6 +1542,16 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
+        batch_fold_cb = batch_index is not None and self._uses_batch_folded_attention()
+        if batch_fold_cb:
+            # Folded attention consumes physical batch rows; restore logical
+            # request order only at the decoder output boundary.
+            input_ids = _batch_index_scatter(input_ids, batch_index)
+            position_ids = _batch_index_scatter(position_ids, batch_index, batch_dim=1)
+            cache_batch_index = None
+        else:
+            cache_batch_index = batch_index
+
         inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
         _, _, channel_size = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
@@ -1488,11 +1566,14 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
+            batch_index=cache_batch_index,
+            batch_fold=batch_fold_cb,
             use_cache=True,
         )
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        if batch_fold_cb:
+            hidden_states = _batch_index_gather(hidden_states, batch_index)
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
@@ -1617,6 +1698,21 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
 
+        language_model = getattr(self.model, "language_model", None)
+        blocking_config = None
+        for layer in getattr(language_model, "layers", ()):
+            attention = getattr(layer, "self_attn", None)
+            blocking_config = getattr(attention, "attn_blocking_config", None)
+            if blocking_config is not None:
+                break
+        if (
+            continuous_batching
+            and blocking_config is not None
+            and blocking_config.batch_fold
+            and batch_size != full_batch_size
+        ):
+            raise ValueError("Batch-folded continuous batching requires batch_size == full_batch_size.")
+
         if height is None or width is None:
             height = constants.QWEN3_VL_HEIGHT
             width = constants.QWEN3_VL_WIDTH
@@ -1732,10 +1828,15 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
+        input_batch_axis = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -1743,8 +1844,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         }
 
         lang_dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {1: "batch_size", 2: "seq_len"},
+            "input_ids": {0: input_batch_axis, 1: "seq_len"},
+            "position_ids": {1: input_batch_axis, 2: "seq_len"},
             "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
@@ -1757,7 +1858,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
                 lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
-            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+            lang_dynamic_axes["batch_index"] = {0: input_batch_axis}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -1782,12 +1883,19 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
     ):
         inputs_shapes = {}
 
-        dummy_seq_len = 32
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
+        dummy_seq_len = int(kwargs.get("prefill_seq_len", 32))
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if bs > 1:
+            bs = 2
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        batch_fold = kwargs.pop("batch_fold", False)
+        if continuous_batching and batch_fold:
+            bs = fbs
+        inputs_shapes["input_ids"] = (bs, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
             4,
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             dummy_seq_len,
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
@@ -1811,18 +1919,11 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(dummy_seq_len, dtype=torch.int64)
-                .view(1, dummy_seq_len)
-                .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-            )
+            (torch.arange(dummy_seq_len, dtype=torch.int64).view(1, dummy_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
