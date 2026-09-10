@@ -345,4 +345,3 @@ def generic_blocked_attention_interface(
     )
 
     return attn_output, attn_weights
-

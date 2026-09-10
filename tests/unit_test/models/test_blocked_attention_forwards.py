@@ -110,9 +110,7 @@ class TestHoistedGatherCallCount:
         query = torch.randn(1, heads, 2, HEAD_DIM)
         cache_kwargs = _cache_kwargs(torch.tensor([[6, 7]]), _identity_block_table(1, NUM_PHYS_BLOCKS))
 
-        with patch(
-            "QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block
-        ) as mocked:
+        with patch("QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block) as mocked:
             blocked_qkv_attention_forward(
                 module=module,
                 query=query,
@@ -142,9 +140,7 @@ class TestHoistedGatherCallCount:
         query = torch.randn(1, heads, 2, HEAD_DIM)
         cache_kwargs = _cache_kwargs(torch.tensor([[6, 7]]), _identity_block_table(1, NUM_PHYS_BLOCKS))
 
-        with patch(
-            "QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block
-        ) as mocked:
+        with patch("QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block) as mocked:
             blocked_hqkv_attention_forward(
                 module=module,
                 query=query,
@@ -174,13 +170,9 @@ class TestHoistedGatherCallCount:
         cache = _make_paged_cache(heads=heads)
         module = _DummyModule()
         query = torch.randn(batch, heads, 2, HEAD_DIM)
-        cache_kwargs = _cache_kwargs(
-            torch.tensor([[6, 7], [6, 7]]), _identity_block_table(batch, NUM_PHYS_BLOCKS)
-        )
+        cache_kwargs = _cache_kwargs(torch.tensor([[6, 7], [6, 7]]), _identity_block_table(batch, NUM_PHYS_BLOCKS))
 
-        with patch(
-            "QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block
-        ) as mocked:
+        with patch("QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block) as mocked:
             blocked_bhqkv_attention_forward(
                 module=module,
                 query=query,
@@ -400,9 +392,7 @@ class TestSkipKvBreakPreserved:
         # (start_index=4) and block 3 (start_index=6) are entirely in the future.
         cache_kwargs = _cache_kwargs(torch.tensor([[3]]), _identity_block_table(1, NUM_PHYS_BLOCKS))
 
-        with patch(
-            "QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block
-        ) as mocked:
+        with patch("QEfficient.blocking.blocked_attention_forwards._read_kv_block", wraps=_read_kv_block) as mocked:
             blocked_hqkv_attention_forward(
                 module=module,
                 query=query,
