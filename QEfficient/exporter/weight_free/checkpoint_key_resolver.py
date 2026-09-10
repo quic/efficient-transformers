@@ -108,14 +108,17 @@ def find_checkpoint_key(
     onnx_name: str,
     checkpoint_index: Dict[str, str],
     backbone: nn.Module,
+    active_transform=None,
 ) -> Optional[str]:
     """Resolve an ONNX initializer name to its safetensors checkpoint key.
 
-    Most weights match directly. The fallback rules cover wrapper prefixes,
-    task-head/base-model checkpoint differences, and known HF/QEff MoE naming
-    differences without putting those details in the export orchestration path.
-    TODO(wf): Make this explicit model/layout mapping we should always know what key to expect in what case.
+    Resolution order:
+    1. Universal HF prefix rules (base_model., base_model_prefix).
+    2. Transform-specific explicit mapping via resolve_onnx_key() — replaces
+       the hardcoded architecture-specific fallbacks (TODO-3).
+    3. Legacy MoE weight aliases fallback for old checkpoints.
     """
+    # 1. Universal HF prefix rules
     candidates = [onnx_name]
     stripped = onnx_name.removeprefix("base_model.")
     candidates.append(stripped)
@@ -127,16 +130,22 @@ def find_checkpoint_key(
     if prefix and stripped.startswith(f"{prefix}."):
         candidates.append(stripped[len(f"{prefix}.") :])
 
-    if ".mlp." in stripped:
-        candidates.append(stripped.replace(".mlp.", ".block_sparse_moe."))
+    key = _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
+    if key is not None:
+        return key
 
-    if stripped.endswith(".mlp.gate.weight"):
-        candidates.append(stripped[: -len(".gate.weight")] + ".router.weight")
+    # 2. Transform-specific explicit mapping
+    if active_transform is not None and hasattr(active_transform, "resolve_onnx_key"):
+        key = active_transform.resolve_onnx_key(onnx_name, checkpoint_index)
+        if key is not None:
+            return key
 
-    if stripped.endswith(".mlp.router.weight"):
-        candidates.append(stripped[: -len(".router.weight")] + ".gate.weight")
-
-    return _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
+    # 3. Legacy MoE weight aliases (kept for old prepared checkpoints)
+    return _find_checkpoint_key(
+        [alias for c in candidates for alias in _moe_weight_aliases(c)],
+        checkpoint_index,
+        onnx_name,
+    )
 
 
 def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name: str, qeff_model) -> WeightSpec:
@@ -179,6 +188,18 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         for checkpoint_file in checkpoint_files
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
+    # Identify the active layout transform so find_checkpoint_key() can use
+    # its explicit resolve_onnx_key() mapping instead of hardcoded fallbacks.
+    from QEfficient.base.checkpoint_transforms import detect_group_transform  # noqa: PLC0415
+    from QEfficient.utils.checkpoint_utils import read_weight_map  # noqa: PLC0415
+
+    _wm = read_weight_map(Path(model_ref))
+    active_transform = detect_group_transform(
+        getattr(qeff_model.model, "config", None),
+        _wm,
+        getattr(qeff_model, "hash_params", {}),
+        getattr(qeff_model, "_checkpoint_transforms", []),
+    )
     promoted_inputs: List[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
@@ -186,7 +207,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
             continue
 
         onnx_name = tied_weight_map.get(name, name)
-        checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
+        checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone, active_transform)
         if checkpoint_key is None:
             if _is_computed_initializer(onnx_name):
                 continue
