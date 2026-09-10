@@ -564,13 +564,23 @@ def test_llm_can_escalate_to_full_ci() -> None:
     assert all(stage["enabled"] for stage in merged.stages.values())
 
 
-def test_llm_can_refine_static_analysis_full_plan() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "unsafe static analysis for QEfficient/base/modeling_qeff.py",
+        "unclassified production/configuration changes",
+        "unparsable model inventory: tests/configs/models.json",
+        "production changes produced no confident deterministic test matches",
+        "dependency closure reaches every Jenkins stage",
+    ],
+)
+def test_llm_can_refine_deterministic_full_plan(reason: str) -> None:
     deterministic = ImpactPlan(
         mode="full",
         base="base",
         head="head",
         changed_files=["QEfficient/base/modeling_qeff.py"],
-        reasons=["unsafe static analysis for QEfficient/base/modeling_qeff.py"],
+        reasons=[reason],
         unresolved=["QEFFBaseModel: dynamic reflection"],
         stages=_stage_plans(enabled=True),
     )
