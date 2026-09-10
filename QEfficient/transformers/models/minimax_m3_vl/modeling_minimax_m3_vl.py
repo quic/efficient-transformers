@@ -60,7 +60,6 @@ def qeff_apply_rotary_pos_emb(
     sin: torch.Tensor,
     rotary_dim: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    rotary_dim = cos.shape[-1]
     rotated_q = q[..., :rotary_dim]
     passthrough_q = q[..., rotary_dim:]
     rotated_k = k[..., :rotary_dim]
@@ -204,7 +203,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             idx_k,
             cos[..., : cfg.index_head_dim],
             sin[..., : cfg.index_head_dim],
-            cfg.index_head_dim // 2,
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
         idx_k = past_key_values.update_index_key_cache(idx_k, layer_idx, position_ids)
 
@@ -239,14 +238,15 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         return safe_indices, token_valid
 
     @staticmethod
-    def _apply_rope_dp(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def _apply_rope_dp(
+        x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, rotary_dim: int
+    ) -> torch.Tensor:
         """Apply RoPE to x in DP layout.
 
         x:   [..., H, seq_len, D]  where the leading dims include a DP axis
         cos: [..., seq_len, rotary_dim]  (no head axis yet)
         sin: [..., seq_len, rotary_dim]
         """
-        rotary_dim = cos.shape[-1]
         rotated = x[..., :rotary_dim]
         passthrough = x[..., rotary_dim:]
         head_axis = x.ndim - 3  # insert singleton for H axis
@@ -385,11 +385,13 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             idx_q,
             cos_dp[..., : cfg.index_head_dim],
             sin_dp[..., : cfg.index_head_dim],
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
         idx_k = self._apply_rope_dp(
             idx_k,
             cos_dp[..., : cfg.index_head_dim],
             sin_dp[..., : cfg.index_head_dim],
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
 
         k_updates = idx_k.unsqueeze(2).expand(batch_local, dp, cp, hkv, query_len, dim).reshape(batch_local, rows, query_len, dim)
@@ -779,7 +781,13 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
         cos, sin = position_embeddings
         # to do - don't use constant, should get from config
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, self.config.index_head_dim // 2)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states,
+            key_states,
+            cos,
+            sin,
+            int(self.head_dim * self.config.rope_parameters.get("partial_rotary_factor", 1.0)),
+        )
 
         cache_kwargs = {
             "position_ids": position_ids,
