@@ -145,6 +145,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif dim_name.startswith("compressed_ctx_len_"):
+                dim_registry[dim_name] = Dim(dim_name, min=1, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
             elif "sliding_window" in dim_name:
@@ -163,6 +165,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
     indexer_key_layers: Dict[int, Any] = {}
+    deepseek_v4_past_states: Dict[int, list[Any]] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         # Folded GLM cache dimensions are derived from fixed DP/CP topology
@@ -184,6 +187,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
             k_pe_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("indexer_key."):
             indexer_key_layers[int(input_name.split(".")[1])] = resolved
+        elif model_type == "deepseek_v4" and input_name.startswith("past_"):
+            if input_name.endswith("_RetainedState"):
+                continue
+            _, layer_idx = input_name.rsplit(".", maxsplit=1)
+            deepseek_v4_past_states.setdefault(int(layer_idx), []).append(resolved)
         else:
             dynamic_shapes[input_name] = resolved
 
@@ -203,6 +211,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
         dynamic_shapes["indexer_key_cache"] = [
             resolved for _, resolved in sorted(indexer_key_layers.items(), key=lambda item: item[0])
         ]
+
+    if deepseek_v4_past_states:
+        max_layer = max(deepseek_v4_past_states)
+        dynamic_shapes["past_key_values"] = [deepseek_v4_past_states.get(i, []) for i in range(max_layer + 1)]
 
     return dynamic_shapes
 
