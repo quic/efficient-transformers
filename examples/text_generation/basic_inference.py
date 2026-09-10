@@ -37,6 +37,7 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
+import torch
 
 # Make `examples._common` importable when this file is run directly, i.e.
 # `python examples/text_generation/basic_inference.py` from the repo root.
@@ -99,6 +100,13 @@ def _stage_device_group(ns: argparse.Namespace, stage: str):
     return None
 
 
+def _select_ccl_length(ccl_lengths, required_length: int, ctx_len: int) -> int | None:
+    if not ccl_lengths:
+        return None
+    candidates = sorted(set(ccl_lengths) | {ctx_len})
+    return next((length for length in candidates if length >= required_length), candidates[-1])
+
+
 def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
     """Compile decode and pipeline-parallel prefill QPCs for DMA KV handoff."""
     shared = {
@@ -126,6 +134,8 @@ def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
         **shared,
         **_stage_compiler_options(ns, "decode"),
     )
+    if ns.comp_ctx_lengths_decode is not None:
+        ns.comp_ctx_lengths_decode = getattr(model, "comp_ctx_lengths_decode", ns.comp_ctx_lengths_decode)
     print(f"Compiled decode QPC: {decode_qpc_path}")
 
     prefill_qpc_path = model.compile(
@@ -142,6 +152,8 @@ def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
         **shared,
         **_stage_compiler_options(ns, "prefill"),
     )
+    if ns.comp_ctx_lengths_prefill is not None:
+        ns.comp_ctx_lengths_prefill = getattr(model, "comp_ctx_lengths_prefill", ns.comp_ctx_lengths_prefill)
     print(f"Compiled prefill QPC: {prefill_qpc_path}")
     return prefill_qpc_path, decode_qpc_path
 
@@ -199,6 +211,9 @@ def run_disaggregated(
             chunk_end = (chunk_idx + 1) * ns.prefill_seq_len
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, chunk_start:chunk_end]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, chunk_start:chunk_end]
+            ccl_length = _select_ccl_length(ns.comp_ctx_lengths_prefill, chunk_end, ns.ctx_len)
+            if ccl_length is not None:
+                chunk_inputs["comp_ctx_lengths"] = np.zeros(ccl_length, dtype=np.int64)
             last_chunk = chunk_idx == num_chunks - 1
             exec_idx = prefill_session.np_run_pipeline(
                 chunk_inputs,
@@ -257,7 +272,13 @@ def run_disaggregated(
                 input_ids[slot, 0] = last_token[slot]
                 position_ids[slot, 0] = position[slot]
                 batch_index[slot, 0] = slot
-        return {"input_ids": input_ids, "position_ids": position_ids, "batch_index": batch_index}
+        decode_inputs = {"input_ids": input_ids, "position_ids": position_ids, "batch_index": batch_index}
+        active_positions = [position[slot] for slot in range(ns.full_batch_size) if ongoing[slot]]
+        required_ccl_length = max(active_positions, default=-1) + 1
+        ccl_length = _select_ccl_length(ns.comp_ctx_lengths_decode, required_ccl_length, ns.ctx_len)
+        if ccl_length is not None:
+            decode_inputs["comp_ctx_lengths"] = np.zeros(ccl_length, dtype=np.int64)
+        return decode_inputs
 
     decode_start = perf_counter()
     decode_steps = 0
@@ -315,6 +336,8 @@ def main() -> None:
     )
 
     from_pretrained_kwargs = {"continuous_batching": ns.continuous_batching or ns.disaggregated}
+    if ns.dtype is not None:
+        from_pretrained_kwargs["dtype"] = getattr(torch, ns.dtype)
     if ns.gguf_file:
         from_pretrained_kwargs["gguf_file"] = ns.gguf_file
     if ns.max_seq_len_cached is not None:
@@ -335,6 +358,8 @@ def main() -> None:
     prompts = A.resolve_prompts(ns)
     if ns.disaggregated:
         prefill_qpc_path, decode_qpc_path = compile_disaggregated(model, ns)
+        if ns.compile_only:
+            return
         run_disaggregated(tokenizer, prefill_qpc_path, decode_qpc_path, prompts, ns)
         return
 
@@ -376,7 +401,7 @@ def main() -> None:
     )
     print(f"Compiled QPC: {qpc_path}")
 
-    if ns.stage == "prefill":
+    if ns.compile_only or ns.stage == "prefill":
         return
 
     exec_info = model.generate(
