@@ -331,8 +331,8 @@ class TestEmbeddingORTAccuracy:
 
         if ort_hidden is not None:
             ort_mean = ort_hidden.mean(axis=1)
-            pt_top = int(pt_mean.argmax(-1))
-            ort_top = int(ort_mean.argmax(-1))
+            pt_top = pt_mean.argmax(-1).item()
+            ort_top = ort_mean.argmax(-1).item()
             assert pt_top == ort_top, f"Mean-pooled embedding argmax mismatch: QEff={pt_top}, ORT={ort_top}"
 
 
