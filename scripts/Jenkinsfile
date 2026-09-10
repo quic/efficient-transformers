@@ -228,7 +228,7 @@ pipeline {
                             ${DOCKER_LATEST}:master_latest
                             sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
-                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_disagg,qaic_diffusion,cli,dynamo_qaic,finetune} &&
+                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_disagg,qaic_diffusion,cli,dynamo_qaic,weight_free_qaic,finetune} &&
                             rm -f /etc/apt/apt.conf.d/docker-clean &&
                             apt update &&
                             DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
