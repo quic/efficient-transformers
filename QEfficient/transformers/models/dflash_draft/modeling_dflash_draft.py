@@ -51,22 +51,10 @@ def _create_mask(
         attention_mask: [1, 1, num_queries, target_length]
     """
 
-    device = position_ids.device
-
     num_queries = position_ids.shape[1]  # = block_size (B)
     bsz = position_ids.shape[0]
 
-    # ---- Step 1: Create base KV validity mask ----
-    # PER-ROW: each batch row must mask KV positions using ITS OWN max query
-    # position, not a single global max across the batch.  With batch_size > 1
-    # the rows hold different requests at different absolute positions; a shared
-    # mask built from position_ids.max() (the global max) lets a request at an
-    # earlier position attend to KV positions it must not see (or vice-versa),
-    # corrupting that request's drafts and dropping acceptance.  Computing the
-    # cutoff per row (keepdim over the query axis) makes each row's mask depend
-    # only on that row's own positions, so batched output matches single-batch.
-    # Shape: [bsz, target_length]
-    kv_positions = torch.arange(start_index, start_index + target_length, device=device)
+    kv_positions = torch.arange(start_index, start_index + target_length)
     row_max = position_ids.max(dim=-1, keepdim=True).values  # [bsz, 1]
     valid_kv_mask = kv_positions.view(1, target_length) > (start_index + row_max)  # [bsz, target_length]
 
@@ -81,7 +69,7 @@ def _create_mask(
 
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
-class QEffDFlashRotaryEmbedding(Qwen3RotaryEmbedding):
+class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
@@ -92,7 +80,7 @@ class QEffDFlashRotaryEmbedding(Qwen3RotaryEmbedding):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -102,27 +90,8 @@ class QEffDFlashRotaryEmbedding(Qwen3RotaryEmbedding):
         freqs = torch.outer(t, self.inv_freq)
 
         emb = torch.cat((freqs, freqs), dim=-1)
-        # print_stats(emb, "RotaryEmbedding/emb")
-        cos_cached = emb.cos().to(dtype)
-        sin_cached = emb.sin().to(dtype)
-
-        self.register_buffer("cos_cached", cos_cached, persistent=False)
-        self.register_buffer("sin_cached", sin_cached, persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len is not None and seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        # Callers (qeff_apply_rope_two_streams) gather by absolute position (position_ids /
-        # position_ids_target), and DFlash's "noise" positions run block_size ahead of the
-        # context (up to 2x kv_seq_len) -- so the returned table must cover every position a
-        # caller might index, not just [:seq_len]. Return the full (already large enough,
-        # dynamically extended above if needed) cached table instead of truncating it.
-        cos_out = self.cos_cached.to(dtype=x.dtype) * self.attention_scaling
-        sin_out = self.sin_cached.to(dtype=x.dtype) * self.attention_scaling
-
-        return (cos_out, sin_out)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -258,7 +227,6 @@ class QEffDFlashAttention(Qwen3Attention):
     """
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffDFlashRotaryEmbedding(config=self.config)
         self.dflash_dlm = True
 
     def forward(
@@ -272,6 +240,8 @@ class QEffDFlashAttention(Qwen3Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -297,12 +267,9 @@ class QEffDFlashAttention(Qwen3Attention):
         v_ctx = (v_ctx.view(bsz, ctx_len, -1, self.head_dim)).transpose(1, 2)
         v_noise = (v_noise.view(bsz, q_len, -1, self.head_dim)).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         # Assuming position_id [77,78,79,80, 75,76,-1,-1] first 4 pos id of noise next four position_id for target
-
-        cos, sin = self.rotary_emb(v_ctx, seq_len=kv_seq_len)
         query_states, k_ctx, k_noise = qeff_apply_rope_two_streams(
-            query_states, k_ctx, k_noise, cos, sin, position_ids_target, position_ids
+            query_states, k_ctx, k_noise, cos_cached, sin_cached, position_ids_target, position_ids
         )
 
         if past_key_value is not None:
@@ -355,6 +322,8 @@ class QEffDFlashDecoderLayer(Qwen3DecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -389,6 +358,8 @@ class QEffDFlashDecoderLayer(Qwen3DecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -409,6 +380,11 @@ class QEffDFlashModel(Qwen3Model):
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen3RotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -445,22 +421,24 @@ class QEffDFlashModel(Qwen3Model):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
-        if cache_position is None:  ####?
+        if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + noise_embeds.shape[1], device=noise_embeds.device
-            )
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + noise_embeds.shape[1])
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(
-                0
-            )  ###? no need for this because we input it  ( where the tokens will be filled )
+            position_ids = cache_position.unsqueeze(0)
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
         causal_mask = _create_mask(
             position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         )
-
         hidden_states = noise_embeds
+
+        # Pass the whole rotary table down: `qeff_apply_rope_two_streams` gathers it once per stream
+        # (`position_ids_target` for the context keys, `position_ids` for the noise keys), so
+        # pre-gathering by `position_ids` here would drop the target stream. `attention_scaling` is
+        # already folded into the cached buffers by `__qeff_init__`.
+        sin = self.sin_cached.to(device=hidden_states.device, dtype=hidden_states.dtype)
+        cos = self.cos_cached.to(device=hidden_states.device, dtype=hidden_states.dtype)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -480,6 +458,8 @@ class QEffDFlashModel(Qwen3Model):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=sin,
+                cos_cached=cos,
             )
 
         hidden_states = self.norm(hidden_states)
