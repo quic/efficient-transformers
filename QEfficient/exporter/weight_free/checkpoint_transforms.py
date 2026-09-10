@@ -7,11 +7,15 @@
 
 """Checkpoint preparation transforms for weight-free ONNX export.
 
-Concrete transforms below are picked in priority order by CheckpointTransformPipeline
-(QEfficient/base/checkpoint_transforms.py) — the first whose is_applicable() returns
-True runs and the pipeline stops. Layout transforms rewrite HF checkpoint keys to
-match QEff-derived parameters; DtypeConversionCheckpointTransform is only used when
-the source floating-point dtype does not already match the exported ONNX input dtype.
+Layout transforms rewrite HF checkpoint keys to match QEff-derived parameters.
+Each transform declares TRANSFORM_ID, get_consumed_keys(), and apply() which
+returns {new_key: shard_file}.  DtypeConversionCheckpointTransform always runs
+last on remaining (non-expert) keys.
+
+FusedExpertSplitCheckpointTransform uses a two-map approach so that
+architecture-specific key names are handled by a CHECKPOINT_KEY_REMAP class
+attribute rather than separate transform classes.  Architecture subclasses
+(e.g. GraniteMoeFusedExpertSplitCheckpointTransform) only declare the remap.
 """
 
 import re
@@ -35,6 +39,49 @@ from QEfficient.utils.checkpoint_utils import (
     write_index,
 )
 from QEfficient.utils.logging_utils import logger
+
+
+# ---------------------------------------------------------------------------
+# Canonical key mapping helpers
+# ---------------------------------------------------------------------------
+
+
+def build_canonical_maps(
+    weight_map: Dict[str, str],
+    key_remap: Dict[str, str],
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Build canonical index and key translation from raw weight_map + KEY_REMAP.
+
+    Parameters
+    ----------
+    weight_map
+        Raw ``{actual_key: shard_file}`` from model.safetensors.index.json.
+    key_remap
+        ``{regex_pattern: canonical_suffix_replacement}`` declared by the
+        transform class.  Empty dict means no remapping (Mixtral-style
+        checkpoints already use canonical names).
+
+    Returns
+    -------
+    canonical_index
+        ``{canonical_key: shard_file}`` — WHERE to find each tensor.
+    key_translation
+        ``{canonical_key: actual_key_in_shard}`` — WHAT to ask the shard for.
+        Only contains entries where the key was remapped; absent means
+        canonical_key == actual_key.
+    """
+    canonical_index: Dict[str, str] = {}
+    key_translation: Dict[str, str] = {}
+    for actual_key, shard_file in weight_map.items():
+        canonical_key = actual_key
+        for pattern, replacement in key_remap.items():
+            remapped = re.sub(pattern, replacement, actual_key)
+            if remapped != actual_key:
+                canonical_key = remapped
+                key_translation[canonical_key] = actual_key
+                break
+        canonical_index[canonical_key] = shard_file
+    return canonical_index, key_translation
 
 # ---------------------------------------------------------------------------
 # MoE-specific memory estimation — tied to _LayerStacker's tensor layout below,
@@ -623,8 +670,176 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 
 
 # ---------------------------------------------------------------------------
-# Transform 4: split already-stacked fused MoE experts (Mixtral v5+ layout)
+# Transform 4: split already-stacked fused MoE experts
+# Unified implementation — architecture subclasses declare CHECKPOINT_KEY_REMAP
+# so a single algorithm handles Mixtral fused and GraniteMoE.
 # ---------------------------------------------------------------------------
+
+
+class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
+    """Split pre-stacked fused expert tensors into canonical moe_weights layout.
+
+    Handles checkpoints where all experts are stored as one stacked tensor:
+
+        *.experts.gate_up_proj  [E, 2*I, H]   → moe_weights.gate + up
+        *.experts.down_proj     [E, H, I]      → moe_weights.down
+
+    Architecture subclasses override CHECKPOINT_KEY_REMAP to translate
+    architecture-specific key names to the canonical form above so a single
+    apply() implementation handles all fused variants.
+    """
+
+    TRANSFORM_ID = "fused_expert_split_v1"
+
+    # Canonical key patterns — all architectures map to these names.
+    _FUSED_GATE_UP_RE = re.compile(r"^(.+\.experts)\.gate_up_proj$")
+    _FUSED_DOWN_RE = re.compile(r"^(.+\.experts)\.down_proj$")
+    _FUSED_GATE_UP_BIAS_RE = re.compile(r"^(.+\.experts)\.gate_up_proj_bias$")
+    _FUSED_DOWN_BIAS_RE = re.compile(r"^(.+\.experts)\.down_proj_bias$")
+
+    @classmethod
+    def _get_key_remap(cls, weight_map: Dict[str, str]) -> Dict[str, str]:
+        """Detect architecture from weight_map keys and return the right remap.
+
+        Uses weight_map key patterns — consistent with the rest of the detection
+        design and requires no config or model_type.
+
+        GraniteMoE always uses input_linear/output_linear key names.
+        Mixtral fused and others already use canonical experts.gate_up_proj names.
+        """
+        if any("input_linear.weight" in k for k in weight_map):
+            return {
+                r"\.input_linear\.weight$":  ".experts.gate_up_proj",
+                r"\.output_linear\.weight$": ".experts.down_proj",
+            }
+        return {}
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        canonical_index, _ = build_canonical_maps(weight_map, cls._get_key_remap(weight_map))
+        return any(cls._FUSED_GATE_UP_RE.match(k) for k in canonical_index)
+
+    @classmethod
+    def get_consumed_keys(cls, weight_map: Dict[str, str]) -> set:
+        canonical_index, _ = build_canonical_maps(weight_map, cls._get_key_remap(weight_map))
+        return {k for k in canonical_index
+                if cls._FUSED_GATE_UP_RE.match(k)
+                or cls._FUSED_DOWN_RE.match(k)
+                or cls._FUSED_GATE_UP_BIAS_RE.match(k)
+                or cls._FUSED_DOWN_BIAS_RE.match(k)}
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Dict[str, str]:
+        """Split fused expert tensors using canonical key mapping."""
+        if weight_map is None:
+            weight_map = read_weight_map(src)
+
+        # Build canonical maps — two-map approach.
+        # For Mixtral (no remap): canonical_index = weight_map, key_translation = {}
+        # For GraniteMoE: input_linear.weight → experts.gate_up_proj in canonical_index
+        key_remap = cls._get_key_remap(weight_map)
+        canonical_index, key_translation = build_canonical_maps(weight_map, key_remap)
+
+        if not any(cls._FUSED_GATE_UP_RE.match(k) for k in canonical_index):
+            return {}
+
+        out.mkdir(parents=True, exist_ok=True)
+        new_weight_map: Dict[str, str] = {}
+
+        # Group consumed canonical keys by shard for minimal file opens.
+        consumed = cls.get_consumed_keys(canonical_index)
+        by_shard: Dict[str, List[str]] = {}
+        for canonical_key in consumed:
+            by_shard.setdefault(canonical_index[canonical_key], []).append(canonical_key)
+
+        # Single pass: load, split, write.
+        # Split dim is determined from canonical_index key presence (bias or not)
+        # — no shape reads from shard files needed.
+        for shard_name, canonical_keys in by_shard.items():
+            shard_src = src / shard_name
+            if not shard_src.exists():
+                continue
+            out_tensors: Dict[str, torch.Tensor] = {}
+            with safe_open(str(shard_src), framework="pt") as f:
+                for ck in canonical_keys:
+                    actual = key_translation.get(ck, ck)
+                    raw = f.get_tensor(actual)
+                    tensor = raw.to(target_dtype) if raw.is_floating_point() else raw
+
+                    gate_up_m = cls._FUSED_GATE_UP_RE.match(ck)
+                    down_m = cls._FUSED_DOWN_RE.match(ck)
+                    gate_up_bias_m = cls._FUSED_GATE_UP_BIAS_RE.match(ck)
+                    down_bias_m = cls._FUSED_DOWN_BIAS_RE.match(ck)
+
+                    if gate_up_m:
+                        prefix = gate_up_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        split_dim = cls._resolve_split_dim(prefix, canonical_index)
+                        interleaved = split_dim == 2
+                        gate, up = _split_fused_gate_up_to_canonical(
+                            tensor, None, interleaved=interleaved, preferred_split_dim=split_dim
+                        )
+                        out_tensors[f"{moe_prefix}.gate"] = gate
+                        out_tensors[f"{moe_prefix}.up"] = up
+                        new_weight_map[f"{moe_prefix}.gate"] = shard_name
+                        new_weight_map[f"{moe_prefix}.up"] = shard_name
+
+                    elif down_m:
+                        prefix = down_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        split_dim = cls._resolve_split_dim(prefix, canonical_index)
+                        out_tensors[f"{moe_prefix}.down"] = _down_to_canonical(
+                            tensor, None, preferred_split_dim=split_dim
+                        )
+                        new_weight_map[f"{moe_prefix}.down"] = shard_name
+
+                    elif gate_up_bias_m:
+                        prefix = gate_up_bias_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        gate_bias, up_bias = _split_gate_up_bias(tensor, interleaved=True)
+                        out_tensors[f"{moe_prefix}.gate_bias"] = gate_bias
+                        out_tensors[f"{moe_prefix}.up_bias"] = up_bias
+                        new_weight_map[f"{moe_prefix}.gate_bias"] = shard_name
+                        new_weight_map[f"{moe_prefix}.up_bias"] = shard_name
+
+                    elif down_bias_m:
+                        prefix = down_bias_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        out_tensors[f"{moe_prefix}.down_bias"] = tensor.clone()
+                        new_weight_map[f"{moe_prefix}.down_bias"] = shard_name
+
+            if out_tensors:
+                save_file({k: v.contiguous() for k, v in out_tensors.items()}, str(out / shard_name))
+
+        return new_weight_map
+
+    @classmethod
+    def _resolve_split_dim(cls, prefix: str, canonical_index: Dict[str, str]) -> int:
+        """Return split dimension from canonical_index key presence.
+
+        GptOss-MXFP4 has its own transform so FusedExpertSplitCheckpointTransform
+        only sees two cases:
+          bias present → GptOss dense interleaved → dim=2
+          bias absent  → Mixtral or GraniteMoE    → dim=1
+        No shape reads needed — canonical_index (from index.json) is sufficient.
+        """
+        return 2 if f"{prefix}.gate_up_proj_bias" in canonical_index else 1
+
+
+# Backward-compatible alias — existing callers keep working.
+GraniteMoeFusedExpertSplitCheckpointTransform = FusedExpertSplitCheckpointTransform
+MoEFusedExpertSplitCheckpointTransform = FusedExpertSplitCheckpointTransform
+
+# Backward-compatible alias — existing callers keep working.
+MoEFusedExpertSplitCheckpointTransform = FusedExpertSplitCheckpointTransform
+
 
 
 class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
