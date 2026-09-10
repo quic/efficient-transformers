@@ -974,9 +974,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 logger.debug(f"Set vision buffers for batch_id {decode_batch_id} prefill")
 
                 # Run prefill with cached inputs
-                block_table = (
-                    self.block_table[decode_batch_id].reshape(1, -1) if self.block_table is not None else None
-                )
+                block_table = self.block_table[decode_batch_id].reshape(1, -1) if self.block_table is not None else None
                 outputs = self._execute_chunked_prefill(
                     lang_inputs,
                     num_chunks,

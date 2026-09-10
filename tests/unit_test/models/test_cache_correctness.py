@@ -588,9 +588,11 @@ class TestPagedAttentionBlockTableRegression:
         """Both rows prefill the same prompt and are handed a block_table
         that maps them both to physical block 3 (as a prefix-sharing caller
         would do) -> both writes target physical block 3."""
-        shared_prefix = torch.arange(self.BLOCK_SIZE * self.HEAD_DIM, dtype=torch.float32).reshape(
-            1, 1, self.BLOCK_SIZE, self.HEAD_DIM
-        ).expand(2, 1, self.BLOCK_SIZE, self.HEAD_DIM)
+        shared_prefix = (
+            torch.arange(self.BLOCK_SIZE * self.HEAD_DIM, dtype=torch.float32)
+            .reshape(1, 1, self.BLOCK_SIZE, self.HEAD_DIM)
+            .expand(2, 1, self.BLOCK_SIZE, self.HEAD_DIM)
+        )
         layer.write_only_paged_attention(
             shared_prefix.clone(),
             shared_prefix.clone(),
@@ -706,4 +708,3 @@ class TestPagedAttentionBlockTableRegression:
         assert torch.allclose(layer.keys[3], torch.full((1, self.BLOCK_SIZE, self.HEAD_DIM), 400.0))
         # Row 1 must land in its own physical block (9), not row 0's (3).
         assert torch.allclose(layer.keys[9], torch.full((1, self.BLOCK_SIZE, self.HEAD_DIM), 500.0))
-
