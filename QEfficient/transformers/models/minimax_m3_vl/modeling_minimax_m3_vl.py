@@ -1410,13 +1410,14 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
+        ctx_len: Optional[int] = None,
         **kwargs,
     ):
+        ctx_len = constants.ONNX_EXPORT_CTX_LEN if ctx_len is None else int(ctx_len)
         prefill_seq_len = kwargs.get("prefill_seq_len")
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
-
         qaic_config = getattr(self, "qaic_config", None) or {}
         msa_dp = max(
             int(qaic_config.get("msa_indexer_dp", 1) or 1),
@@ -1464,7 +1465,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         index_keys = self.get_dummy_index_keys(
             config=self.model.language_model.config,
             batch_size=cache_batch_size if continuous_batching else batch_size,
-            seq_len=prefill_seq_len,
+            seq_len=ctx_len,
             dtype=dtype,
         )
         inputs["past_key_values"] = past_key_values

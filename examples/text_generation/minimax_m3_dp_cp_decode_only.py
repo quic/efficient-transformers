@@ -45,6 +45,7 @@ def _run_pytorch_parity_test(
     cores_per_expert: int = 2,
     tree_reduce: bool = True,
     msa_indexer_dp: int = 1,
+    msa_indexer_cp: int = 1,
     msa_attn_dp: int = 1,
     indexer_n_head: int = 1,
     num_cores_per_device: int = 16,
@@ -87,8 +88,9 @@ def _run_pytorch_parity_test(
     if msa_indexer_dp > 1 or msa_attn_dp > 1:
         qaic_config["blocking_mode"] = "kv_headpar"
         qaic_config["num_kv_blocks"] = 2
-        if msa_indexer_dp > 1:
+        if msa_indexer_dp > 1 or msa_indexer_cp > 1:
             qaic_config["msa_indexer_dp"] = msa_indexer_dp
+            qaic_config["msa_indexer_cp"] = msa_indexer_cp
             qaic_config["indexer_n_head"] = indexer_n_head
             qaic_config["num_cores_per_device"] = num_cores_per_device
         if msa_attn_dp > 1:
@@ -122,7 +124,7 @@ def _run_pytorch_parity_test(
 def main():
     parser = argparse.ArgumentParser(description="MiniMax-M3 text-only decode (PL=1) with DP and GP enabled.")
     parser.add_argument("--model-id", default=MODEL_ID)
-    parser.add_argument("--ctx-len", type=int, default=2048)
+    parser.add_argument("--ctx-len", type=int, default=4096)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--generation-len", type=int, default=32)
@@ -159,6 +161,12 @@ def main():
         type=int,
         default=2,
         help="DP factor for the MSA sparse-attention indexer (_select_blocks_dp path).",
+    )
+    parser.add_argument(
+        "--msa-indexer-cp",
+        type=int,
+        default=2,
+        help="CP factor for the MSA sparse-attention indexer compact cache layout.",
     )
     parser.add_argument(
         "--msa-attn-dp",
@@ -201,6 +209,7 @@ def main():
                 cores_per_expert=args.cores_per_expert,
                 tree_reduce=args.tree_reduce,
                 msa_indexer_dp=args.msa_indexer_dp,
+                msa_indexer_cp=args.msa_indexer_cp,
                 msa_attn_dp=args.msa_attn_dp,
                 indexer_n_head=args.indexer_n_head,
                 num_cores_per_device=args.num_cores_per_device,
@@ -235,6 +244,7 @@ def main():
             "blocking_mode": "kv_headpar",
             "num_kv_blocks": 2,
             "msa_indexer_dp": args.msa_indexer_dp,
+            "msa_indexer_cp": args.msa_indexer_cp,
             "msa_attn_dp": args.msa_attn_dp,
             "indexer_n_head": args.indexer_n_head,
             "num_cores_per_device": args.num_cores_per_device,
