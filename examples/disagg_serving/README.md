@@ -1,4 +1,10 @@
-# We should be using disaggragate serving for GPTOSS model for best performance
+# Disaggregated serving
+
+Text-only causal language models use the canonical
+[`../text_generation/basic_inference.py`](../text_generation/basic_inference.py)
+entry point with `--disaggregated`. Model-specific text KV-handoff scripts are
+intentionally not maintained here; this directory retains manual reference and
+multimodal disaggregated examples.
  - GPT-OSS model has 128/4 for 120b and 32/4 ratio of total_experts/experts_per_tok
  - We use read all experts only once always strategy in prefill-only model
  - And we treat weights activtions meaning read only chosen experts for decode-only model

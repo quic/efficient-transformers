@@ -222,6 +222,11 @@ def disagg_group() -> argparse.ArgumentParser:
     p = _parent()
     g = p.add_argument_group("disagg / chunked prefill")
     g.add_argument(
+        "--disaggregated",
+        action="store_true",
+        help="Compile separate prefill/decode QPCs and run continuous batching with DMA KV handoff.",
+    )
+    g.add_argument(
         "--stage",
         choices=["prefill", "decode", "both"],
         default="both",
@@ -233,9 +238,84 @@ def disagg_group() -> argparse.ArgumentParser:
         help="Chunked prefill; pair with --stage prefill for MoE expert-blocked prefill.",
     )
     g.add_argument(
-        "--moe-prefill-packed-chunk-size", type=int, default=256, help="Packed rows per expert-blocked MoE chunk."
+        "--moe-expert-parallel-chunk-size",
+        "--moe-prefill-packed-chunk-size",
+        dest="moe_expert_parallel_chunk_size",
+        type=int,
+        default=None,
+        help="Packed rows per expert-parallel MoE prefill chunk.",
     )
     g.add_argument("--retain-full-kv", action="store_true", help="Keep full KV in the decode QPC.")
+    g.add_argument(
+        "--mdp-num-partitions",
+        type=int,
+        default=1,
+        help="Pipeline-parallel partitions for a prefill-only QPC.",
+    )
+    g.add_argument(
+        "--mdp-strategy",
+        choices=["onnx", "intersection"],
+        default="onnx",
+        help="How to derive pipeline-parallel partition boundaries.",
+    )
+    g.add_argument(
+        "--prefill-num-devices",
+        type=int,
+        default=None,
+        help="Devices used to compile the disaggregated prefill QPC; defaults to --num-devices.",
+    )
+    g.add_argument(
+        "--decode-num-devices",
+        type=int,
+        default=None,
+        help="Devices used to compile the disaggregated decode QPC; defaults to --num-devices.",
+    )
+    g.add_argument(
+        "--prefill-device-group",
+        type=_device_group,
+        default=None,
+        help=_adv("Runtime device IDs for the prefill cluster."),
+    )
+    g.add_argument(
+        "--decode-device-group",
+        type=_device_group,
+        default=None,
+        help=_adv("Runtime device IDs for the decode cluster."),
+    )
+    g.add_argument(
+        "--prefill-node-precision-info",
+        default=None,
+        help=_adv("Prefill-specific NPI YAML/JSON; overrides --node-precision-info."),
+    )
+    g.add_argument(
+        "--decode-node-precision-info",
+        default=None,
+        help=_adv("Decode-specific NPI YAML/JSON; overrides --node-precision-info."),
+    )
+    g.add_argument(
+        "--prefill-aic-enable-depth-first",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_adv("Override depth-first scheduling for the disaggregated prefill QPC."),
+    )
+    g.add_argument(
+        "--decode-aic-enable-depth-first",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_adv("Override depth-first scheduling for the disaggregated decode QPC."),
+    )
+    g.add_argument(
+        "--prefill-user-tiled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_adv("Override user tiling for the disaggregated prefill QPC."),
+    )
+    g.add_argument(
+        "--decode-user-tiled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=_adv("Override user tiling for the disaggregated decode QPC."),
+    )
     return p
 
 
@@ -244,20 +324,52 @@ def blocking_group() -> argparse.ArgumentParser:
     p = _parent()
     g = p.add_argument_group("blocking (attention tiling for long contexts)")
     g.add_argument("--enable-blocking", action="store_true")
+    blocking_modes = [
+        "auto",
+        "kv",
+        "kv_headpar",
+        "kv_batch_fold",
+        "q",
+        "h",
+        "qkv",
+        "hq",
+        "hkv",
+        "hqkv",
+        "bhqkv",
+        "prefill_q",
+        "prefill_kv",
+        "prefill_qkv",
+        "prefill_online",
+    ]
     g.add_argument(
         "--blocking-mode",
-        choices=["kv", "q", "h", "b", "qkv", "hqkv"],
+        choices=blocking_modes,
         default="kv",
         help="Axes to tile along; combine as substring (k=key, v=value, q=query, h=head, b=batch).",
+    )
+    g.add_argument(
+        "--prefill-blocking-mode",
+        choices=blocking_modes,
+        default=None,
+        help=_adv("Prefill-only blocking mode; overrides --blocking-mode for a prefill QPC."),
+    )
+    g.add_argument(
+        "--decode-blocking-mode",
+        choices=blocking_modes,
+        default=None,
+        help=_adv("Decode-only blocking mode; overrides --blocking-mode for a decode QPC."),
     )
     g.add_argument("--num-kv-blocks", type=int, default=None)
     g.add_argument("--num-q-blocks", type=int, default=None)
     g.add_argument("--num-batch-blocks", type=int, default=None)
     g.add_argument("--head-block-size", type=int, default=None)
+    g.add_argument("--headpar-split", type=int, default=None, help=_adv("Head-parallel split factor."))
     g.add_argument(
         "--num-kv-heads-repeat", type=int, default=None, help="KV-head replication factor (DeepSeek MLA workloads)."
     )
     g.add_argument("--skip-kv", action="store_true")
+    g.add_argument("--n-rep-chunk", type=int, default=None, help=_adv("Replication chunk count for blocking."))
+    g.add_argument("--kv-block-unroll", type=int, default=None, help=_adv("KV block unroll factor."))
     return p
 
 
@@ -374,10 +486,38 @@ def validate_args(ns: argparse.Namespace, error_fn) -> None:
     if ns.num_devices is not None and ns.device_group is not None:
         if ns.num_devices != len(ns.device_group):
             error_fn(f"--num-devices ({ns.num_devices}) does not match len(--device-group) ({len(ns.device_group)}).")
-    if ns.continuous_batching and ns.full_batch_size is None:
-        error_fn("--continuous-batching requires --full-batch-size.")
+    if (ns.continuous_batching or ns.disaggregated) and ns.full_batch_size is None:
+        error_fn("--continuous-batching/--disaggregated requires --full-batch-size.")
+    if ns.generation_len is not None and ns.generation_len < 1:
+        error_fn("--generation-len must be >= 1.")
     if getattr(ns, "layerwise", False) and ns.layerwise_window_size < 1:
         error_fn("--layerwise-window-size must be >= 1.")
+    if ns.mdp_num_partitions < 1:
+        error_fn("--mdp-num-partitions must be >= 1.")
+    if ns.moe_expert_parallel_chunk_size is not None and ns.moe_expert_parallel_chunk_size < 1:
+        error_fn("--moe-expert-parallel-chunk-size must be >= 1.")
+    if ns.mdp_num_partitions > 1 and not ns.disaggregated and ns.stage != "prefill":
+        error_fn("--mdp-num-partitions > 1 requires --stage prefill or --disaggregated.")
+    if ns.disaggregated:
+        if ns.stage != "both":
+            error_fn("--disaggregated runs both stages; do not combine it with --stage prefill/decode.")
+        if ns.onnx_path is not None:
+            error_fn("--disaggregated cannot use one --onnx-path for two differently exported QPCs.")
+        if ns.layerwise:
+            error_fn("--disaggregated does not support --layerwise.")
+        if ns.include_sampler or ns.speculative_model_type:
+            error_fn("--disaggregated currently requires host argmax decoding without sampler/speculative flags.")
+
+    prefill_num_devices = resolve_prefill_num_devices(ns)
+    decode_num_devices = resolve_decode_num_devices(ns)
+    if prefill_num_devices < 1 or decode_num_devices < 1:
+        error_fn("Prefill and decode device counts must be >= 1.")
+    if prefill_num_devices % ns.mdp_num_partitions:
+        error_fn("Prefill device count must be divisible by --mdp-num-partitions.")
+    if ns.prefill_device_group is not None and len(ns.prefill_device_group) != prefill_num_devices:
+        error_fn("len(--prefill-device-group) must match the resolved prefill device count.")
+    if ns.decode_device_group is not None and len(ns.decode_device_group) != decode_num_devices:
+        error_fn("len(--decode-device-group) must match the resolved decode device count.")
 
 
 def resolve_prefill_only(ns: argparse.Namespace) -> Optional[bool]:
@@ -385,7 +525,27 @@ def resolve_prefill_only(ns: argparse.Namespace) -> Optional[bool]:
     return {"prefill": True, "decode": False, "both": None}[ns.stage]
 
 
-def build_qaic_config(ns: argparse.Namespace) -> Optional[Dict[str, Any]]:
+def _resolve_stage_num_devices(ns: argparse.Namespace, stage: str) -> int:
+    explicit = getattr(ns, f"{stage}_num_devices")
+    if explicit is not None:
+        return explicit
+    stage_device_group = getattr(ns, f"{stage}_device_group")
+    if stage_device_group is not None:
+        return len(stage_device_group)
+    return resolve_num_devices(ns)
+
+
+def resolve_prefill_num_devices(ns: argparse.Namespace) -> int:
+    """Resolve the compile device count for a disaggregated prefill QPC."""
+    return _resolve_stage_num_devices(ns, "prefill")
+
+
+def resolve_decode_num_devices(ns: argparse.Namespace) -> int:
+    """Resolve the compile device count for a disaggregated decode QPC."""
+    return _resolve_stage_num_devices(ns, "decode")
+
+
+def build_qaic_config(ns: argparse.Namespace, stage: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Collect the ``qaic_config`` dict for ``from_pretrained``.
 
     Returns ``None`` when no qaic_config knob is set — some transforms
@@ -401,14 +561,17 @@ def build_qaic_config(ns: argparse.Namespace) -> Optional[Dict[str, Any]]:
     if ns.num_kv_heads_repeat is not None:
         cfg["num_kv_heads_repeat"] = ns.num_kv_heads_repeat
 
-    if ns.enable_blocking:
-        cfg["enable_blocking"] = True
-        cfg["blocking_mode"] = ns.blocking_mode
+    stage_blocking_mode = getattr(ns, f"{stage}_blocking_mode", None) if stage else None
+    if ns.enable_blocking or stage_blocking_mode is not None:
+        cfg["blocking_mode"] = stage_blocking_mode or ns.blocking_mode
         for key, val in (
             ("num_kv_blocks", ns.num_kv_blocks),
             ("num_q_blocks", ns.num_q_blocks),
             ("num_batch_blocks", ns.num_batch_blocks),
             ("head_block_size", ns.head_block_size),
+            ("headpar_split", ns.headpar_split),
+            ("n_rep_chunk", ns.n_rep_chunk),
+            ("kv_block_unroll", ns.kv_block_unroll),
         ):
             if val is not None:
                 cfg[key] = val
@@ -427,6 +590,19 @@ def build_qaic_config(ns: argparse.Namespace) -> Optional[Dict[str, Any]]:
         cfg["speculative_model_type"] = ns.speculative_model_type
 
     return cfg or None
+
+
+def build_prefill_qaic_config(ns: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """Add prefill-only MoE expert-parallel settings to the common QAIC config."""
+    cfg = dict(build_qaic_config(ns, "prefill") or {})
+    if ns.moe_expert_parallel_chunk_size is not None:
+        cfg["moe_config"] = {"expert_parallel_chunk_size": ns.moe_expert_parallel_chunk_size}
+    return cfg or None
+
+
+def build_decode_qaic_config(ns: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """Build a decode-stage QAIC config, including any blocking override."""
+    return build_qaic_config(ns, "decode")
 
 
 def compiler_options(ns: argparse.Namespace) -> Dict[str, Any]:
@@ -471,7 +647,9 @@ def apply_num_layers_override(from_pretrained_kwargs: Dict[str, Any], ns: argpar
 __all__: Sequence[str] = (
     "apply_num_layers_override",
     "blocking_group",
+    "build_decode_qaic_config",
     "build_qaic_config",
+    "build_prefill_qaic_config",
     "ccl_group",
     "compile_group",
     "compiler_options",
@@ -481,6 +659,8 @@ __all__: Sequence[str] = (
     "num_speculative_tokens",
     "print_namespace",
     "resolve_num_devices",
+    "resolve_decode_num_devices",
+    "resolve_prefill_num_devices",
     "resolve_prefill_only",
     "resolve_prompts",
     "runtime_group",
