@@ -404,6 +404,21 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         return {k for k in weight_map if cls.EXPERT_RE.match(k)}
 
     @classmethod
+    def resolve_onnx_key(cls, onnx_key: str, checkpoint_index: Dict[str, str]) -> Optional[str]:
+        """Explicit ONNX → checkpoint key mapping for per-expert MoE models.
+
+        Handles the Mixtral/Qwen3-MoE convention where the ONNX graph names
+        the MoE block as ``.mlp.`` but the checkpoint stores it as
+        ``.block_sparse_moe.``.
+        """
+        if onnx_key in checkpoint_index:
+            return onnx_key
+        candidate = onnx_key.replace(".mlp.", ".block_sparse_moe.")
+        if candidate in checkpoint_index:
+            return candidate
+        return None
+
+    @classmethod
     def apply(
         cls,
         src: Path,
@@ -556,6 +571,11 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         _BIAS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_bias$")
         return {k for k in weight_map
                 if cls._BLOCKS_RE.match(k) or _SCALES_RE.match(k) or _BIAS_RE.match(k)}
+
+    @classmethod
+    def resolve_onnx_key(cls, onnx_key: str, checkpoint_index: Dict[str, str]) -> Optional[str]:
+        """Direct lookup only — GptOss checkpoint keys match ONNX names directly."""
+        return onnx_key if onnx_key in checkpoint_index else None
 
     @classmethod
     def apply(
@@ -727,6 +747,21 @@ class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                 or cls._FUSED_DOWN_RE.match(k)
                 or cls._FUSED_GATE_UP_BIAS_RE.match(k)
                 or cls._FUSED_DOWN_BIAS_RE.match(k)}
+
+    @classmethod
+    def resolve_onnx_key(cls, onnx_key: str, checkpoint_index: Dict[str, str]) -> Optional[str]:
+        """Explicit ONNX → checkpoint key mapping for fused MoE models.
+
+        Handles the Mixtral convention where the ONNX graph names the MoE
+        block as ``.mlp.`` but the checkpoint stores it as ``.block_sparse_moe.``.
+        Also handles GraniteMoE which uses canonical names after key remapping.
+        """
+        if onnx_key in checkpoint_index:
+            return onnx_key
+        candidate = onnx_key.replace(".mlp.", ".block_sparse_moe.")
+        if candidate in checkpoint_index:
+            return candidate
+        return None
 
     @classmethod
     def apply(
