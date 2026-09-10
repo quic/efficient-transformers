@@ -40,6 +40,7 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
+from QEfficient.exporter.weight_free.mxfp6 import normalize_mxfp6_config, validate_mxfp6_capabilities
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -3664,6 +3665,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
         weight_free: bool = False,
+        mxfp6: bool = False,
+        mxfp6_scale_dtype: str = "float16",
         *args,
         **kwargs,
     ):
@@ -3708,6 +3711,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             (dtype conversion, MoE expert restacking, etc.) is saved under the
             ``QEFF_CHECKPOINT_HOME`` environment variable if set, otherwise next
             to the source checkpoint under the Hugging Face cache.
+        mxfp6 : bool, optional
+            If True, quantizes dense weight-free MatMul weights to QEff-owned
+            MXFP6 and emits standard-domain DequantizeLinear nodes. Requires
+            ``weight_free=True``. Default is False.
+        mxfp6_scale_dtype : str, optional
+            Scale tensor dtype for MXFP6. Accepted aliases are float16/fp16/half,
+            float32/fp32/float, bfloat16/bf16, and fp8/e8m0/float8e8m0/float8_e8m0fnu.
+            Default is "float16".
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
@@ -3722,10 +3733,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        mxfp6_config = normalize_mxfp6_config(mxfp6, mxfp6_scale_dtype)
+        if mxfp6_config.enabled and not weight_free:
+            raise ValueError("`mxfp6=True` requires `weight_free=True`.")
         if layerwise and weight_free:
             raise ValueError(
                 "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
             )
+        if layerwise and mxfp6_config.enabled:
+            raise ValueError("`layerwise=True` and `mxfp6=True` are mutually exclusive.")
+        if mxfp6_config.enabled:
+            if "quantization_config" in kwargs or kwargs.get("load_in_4bit") or kwargs.get("load_in_8bit"):
+                raise ValueError("`mxfp6=True` does not currently support source HF quantization configs.")
+            validate_mxfp6_capabilities(mxfp6_config)
         if weight_free:
             validate_dynamo_export_requirements("weight_free=True")
 
@@ -3776,9 +3796,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
+        if mxfp6_config.enabled and getattr(model.config, "quantization_config", None) is not None:
+            raise ValueError("`mxfp6=True` does not currently support source HF quantization configs.")
+
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
+            if mxfp6_config.enabled:
+                raise ValueError("`mxfp6=True` is currently supported only for text CausalLM weight-free export.")
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
                 kv_offload=kv_offload,
@@ -3794,6 +3819,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
             weight_free=weight_free,
+            mxfp6_config=mxfp6_config,
             **kwargs,
         )
         if layerwise:

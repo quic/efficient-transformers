@@ -38,6 +38,7 @@ from QEfficient.compile.mdp_generator import (
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
+from QEfficient.exporter.weight_free.mxfp6 import MXFP6_ONNX_OPSET
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -250,6 +251,7 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
         self._weight_free: bool = kwargs.get("weight_free", False)
+        self._mxfp6_config = kwargs.get("mxfp6_config", None)
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -609,6 +611,12 @@ class QEFFBaseModel(ABC):
             active_transforms = [
                 transform for transform in self._onnx_transforms if transform not in excluded_transforms
             ]
+            if (
+                getattr(getattr(self, "_mxfp6_config", None), "enabled", False)
+                and CustomOpTransform not in active_transforms
+                and CustomOpTransform not in excluded_transforms
+            ):
+                active_transforms.append(CustomOpTransform)
             needs_external_tensor_data = any(
                 transform in active_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
             )
@@ -616,7 +624,11 @@ class QEFFBaseModel(ABC):
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
                 "dynamic_axes": None if dynamo else dynamic_axes,
-                "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
+                "onnx_export_opset": (
+                    MXFP6_ONNX_OPSET
+                    if getattr(getattr(self, "_mxfp6_config", None), "enabled", False)
+                    else constants.get_onnx_export_opset(dynamo)
+                ),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -1073,6 +1085,14 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        if getattr(getattr(self, "_mxfp6_config", None), "enabled", False):
+            compiler_mxfp6_keys = ("mxfp6_matmul", "mxfp6-matmul", "mxfp6")
+            if any(compiler_options.get(key, False) for key in compiler_mxfp6_keys):
+                raise ValueError(
+                    "`mxfp6_matmul=True`/`mxfp6=True` cannot be used when QEff-owned `mxfp6=True` is active."
+                )
+            if enable_qnn:
+                raise ValueError("QNN compilation is not supported when QEff-owned `mxfp6=True` is active.")
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:

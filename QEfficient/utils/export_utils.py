@@ -25,6 +25,11 @@ from QEfficient.base.onnx_transforms import (
     RenameRepeatedSubgraphTransform,
     RenameWsubNodesTransform,
 )
+from QEfficient.exporter.weight_free.mxfp6 import (
+    MXFP6_BLOCK_SIZE,
+    MXFP6_QUANTIZER_VERSION,
+    MXFP6_SUBFUNCTION_TOPOLOGY_VERSION,
+)
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
@@ -433,6 +438,14 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     )
     if getattr(qeff_model, "_weight_free", False):
         copy_of_hash_params["weight_free"] = True
+    mxfp6_config = getattr(qeff_model, "_mxfp6_config", None)
+    if getattr(mxfp6_config, "enabled", False):
+        copy_of_hash_params["mxfp6"] = True
+        copy_of_hash_params["mxfp6_scale_dtype"] = mxfp6_config.scale_dtype
+        copy_of_hash_params["mxfp6_block_size"] = MXFP6_BLOCK_SIZE
+        copy_of_hash_params["mxfp6_quantizer_version"] = MXFP6_QUANTIZER_VERSION
+        if getattr(qeff_model, "_use_onnx_subfunctions", False):
+            copy_of_hash_params["mxfp6_subfunction_topology_version"] = MXFP6_SUBFUNCTION_TOPOLOGY_VERSION
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
         copy_of_hash_params["onnx_subfunction_version"] = 3
     # Generate hash from relevant parameters

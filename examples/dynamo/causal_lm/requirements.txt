@@ -18,4 +18,8 @@ torchvision @ https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp31
 # Additional dynamo dependencies
 accelerate==1.9.0
 compressed-tensors==0.17.0
+ml_dtypes>=0.5.4
+onnx @ git+https://github.com/onnx/onnx.git@3ab9181bbe2bb73cfd9ab88d4bdb8fad539d59b3
+onnx-ir==1.0.0
 onnxscript==0.6.2
+protobuf>=6.31.1
