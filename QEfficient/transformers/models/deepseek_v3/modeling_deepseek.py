@@ -308,6 +308,8 @@ class QEffDeepseekV3Attention(nn.Module):
             scaling=self.softmax_scale,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             is_mla=True,
             mla_kwargs=dict(
                 q_a_proj_out=q_a_proj_out,
@@ -403,6 +405,8 @@ class QEffDeepseekV3Attention(nn.Module):
             layer_idx=self.layer_idx,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             is_mla=True,
             mla_kwargs=dict(
                 per_head_k_up_normal=self.per_head_k_up_normal,
