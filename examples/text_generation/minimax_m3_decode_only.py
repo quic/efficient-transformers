@@ -155,7 +155,7 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
         skip_vision=True,
         offload_pt_weights=False,
         log_times=True,
