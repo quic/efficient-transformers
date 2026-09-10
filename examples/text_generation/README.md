@@ -91,28 +91,45 @@ python examples/text_generation/basic_inference.py \
     --user-tiled
 ```
 
-`--enable-blocking` opens the `qaic_config["enable_blocking"]` surface;
-`--blocking-mode` picks the tile axes (`kv`, `q`, `h`, `b`, `qkv`, `hqkv`);
+`--enable-blocking` makes the script forward `--blocking-mode` in `qaic_config`;
+the mode picks the tile axes (`kv`, `q`, `h`, `b`, `qkv`, `hqkv`);
 per-axis block counts (`--num-kv-blocks`, `--num-q-blocks`,
 `--num-batch-blocks`, `--head-block-size`) tune the tile shape.
 
-### Disaggregated serve (prefill + decode as separate QPCs)
+Disaggregated prefill and decode may select different modes. For example,
+GPT-OSS head-parallel blocking uses
+`--prefill-blocking-mode prefill_online --decode-blocking-mode kv_headpar`
+with `--num-kv-blocks 2 --num-q-blocks 2`; `--headpar-split` optionally
+overrides its default split.
 
-Compile prefill and decode QPCs into distinct directories:
+### Disaggregated serving with pipeline-parallel prefill and DMA KV handoff
+
+The canonical script can compile both QPCs and run continuous batching while
+prefill writes KV directly into the host buffers consumed by decode. This path
+requires a text architecture with full-KV disaggregated support, such as
+GPT-OSS, Qwen3-MoE, GLM4-MoE, or Kimi-K2.
 
 ```bash
 python examples/text_generation/basic_inference.py \
-    --model-name meta-llama/Llama-3.1-8B \
-    --stage prefill --enable-chunking --compile-dir /tmp/prefill_qpc
-
-python examples/text_generation/basic_inference.py \
-    --model-name meta-llama/Llama-3.1-8B \
-    --stage decode --retain-full-kv --compile-dir /tmp/decode_qpc
+    --model-name Qwen/Qwen3-30B-A3B \
+    --disaggregated --full-batch-size 4 \
+    --prefill-seq-len 256 --ctx-len 512 --generation-len 200 \
+    --prefill-num-devices 8 --decode-num-devices 4 \
+    --mdp-num-partitions 4 --mdp-strategy onnx \
+    --moe-expert-parallel-chunk-size 128 \
+    --decode-aic-enable-depth-first --prefill-user-tiled \
+    --mxfp6-matmul --mxint8-kv-cache --use-onnx-subfunctions \
+    --prompt "Explain quantum computing." "What is the capital of France?"
 ```
 
-vLLM-style chunked-context (CCL) lists are `--ccl-prefill` / `--ccl-decode`.
+Use `--prefill-device-group` and `--decode-device-group` when the two runtime
+clusters need explicit device IDs. For GPT-OSS-120B, the stage-specific
+`--prefill-node-precision-info` and `--decode-node-precision-info` flags allow
+different NPI files. The older compile-only flow remains available through
+`--stage prefill` and `--stage decode`; vLLM-style CCL lists are
+`--ccl-prefill` / `--ccl-decode`.
 
-### Multi-device (MDP)
+### Multi-device tensor slicing
 
 ```bash
 python examples/text_generation/basic_inference.py \
@@ -123,6 +140,10 @@ python examples/text_generation/basic_inference.py \
 
 `--num-devices` is authoritative; if omitted it falls back to
 `len(--device-group)`, else 1.
+
+For pipeline-parallel prefill, use `--stage prefill --mdp-num-partitions N` or
+the complete `--disaggregated` recipe above. The prefill device count must be
+divisible by the number of MDP partitions.
 
 ### Speculative decoding (TLM side)
 

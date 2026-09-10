@@ -234,13 +234,13 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - [Kimi-K2.5 Vision Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/kimi_k2/export_kimi_k25_vision.py)
 
 
-- **Disaggregated serving ready via vLLM GPT-OSS**
+- **Disaggregated serving for text models**
   > **Note**: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.
     
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Separate prefill and decode compilation supported
-  - Disaggregated serving ready
-  - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/gpt_oss_disagg_mode.py)
+  - Pipeline-parallel prefill and DMA KV handoff for supported text architectures
+  - [Unified Text Generation Example](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py)
 
 - **Olmo2**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)

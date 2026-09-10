@@ -105,8 +105,8 @@ Distributed inference across multiple devices.
 
 | Example | Description | Script |
 |---------|-------------|--------|
-| Basic Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode.py](disagg_serving/gpt_oss_disagg_mode.py) |
-| Chunking Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode_with_chunking.py](disagg_serving/gpt_oss_disagg_mode_with_chunking.py) |
+| Text models with DMA KV handoff | Unified causal-LM path (`--disaggregated`) | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
+| Legacy chunked GPT-OSS flow | Manual KV-copy reference | [disagg_serving/gpt_oss_disagg_mode_with_chunking.py](disagg_serving/gpt_oss_disagg_mode_with_chunking.py) |
 | Qwen3-VL MDP Compile | MDP compile-only validation for Qwen3-VL | [disagg_serving/qwen3_vl_mdp_compile.py](disagg_serving/qwen3_vl_mdp_compile.py) |
 
 ## Installation
