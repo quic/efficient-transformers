@@ -1,56 +1,32 @@
-# Qwen3-ASR Changes
+# Qwen3-ASR Transformers Changes
 
-## Overview
+This PR adds the Transformers integration needed to compile and execute
+`Qwen/Qwen3-ASR-0.6B-hf` through QEfficient.
 
-Added a standalone `qwen_asr_onefile.py` workflow for Qwen3-ASR model compilation
-and Cloud AI 100 inference.
+## Transformers-side changes
 
-## Added
+- Loads Qwen3-ASR with `AutoModelForSpeechSeq2Seq`.
+- Uses `QEFFAutoModelForSpeechSeq2Seq` to create the QEfficient model wrapper.
+- Loads the matching `AutoProcessor` and `AutoConfig` from the same model ID.
+- Builds processor input with the Qwen ASR audio chat template:
+  `processor.apply_chat_template(..., add_generation_prompt=True)`.
+- Uses eager attention during model loading for the Qwen3-ASR export path.
+- Uses float32 model weights during export and applies QEfficient's Transformers
+  quantizer replacement before compilation.
+- Converts processor position IDs and input-feature masks to the integer types
+  expected by the QEfficient/QPC graph.
+- Handles the model's audio-feature context and audio-token sizing when setting
+  the compiled encoder and decoder context lengths.
 
-- Qwen3-ASR model support using `Qwen/Qwen3-ASR-0.6B-hf`.
-- One-file `compile`, `run`, `compile-run`, and `benchmark` commands.
-- QPC compilation with configurable chunk length, decoder context length,
-  core count, and device IDs.
-- WAV, FLAC, OGG, AIFF, and optional video/audio conversion through `ffmpeg`.
-- Qwen ASR chat-template processor input construction.
-- Prefill padding and retained-state carry-over for decode iterations.
-- EOS-based generation stopping, with an option for fixed-length decoding.
-- Runtime chunking with configurable overlap.
-- JSON and CSV benchmark output.
-- Explicit rejection of device ID `43`.
+## Compatibility
 
-## Usage
-
-Compile and run:
-
-```bash
-python qwen_asr_onefile.py compile-run \
-  --audio-file /path/to/audio.flac \
-  --chunk-seconds 30 \
-  --ctx-len 512 \
-  --generation-len 128 \
-  --num-cores 8 \
-  --device-ids 0
-```
-
-Run an existing QPC:
-
-```bash
-python qwen_asr_onefile.py run \
-  --manifest /path/to/qpc_manifest.json \
-  --audio-file /path/to/audio.flac \
-  --generation-len 128 \
-  --device-ids 0
-```
-
-## Generated artifacts
-
-Compilation writes a manifest, QPC path file, and QEfficient build output under
-the selected output directory. QPC binaries are generated artifacts and should
-not be committed to the source repository.
+- The model ID is `Qwen/Qwen3-ASR-0.6B-hf`.
+- The environment must provide a Transformers version compatible with the
+  installed QEfficient checkout and the Qwen3-ASR architecture.
+- No upstream Transformers source files were modified by this PR; the integration
+  is implemented through the standalone `qwen_asr_onefile.py` workflow.
 
 ## Verification note
 
-The script has passed syntax and runtime smoke checks on Cloud AI 100. A smoke
-run or coherent transcript is not a numerical parity result; correctness claims
-require the appropriate HF/QEfficient/ORT/QPC parity evidence.
+Syntax and Cloud AI 100 smoke checks passed. These checks do not establish
+numerical parity; correctness requires HF/QEfficient/ORT/QPC parity evidence.
