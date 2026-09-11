@@ -54,11 +54,9 @@ from QEfficient.transformers.modeling_utils import (
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
 )
-from QEfficient.transformers.models.dflash2_draft import QEffDFlash2ForCausalLM
 from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import override_gptoss_prefill_chunking
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
-    DFlash2DLMTransform,
     DFlashDLMTransform,
     DFlashTLMTransform,
     DFlashTransform,
@@ -3638,15 +3636,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # DFlash changes the model structure and output contract, so apply it before
         # the generic speculative-decoding and sampler transforms wrap model.forward.
         self.dflash_dlm = bool(qaic_config and qaic_config.get("dflash_dlm", False))
-        self.dflash2_dlm = bool(qaic_config and qaic_config.get("dflash2_dlm", False))
         self.dflash_tlm = bool(qaic_config and qaic_config.get("target_layer_ids", None))
-        if self.dflash_dlm and self.dflash2_dlm:
-            raise ValueError("Set exactly one of qaic_config['dflash_dlm'] / qaic_config['dflash2_dlm'].")
         if self.dflash_dlm:
             self.model, _ = DFlashTransform.apply(self.model, qaic_config)
             self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
-        if self.dflash2_dlm:
-            self.model, _ = DFlash2DLMTransform.apply(self.model, qaic_config)
         if self.dflash_tlm:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
@@ -3796,9 +3789,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             # checkpoint weights are ever materialized here. The real weights
             # are supplied later at export time via pretrained_model_name_or_path.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
-        elif qaic_config is not None and qaic_config.get("dflash2_dlm", False):
-            # DFlash-2 drafts have no upstream `transformers` implementation, so AutoModelForCausalLM
-            model = QEffDFlash2ForCausalLM.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
@@ -4025,7 +4015,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config,
             fbs if self.continuous_batching else bs,
-            seq_len * 2 if (self.dflash_dlm or self.dflash2_dlm) else seq_len,
+            seq_len * 2 if self.dflash_dlm else seq_len,
         )
         if dynamo:
             kv_cache_shape = list(kv_cache_shape)
@@ -4088,7 +4078,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
 
-        if self.dflash_dlm or self.dflash2_dlm:
+        if self.dflash_dlm:
             example_inputs["target_hidden"] = torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float)
             example_inputs["position_ids"] = (
                 torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
@@ -4342,7 +4332,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if not self.continuous_batching:
             exec_batch_size = batch_size
-        elif self.dflash_dlm or self.dflash2_dlm:
+        elif self.dflash_dlm:
             # DFlash DLM: route decode_bsz rows via batch_index; use full_batch_size.
             exec_batch_size = full_batch_size or batch_size
         elif prefill_seq_len == 1:
@@ -4433,7 +4423,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
-        if self.dflash_tlm or self.dflash_dlm or self.dflash2_dlm:
+        if self.dflash_tlm or self.dflash_dlm:
             spec["seq_len"] = dflash_block_size
 
         if self.continuous_batching:
