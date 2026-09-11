@@ -118,21 +118,6 @@ pipeline {
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
-        booleanParam(
-            name: 'FORCE_FULL_CI',
-            defaultValue: false,
-            description: 'Run the complete regression pipeline regardless of the impact plan'
-        )
-        string(
-            name: 'CI_IMPACT_VALIDATION_PR',
-            defaultValue: '',
-            description: 'Optional PR number to check out and validate with this CI implementation'
-        )
-        booleanParam(
-            name: 'CI_IMPACT_LATEST_COMMIT_ONLY',
-            defaultValue: false,
-            description: 'Validation only: compare the selected PR head with HEAD^ instead of main'
-        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
@@ -146,10 +131,6 @@ pipeline {
 
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
-        IMPACT_TEST_FILTER = testFilter(params.TEST_PROFILE)
-        CI_IMPACT_MODE = 'full'
-        CI_SELECTIVE_LAYER_FILTER = noopMarkerFilter()
-        CI_QAIC_WORKERS = '3'
     }
 
     stages {
@@ -280,8 +261,13 @@ pipeline {
         stage('Collect Pytest Catalog') {
             steps {
                 sh '''
+                    . ~/.bashrc
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
+                    apt update &&
+                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                    python3.12 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate &&
                     python -m pytest tests --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-catalog=.ci-impact-catalog.json --impact-head=${CI_IMPACT_HEAD} &&
                     deactivate"
