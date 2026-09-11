@@ -1437,8 +1437,9 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
         eos_token_id = 0
 
         def __call__(self, prompt, return_tensors, padding, max_length=None):
-            del prompt, return_tensors
-            input_ids = np.array([[5, 6, 7]], dtype=np.int64)
+            del return_tensors
+            prompts = prompt if isinstance(prompt, list) else [prompt]
+            input_ids = np.array([[5 + index, 6 + index, 7 + index] for index, _ in enumerate(prompts)], dtype=np.int64)
             attention_mask = np.ones_like(input_ids)
             if padding == "max_length":
                 pad_width = max_length - input_ids.shape[1]
@@ -1487,3 +1488,116 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [5, 6, 7, 0]
     assert np.fromfile(io_dir / "data/position_ids.raw", dtype=np.int64).tolist() == [0, 1, 2, -1]
     assert np.fromfile(io_dir / "data/batch_index.raw", dtype=np.int64).tolist() == [0]
+
+
+@pytest.mark.cpu_only
+def test_causal_lm_runner_bundle_matches_compiled_batch_size(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_causal_lm_runner_bundle
+
+    class FakeTokenizer:
+        padding_side = "right"
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def __call__(self, prompt, return_tensors, padding, max_length=None):
+            del return_tensors
+            prompts = prompt if isinstance(prompt, list) else [prompt]
+            input_ids = np.array([[index + 1, index + 2] for index, _ in enumerate(prompts)], dtype=np.int64)
+            attention_mask = np.ones_like(input_ids)
+            if padding == "max_length":
+                pad_width = max_length - input_ids.shape[1]
+                input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [2, 4])
+    position_ids = helper.make_tensor_value_info("position_ids", TensorProto.INT64, [2, 4])
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [2, 1, 10])
+    graph = helper.make_graph([], "causal_runner_bs2", [input_ids, position_ids], [logits])
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    (compile_dir / "specializations.json").write_text(
+        json.dumps({"specializations": [{"batch_size": 2, "seq_len": 4, "ctx_len": 8}]})
+    )
+    qeff_model = SimpleNamespace(
+        qpc_path=None,
+        compile_artifacts_path=compile_dir,
+        onnx_path=onnx_path,
+        model=SimpleNamespace(config=SimpleNamespace(n_head=2, n_embd=8)),
+    )
+
+    io_dir = write_causal_lm_runner_bundle(model=qeff_model, tokenizer=FakeTokenizer(), prompts=["hello"])
+
+    entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
+    input_dims = {entry["map-to"]: entry["dims"] for entry in entries if entry["io-direction"] == "in"}
+    assert input_dims["input_ids"] == [2, 4]
+    assert input_dims["position_ids"] == [2, 4]
+    assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [1, 2, 0, 0, 2, 3, 0, 0]
+    assert np.fromfile(io_dir / "data/position_ids.raw", dtype=np.int64).tolist() == [0, 1, -1, -1, 0, 1, -1, -1]
+
+
+@pytest.mark.cpu_only
+def test_single_qpc_vlm_runner_bundle_matches_compiled_batch_size(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_single_qpc_vlm_runner_bundle
+
+    class FakeVisionHandler:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_processor_inputs(self, image, prompt, prefill_seq_len):
+            del image, prompt
+            return (
+                {"pixel_values": np.array([[11.0, 12.0, 13.0]], dtype=np.float32)},
+                {
+                    "input_ids": np.array([[1, 2, 0, 0]], dtype=np.int64)[:, :prefill_seq_len],
+                    "position_ids": np.array([[0, 1, -1, -1]], dtype=np.int64)[:, :prefill_seq_len],
+                    "image_idx": np.array([[0]], dtype=np.int64),
+                },
+                1,
+            )
+
+    input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [2, 4])
+    position_ids = helper.make_tensor_value_info("position_ids", TensorProto.INT64, [2, 4])
+    image_idx = helper.make_tensor_value_info("image_idx", TensorProto.INT64, [2, 1])
+    pixel_values = helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [2, 3])
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [2, 1, 10])
+    graph = helper.make_graph([], "single_qpc_vlm_bs2", [input_ids, position_ids, image_idx, pixel_values], [logits])
+    onnx_path = tmp_path / "vlm.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    (compile_dir / "specializations.json").write_text(
+        json.dumps({"specializations": [{"batch_size": 2, "seq_len": 4, "ctx_len": 8}]})
+    )
+    qeff_model = SimpleNamespace(
+        qpc_path=None,
+        compile_artifacts_path=compile_dir,
+        onnx_path=onnx_path,
+        model=SimpleNamespace(config=SimpleNamespace(model_type="fake_vlm")),
+    )
+
+    with patch("QEfficient.generation.embedding_handler.VisionHandler", FakeVisionHandler):
+        io_dir = write_single_qpc_vlm_runner_bundle(
+            model=qeff_model, processor=MagicMock(), images=["image"], prompts=["prompt"]
+        )
+
+    entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
+    input_dims = {entry["map-to"]: entry["dims"] for entry in entries if entry["io-direction"] == "in"}
+    assert input_dims["input_ids"] == [2, 4]
+    assert input_dims["position_ids"] == [2, 4]
+    assert input_dims["image_idx"] == [2, 1]
+    assert input_dims["pixel_values"] == [2, 3]
+    assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [1, 2, 0, 0, 1, 2, 0, 0]
+    assert np.fromfile(io_dir / "data/pixel_values.raw", dtype=np.float32).tolist() == [11.0, 12.0, 13.0] * 2

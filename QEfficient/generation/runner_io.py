@@ -82,6 +82,48 @@ def _specialization_symbols(specialization: Mapping[str, int]) -> Dict[str, int]
     return {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
 
 
+def _execution_batch_size(specialization: Mapping[str, int]) -> int:
+    return int(specialization.get("batch_size", 1))
+
+
+def _first_execution_batch(values: Sequence, batch_size: int, name: str) -> List:
+    if not values:
+        raise ValueError(f"`{name}` must contain at least one value.")
+    values = list(values)
+    if len(values) < batch_size:
+        logger.warning(f"Number of {name} is less than the compiled batch size; repeating to match it.")
+        values = values * (batch_size // len(values) + 1)
+    return values[:batch_size]
+
+
+def _concat_input_batches(input_batches: Sequence[Mapping[str, np.ndarray]]) -> Dict[str, np.ndarray]:
+    merged_inputs = {}
+    input_names = set().union(*(input_batch.keys() for input_batch in input_batches))
+    for input_name in input_names:
+        values = [np.asarray(input_batch[input_name]) for input_batch in input_batches if input_name in input_batch]
+        if len(values) != len(input_batches):
+            raise ValueError(f"Processor output {input_name!r} is missing from one or more batch entries.")
+        try:
+            merged_inputs[input_name] = np.concatenate(values, axis=0)
+        except ValueError as error:
+            raise ValueError(f"Processor output {input_name!r} cannot be batched for artifact-only replay.") from error
+    return merged_inputs
+
+
+def _prepare_vlm_execution_inputs(
+    handler, images: Sequence, prompts: Sequence[str], prefill_seq_len: int, batch_size: int
+) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    batch_images = _first_execution_batch(images, batch_size, "images")
+    batch_prompts = _first_execution_batch(prompts, batch_size, "prompts")
+    vision_batches = []
+    lang_batches = []
+    for image, prompt in zip(batch_images, batch_prompts):
+        vision_inputs, lang_inputs, _ = handler.prepare_processor_inputs(image, prompt, prefill_seq_len)
+        vision_batches.append(vision_inputs)
+        lang_batches.append(_slice_vlm_prefill_inputs(lang_inputs, prefill_seq_len))
+    return _concat_input_batches(vision_batches), _concat_input_batches(lang_batches)
+
+
 def _component_prefill_symbols(component) -> Dict[str, int]:
     try:
         compile_dir = _get_compile_dir(component)
@@ -265,8 +307,9 @@ def write_causal_lm_runner_bundle(
 
     specialization = load_prefill_specialization(_get_compile_dir(model))
     prefill_seq_len = int(specialization["seq_len"])
+    batch_prompts = _first_execution_batch(prompts, _execution_batch_size(specialization), "prompts")
     prepare_tokenizer(tokenizer)
-    prefill_inputs, _, _ = build_prefill_inputs(tokenizer, prompts[0], prefill_seq_len)
+    prefill_inputs, _, _ = build_prefill_inputs(tokenizer, batch_prompts, prefill_seq_len)
     host_inputs = slice_prefill_inputs(prefill_inputs, 0, prefill_seq_len)
 
     full_batch_size = specialization.get("full_batch_size")
@@ -327,14 +370,14 @@ def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], p
 
     specialization = load_prefill_specialization(_get_compile_dir(model))
     prefill_seq_len = int(specialization["seq_len"])
+    batch_size = _execution_batch_size(specialization)
     handler = VisionHandler(
         qeff_model=model,
         vision_session=None,
         processor=processor,
         tokenizer=getattr(processor, "tokenizer", None),
     )
-    vision_inputs, lang_inputs, _ = handler.prepare_processor_inputs(images[0], prompts[0], prefill_seq_len)
-    host_inputs = _slice_vlm_prefill_inputs(lang_inputs, prefill_seq_len)
+    vision_inputs, host_inputs = _prepare_vlm_execution_inputs(handler, images, prompts, prefill_seq_len, batch_size)
     host_inputs.update(vision_inputs)
     _add_specialization_control_inputs(model.onnx_path, host_inputs, specialization)
     host_inputs = _filter_graph_inputs(model.onnx_path, host_inputs)
@@ -445,13 +488,14 @@ def write_dual_qpc_vlm_runner_bundle(
         raise TypeError("Compile the active ImageTextToText component before generating runner inputs.")
     specialization = load_prefill_specialization(_get_compile_dir(active_model))
     prefill_seq_len = max(int(specialization.get("seq_len", 1)), 1)
+    batch_size = _execution_batch_size(specialization)
     handler = VisionHandler(
         qeff_model=model,
         vision_session=None,
         processor=processor,
         tokenizer=getattr(processor, "tokenizer", None),
     )
-    vision_inputs, lang_inputs, _ = handler.prepare_processor_inputs(images[0], prompts[0], prefill_seq_len)
+    vision_inputs, lang_inputs = _prepare_vlm_execution_inputs(handler, images, prompts, prefill_seq_len, batch_size)
     if skip_lang:
         # Some processors leave model-specific vision metadata in the language group.
         # The active ONNX graph is the source of truth for the replay invocation.
@@ -459,7 +503,7 @@ def write_dual_qpc_vlm_runner_bundle(
         shape_overrides = {}
         output_shape_overrides = _cross_qpc_output_shapes(model, specialization)
     else:
-        host_inputs = _slice_vlm_prefill_inputs(lang_inputs, prefill_seq_len)
+        host_inputs = lang_inputs
         _add_specialization_control_inputs(active_model.onnx_path, host_inputs, specialization)
         host_inputs = _filter_graph_inputs(active_model.onnx_path, host_inputs)
         _add_cross_qpc_placeholders(active_model, host_inputs, specialization)

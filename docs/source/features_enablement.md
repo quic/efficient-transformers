@@ -143,6 +143,6 @@ io_dir = model.generate(
 )
 ```
 
-The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
+The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` and node precision info (NPI) files when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
 
 Image-text-to-text generation also requires an example `processor`, `images`, and `prompts`. For dual-QPC models, set exactly one of `skip_vision=True` or `skip_lang=True` to emit one independently replayable stage.

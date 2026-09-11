@@ -75,6 +75,23 @@ def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
 
 
+def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Path) -> None:
+    """Copy a file-valued compiler input into compile_dir and update command in-place."""
+    for index, argument in enumerate(command):
+        option, separator, value = argument.partition("=")
+        if option != flag or not separator:
+            continue
+
+        input_path = Path(value)
+        if not input_path.is_file():
+            continue
+
+        artifact_path = compile_dir / input_path.name
+        if input_path.resolve() != artifact_path.resolve():
+            shutil.copy2(input_path, artifact_path)
+        command[index] = f"{flag}={artifact_path}"
+
+
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
     """Rename a graph value everywhere it can be referenced in an ONNX graph."""
     if old_name == new_name:
@@ -1317,6 +1334,7 @@ class QEFFBaseModel(ABC):
             logger.info(f"Running compiler: {' '.join(command)}")
 
         if artifact_only:
+            _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
             path_flags = {
                 "-aic-binary-dir",
                 "-custom-IO-list-file",
