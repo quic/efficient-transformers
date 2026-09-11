@@ -12,6 +12,7 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 """
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
@@ -686,6 +687,53 @@ class TestMdpCompileIntegration:
         assert compiler_cfg.get("mdp_strategy") == "onnx", (
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
+
+    def test_compile_artifact_only_writes_replay_without_invoking_compiler(self, tmp_path):
+        onnx_path = tmp_path / "model.onnx"
+        npi_path = tmp_path / "node_precision_info.yaml"
+        compile_root = tmp_path / "compile"
+        compile_dir = None
+
+        try:
+            _build_synthetic_gpt2_onnx(num_layers=2, out_path=onnx_path)
+            npi_path.write_text("FP32NodeInstanceNames: []\n")
+            model_hf, _ = make_tiny_gpt2()
+            qeff = QEFFAutoModelForCausalLM(model_hf)
+
+            with patch("QEfficient.base.modeling_qeff.subprocess.run") as compiler_run:
+                compile_dir = qeff._compile(
+                    onnx_path=str(onnx_path),
+                    compile_dir=str(compile_root),
+                    specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                    custom_io={"input_ids": "int64"},
+                    node_precision_info=str(npi_path),
+                    artifact_only=True,
+                )
+
+            compiler_run.assert_not_called()
+            assert compile_dir == qeff.compile_artifacts_path
+            assert qeff.qpc_path is None
+            replay_script = compile_dir / "qaic-compile.sh"
+            assert replay_script.is_file()
+            assert replay_script.stat().st_mode & 0o111
+            subprocess.run(["bash", "-n", replay_script], check=True)
+            assert (compile_dir / "specializations.json").is_file()
+            assert (compile_dir / "custom_io.yaml").is_file()
+            assert (compile_dir / "hashed_compile_params.json").is_file()
+            assert (compile_dir / npi_path.name).read_text() == npi_path.read_text()
+            replay_command = replay_script.read_text()
+            assert 'cd -- "$(dirname -- "$0")"' in replay_command
+            assert "-aic-binary-dir=qpc" in replay_command
+            assert f"-node-precision-info={npi_path.name}" in replay_command
+            assert "-artifact-only" not in replay_command
+            assert str(tmp_path) not in replay_command
+            assert not (compile_dir / "qpc").exists()
+        finally:
+            if compile_dir is not None:
+                shutil.rmtree(compile_dir, ignore_errors=True)
+            shutil.rmtree(compile_root, ignore_errors=True)
+            onnx_path.unlink(missing_ok=True)
+            npi_path.unlink(missing_ok=True)
 
     def test_user_mdp_compiler_dump_path_is_deprecated(self, compile_workspace):
         """User-provided compiler dumps are deprecated and ignored in favor of auto-generation."""

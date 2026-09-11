@@ -29,6 +29,11 @@ def main():
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
+        "--artifact-only",
+        action="store_true",
+        help="Write compiler and runner artifacts without executing either tool",
+    )
+    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -47,7 +52,7 @@ def main():
     )
 
     # Compile the model with full_batch_size for continuous batching
-    qpc_path = model.compile(
+    compile_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
@@ -55,8 +60,12 @@ def main():
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=True,
+        artifact_only=args.artifact_only,
     )
-    print(f"Model compiled to: {qpc_path}")
+    if args.artifact_only:
+        print(f"Compiler artifacts written to: {compile_path}")
+    else:
+        print(f"Model compiled to: {compile_path}")
 
     # Generate text for all prompts
     exec_info = model.generate(
@@ -64,7 +73,12 @@ def main():
         prompts=prompt_list,
         device_id=args.device_group,
         generation_len=args.generation_len,
+        artifact_only=args.artifact_only,
     )
+
+    if args.artifact_only:
+        print(f"Runner inputs written to: {exec_info}")
+        return
 
     # Display results
     print("\n" + "=" * 80)
