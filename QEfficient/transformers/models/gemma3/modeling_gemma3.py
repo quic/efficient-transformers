@@ -67,9 +67,15 @@ class QEffGemma3CustomRMSNormAIC(nn.Module):
 
 class QEffGemma3RotaryEmbedding(nn.Module):
     """
-    Copied from Gemma2RotaryEmbedding: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
-    The only differences are:
-    - Add static sin/cos computations.
+    ONNX-traceable rotary position embedding for Gemma3.
+
+    Maintains pre-computed cos/sin tables for both attention layer types:
+      - "full_attention"     uses rope_theta         (global layers, every 6th)
+      - "sliding_attention"  uses rope_local_base_freq (local/sliding layers)
+
+    The forward pass returns raw (unscaled) cos/sin already indexed by position_ids,
+    so qeff_apply_rotary_pos_emb only needs to unsqueeze — no gather step required.
+
     """
 
     def __init__(self, dim, config, max_position_embeddings=2048, base=10000, device=None):
@@ -77,35 +83,62 @@ class QEffGemma3RotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
+        dev = device or "cpu"
 
-        if hasattr(config, "rope_scaling") and "factor" in config.rope_scaling:
-            factor = config.rope_scaling["factor"]
-            inv_freq /= factor
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        # Resolve global and local theta.  HF v5.5 stores them inside
+        # config.rope_parameters; HF v4.x exposed them as direct attributes.
+        rp = getattr(config, "rope_parameters", None) or {}
+        global_theta = rp.get("full_attention", {}).get("rope_theta", None)
+        if global_theta is None:
+            global_theta = getattr(config, "rope_theta", base)
+        local_theta = rp.get("sliding_attention", {}).get("rope_theta", None)
+        if local_theta is None:
+            local_theta = getattr(config, "rope_local_base_freq", global_theta)
 
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=config.torch_dtype)
+        # ── full_attention (global) tables ────────────────────────────────────
+        full_inv_freq = 1.0 / (global_theta ** (torch.arange(0, dim, 2, dtype=torch.int64).float().to(dev) / dim))
+        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict) and "factor" in config.rope_scaling:
+            full_inv_freq /= config.rope_scaling["factor"]
+        self.register_buffer("inv_freq", full_inv_freq, persistent=False)
+        # Always build in float32 for maximum precision; forward() casts to the
+        # runtime dtype on the fly.  Storing in float16/bfloat16 at init time
+        # would bake quantisation error into every position permanently.
+        self._set_cos_sin_cache(seq_len=max_position_embeddings, device=dev)
 
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        # ── sliding_attention (local) tables ─────────────────────────────────
+        local_inv_freq = 1.0 / (local_theta ** (torch.arange(0, dim, 2, dtype=torch.int64).float().to(dev) / dim))
+        t = torch.arange(max_position_embeddings, device=dev, dtype=torch.int64).float()
+        local_freqs = torch.outer(t, local_inv_freq.float())
+        local_emb = torch.cat((local_freqs, local_freqs), dim=-1)
+        self.register_buffer("sliding_cos_cached", local_emb.cos().float(), persistent=False)
+        self.register_buffer("sliding_sin_cached", local_emb.sin().float(), persistent=False)
+
+    def _set_cos_sin_cache(self, seq_len, device):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
-
+        t = torch.arange(seq_len, device=device, dtype=torch.int64).type_as(self.inv_freq)
         freqs = torch.outer(t, self.inv_freq)
-
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+        # Store in float32; cast to runtime dtype in forward().
+        self.register_buffer("cos_cached", emb.cos().float(), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().float(), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+    def forward(self, x, position_ids=None, layer_type=None):
+        """Return pre-indexed, unscaled (cos, sin) for the given layer_type.
 
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
+        Args:
+            x:            Reference tensor — used only for dtype/device casting.
+            position_ids: LongTensor [batch, seq_len] with token positions.
+            layer_type:   "sliding_attention" or "full_attention".
+        Returns:
+            (cos, sin) each of shape [batch, seq_len, head_dim], dtype = x.dtype.
+        """
+        if layer_type == "sliding_attention":
+            cos = self.sliding_cos_cached[position_ids]
+            sin = self.sliding_sin_cached[position_ids]
+        else:
+            cos = self.cos_cached[position_ids]
+            sin = self.sin_cached[position_ids]
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -346,6 +379,25 @@ class QEffGemma3TextModel(Gemma3TextModel):
         config: Gemma3TextConfig
     """
 
+    def __qeff_init__(self):
+        # Replace the HF v5.5 Gemma3RotaryEmbedding (which multiplies cos/sin by
+        # attention_scaling, causing incorrect on-device attention magnitudes) with
+        # QEffGemma3RotaryEmbedding that stores raw, unscaled pre-indexed cos/sin
+        # tables for both layer types.
+        #
+        # Resolve global theta from either HF v5.5 rope_parameters dict or the
+        # legacy HF v4.x rope_theta direct attribute.
+        rp = getattr(self.config, "rope_parameters", None) or {}
+        global_theta = rp.get("full_attention", {}).get("rope_theta", None)
+        if global_theta is None:
+            global_theta = getattr(self.config, "rope_theta", 1_000_000.0)
+        self.rotary_emb = QEffGemma3RotaryEmbedding(
+            self.config.head_dim,
+            self.config,
+            max_position_embeddings=self.config.max_position_embeddings,
+            base=global_theta,
+        )
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -412,11 +464,6 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         hidden_states = inputs_embeds
 
-        # Compute position embeddings per layer_type using the single rotary_emb
-        position_embeddings = {}
-        for layer_type in set(self.config.layer_types):
-            position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
-
         # Build per-layer-type causal masks using _create_causal_mask for the model.generate() path
         # (DynamicCache from model.generate(), or None on first prefill).
         # For QEffSlidingWindowCache the masks are built here at the model level (keyed by layer_type)
@@ -463,9 +510,12 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 all_hidden_states += (hidden_states,)
 
             layer_type = self.config.layer_types[i]
+            # Call rotary_emb per layer so torch.jit.trace emits independent ONNX
+            # subgraphs for each layer.
+            position_embeddings = self.rotary_emb(hidden_states, position_ids, layer_type)
             layer_outputs = decoder_layer(
                 hidden_states,
-                position_embeddings=position_embeddings[layer_type],
+                position_embeddings=position_embeddings,
                 attention_mask=_causal_mask_mapping[layer_type] if _causal_mask_mapping is not None else None,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
