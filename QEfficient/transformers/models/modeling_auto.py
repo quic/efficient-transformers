@@ -4761,11 +4761,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             retained_state_names = (
                 self.model.get_retained_state_names()
                 if hasattr(self.model, "get_retained_state_names")
-                else [
-                    f"past_{kv}.{i}"
-                    for i in range(self.num_layers)
-                    for kv in ("key", "value")
-                ]
+                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ("key", "value")]
             )
             for retained_state_name in retained_state_names:
                 _add_retained_state_custom_io(

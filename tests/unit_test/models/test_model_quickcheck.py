@@ -2354,7 +2354,9 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     """Mixed full/linear attention configs must still expose decoder layer subfunctions."""
     from types import SimpleNamespace
 
+    from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeAttention,
         QEffQwen3_5MoeDecoderLayer,
         QEffQwen3_5MoeDecoderWrapper,
         QEffQwen3_5MoeForCausalLM,
@@ -2371,6 +2373,24 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
     assert wrapper.get_onnx_past_key_value_names(0) == ["past_key.0", "past_value.0"]
     assert wrapper.get_onnx_past_key_value_names(1) == ["conv_state.1", "recurrent_state.1"]
+
+    headpar_model = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
+    nn.Module.__init__(headpar_model)
+    headpar_model.self_attn = QEffQwen3_5MoeAttention(
+        Qwen3_5MoeTextConfig(
+            hidden_size=128,
+            num_attention_heads=4,
+            num_key_value_heads=1,
+            head_dim=32,
+        ),
+        layer_idx=0,
+    )
+    headpar_model.self_attn.attn_blocking_config = AttentionBlockingConfig(
+        mode=BlockingMode.KV_HEADPAR,
+        num_kv_blocks=8,
+        headpar_split=4,
+    )
+    assert headpar_model.get_submodules_for_export() == {QEffQwen3_5MoeAttention}
 
 
 def test_qwen3_5_moe_get_specializations_supports_multi_resolution():

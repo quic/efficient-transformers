@@ -213,6 +213,18 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
 
+    def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_K(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_V(start_index, end_index, cache_kwargs)
+
     def write_only(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
@@ -1141,6 +1153,17 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         return hidden_states
 
 
+def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> set[Type[nn.Module]]:
+    if getattr(model, "_modules", None) is not None:
+        for module in model.modules():
+            if not isinstance(module, QEffQwen3_5MoeAttention):
+                continue
+            blocking_config = getattr(module, "attn_blocking_config", None)
+            if blocking_config is not None and BlockingMode.resolve(blocking_config.mode) == BlockingMode.KV_HEADPAR:
+                return {QEffQwen3_5MoeAttention}
+    return {QEffQwen3_5MoeDecoderLayer}
+
+
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
     _start = 0
     _end = 0
@@ -1271,7 +1294,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        return {QEffQwen3_5MoeDecoderLayer}
+        return _qwen3_5_moe_submodules_for_export(self)
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
@@ -1701,7 +1724,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        return {QEffQwen3_5MoeDecoderLayer}
+        return _qwen3_5_moe_submodules_for_export(self)
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
         if self.config.text_config.layer_types[layer_idx] == "full_attention":

@@ -191,6 +191,18 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 }
 
 
+def _uses_blocked_kv_cache(mode: BlockingMode) -> bool:
+    return (
+        mode == BlockingMode.KV
+        or mode == BlockingMode.KV_HEADPAR
+        or mode == BlockingMode.KV_BATCH_FOLD
+        or mode == BlockingMode.QKV
+        or mode == BlockingMode.HKV
+        or mode == BlockingMode.HQKV
+        or mode == BlockingMode.BHQKV
+    )
+
+
 # helper function needed both in generic blocked approach and in other modeling files for non-blocked approach
 def past_key_value_update(
     module,
@@ -243,9 +255,8 @@ def generic_blocked_attention_interface(
     prefill_only: bool = False,
     **kwargs,
 ):
-    strategy = _STRATEGIES[
-        BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
-    ]
+    mode = BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
+    strategy = _STRATEGIES[mode]
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
@@ -261,8 +272,8 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
-            use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
+            use_kv_blocked = _uses_blocked_kv_cache(mode) and supports_blocked_kv(past_key_value)
+            if mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)

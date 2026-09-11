@@ -299,6 +299,36 @@ class TestBlockingModes:
             assert c.skip_kv is False
             assert c.num_batch_blocks == 1
 
+    def test_kv_headpar_uses_blocked_kv_cache(self):
+        from QEfficient.blocking.attention_blocking import _uses_blocked_kv_cache
+
+        assert _uses_blocked_kv_cache(BlockingMode.KV_HEADPAR)
+
+    def test_qwen3_5_moe_hybrid_cache_supports_kv_headpar_split_reads(self):
+        from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
+
+        from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeDynamicCache
+
+        cfg = Qwen3_5MoeTextConfig(
+            layer_types=["linear_attention", "full_attention"],
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=1,
+            hidden_size=128,
+            head_dim=32,
+        )
+        cache = QEffQwen3_5MoeDynamicCache(cfg)
+        key_states = torch.arange(4 * 32, dtype=torch.float32).reshape(1, 1, 4, 32)
+        value_states = key_states + 1000
+        cache.kv_layers[1].keys = key_states
+        cache.kv_layers[1].values = value_states
+        cache_kwargs = {"position_ids": torch.tensor([[3]])}
+
+        expected_key, expected_value = cache.read_only_blockedKV(1, 3, 1, cache_kwargs)
+
+        torch.testing.assert_close(cache.read_only_blocked_K(1, 3, 1, cache_kwargs), expected_key)
+        torch.testing.assert_close(cache.read_only_blocked_V(1, 3, 1, cache_kwargs), expected_value)
+
 
 # ---------------------------------------------------------------------------
 # Tests: re-application overrides the previous config
