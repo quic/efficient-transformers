@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import functools
 import os
 from time import perf_counter
 
@@ -19,7 +20,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3.6-35B-A3B"
+model_id = "/local/mnt/workspace/mkshirsa/hub/models--Qwen--Qwen3.6-35B-A3B/snapshots/995ad96eacd98c81ed38be0c5b274b04031597b0"
 DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
 config = AutoConfig.from_pretrained(model_id)
 
@@ -43,15 +44,40 @@ def _update_retained_states(target_inputs, source_outputs):
             target_inputs[f"recurrent_state.{layer_idx}"] = source_outputs[f"recurrent_state.{layer_idx}_RetainedState"]
 
 
+def apply_chunk_size(qeff_model, chunk_size: int):
+    """Bind chunk_size into each GDN layer's chunk_gated_delta_rule call so it
+    matches the chunk_size __qeff_init__ already sized _mask_causal/_mask_strict/
+    _ones_lower/_eye for -- torch_chunk_gated_delta_rule_qeff's own default
+    (64) is otherwise used instead, since forward() never passes chunk_size
+    explicitly. Applied here (not in modeling_qwen3_5_moe.py) so it can be
+    tied to PREFILL_SEQ_LEN per script/run instead of hardcoded in the model."""
+    language_model = getattr(qeff_model.model, "language_model", None)
+    if language_model is None:
+        language_model = qeff_model.model.model.language_model
+
+    for decoder_layer in language_model.layers:
+        linear_attn = getattr(decoder_layer, "linear_attn", None)
+        if linear_attn is not None:
+            linear_attn.chunk_gated_delta_rule = functools.partial(
+                linear_attn.torch_chunk_gated_delta_rule_qeff, chunk_size=chunk_size
+            )
+
+
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 64
+PREFILL_SEQ_LEN = 1024
 CTX_LEN = 4096
 BS = 1
+
+# GDN's chunk_gated_delta_rule call otherwise falls back to its own default
+# chunk_size=64, which no longer matches the chunk_size __qeff_init__ used to
+# size _mask_causal/_mask_strict/_ones_lower/_eye (also 1024) -- bind it here
+# instead of hardcoding it in the model. Must run before qeff_model.compile().
+apply_chunk_size(qeff_model, PREFILL_SEQ_LEN)
 
 # Enable KV blocking for full-attention layers with 2 KV blocks
 # To disable KV blocking, comment out the qaic_config line below
@@ -62,7 +88,7 @@ enable_blocking = False  ## By default it is false
 
 generation_len = 256
 
-skip_vision = True
+skip_vision = False
 
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -94,7 +120,7 @@ prefill_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
-    mos=1,
+    # mos=1,
     user_tiled=True,
     aic_enable_depth_first=False,
     prefill_only=True,
@@ -117,7 +143,7 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
-    mos=1,
+    # mos=1,
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
