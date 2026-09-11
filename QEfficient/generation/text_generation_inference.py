@@ -479,6 +479,8 @@ class QEffTextGenerationBase:
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self._prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
         self._decode_seq_len = self._fetch_decode_seq_len()
+        self._position_ids_rank = self._fetch_position_ids_rank()
+        self._position_ids_num_sections = self._fetch_position_ids_num_sections()
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
@@ -591,6 +593,79 @@ class QEffTextGenerationBase:
 
         return self._session.bindings[self._session.binding_index_map[key]].dims[2]
 
+    def _fetch_position_ids_shape(self) -> Optional[List[int]]:
+        if "position_ids" not in self._session.binding_index_map:
+            return None
+        position_ids_index = self._session.binding_index_map["position_ids"]
+        if self._session.allowed_shapes:
+            return self._session.allowed_shapes[0][position_ids_index][1]
+        return list(self._session.bindings[position_ids_index].dims)
+
+    def _fetch_position_ids_rank(self) -> int:
+        position_ids_shape = self._fetch_position_ids_shape()
+        return len(position_ids_shape) if position_ids_shape is not None else 2
+
+    def _fetch_position_ids_num_sections(self) -> int:
+        position_ids_shape = self._fetch_position_ids_shape()
+        if position_ids_shape is None or len(position_ids_shape) < 3:
+            return 1
+        return position_ids_shape[0]
+
+    def _decode_input_seq_len(self) -> int:
+        if self._position_ids_rank == 3 and self._decode_seq_len is None:
+            return self._prefill_seq_len
+        return self._decode_seq_len or self.decode_input_ids.shape[-1]
+
+    def _format_input_ids_for_session(self, input_ids: np.ndarray) -> np.ndarray:
+        expected_seq_len = self._decode_input_seq_len()
+        if input_ids.shape[-1] == expected_seq_len:
+            return input_ids
+        if input_ids.shape[-1] > expected_seq_len:
+            raise ValueError(f"input_ids shape {input_ids.shape} exceeds QPC sequence length {expected_seq_len}.")
+        padded = np.full(
+            (input_ids.shape[0], expected_seq_len),
+            self.tokenizer.pad_token_id,
+            dtype=input_ids.dtype,
+        )
+        padded[:, : input_ids.shape[-1]] = input_ids
+        return padded
+
+    @staticmethod
+    def _pad_position_ids(position_ids: np.ndarray, expected_seq_len: int) -> np.ndarray:
+        if position_ids.shape[-1] == expected_seq_len:
+            return position_ids
+        if position_ids.shape[-1] > expected_seq_len:
+            raise ValueError(f"position_ids shape {position_ids.shape} exceeds QPC sequence length {expected_seq_len}.")
+        padded_shape = (*position_ids.shape[:-1], expected_seq_len)
+        padded = np.full(padded_shape, -1, dtype=position_ids.dtype)
+        padded[..., : position_ids.shape[-1]] = position_ids
+        return padded
+
+    def _format_position_ids_for_session(
+        self, position_ids: np.ndarray, expected_seq_len: Optional[int] = None
+    ) -> np.ndarray:
+        if expected_seq_len is not None:
+            position_ids = self._pad_position_ids(position_ids, expected_seq_len)
+        if self._position_ids_rank != 3:
+            return position_ids
+        if position_ids.ndim == 3:
+            return position_ids
+        if position_ids.ndim != 2:
+            raise ValueError(f"Expected 2-D or 3-D position_ids for QPC input, got shape {position_ids.shape}.")
+        return np.repeat(position_ids[None, :, :], self._position_ids_num_sections, axis=0)
+
+    @staticmethod
+    def _advance_position_ids(position_ids: np.ndarray, decode_batch_id=None) -> None:
+        if decode_batch_id is None:
+            np.add(position_ids, 1, out=position_ids, where=position_ids >= 0)
+            return
+        position_ids_index = int(np.asarray(decode_batch_id).reshape(-1)[0])
+        if position_ids.ndim == 3:
+            target = position_ids[:, position_ids_index, :]
+        else:
+            target = position_ids[position_ids_index, :]
+        np.add(target, 1, out=target, where=target >= 0)
+
     def _fetch_generation_len(self, generation_len, max_gen_len):
         """
         Fetches the generation length for the model.
@@ -635,6 +710,10 @@ class QEffTextGenerationBase:
         else:
             decode_inputs["input_ids"] = self.decode_input_ids
             decode_inputs["position_ids"] = self.decode_pos_ids
+        decode_inputs["input_ids"] = self._format_input_ids_for_session(decode_inputs["input_ids"])
+        decode_inputs["position_ids"] = self._format_position_ids_for_session(
+            decode_inputs["position_ids"], expected_seq_len=self._decode_input_seq_len()
+        )
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
         if self.include_sampler:
@@ -798,6 +877,9 @@ class QEffTextGenerationBase:
 
         inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs["position_ids"] = self._format_position_ids_for_session(
+            inputs["position_ids"], expected_seq_len=padded_len
+        )
         inputs.pop("token_type_ids", None)
 
         if decode_batch_id is not None:
@@ -840,7 +922,7 @@ class QEffTextGenerationBase:
                 :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
             chunk_inputs["position_ids"] = inputs["position_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
+                ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
@@ -961,7 +1043,7 @@ class QEffTextGenerationBase:
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
                     decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
-                    decode_inputs["position_ids"][decode_batch_id][..., -1] += 1
+                    self._advance_position_ids(decode_inputs["position_ids"], decode_batch_id)
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )
@@ -1024,11 +1106,12 @@ class QEffTextGenerationBase:
                 self._write_io_dir = None
 
             # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
-            decode_inputs["position_ids"][:, -1] += 1
+            next_token_id = self._fetch_next_token_id(outputs)
+            decode_inputs["input_ids"] = self._format_input_ids_for_session(next_token_id)
+            self._advance_position_ids(decode_inputs["position_ids"])
             cache_index += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"][:, -1]
-            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+            self.generated_ids[:, num_token] = next_token_id[:, -1]
+            finished_sequences |= next_token_id == self.tokenizer.eos_token_id
             if self.include_sampler:
                 decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
 
@@ -1059,10 +1142,11 @@ class QEffTextGenerationBase:
                 self._write_io_dir = None
 
             # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
-            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+            next_token_id = outputs["logits"].argmax(2)
+            decode_inputs["input_ids"] = self._format_input_ids_for_session(next_token_id)
+            self._advance_position_ids(decode_inputs["position_ids"])
+            self.generated_ids[:, num_token] = next_token_id.squeeze(1)
+            finished_sequences |= next_token_id == self.tokenizer.eos_token_id
 
             if finished_sequences.all() and not automation:
                 break

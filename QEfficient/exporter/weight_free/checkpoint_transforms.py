@@ -18,7 +18,6 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import torch
 from safetensors import safe_open
@@ -44,7 +43,7 @@ from QEfficient.utils.logging_utils import logger
 
 
 def _estimate_layer_stack_gb(
-    expert_entries: Dict[Tuple[int, int, str], Tuple[str, str]],
+    expert_entries: dict[tuple[int, int, str], tuple[str, str]],
     layer_idx: int,
     num_experts: int,
     src: Path,
@@ -100,6 +99,29 @@ def _estimate_layer_stack_gb(
 # Sentinel marking a fully-prepared checkpoint directory
 # ---------------------------------------------------------------------------
 _SENTINEL = CHECKPOINT_PREPARED_SENTINEL
+_LAYER_KEY_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
+
+
+def _is_within_selected_layers(key: str, selected_layer_count: int | None = None) -> bool:
+    """Return whether a checkpoint key belongs to the exported layer range."""
+    if selected_layer_count is None or selected_layer_count < 0:
+        return True
+    match = _LAYER_KEY_RE.search(key)
+    return match is None or int(match.group(1)) < selected_layer_count
+
+
+def _filter_weight_map_for_selected_layers(
+    weight_map: dict[str, str],
+    selected_layer_count: int | None = None,
+) -> dict[str, str]:
+    """Drop decoder-layer checkpoint keys outside the exported layer range."""
+    if selected_layer_count is None or selected_layer_count < 0:
+        return weight_map
+    return {
+        key: shard_name
+        for key, shard_name in weight_map.items()
+        if _is_within_selected_layers(key, selected_layer_count)
+    }
 
 
 def _moe_weights_prefix_from_experts_prefix(prefix: str) -> str:
@@ -110,10 +132,10 @@ def _moe_weights_prefix_from_experts_prefix(prefix: str) -> str:
 
 
 def _infer_fused_gate_up_split_dim(
-    gate_up_shape: Tuple[int, ...],
-    down_shape: Optional[Tuple[int, ...]],
+    gate_up_shape: tuple[int, ...],
+    down_shape: tuple[int, ...] | None,
     *,
-    preferred_split_dim: Optional[int] = None,
+    preferred_split_dim: int | None = None,
 ) -> int:
     """Infer whether fused gate/up uses [E,2I,H] or [E,H,2I]."""
     if len(gate_up_shape) != 3 or down_shape is None or len(down_shape) != 3:
@@ -130,11 +152,11 @@ def _infer_fused_gate_up_split_dim(
 
 def _split_fused_gate_up_to_canonical(
     gate_up: torch.Tensor,
-    down_shape: Optional[Tuple[int, ...]] = None,
+    down_shape: tuple[int, ...] | None = None,
     *,
     interleaved: bool = False,
-    preferred_split_dim: Optional[int] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    preferred_split_dim: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Split fused gate/up tensor into canonical gate/up [E,H,I] tensors."""
     split_dim = _infer_fused_gate_up_split_dim(
         tuple(gate_up.shape),
@@ -155,9 +177,9 @@ def _split_fused_gate_up_to_canonical(
 
 def _down_to_canonical(
     down: torch.Tensor,
-    gate_up_shape: Optional[Tuple[int, ...]] = None,
+    gate_up_shape: tuple[int, ...] | None = None,
     *,
-    preferred_split_dim: Optional[int] = None,
+    preferred_split_dim: int | None = None,
 ) -> torch.Tensor:
     """Return canonical down [E,I,H] for the fused source layout."""
     split_dim = _infer_fused_gate_up_split_dim(
@@ -170,7 +192,7 @@ def _down_to_canonical(
     return down.transpose(1, 2).contiguous()
 
 
-def _split_gate_up_bias(gate_up_bias: torch.Tensor, *, interleaved: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+def _split_gate_up_bias(gate_up_bias: torch.Tensor, *, interleaved: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
     """Split fused gate/up bias into canonical gate/up bias [E,I] tensors."""
     if interleaved:
         return gate_up_bias[..., 0::2].contiguous(), gate_up_bias[..., 1::2].contiguous()
@@ -195,12 +217,13 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
     @classmethod
     def is_applicable(
         cls,
-        weight_map: Dict[str, str],
-        src: Optional[Path] = None,
+        weight_map: dict[str, str],
+        src: Path | None = None,
         target_dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> bool:
         """Return True when dtype conversion is required for this checkpoint."""
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
         return src is None or requires_dtype_conversion(Path(src), weight_map, target_dtype)
 
     @classmethod
@@ -209,7 +232,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         **kwargs,
     ) -> bool:
         """Convert checkpoint shards to ``target_dtype`` in a prepared output directory."""
@@ -223,7 +246,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         # This is not a transform
         copy_checkpoint_aux_files(src, out)
 
-        weight_map = read_weight_map(src)
+        weight_map = _filter_weight_map_for_selected_layers(read_weight_map(src), kwargs.get("selected_layer_count"))
         shard_names = sorted(set(weight_map.values()))
         new_name_for = {
             shard: (f"model_{idx:04d}.safetensors" if len(shard_names) > 1 else "model.safetensors")
@@ -235,9 +258,11 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         n_workers = max_workers if max_workers is not None else min(len(shard_names), cpu_count() * 4, 256)
 
         def _process_shard(shard_name: str) -> None:
-            tensors: Dict[str, torch.Tensor] = {}
+            tensors: dict[str, torch.Tensor] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     t = f.get_tensor(key)
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
             atomic_save(tensors, out / new_name_for[shard_name])
@@ -270,9 +295,9 @@ class _LayerStacker:
         """Create an accumulator for all experts in one MoE layer."""
         self.prefix = prefix
         self.num_experts = num_experts
-        self._gate: Optional[torch.Tensor] = None
-        self._up: Optional[torch.Tensor] = None
-        self._down: Optional[torch.Tensor] = None
+        self._gate: torch.Tensor | None = None
+        self._up: torch.Tensor | None = None
+        self._down: torch.Tensor | None = None
 
     def add(self, expert_idx: int, kind: str, tensor: torch.Tensor) -> None:
         """Add one expert projection tensor to the layer accumulator."""
@@ -295,7 +320,7 @@ class _LayerStacker:
                 self._down = torch.empty(self.num_experts, hidden_dim, ffn_dim, dtype=tensor.dtype)
             self._down[expert_idx] = tensor
 
-    def stack(self, target_dtype: torch.dtype) -> Dict[str, torch.Tensor]:
+    def stack(self, target_dtype: torch.dtype) -> dict[str, torch.Tensor]:
         """Return stacked expert tensors in the derived QEff checkpoint layout."""
         # Output in the canonical layout that OptimizedMoETransform creates so
         # promote_initializers_and_build_spec finds an exact checkpoint key match.
@@ -352,8 +377,9 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
     )
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
         """Return True when the checkpoint uses per-expert MoE tensor keys."""
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
         return any(cls.EXPERT_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -362,9 +388,9 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
-        max_workers_scan: Optional[int] = None,
-        max_workers_layers: Optional[int] = None,
-        max_workers_base: Optional[int] = None,
+        max_workers_scan: int | None = None,
+        max_workers_layers: int | None = None,
+        max_workers_base: int | None = None,
         **kwargs,
     ) -> bool:
         """Stack per-expert MoE tensors and convert remaining tensors to ``target_dtype``."""
@@ -376,7 +402,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        weight_map = read_weight_map(src)
+        weight_map = _filter_weight_map_for_selected_layers(read_weight_map(src), kwargs.get("selected_layer_count"))
         shard_names = sorted(set(weight_map.values()))
 
         # Phase 1: parallel key scan - no tensor data loaded.
@@ -384,16 +410,18 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         # expert_entries[(layer_idx, expert_idx, kind)] = (shard_name, orig_key)
         # layer_prefix[layer_idx]                        = prefix up to .experts
         # base_entries[orig_key]                         = shard_name
-        expert_entries: Dict[Tuple[int, int, str], Tuple[str, str]] = {}
-        layer_prefix: Dict[int, str] = {}
-        base_entries: Dict[str, str] = {}
+        expert_entries: dict[tuple[int, int, str], tuple[str, str]] = {}
+        layer_prefix: dict[int, str] = {}
+        base_entries: dict[str, str] = {}
 
-        def _scan(shard_name: str) -> Tuple[Dict, Dict, Dict]:
-            loc_e: Dict[Tuple[int, int, str], Tuple[str, str]] = {}
-            loc_p: Dict[int, str] = {}
-            loc_b: Dict[str, str] = {}
+        def _scan(shard_name: str) -> tuple[dict, dict, dict]:
+            loc_e: dict[tuple[int, int, str], tuple[str, str]] = {}
+            loc_p: dict[int, str] = {}
+            loc_b: dict[str, str] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     m = cls.EXPERT_RE.match(key)
                     if m:
                         loc_e[(int(m.group(2)), int(m.group(3)), m.group(4))] = (shard_name, key)
@@ -417,19 +445,19 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
                 layer_prefix.update(loc_p)
                 base_entries.update(loc_b)
 
-        experts_per_layer: Dict[int, set] = {}
+        experts_per_layer: dict[int, set] = {}
         for layer_idx, expert_idx, _ in expert_entries:
             experts_per_layer.setdefault(layer_idx, set()).add(expert_idx)
         layer_indices = sorted(experts_per_layer.keys())
         sample_n = len(next(iter(experts_per_layer.values()))) if experts_per_layer else 0
         logger.info(f"  {len(layer_indices)} MoE layers × {sample_n} experts each.")
 
-        new_weight_map: Dict[str, str] = {}
+        new_weight_map: dict[str, str] = {}
 
         # Phase 2: parallel layer stacking.
         # Each layer thread loads its own experts (grouped by shard to open each
         # shard at most once per layer), stacks, converts dtype, writes atomically.
-        def _stack_layer(layer_idx: int) -> Tuple[str, List[str]]:
+        def _stack_layer(layer_idx: int) -> tuple[str, list[str]]:
             num_exp = len(experts_per_layer[layer_idx])
             stacker = _LayerStacker(layer_prefix[layer_idx], num_exp)
 
@@ -437,7 +465,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
             # grok-1: linear/linear_v/linear_1).
             kinds_present = {k for (li, _, k) in expert_entries if li == layer_idx}
 
-            by_shard: Dict[str, List[Tuple[int, str, str]]] = {}
+            by_shard: dict[str, list[tuple[int, str, str]]] = {}
             for exp_idx in range(num_exp):
                 for kind in kinds_present:
                     shard_name, orig_key = expert_entries[(layer_idx, exp_idx, kind)]
@@ -487,15 +515,15 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
                 logger.info(f"    layer {li:5d} → {out_name}")
 
         # Phase 3: parallel base shard conversion.
-        by_shard_base: Dict[str, List[str]] = {}
+        by_shard_base: dict[str, list[str]] = {}
         for key, shard_name in base_entries.items():
             by_shard_base.setdefault(shard_name, []).append(key)
 
         base_shard_list = sorted(by_shard_base)
         new_base_name_for = {shard: f"base-{idx:04d}.safetensors" for idx, shard in enumerate(base_shard_list)}
 
-        def _convert_base(shard_name: str, keys: List[str]) -> None:
-            tensors: Dict[str, torch.Tensor] = {}
+        def _convert_base(shard_name: str, keys: list[str]) -> None:
+            tensors: dict[str, torch.Tensor] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in keys:
                     t = f.get_tensor(key)
@@ -561,8 +589,9 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
     _BLOCKS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_blocks$")
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
         """Return True when the checkpoint contains GPT-OSS MXFP4 expert blocks."""
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
         return any(cls._BLOCKS_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -571,9 +600,9 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         src: Path,
         out: Path,
         target_dtype: torch.dtype = torch.float32,
-        max_workers_scan: Optional[int] = None,
-        max_workers_layers: Optional[int] = None,
-        max_workers_base: Optional[int] = None,
+        max_workers_scan: int | None = None,
+        max_workers_layers: int | None = None,
+        max_workers_base: int | None = None,
         **kwargs,
     ) -> bool:
         """Dequantize GPT-OSS MXFP4 experts and split fused expert projections."""
@@ -585,7 +614,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        weight_map = read_weight_map(src)
+        weight_map = _filter_weight_map_for_selected_layers(read_weight_map(src), kwargs.get("selected_layer_count"))
         shard_names = sorted(set(weight_map.values()))
 
         # Phase 1: scan - collect expert tensor locations.
@@ -596,18 +625,20 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         _SCALES_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_scales$")
         _BIAS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_bias$")
 
-        expert_locs: Dict[Tuple[int, str], Dict] = {}  # {(layer, kind): {blocks/scales: (shard, key)}}
-        bias_locs: Dict[Tuple[int, str], Tuple[str, str]] = {}
-        layer_prefix: Dict[int, str] = {}
-        base_entries: Dict[str, str] = {}
+        expert_locs: dict[tuple[int, str], dict] = {}  # {(layer, kind): {blocks/scales: (shard, key)}}
+        bias_locs: dict[tuple[int, str], tuple[str, str]] = {}
+        layer_prefix: dict[int, str] = {}
+        base_entries: dict[str, str] = {}
 
         def _scan(shard_name: str):
-            loc_e: Dict[Tuple[int, str], Dict] = {}
-            loc_b: Dict[Tuple[int, str], Tuple[str, str]] = {}
-            loc_p: Dict[int, str] = {}
-            loc_base: Dict[str, str] = {}
+            loc_e: dict[tuple[int, str], dict] = {}
+            loc_b: dict[tuple[int, str], tuple[str, str]] = {}
+            loc_p: dict[int, str] = {}
+            loc_base: dict[str, str] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     m = cls._BLOCKS_RE.match(key)
                     if m:
                         li, kind = int(m.group(2)), m.group(3)
@@ -645,13 +676,13 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         layer_indices = sorted({li for li, _ in expert_locs})
         logger.info(f"  Found {len(layer_indices)} MoE layers.")
 
-        new_weight_map: Dict[str, str] = {}
+        new_weight_map: dict[str, str] = {}
 
         # Phase 2: per-layer dequant + split.
-        def _process_layer(layer_idx: int) -> Tuple[str, List[str]]:
+        def _process_layer(layer_idx: int) -> tuple[str, list[str]]:
             prefix = layer_prefix[layer_idx]
             moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
-            tensors: Dict[str, torch.Tensor] = {}
+            tensors: dict[str, torch.Tensor] = {}
 
             def _load(shard: str, key: str) -> torch.Tensor:
                 with safe_open(str(src / shard), framework="pt") as f:
@@ -705,15 +736,15 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                 logger.info(f"    layer {li:5d} → {out_name}")
 
         # Phase 3: base shard dtype conversion.
-        by_shard_base: Dict[str, List[str]] = {}
+        by_shard_base: dict[str, list[str]] = {}
         for key, shard_name in base_entries.items():
             by_shard_base.setdefault(shard_name, []).append(key)
 
         base_shard_list = sorted(by_shard_base)
         new_base_name_for = {shard: f"base-{idx:04d}.safetensors" for idx, shard in enumerate(base_shard_list)}
 
-        def _convert_base(shard_name: str, keys: List[str]) -> None:
-            tensors: Dict[str, torch.Tensor] = {}
+        def _convert_base(shard_name: str, keys: list[str]) -> None:
+            tensors: dict[str, torch.Tensor] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in keys:
                     t = f.get_tensor(key)
@@ -770,8 +801,9 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
     _FUSED_DOWN_BIAS_RE = re.compile(r"^(.+\.experts)\.down_proj_bias$")
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
         """Return True when already-stacked fused MoE expert tensors are present."""
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
         return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -790,7 +822,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
 
         index_path = src / "model.safetensors.index.json"
         if index_path.exists():
-            weight_map: Dict[str, str] = json.loads(index_path.read_text())["weight_map"]
+            weight_map: dict[str, str] = json.loads(index_path.read_text())["weight_map"]
         else:
             # TODO(wf): Reuse read_weight_map() here instead of duplicating safetensors map resolution
             # It does not make sense to rebuild weight_map from shards, error out if its not present.
@@ -802,6 +834,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                 with safe_open(str(shard), framework="pt") as f:
                     for k in f.keys():
                         weight_map[k] = shard.name
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
 
         if not cls.is_applicable(weight_map):
             return False
@@ -809,14 +842,16 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        new_weight_map: Dict[str, str] = {}
-        source_shapes: Dict[str, Tuple[int, ...]] = {}
+        new_weight_map: dict[str, str] = {}
+        source_shapes: dict[str, tuple[int, ...]] = {}
         for shard_name in sorted(set(weight_map.values())):
             shard_src = src / shard_name
             if not shard_src.exists():
                 continue
             with safe_open(str(shard_src), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     source_shapes[key] = tuple(f.get_slice(key).get_shape())
 
         for shard_name in sorted(set(weight_map.values())):
@@ -824,9 +859,11 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             if not shard_src.exists():
                 continue
 
-            out_tensors: Dict[str, torch.Tensor] = {}
+            out_tensors: dict[str, torch.Tensor] = {}
             with safe_open(str(shard_src), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     raw_tensor = f.get_tensor(key)
                     tensor = raw_tensor.to(target_dtype) if raw_tensor.is_floating_point() else raw_tensor
                     gate_up_m = cls._FUSED_GATE_UP_RE.match(key)
@@ -854,9 +891,6 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                         out_tensors[f"{moe_prefix}.up"] = up
                         new_weight_map[f"{moe_prefix}.gate"] = shard_name
                         new_weight_map[f"{moe_prefix}.up"] = shard_name
-                        # Keep original for completeness
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     elif down_m:
                         prefix = down_m.group(1)
                         moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
@@ -873,8 +907,6 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                             preferred_split_dim=split_dim,
                         )
                         new_weight_map[f"{moe_prefix}.down"] = shard_name
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     elif gate_up_bias_m:
                         prefix = gate_up_bias_m.group(1)
                         moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
@@ -888,15 +920,11 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                         out_tensors[f"{moe_prefix}.up_bias"] = up_bias
                         new_weight_map[f"{moe_prefix}.gate_bias"] = shard_name
                         new_weight_map[f"{moe_prefix}.up_bias"] = shard_name
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     elif down_bias_m:
                         prefix = down_bias_m.group(1)
                         moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
                         out_tensors[f"{moe_prefix}.down_bias"] = tensor.clone()
                         new_weight_map[f"{moe_prefix}.down_bias"] = shard_name
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     else:
                         out_tensors[key] = tensor
                         new_weight_map[key] = shard_name
@@ -920,8 +948,9 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
     _FUSED_DOWN_RE = re.compile(r"^(.+)\.output_linear\.weight$")
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
         """Return True when GraniteMoE fused expert tensors are present."""
+        weight_map = _filter_weight_map_for_selected_layers(weight_map, kwargs.get("selected_layer_count"))
         return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -938,21 +967,23 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             logger.info("GraniteMoeFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
             return False
 
-        weight_map = read_weight_map(src)
+        weight_map = _filter_weight_map_for_selected_layers(read_weight_map(src), kwargs.get("selected_layer_count"))
         if not cls.is_applicable(weight_map):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
 
-        new_weight_map: Dict[str, str] = {}
-        source_shapes: Dict[str, Tuple[int, ...]] = {}
+        new_weight_map: dict[str, str] = {}
+        source_shapes: dict[str, tuple[int, ...]] = {}
         for shard_name in sorted(set(weight_map.values())):
             shard_src = src / shard_name
             if not shard_src.exists():
                 continue
             with safe_open(str(shard_src), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     source_shapes[key] = tuple(f.get_slice(key).get_shape())
 
         for shard_name in sorted(set(weight_map.values())):
@@ -960,9 +991,11 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             if not shard_src.exists():
                 continue
 
-            out_tensors: Dict[str, torch.Tensor] = {}
+            out_tensors: dict[str, torch.Tensor] = {}
             with safe_open(str(shard_src), framework="pt") as f:
                 for key in f.keys():
+                    if key not in weight_map:
+                        continue
                     raw_tensor = f.get_tensor(key)
                     tensor = raw_tensor.to(target_dtype) if raw_tensor.is_floating_point() else raw_tensor
                     gate_up_m = cls._FUSED_GATE_UP_RE.match(key)
@@ -977,8 +1010,6 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                         out_tensors[f"{moe_prefix}.up"] = up
                         new_weight_map[f"{moe_prefix}.gate"] = shard_name
                         new_weight_map[f"{moe_prefix}.up"] = shard_name
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     elif down_m:
                         prefix = down_m.group(1)
                         moe_prefix = f"{prefix}.moe_weights"
@@ -989,8 +1020,6 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                             preferred_split_dim=1,
                         )
                         new_weight_map[f"{moe_prefix}.down"] = shard_name
-                        out_tensors[key] = tensor
-                        new_weight_map[key] = shard_name
                     else:
                         out_tensors[key] = tensor
                         new_weight_map[key] = shard_name

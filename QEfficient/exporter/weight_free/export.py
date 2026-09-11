@@ -14,6 +14,7 @@ import onnx
 import torch
 from accelerate import init_empty_weights
 
+from QEfficient.base.checkpoint_transforms import CHECKPOINT_LAYOUT_VERSION
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
 from QEfficient.utils import load_json
@@ -88,6 +89,28 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
     return qeff_model
 
 
+def _effective_num_hidden_layers(config: Any) -> int | None:
+    """Return the layer count used by the exported text decoder config."""
+    for candidate in (
+        config,
+        getattr(config, "text_config", None),
+        getattr(config, "llm_config", None),
+    ):
+        if candidate is None:
+            continue
+        num_hidden_layers = getattr(candidate, "num_hidden_layers", None)
+        if isinstance(num_hidden_layers, int) and num_hidden_layers >= 0:
+            return num_hidden_layers
+    return None
+
+
+def _prepared_checkpoint_name(source_dir: Path, target_dtype: torch.dtype, selected_layer_count: int | None) -> str:
+    """Build the prepared checkpoint cache directory name."""
+    dtype_suffix = str(target_dtype).replace("torch.", "")
+    layer_suffix = f"-layers{selected_layer_count}" if selected_layer_count is not None else ""
+    return source_dir.name + f"-qeff-prepared-{dtype_suffix}{layer_suffix}-v{CHECKPOINT_LAYOUT_VERSION}"
+
+
 def _prune_unused_fake_initializers(onnx_program) -> None:
     """Remove FakeTensor initializers not referenced by any graph node.
 
@@ -132,10 +155,8 @@ def _prepare_checkpoint_for_weight_free_export(
     from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
 
     source_dir = resolve_checkpoint_dir(model_ref)
-    dtype_suffix = str(target_dtype).replace("torch.", "")
-    # TODO(wf): For different flavours of the model that expect different checkpoint weight layouts,
-    # we end up overriding old one. We need to add support of hashing/caching here.
-    prepared_name = source_dir.name + f"-qeff-prepared-{dtype_suffix}"
+    selected_layer_count = _effective_num_hidden_layers(qeff_model.model.config)
+    prepared_name = _prepared_checkpoint_name(source_dir, target_dtype, selected_layer_count)
     if QEFF_CHECKPOINT_HOME:
         prepared_out = QEFF_CHECKPOINT_HOME.expanduser() / prepared_name
     else:
@@ -146,6 +167,8 @@ def _prepare_checkpoint_for_weight_free_export(
             src=source_dir,
             out=prepared_out,
             target_dtype=target_dtype,
+            checkpoint_layout_version=CHECKPOINT_LAYOUT_VERSION,
+            selected_layer_count=selected_layer_count,
         )
     )
 

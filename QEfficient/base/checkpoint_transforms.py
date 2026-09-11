@@ -18,7 +18,7 @@ e.g. QEfficient/exporter/weight_free/checkpoint_transforms.py.
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, List, Type
+from typing import Any
 
 import torch
 
@@ -27,9 +27,10 @@ from QEfficient.utils.checkpoint_utils import convert_bin_to_safetensors, read_w
 # Marks a prepared checkpoint directory as complete, so re-runs can skip work.
 CHECKPOINT_PREPARED_SENTINEL = ".checkpoint_prepared"
 CHECKPOINT_PREPARED_MANIFEST = ".checkpoint_prepared.json"
+CHECKPOINT_LAYOUT_VERSION = 2
 
 
-def _checkpoint_files(root: Path) -> List[Path]:
+def _checkpoint_files(root: Path) -> list[Path]:
     patterns = ("*.safetensors", "*.bin", "*.json")
     files = set()
     for pattern in patterns:
@@ -37,7 +38,7 @@ def _checkpoint_files(root: Path) -> List[Path]:
     return sorted(files)
 
 
-def _checkpoint_file_fingerprint(root: Path, label: str) -> List[dict]:
+def _checkpoint_file_fingerprint(root: Path, label: str) -> list[dict]:
     fingerprint = []
     for path in _checkpoint_files(root):
         stat = path.stat()
@@ -56,7 +57,8 @@ def _checkpoint_manifest(
     src: Path,
     source_dir: Path,
     target_dtype: torch.dtype,
-    transforms: List[Type["BaseCheckpointTransform"]],
+    transforms: list[type["BaseCheckpointTransform"]],
+    options: dict[str, Any] | None = None,
 ) -> dict:
     files = _checkpoint_file_fingerprint(source_dir, "source")
     if source_dir != src:
@@ -67,6 +69,7 @@ def _checkpoint_manifest(
         "original_source": str(src.resolve()),
         "target_dtype": str(target_dtype),
         "transforms": [f"{transform.__module__}.{transform.__name__}" for transform in transforms],
+        "options": options or {},
         "files": files,
     }
 
@@ -118,7 +121,7 @@ class BaseCheckpointTransform:
         raise NotImplementedError
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
         """Return True if this transform should run for the given checkpoint."""
         return True
 
@@ -145,7 +148,7 @@ class CheckpointTransformPipeline:
         prepared_dir = pipeline.apply(src, out, target_dtype=torch.float32)
     """
 
-    def __init__(self, transforms: List[Type[BaseCheckpointTransform]]):
+    def __init__(self, transforms: list[type[BaseCheckpointTransform]]):
         """Create a priority-ordered checkpoint transform pipeline."""
         self.transforms = transforms
 
@@ -158,6 +161,11 @@ class CheckpointTransformPipeline:
     ) -> Path:
         """Apply the first matching transform and return the usable checkpoint directory."""
         src, out = Path(src), Path(out)
+        manifest_options = {
+            key: kwargs[key]
+            for key in ("checkpoint_layout_version", "selected_layer_count")
+            if kwargs.get(key) is not None
+        }
 
         source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
@@ -167,14 +175,14 @@ class CheckpointTransformPipeline:
             source_dir = out.with_name(out.name + "-source-safetensors")
             convert_bin_to_safetensors(src, source_dir)
 
-        expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
+        expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms, manifest_options)
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
             return out
         _clear_stale_prepared_dir(out, src, source_dir)
 
         weight_map = read_weight_map(source_dir)
         for transform in self.transforms:
-            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
+            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype, **kwargs):
                 transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
                 if (out / CHECKPOINT_PREPARED_SENTINEL).exists():
                     _write_manifest(out, expected_manifest)

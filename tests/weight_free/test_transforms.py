@@ -19,6 +19,7 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -30,7 +31,11 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_MANIFEST, CheckpointTransformPipeline
+from QEfficient.base.checkpoint_transforms import (
+    CHECKPOINT_LAYOUT_VERSION,
+    CHECKPOINT_PREPARED_MANIFEST,
+    CheckpointTransformPipeline,
+)
 from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     PruneFakeInitializersTransform,
@@ -44,6 +49,7 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
+from QEfficient.exporter.weight_free.export import _prepared_checkpoint_name
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import runtime_requirements
@@ -266,6 +272,96 @@ class TestWeightFreeCheckpointTransforms:
         torch.testing.assert_close(tensors[f"{moe_prefix}.gate_bias"], gate_bias)
         torch.testing.assert_close(tensors[f"{moe_prefix}.up_bias"], up_bias)
         torch.testing.assert_close(tensors[f"{moe_prefix}.down_bias"], down_bias)
+        assert f"{prefix}.gate_up_proj" not in tensors
+        assert f"{prefix}.down_proj" not in tensors
+        assert f"{prefix}.gate_up_proj_bias" not in tensors
+        assert f"{prefix}.down_proj_bias" not in tensors
+
+    def test_fused_expert_split_respects_selected_layer_count(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        layer0_prefix = "model.layers.0.mlp.experts"
+        layer1_prefix = "model.layers.1.mlp.experts"
+        layer0_moe_prefix = "model.layers.0.mlp.moe_weights"
+        layer0_gate_up = torch.arange(8, dtype=torch.float32).reshape(1, 4, 2)
+        layer0_down = torch.arange(4, dtype=torch.float32).reshape(1, 2, 2)
+        layer1_gate_up = layer0_gate_up + 100
+        layer1_down = layer0_down + 100
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{layer0_prefix}.gate_up_proj": layer0_gate_up,
+                f"{layer0_prefix}.down_proj": layer0_down,
+                f"{layer1_prefix}.gate_up_proj": layer1_gate_up,
+                f"{layer1_prefix}.down_proj": layer1_down,
+                "model.norm.weight": torch.ones(2, dtype=torch.float32),
+            },
+        )
+
+        changed = MoEFusedExpertSplitCheckpointTransform.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            selected_layer_count=1,
+        )
+
+        assert changed
+        tensors = _load_prepared_tensors(out)
+        assert f"{layer0_moe_prefix}.gate" in tensors
+        assert f"{layer0_moe_prefix}.up" in tensors
+        assert f"{layer0_moe_prefix}.down" in tensors
+        assert "model.norm.weight" in tensors
+        assert all(".layers.1." not in key for key in tensors)
+        assert all(
+            not key.endswith((".gate_up_proj", ".down_proj", ".gate_up_proj_bias", ".down_proj_bias"))
+            for key in tensors
+        )
+
+    def test_checkpoint_pipeline_rebuilds_when_selected_layer_count_changes(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.layers.0.weight": torch.ones(2, dtype=torch.float16),
+                "model.layers.1.weight": torch.ones(2, dtype=torch.float16),
+                "model.norm.weight": torch.ones(2, dtype=torch.float16),
+            },
+        )
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        pipeline.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            checkpoint_layout_version=99,
+            selected_layer_count=1,
+        )
+
+        tensors = _load_prepared_tensors(out)
+        assert set(tensors) == {"model.layers.0.weight", "model.norm.weight"}
+        manifest = json.loads((out / CHECKPOINT_PREPARED_MANIFEST).read_text())
+        assert manifest["options"] == {"checkpoint_layout_version": 99, "selected_layer_count": 1}
+
+        pipeline.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            checkpoint_layout_version=99,
+            selected_layer_count=2,
+        )
+
+        tensors = _load_prepared_tensors(out)
+        assert set(tensors) == {"model.layers.0.weight", "model.layers.1.weight", "model.norm.weight"}
+        manifest = json.loads((out / CHECKPOINT_PREPARED_MANIFEST).read_text())
+        assert manifest["options"] == {"checkpoint_layout_version": 99, "selected_layer_count": 2}
+
+    def test_prepared_checkpoint_name_includes_layer_count_and_layout_version(self):
+        prepared_name = _prepared_checkpoint_name(Path("snapshot"), torch.bfloat16, selected_layer_count=8)
+
+        assert prepared_name == f"snapshot-qeff-prepared-bfloat16-layers8-v{CHECKPOINT_LAYOUT_VERSION}"
 
     def test_splits_granitemoe_fused_parallel_experts_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
@@ -291,6 +387,8 @@ class TestWeightFreeCheckpointTransforms:
         torch.testing.assert_close(tensors[f"{prefix}.moe_weights.gate"], gate_up[:, :2, :].transpose(1, 2))
         torch.testing.assert_close(tensors[f"{prefix}.moe_weights.up"], gate_up[:, 2:, :].transpose(1, 2))
         torch.testing.assert_close(tensors[f"{prefix}.moe_weights.down"], down.transpose(1, 2))
+        assert f"{prefix}.input_linear.weight" not in tensors
+        assert f"{prefix}.output_linear.weight" not in tensors
 
     def test_resolver_accepts_moe_weight_aliases(self):
         checkpoint_index = {
@@ -574,6 +672,7 @@ class TestWeightFreeExportHash:
         assert regular_hash != weight_free_hash
         assert "weight_free" not in regular_params
         assert weight_free_params["weight_free"] is True
+        assert weight_free_params["weight_free_checkpoint_layout_version"] == CHECKPOINT_LAYOUT_VERSION
 
 
 class TestRuntimeRequirements:
