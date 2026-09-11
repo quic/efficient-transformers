@@ -569,7 +569,7 @@ def _parse_text_example_args(*args):
     return namespace
 
 
-def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill():
+def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill(tmp_path):
     from examples.text_generation.basic_inference import compile_disaggregated
 
     namespace = _parse_text_example_args(
@@ -600,6 +600,8 @@ def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill():
         "decode.yaml",
         "--decode-aic-enable-depth-first",
         "--prefill-user-tiled",
+        "--compile-dir",
+        str(tmp_path),
     )
 
     class RecordingModel:
@@ -615,6 +617,8 @@ def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill():
     decode_call, prefill_call = model.compile_calls
 
     assert decode_call["prefill_seq_len"] == 1
+    assert decode_call["compile_dir"] == str(tmp_path / "decode")
+    assert (tmp_path / "decode").is_dir()
     assert decode_call["num_devices"] == 4
     assert decode_call["prefill_only"] is False
     assert decode_call["offload_pt_weights"] is False
@@ -626,6 +630,8 @@ def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill():
     assert "user_tiled" not in decode_call
 
     assert prefill_call["prefill_seq_len"] == namespace.prefill_seq_len
+    assert prefill_call["compile_dir"] == str(tmp_path / "prefill")
+    assert (tmp_path / "prefill").is_dir()
     assert prefill_call["num_devices"] == 8
     assert prefill_call["prefill_only"] is True
     assert prefill_call["enable_chunking"] is True
