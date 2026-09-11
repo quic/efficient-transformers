@@ -88,7 +88,9 @@ def _stage_compiler_options(ns: argparse.Namespace, stage: str | None = None) ->
 def _stage_compile_dir(ns: argparse.Namespace, stage: str) -> str | None:
     if ns.compile_dir is None:
         return None
-    return str(Path(ns.compile_dir) / stage)
+    stage_compile_dir = Path(ns.compile_dir) / stage
+    stage_compile_dir.mkdir(parents=True, exist_ok=True)
+    return str(stage_compile_dir)
 
 
 def _stage_device_group(ns: argparse.Namespace, stage: str):
