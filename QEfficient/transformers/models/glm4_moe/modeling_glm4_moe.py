@@ -528,7 +528,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         return topk_indices
 
     def orig_forward(self, hidden_states):
-        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        hidden_states = hidden_states.view(-1, self.hidden_dim)
         router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
         scores = router_logits.sigmoid()
         topk_indices = self.get_topk_indices(scores)
@@ -542,7 +542,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
 
     def forward(self, hidden_states):
         # orig_i, orig_w = self.orig_forward(hidden_states)
-        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        hidden_states = hidden_states.view(-1, self.hidden_dim)
         # router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
         router_logits = torch.nn.functional.linear(hidden_states, self.weight)
 

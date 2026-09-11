@@ -136,6 +136,9 @@ def find_checkpoint_key(
     if stripped.endswith(".mlp.router.weight"):
         candidates.append(stripped[: -len(".router.weight")] + ".gate.weight")
 
+    if stripped.endswith(".block_sparse_moe.router.weight"):
+        candidates.append(stripped[: -len(".router.weight")] + ".router.layer.weight")
+
     return _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
 
 

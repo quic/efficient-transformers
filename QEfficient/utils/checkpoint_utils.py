@@ -103,6 +103,16 @@ def read_weight_map(src: Path) -> Dict[str, str]:
     return weight_map
 
 
+def checkpoint_files_complete(src: Path) -> bool:
+    """Return True when a checkpoint directory has all shards referenced by its weight map."""
+    try:
+        weight_map = read_weight_map(src)
+    except Exception:
+        return False
+
+    return all((src / shard_name).is_file() for shard_name in set(weight_map.values()))
+
+
 @lru_cache(maxsize=None)
 def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     """Resolve a local or remote model reference to a checkpoint directory.
@@ -274,8 +284,14 @@ def convert_bin_to_safetensors(src: Path, out: Path) -> None:
 
     from transformers import AutoConfig, AutoModelForCausalLM
 
-    if bool(list(out.glob("*.safetensors"))) or (out / "model.safetensors.index.json").exists():
+    if checkpoint_files_complete(out):
         return
+
+    if out.exists():
+        if out.is_dir():
+            shutil.rmtree(out)
+        else:
+            out.unlink()
 
     out.mkdir(parents=True, exist_ok=True)
     copy_checkpoint_aux_files(src, out)
@@ -290,4 +306,6 @@ def convert_bin_to_safetensors(src: Path, out: Path) -> None:
     model.save_pretrained(str(out), safe_serialization=True)
     del model
     gc.collect()
+    if not checkpoint_files_complete(out):
+        raise FileNotFoundError(f"Failed to create a complete safetensors checkpoint in {out}")
     logger.info(f"Conversion complete — safetensors files written to {out}")
