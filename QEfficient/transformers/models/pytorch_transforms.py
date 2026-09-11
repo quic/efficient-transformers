@@ -333,12 +333,6 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
 )
-from QEfficient.transformers.models.dflash2_draft.modeling_dflash2_draft import (
-    DFlash2ForCausalLM as QEffDFlash2ForCausalLM,
-)
-from QEfficient.transformers.models.dflash2_draft.modeling_dflash2_draft import (
-    _draft_value as _dflash2_draft_value,
-)
 from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
     QEffDFlashAttention,
     QEffDFlashDecoderLayer,
@@ -1268,94 +1262,6 @@ class DFlashDLMTransform:
             if w.get("lm_head.bias") is not None:
                 model.lm_head.bias = nn.Parameter(w["lm_head.bias"].float())
         return model, True
-
-
-#: Candidate checkpoint keys for the target (TLM) tensors a DFlash-2 draft borrows. Checkpoints
-#: differ on whether the decoder prefix (``model.``) is retained, so each tensor is looked up
-#: against an ordered list of aliases and the first present key wins.
-_TLM_EMBED_KEYS = ("model.embed_tokens.weight", "embed_tokens.weight")
-_TLM_LM_HEAD_KEYS = ("lm_head.weight", "model.lm_head.weight")
-_TLM_LM_HEAD_BIAS_KEYS = ("lm_head.bias", "model.lm_head.bias")
-
-
-def _first_present(weights: dict, keys: Tuple[str, ...]) -> Optional[torch.Tensor]:
-    """Return the first tensor in ``weights`` whose key appears in ``keys``, else ``None``."""
-    for key in keys:
-        if key in weights:
-            return weights[key]
-    return None
-
-
-class DFlash2DLMTransform:
-    """Prepare a DFlash-2 draft (``dflash2_draft``) for export as an SpD draft model."""
-
-    @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
-        if not (qaic_config and qaic_config.get("dflash2_dlm", False)):
-            return model, False
-        if not isinstance(model, QEffDFlash2ForCausalLM):
-            raise NotImplementedError(
-                f"DFlash-2 DLM does not support model class {type(model).__name__}. "
-                "Supported model class: DFlash2ForCausalLM (see QEfficient/transformers/models/dflash2_draft)."
-            )
-
-        inner = model.model
-        for attr in ("fc", "hidden_norm"):
-            if hasattr(inner, attr):
-                delattr(inner, attr)
-
-        emit_selector_hidden = bool(qaic_config.get("dflash_emit_selector_hidden", False))
-        top_k = int(_dflash2_draft_value(model.config, "selector_top_k", 1) or 1)
-        if top_k <= 1:
-            if emit_selector_hidden:
-                raise ValueError(
-                    "dflash_emit_selector_hidden=True is meaningless at selector_top_k="
-                    f"{top_k}: with a single candidate per position the bigram rescore degenerates "
-                    "to logits.argmax(-1), which the host can compute from the `logits` output alone."
-                )
-            if hasattr(inner, "candidate_selector"):
-                delattr(inner, "candidate_selector")
-        model.emit_selector_hidden = emit_selector_hidden
-
-        tlm_repo = qaic_config.get("dflash_tlm_repo")
-        if not tlm_repo:
-            warnings.warn(
-                "DFlash2DLMTransform: no `dflash_tlm_repo` in qaic_config; embed_tokens/lm_head are "
-                "absent from a DFlash-2 draft checkpoint and will stay randomly initialized."
-            )
-            return model, True
-
-        wanted = set(_TLM_EMBED_KEYS) | set(_TLM_LM_HEAD_KEYS) | set(_TLM_LM_HEAD_BIAS_KEYS)
-        w = load_checkpoint_weights(tlm_repo, wanted)
-        embed_w = _first_present(w, _TLM_EMBED_KEYS)
-        lm_head_w = _first_present(w, _TLM_LM_HEAD_KEYS)
-        if lm_head_w is None:
-            lm_head_w = embed_w  # tie_word_embeddings: lm_head is a view of embed_tokens
-        if embed_w is None or lm_head_w is None:
-            raise ValueError(
-                f"DFlash2DLMTransform: could not find embedding weights in the TLM repo {tlm_repo!r}. "
-                f"Looked for {_TLM_EMBED_KEYS} (embed_tokens) and {_TLM_LM_HEAD_KEYS} (lm_head). "
-                "Exporting without them would leave the draft's embed_tokens/lm_head randomly initialized."
-            )
-
-        for name, source, destination in (
-            ("lm_head.weight", lm_head_w, model.lm_head.weight),
-            ("embed_tokens.weight", embed_w, inner.embed_tokens.weight),
-        ):
-            if source.shape != destination.shape:
-                raise ValueError(
-                    f"DFlash2DLMTransform: {name} is {tuple(source.shape)} in the TLM repo {tlm_repo!r} but "
-                    f"{tuple(destination.shape)} in the draft. The draft and target must share a vocabulary."
-                )
-
-        with torch.no_grad():
-            model.lm_head.weight.data.copy_(lm_head_w.float())
-            inner.embed_tokens.weight.data.copy_(embed_w.float())
-            bias = _first_present(w, _TLM_LM_HEAD_BIAS_KEYS)
-            if bias is not None:
-                model.lm_head.bias = nn.Parameter(bias.float())
-        return model, True
-
 
 class DFlashTLMTransform:
     """Attach fc/hidden_norm (weights from dflash_dlm_repo, fc scaled for fp16 range) and set target_layer_ids."""
