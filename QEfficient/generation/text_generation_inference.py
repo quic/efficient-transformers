@@ -8,7 +8,9 @@
 import json
 import os
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -334,6 +336,8 @@ def cloud_ai_100_exec_kv(
     return_pdfs: bool = False,
     include_guided_decoding: bool = False,
     sampling_params: Optional[Dict[str, Any]] = None,
+    profiling_type: str | None = None,
+    profiling_output_dir: Path | str | None = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -366,6 +370,9 @@ def cloud_ai_100_exec_kv(
         The dictionary should contain the following keys:
         `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
         `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
+        :profiling_type (str, default=None): One of "latency", "trace", "raw_device_stats". Enables
+        runtime device profiling capture (via `QAICInferenceSession`'s profiling API) for this call.
+        :profiling_output_dir (Union[Path, str], default=None): Directory to write the profiling report to.
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
@@ -402,6 +409,8 @@ def cloud_ai_100_exec_kv(
         return_pdfs=return_pdfs,
         include_guided_decoding=include_guided_decoding,
         sampling_params=sampling_params,
+        profiling_type=profiling_type,
+        profiling_output_dir=profiling_output_dir,
     )
 
     for _ in range(0, int(iteration)):
@@ -452,6 +461,8 @@ class QEffTextGenerationBase:
         include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
         activate: bool = True,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
     ) -> None:
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
@@ -465,7 +476,12 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(
-            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+            qpc_path,
+            device_id,
+            activate=activate,
+            enable_debug_logs=enable_debug_logs,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
         )
 
         # Validate sampler inputs for On-Device Sampling
@@ -502,6 +518,12 @@ class QEffTextGenerationBase:
         self._session.skip_buffers(
             [x for x in self._session.input_names + self._session.output_names if is_retained_state_name(x)]
         )
+
+    def profiling_context(self):
+        """Context manager bracketing a block of `run()` calls with start/stop profiling, or a no-op if profiling is disabled."""
+        if self._session.profiling_handle is not None:
+            return self._session.profile()
+        return nullcontext()
 
     def _set_tokenizer_params(self):
         """
@@ -1086,6 +1108,8 @@ class TextGeneration:
         return_pdfs: bool = False,
         include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
             tokenizer=tokenizer,
@@ -1102,6 +1126,8 @@ class TextGeneration:
             return_pdfs=return_pdfs,
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
@@ -1297,15 +1323,17 @@ class TextGeneration:
 
         if self._full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
-            perf_metrics, generated_texts = self._continuous_batching_execution(
-                prompt, generation_len, prompt_to_lora_id_mapping
-            )
+            with self._qaic_model.profiling_context():
+                perf_metrics, generated_texts = self._continuous_batching_execution(
+                    prompt, generation_len, prompt_to_lora_id_mapping
+                )
         else:
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
-            perf_metrics, generated_texts = self._regular_model_execution(
-                prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
-            )
+            with self._qaic_model.profiling_context():
+                perf_metrics, generated_texts = self._regular_model_execution(
+                    prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
+                )
 
         if stream:
             stream_start = 0 if self._full_batch_size else 1
