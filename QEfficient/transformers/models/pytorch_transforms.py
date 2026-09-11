@@ -151,6 +151,19 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLRotaryEmbedding,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+)
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
@@ -488,6 +501,18 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+)
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
@@ -694,6 +719,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -783,6 +809,17 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLVisionModel: QEffQwen3VLVisionModel,
         Qwen3VLTextModel: QEffQwen3VLTextModel,
         Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
+        # MiniMaxM3VL
+        MiniMaxM3SparseForConditionalGeneration: QEffMiniMaxM3SparseForConditionalGeneration,
+        MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+        MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+        MiniMaxM3VLDenseMLP: QEffMiniMaxM3VLDenseMLP,
+        MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
+        MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLRotaryEmbedding: QEffMiniMaxM3VLRotaryEmbedding,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+        MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+        MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
@@ -1311,6 +1348,18 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3RMSNorm": {
             "forward": QEffDeepseekV3CustomRMSNormAIC.forward,
         },
+        "MiniMaxM3SparseForConditionalGeneration": {"forward": QEffMiniMaxM3SparseForConditionalGeneration.forward},
+        "MiniMaxM3VLForCausalLM": {
+            "forward": QEffMiniMaxM3VLForCausalLM.forward,
+            "get_submodules_for_export": QEffMiniMaxM3VLForCausalLM.get_submodules_for_export,
+        },
+        "MiniMaxM3VLTextModel": {"forward": QEffMiniMaxM3VLTextModel.forward},
+        "MiniMaxM3VLDecoderLayer": {"forward": QEffMiniMaxM3VLDecoderLayer.forward},
+        "MiniMaxM3VLDenseMLP": {"forward": QEffMiniMaxM3VLDenseMLP.forward},
+        "MiniMaxM3VLAttention": {"forward": QEffMiniMaxM3VLAttention.forward},
+        "MiniMaxM3VLRotaryEmbedding": {"forward": QEffMiniMaxM3VLRotaryEmbedding.forward},
+        "MiniMaxM3VLTopKRouter": {"forward": QEffMiniMaxM3VLTopKRouter.forward},
+        "MiniMaxM3VLSparseMoeBlock": {"forward": QEffMiniMaxM3VLSparseMoeBlock.forward},
     }
 
 
