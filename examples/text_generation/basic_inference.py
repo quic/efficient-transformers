@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+from pathlib import Path
 
 from transformers import AutoConfig, AutoTokenizer
 
@@ -33,6 +34,22 @@ def main():
         default=None,
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
+    parser.add_argument(
+        "--profiling-type",
+        dest="profiling_type",
+        type=str,
+        default=None,
+        choices=["latency", "trace", "raw_device_stats", "stats"],
+        help="Enable QAIC device profiling via the runtime Program/ExecObj profiling API and capture a "
+        "report for the generate() call. Default: disabled",
+    )
+    parser.add_argument(
+        "--profiling-output-dir",
+        dest="profiling_output_dir",
+        type=str,
+        default=None,
+        help="Directory to write the profiling report to. Default: <qpc dir>/profiling_output",
+    )
     args = parser.parse_args()
 
     # Load tokenizer and model
@@ -47,6 +64,7 @@ def main():
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
+        stats_level=100,
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
@@ -55,15 +73,31 @@ def main():
     print(f"Model compiled to: {qpc_path}")
 
     # Generate text
-    exec_info = model.generate(
-        tokenizer=tokenizer,
-        prompts=[args.prompt],
-        device_id=args.device_group,
-        generation_len=args.generation_len,
-    )
+    generate_kwargs = {
+        "tokenizer": tokenizer,
+        "prompts": [args.prompt],
+        "device_id": args.device_group,
+        "generation_len": args.generation_len,
+    }
+    if args.profiling_type is not None:
+        generate_kwargs["profiling_type"] = args.profiling_type
+        if args.profiling_output_dir is not None:
+            generate_kwargs["profiling_output_dir"] = args.profiling_output_dir
+    exec_info = model.generate(**generate_kwargs)
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info.generated_texts[0]}")
+
+    if args.profiling_type is not None:
+        output_dir = (
+            Path(args.profiling_output_dir)
+            if args.profiling_output_dir
+            else (Path(qpc_path) if Path(qpc_path).is_dir() else Path(qpc_path).parent) / "profiling_output"
+        )
+        report_files = sorted(p.name for p in output_dir.glob("*") if p.is_file())
+        print(f"\nProfiling type: {args.profiling_type}")
+        print(f"Profiling report directory: {output_dir}")
+        print(f"Profiling report files: {report_files if report_files else '(none found)'}")
 
 
 if __name__ == "__main__":
