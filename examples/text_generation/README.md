@@ -1,316 +1,222 @@
-# Text Generation Examples
+# Text generation
 
-Examples for running inference on text-only language models on Qualcomm Cloud AI 100.
+One script, one Auto class, one three-step API. The canonical entry point is
+[`basic_inference.py`](basic_inference.py); every feature below is a flag on
+that same script.
 
-
-## Authentication
-
-For private/gated models, export your HuggingFace token:
-```bash
-export HF_TOKEN=<your_huggingface_token>
+```
+QEFFAutoModelForCausalLM.from_pretrained(...)   # load HF weights + attach qaic_config
+              |
+              v
+              .compile(...)                     # export -> ONNX -> QPC (or use --onnx-path)
+              |
+              v
+              .generate(tokenizer, prompts)     # runtime inference
 ```
 
-## Supported Models
+**Supported models.** `QEFFAutoModelForCausalLM` covers dense decoders
+(Llama, Qwen, Mistral, Gemma, Phi, Falcon, Granite, ...) and MoE decoders
+(Mixtral, Qwen-MoE, GPT-OSS). For the authoritative list see
+[`docs/source/validate.md`](../../docs/source/validate.md#text-only-language-models).
 
-**QEff Auto Class:** `QEFFAutoModelForCausalLM`
+**Authentication.** Gated repos need `HF_TOKEN` in the environment. Fast
+downloads: `HF_HUB_ENABLE_HF_TRANSFER=1`.
 
-For the complete list of supported text generation models, see the [Validated Models - Text Generation Section](../../docs/source/validate.md#text-only-language-models).
-
-Popular model families include:
-- Llama (2, 3, 3.1, 3.2, 3.3)
-- Mistral, Mixtral, Codestral
-- Qwen, Qwen2, Qwen3-MoE
-- Gemma, CodeGemma
-- GPT-2, GPT-J
-- Falcon, MPT, Phi-3
-- Granite, StarCoder
-- OLMo 2
+**Getting help.** `python basic_inference.py --help` shows the common flags;
+`python basic_inference.py --help-advanced` reveals everything including
+CI-only knobs.
 
 ---
 
-## Python Examples
+## Recipes
 
-### basic_inference.py
-Simple text generation with any supported language model.
+Each recipe below sets only the flags it needs. Everything else falls back to
+`basic_inference.py`'s defaults.
 
-**Usage:**
+### Hello world (dense, single prompt)
+
 ```bash
-python basic_inference.py \
+python examples/text_generation/basic_inference.py \
     --model-name Qwen/Qwen2-1.5B-Instruct \
-    --prompt "Hello, how are you?" \
-    --prefill-seq-len 32 \
-    --ctx-len 128 \
-    --num-cores 16
+    --prompt "Hello, how are you?"
 ```
 
-This example:
-- Demonstrates basic text generation workflow
-- Loads any HuggingFace text model
-- Compiles and runs inference on Cloud AI 100
+### Continuous batching (dynamic multi-request)
 
-### continuous_batching.py
-Dynamic batching for processing multiple prompts efficiently.
-
-**Usage:**
 ```bash
-python continuous_batching.py \
+python examples/text_generation/basic_inference.py \
     --model-name meta-llama/Llama-3.1-8B \
-    --prompts "Hello|Hi there|Good morning|How are you" \
-    --full-batch-size 4 \
-    --prefill-seq-len 128 \
-    --ctx-len 512 \
-    --num-cores 16
+    --continuous-batching --full-batch-size 4 \
+    --prompt "Hello" "Hi there" "Good morning" "How are you"
 ```
 
-This example:
-- Demonstrates continuous batching mode
-- Processes multiple prompts in parallel
-- Improves throughput for multi-request scenarios
-- Uses pipe-separated prompts
+`--continuous-batching` flips the ``from_pretrained`` flag; `--full-batch-size`
+is the CB slot count and is required whenever continuous batching is on. Old
+`--prompts "A|B|C"` pipe-form still works for backward compatibility.
 
-### gguf_models.py
-GGUF format model support (quantized models). To run GGUF format models, you need to install the `gguf` package:
+### MoE with expert-blocked chunked prefill
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name Qwen/Qwen3-30B-A3B-Instruct-2507 \
+    --use-onnx-subfunctions \
+    --enable-chunking --stage prefill \
+    --moe-prefill-packed-chunk-size 256
+```
+
+`--use-onnx-subfunctions` keeps the ONNX blob small; `--enable-chunking`
+enables the expert-blocked prefill path; `--stage prefill` compiles only the
+prefill QPC (pair with a `--stage decode` compile for a disaggregated deploy).
+
+### GGUF (quantized weights)
 
 ```bash
 pip install gguf
-```
-
-**Usage:**
-```bash
-# With default parameters
-python gguf_models.py
-
-# With custom parameters
-python gguf_models.py \
+python examples/text_generation/basic_inference.py \
     --model-name MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF \
     --gguf-file Mistral-7B-Instruct-v0.3.fp16.gguf \
-    --prompt "How are you?" \
-    --prefill-seq-len 32 \
-    --ctx-len 128 \
-    --num-cores 16
+    --prompt "How are you?"
 ```
 
-This example:
-- Loads models in GGUF format (quantized models)
-- Demonstrates GGUF file loading from HuggingFace
-- Compiles and runs inference on Cloud AI 100
-- Supports custom GGUF files and prompts
+### Blocked attention (long context)
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name meta-llama/Llama-3.2-1B \
+    --prefill-seq-len 1 --ctx-len 131072 \
+    --generation-len 64000 \
+    --num-devices 8 \
+    --mxfp6-matmul --mxint8-kv-cache --use-onnx-subfunctions \
+    --enable-blocking --blocking-mode kv --num-kv-blocks 16 --skip-kv \
+    --user-tiled
+```
+
+`--enable-blocking` makes the script forward `--blocking-mode` in `qaic_config`;
+the mode picks the tile axes (`kv`, `q`, `h`, `b`, `qkv`, `hqkv`);
+per-axis block counts (`--num-kv-blocks`, `--num-q-blocks`,
+`--num-batch-blocks`, `--head-block-size`) tune the tile shape.
+
+Disaggregated prefill and decode may select different modes. For example,
+GPT-OSS head-parallel blocking uses
+`--prefill-blocking-mode prefill_online --decode-blocking-mode kv_headpar`
+with `--num-kv-blocks 2 --num-q-blocks 2`; `--headpar-split` optionally
+overrides its default split.
+
+### Disaggregated serving with pipeline-parallel prefill and DMA KV handoff
+
+The canonical script can compile both QPCs and run continuous batching while
+prefill writes KV directly into the host buffers consumed by decode. This path
+requires a text architecture with full-KV disaggregated support, such as
+GPT-OSS, Qwen3-MoE, GLM4-MoE, or Kimi-K2.
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name Qwen/Qwen3-30B-A3B \
+    --disaggregated --full-batch-size 4 \
+    --prefill-seq-len 256 --ctx-len 512 --generation-len 200 \
+    --prefill-num-devices 8 --decode-num-devices 4 \
+    --mdp-num-partitions 4 --mdp-strategy onnx \
+    --moe-expert-parallel-chunk-size 128 \
+    --decode-aic-enable-depth-first --prefill-user-tiled \
+    --mxfp6-matmul --mxint8-kv-cache --use-onnx-subfunctions \
+    --prompt "Explain quantum computing." "What is the capital of France?"
+```
+
+Use `--prefill-device-group` and `--decode-device-group` when the two runtime
+clusters need explicit device IDs. For GPT-OSS-120B, the stage-specific
+`--prefill-node-precision-info` and `--decode-node-precision-info` flags allow
+different NPI files. The older compile-only flow remains available through
+`--stage prefill` and `--stage decode`; vLLM-style CCL lists are
+`--ccl-prefill` / `--ccl-decode`.
+
+### Multi-device tensor slicing
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name meta-llama/Llama-3.1-8B \
+    --num-devices 4 --device-group [0,1,2,3] \
+    --num-cores 16 --mxfp6-matmul --aic-enable-depth-first --mos 1
+```
+
+`--num-devices` is authoritative; if omitted it falls back to
+`len(--device-group)`, else 1.
+
+For pipeline-parallel prefill, use `--stage prefill --mdp-num-partitions N` or
+the complete `--disaggregated` recipe above. The prefill device count must be
+divisible by the number of MDP partitions.
+
+### Hardware validation matrix
+
+Run the text-generation validation matrix with:
+
+```bash
+bash scripts/test_text_generation_matrix.sh
+```
+
+The default suite covers FP32 and FP16 inference, BF16 compilation, ONNX
+subfunctions, CCL, continuous batching, tensor slicing, blocking modes, MDP,
+and GPT-OSS disaggregated serving. Its default device assignment uses devices
+0-3 for prefill and 4-5 for decode, so adjust the device-group variables in the
+script when running on a different topology.
+
+Each case has a separate log and artifact directory. The runner continues after
+a failure and writes `summary.md` and `summary.tsv` at the end. Use
+`SUITE=smoke` for the short baseline, `CASE_FILTER='ccl|mdp'` to select cases,
+or `DRY_RUN=1` to validate the commands without loading models or compiling.
+
+### Speculative decoding (TLM side)
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name meta-llama/Llama-3.1-8B \
+    --speculative-model-type target --num-speculative-tokens 3
+```
+
+### On-device sampler
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name Qwen/Qwen2-1.5B-Instruct \
+    --include-sampler --max-top-k-ids 512 --return-pdfs
+```
 
 ---
 
+## `advanced/`
 
-### moe_inference.py
-Mixture of Experts (MoE) model inference.
+Two workloads sit outside the main script because they can't ride the standard
+Auto pipeline; see [`advanced/README.md`](advanced/README.md) for details:
 
-**Usage:**
-```bash
-python moe_inference.py \
-    --model-name Qwen/Qwen3-30B-A3B-Instruct-2507 \
-    --prompt "Explain quantum computing" \
-    --ctx-len 256 \
-    --num-cores 16
-```
-
-This example:
-- Demonstrates MoE model inference
-- Uses sparse expert activation for efficiency
-- Works with Qwen, Mixtral, and other MoE models
-- Supports explicit ONNX subfunction enablement with `--use-onnx-subfunctions`
-
-
-## CLI Workflow
-
-The QEfficient CLI provides a streamlined workflow for running text generation models on Cloud AI 100. You can use individual commands for each step or the all-in-one `infer` command.
-
-### Quick Start: All-in-One Inference (Recommended)
-
-The `infer` command handles export, compile, and execute in a single step:
-
-```bash
-python -m QEfficient.cloud.infer \
-    --model_name meta-llama/Llama-3.1-8B \
-    --batch_size 1 \
-    --prompt_len 128 \
-    --ctx_len 512 \
-    --num_cores 16 \
-    --device_group [0] \
-    --prompt "Write a short story about AI" \
-    --mxfp6 \
-    --mxint8_kv_cache \
-    --mos 1 \
-    --aic_enable_depth_first
-```
-
-**What it does:**
-1. Downloads and exports the model to ONNX 
-2. Compiles to QPC 
-3. Executes inference with your prompt
-
-**CLI API Reference:** [`QEfficient.cloud.infer`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-infer)
-
-### Step-by-Step Workflow
-
-For more control, you can execute each step individually:
-
-#### Step 1: Export Model to ONNX
-
-Export the HuggingFace model to ONNX format optimized for Cloud AI 100:
-
-```bash
-python -m QEfficient.cloud.export \
-    --model_name meta-llama/Llama-3.1-8B \
-    --cache_dir ~/.cache/qeff_cache
-```
-
-This downloads the model and converts it to ONNX format. The ONNX model is saved in the QEfficient cache directory.
-
-**CLI API Reference:** [`QEfficient.cloud.export`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-export)
-
-#### Step 2: Compile Model to QPC
-
-Compile the ONNX model to Qualcomm Program Container (QPC) format:
-
-```bash
-python -m QEfficient.cloud.compile \
-    --onnx_path ~/.cache/qeff_cache/meta-llama/Llama-3.1-8B/onnx/model.onnx \
-    --qpc_path ./qpc_output \
-    --batch_size 1 \
-    --prompt_len 128 \
-    --ctx_len 512 \
-    --num_cores 16 \
-    --device_group [0] \
-    --mxfp6 \
-    --mos 1 \
-    --aic_enable_depth_first
-```
-
-**Note:** The `compile` API is deprecated for direct use. Use the unified `infer` API instead for most use cases.
-
-**CLI API Reference:** [`QEfficient.cloud.compile`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-compile)
-
-#### Step 3: Execute Inference
-
-Run inference using the pre-compiled QPC:
-
-```bash
-python -m QEfficient.cloud.execute \
-    --model_name meta-llama/Llama-3.1-8B \
-    --qpc_path ./qpc_output/qpcs \
-    --prompt "Write a short story about AI" \
-    --device_group [0]
-```
-
-This uses the pre-compiled QPC for fast inference. You can run this multiple times with different prompts without recompiling.
-
-**CLI API Reference:** [`QEfficient.cloud.execute`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-execute)
-
-### Common CLI Parameters
-
-| Parameter | Description | Default | Example |
-|-----------|-------------|---------|---------|
-| `--model_name` | HuggingFace model ID | Required | `meta-llama/Llama-3.1-8B` |
-| `--prompt` | Input text prompt | Required | `"Hello, how are you?"` |
-| `--prompt_len` | Maximum input sequence length | 32 | `128` |
-| `--ctx_len` | Maximum context length (input + output) | 128 | `512` |
-| `--batch_size` | Batch size for inference | 1 | `1` |
-| `--num_cores` | AI 100 cores to use | 16 | `16` or `14` |
-| `--device_group` | Device IDs to use | `[0]` | `[0]` or `[0,1,2,3]` |
-| `--mxfp6` | Enable MXFP6 quantization | False | Add flag to enable |
-| `--mxint8_kv_cache` | Enable MXINT8 KV cache | False | Add flag to enable |
-| `--use-onnx-subfunctions` | Enable ONNX subfunctions for export/compile | False | Add flag to enable |
-| `--mos` | Memory optimization strategy | 1 | `1` or `2` |
-| `--aic_enable_depth_first` | Enable depth-first execution | False | Add flag to enable |
-
-
-### Advanced Features
-
-#### Multi-Device Inference (Multi-Qranium)
-
-Run models across multiple devices for better performance:
-
-```bash
-python -m QEfficient.cloud.infer \
-    --model_name meta-llama/Llama-3.1-8B \
-    --batch_size 1 \
-    --prompt_len 128 \
-    --ctx_len 512 \
-    --num_cores 16 \
-    --device_group [0,1,2,3] \
-    --prompt "Explain quantum computing" \
-    --mxfp6 \
-    --mxint8_kv_cache \
-    --aic_enable_depth_first
-```
-
-**Documentation:** [Multi-Qranium Inference](https://quic.github.io/efficient-transformers/source/features_enablement.html#multi-qranium-inference)
-
-#### Continuous Batching
-
-Process multiple prompts efficiently with continuous batching:
-
-```bash
-python -m QEfficient.cloud.infer \
-    --model_name meta-llama/Llama-3.1-8B \
-    --full_batch_size 4 \
-    --prompt_len 128 \
-    --ctx_len 512 \
-    --num_cores 16 \
-    --device_group [0] \
-    --prompt "Hello|Hi there|Good morning|How are you" \
-    --mxfp6 \
-    --mxint8_kv_cache
-```
-
-**Note:** Use pipe (`|`) to separate multiple prompts. When using continuous batching, do not specify `--batch_size`.
-
-**Documentation:** [Continuous Batching](https://quic.github.io/efficient-transformers/source/features_enablement.html#continuous-batching)
-
-#### Batch Processing from File
-
-Process multiple prompts from a text file:
-
-```bash
-python -m QEfficient.cloud.infer \
-    --model_name meta-llama/Llama-3.1-8B \
-    --full_batch_size 8 \
-    --prompt_len 128 \
-    --ctx_len 512 \
-    --num_cores 16 \
-    --device_group [0] \
-    --prompts_txt_file_path examples/sample_prompts/prompts.txt \
-    --mxfp6 \
-    --mxint8_kv_cache
-```
-
-### CLI Examples Script
-
-For a comprehensive collection of copy-paste ready CLI commands, run:
-
-```bash
-bash cli_examples.sh
-```
-
-This script demonstrates:
-- Complete 4-step workflow (Export → Compile → Execute → Infer)
-- Multi-device inference
-- Continuous batching
-- Batch processing from file
-- Parameter explanations and best practices
+- **`kimik2_mla_absorption.py`** — Kimi-K2 MLA with hand-rolled prefill/decode.
+- **`glm4_kv_head_surgery.py`** — GLM-4-MoE with live KV-head weight
+  replication before compile.
 
 ---
 
+## CLI shortcut: `QEfficient.cloud.infer`
 
-## Additional Resources
+For an all-in-one export -> compile -> execute driven purely from the shell
+(useful in CI and quick smoke tests), the packaged CLI still works:
 
-### Documentation
-- [CLI API Reference](https://quic.github.io/efficient-transformers/source/cli_api.html) - Complete CLI command documentation
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html) - Getting started with QEfficient
-- [Features Enablement](https://quic.github.io/efficient-transformers/source/features_enablement.html) - Advanced features guide
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html) - Python API reference
-- [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html) - Supported models list
+```bash
+python -m QEfficient.cloud.infer \
+    --model_name meta-llama/Llama-3.1-8B \
+    --batch_size 1 --prompt_len 128 --ctx_len 512 \
+    --num_cores 16 --device_group [0] \
+    --prompt "Write a short story about AI" \
+    --mxfp6 --mxint8_kv_cache --mos 1 --aic_enable_depth_first
+```
 
+Reference: [`QEfficient.cloud.infer`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-infer).
 
-### Model Storage
-By default, exported models and QPC files are stored in `~/.cache/qeff_cache`. Customize this with:
-- `QEFF_HOME`: Primary cache directory
-- `XDG_CACHE_HOME`: Alternative cache location
+## Further reading
+
+- [Quick Start](https://quic.github.io/efficient-transformers/source/quick_start.html)
+- [Features Enablement](https://quic.github.io/efficient-transformers/source/features_enablement.html)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
+
+## Cache locations
+
+Exports and QPCs default to `~/.cache/qeff_cache`. Override with
+`QEFF_HOME` (primary) or `XDG_CACHE_HOME`.

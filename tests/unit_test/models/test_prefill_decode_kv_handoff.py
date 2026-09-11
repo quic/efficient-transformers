@@ -549,3 +549,161 @@ class TestFullPipelineConsistency:
 
     def test_gemma_full_pipeline(self):
         self._assert_full_pipeline(make_tiny_gemma, "Gemma")
+
+
+# ---------------------------------------------------------------------------
+# Tests: canonical example wires disaggregated text compilation correctly
+# ---------------------------------------------------------------------------
+
+
+def _parse_text_example_args(*args):
+    from examples._common import args as example_args
+    from examples.text_generation.basic_inference import build_parser
+
+    namespace = build_parser().parse_args(list(args))
+
+    def raise_validation_error(message):
+        raise ValueError(message)
+
+    example_args.validate_args(namespace, raise_validation_error)
+    return namespace
+
+
+def test_disaggregated_text_example_compiles_decode_and_pipeline_prefill(tmp_path):
+    from examples.text_generation.basic_inference import compile_disaggregated
+
+    namespace = _parse_text_example_args(
+        "--disaggregated",
+        "--full-batch-size",
+        "4",
+        "--prefill-num-devices",
+        "8",
+        "--decode-num-devices",
+        "4",
+        "--mdp-num-partitions",
+        "4",
+        "--mdp-strategy",
+        "intersection",
+        "--moe-expert-parallel-chunk-size",
+        "128",
+        "--prefill-blocking-mode",
+        "prefill_online",
+        "--decode-blocking-mode",
+        "kv_headpar",
+        "--num-kv-blocks",
+        "2",
+        "--num-q-blocks",
+        "2",
+        "--prefill-node-precision-info",
+        "prefill.yaml",
+        "--decode-node-precision-info",
+        "decode.yaml",
+        "--decode-aic-enable-depth-first",
+        "--prefill-user-tiled",
+        "--compile-dir",
+        str(tmp_path),
+    )
+
+    class RecordingModel:
+        def __init__(self):
+            self.compile_calls = []
+
+        def compile(self, **kwargs):
+            self.compile_calls.append(kwargs)
+            return f"qpc-{len(self.compile_calls)}"
+
+    model = RecordingModel()
+    assert compile_disaggregated(model, namespace) == ("qpc-2", "qpc-1")
+    decode_call, prefill_call = model.compile_calls
+
+    assert decode_call["prefill_seq_len"] == 1
+    assert decode_call["compile_dir"] == str(tmp_path / "decode")
+    assert (tmp_path / "decode").is_dir()
+    assert decode_call["num_devices"] == 4
+    assert decode_call["prefill_only"] is False
+    assert decode_call["offload_pt_weights"] is False
+    assert decode_call["split_retained_state_io"] is True
+    assert decode_call["retain_full_kv"] is True
+    assert decode_call["qaic_config"]["blocking_mode"] == "kv_headpar"
+    assert decode_call["node_precision_info"] == "decode.yaml"
+    assert decode_call["aic_enable_depth_first"] is True
+    assert "user_tiled" not in decode_call
+
+    assert prefill_call["prefill_seq_len"] == namespace.prefill_seq_len
+    assert prefill_call["compile_dir"] == str(tmp_path / "prefill")
+    assert (tmp_path / "prefill").is_dir()
+    assert prefill_call["num_devices"] == 8
+    assert prefill_call["prefill_only"] is True
+    assert prefill_call["enable_chunking"] is True
+    assert prefill_call["mdp_num_partitions"] == 4
+    assert prefill_call["mdp_strategy"] == "intersection"
+    assert prefill_call["qaic_config"]["blocking_mode"] == "prefill_online"
+    assert prefill_call["qaic_config"]["moe_config"] == {"expert_parallel_chunk_size": 128}
+    assert prefill_call["node_precision_info"] == "prefill.yaml"
+    assert prefill_call["user_tiled"] is True
+    assert "aic_enable_depth_first" not in prefill_call
+
+
+def test_disaggregated_text_example_rejects_non_divisible_pipeline_layout():
+    with pytest.raises(ValueError, match="divisible"):
+        _parse_text_example_args(
+            "--disaggregated",
+            "--full-batch-size",
+            "4",
+            "--prefill-num-devices",
+            "6",
+            "--mdp-num-partitions",
+            "4",
+        )
+
+
+def test_text_example_exposes_dtype_hardware_and_compile_only_controls():
+    from examples._common import args as example_args
+
+    namespace = _parse_text_example_args(
+        "--dtype",
+        "bfloat16",
+        "--aic-hw-version",
+        "ai200",
+        "--compile-only",
+    )
+
+    assert namespace.dtype == "bfloat16"
+    assert namespace.compile_only is True
+    assert example_args.compiler_options(namespace)["aic_hw_version"] == "ai200"
+
+
+def test_disaggregated_text_example_selects_ccl_specialization():
+    from examples.text_generation.basic_inference import _select_ccl_length
+
+    assert _select_ccl_length(None, 64, 256) is None
+    assert _select_ccl_length([128, 256], 64, 256) == 128
+    assert _select_ccl_length([128, 256], 129, 256) == 256
+
+
+def test_disaggregated_text_example_uses_compiler_normalized_ccl_lengths():
+    from examples.text_generation.basic_inference import compile_disaggregated
+
+    namespace = _parse_text_example_args(
+        "--disaggregated",
+        "--full-batch-size",
+        "2",
+        "--ccl-prefill",
+        "128",
+        "256",
+        "--ccl-decode",
+        "256",
+    )
+
+    class NormalizingModel:
+        def compile(self, **kwargs):
+            if kwargs["prefill_only"]:
+                self.comp_ctx_lengths_prefill = [256]
+                return "prefill-qpc"
+            self.comp_ctx_lengths_decode = [256]
+            return "decode-qpc"
+
+    compile_disaggregated(NormalizingModel(), namespace)
+
+    assert namespace.comp_ctx_lengths_prefill == [256]
+    assert namespace.comp_ctx_lengths_decode == [256]

@@ -16,14 +16,14 @@ pip install onnx_ir==0.2.1
 ## Quick Navigation
 
 ### Text Generation
-Language model inference.
+Language model inference. One canonical entry point covers dense,
+continuous-batching, MoE, GGUF, blocked attention, disaggregated, and
+MDP workloads via flags — see the recipes in
+[`text_generation/README.md`](text_generation/README.md).
 
 | Example | Description | Script |
 |---------|-------------|--------|
-| Basic Inference | Simple text generation | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
-| GGUF Models | GGUF format support | [text_generation/gguf_models.py](text_generation/gguf_models.py) |
-| MoE Models | Mixture of Experts | [text_generation/moe_inference.py](text_generation/moe_inference.py) |
-| Continuous Batching | Dynamic batching | [text_generation/continuous_batching.py](text_generation/continuous_batching.py) |
+| Basic Inference | Canonical entry point (dense / CB / MoE / GGUF / blocked / disagg / MDP via flags) | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
 
 [See all text generation examples →](text_generation/)
 
@@ -105,8 +105,8 @@ Distributed inference across multiple devices.
 
 | Example | Description | Script |
 |---------|-------------|--------|
-| Basic Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode.py](disagg_serving/gpt_oss_disagg_mode.py) |
-| Chunking Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode_with_chunking.py](disagg_serving/gpt_oss_disagg_mode_with_chunking.py) |
+| Text models with DMA KV handoff | Unified causal-LM path (`--disaggregated`) | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
+| Legacy chunked GPT-OSS flow | Manual KV-copy reference | [disagg_serving/gpt_oss_disagg_mode_with_chunking.py](disagg_serving/gpt_oss_disagg_mode_with_chunking.py) |
 | Qwen3-VL MDP Compile | MDP compile-only validation for Qwen3-VL | [disagg_serving/qwen3_vl_mdp_compile.py](disagg_serving/qwen3_vl_mdp_compile.py) |
 
 ## Installation
@@ -121,7 +121,7 @@ For installation instructions, see the [Quick Installation guide](../README.md#q
 Basic usage:
 ```bash
 python text_generation/basic_inference.py \
-    --model-name gpt2 \
+    --model-name Qwen/Qwen2-1.5B-Instruct \
     --prompt "Hello, how are you?"
 ```
 

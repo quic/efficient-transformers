@@ -234,13 +234,13 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - [Kimi-K2.5 Vision Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/kimi_k2/export_kimi_k25_vision.py)
 
 
-- **Disaggregated serving ready via vLLM GPT-OSS**
+- **Disaggregated serving for text models**
   > **Note**: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.
     
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Separate prefill and decode compilation supported
-  - Disaggregated serving ready
-  - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/gpt_oss_disagg_mode.py)
+  - Pipeline-parallel prefill and DMA KV handoff for supported text architectures
+  - [Unified Text Generation Example](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py)
 
 - **Olmo2**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
@@ -261,7 +261,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Qwen3-MOE (Mixture of Experts)**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Efficient expert routing
-  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/moe_inference.py)
+  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py) — combine `--use-onnx-subfunctions --enable-chunking` for expert-blocked prefill.
 
 - **Wav2Vec2 (Audio)**
   - Executable via [`QEFFAutoModelForCTC`](#QEFFAutoModelForCTC)
@@ -356,7 +356,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 - **GGUF Models**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Execution support (non-quantized)
-  - [Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/gguf_models.py)
+  - [Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py) — pass `--gguf-file <name>.gguf` alongside the HF model id.
 
 - **FP8 Compressed Quantization**
   - Support for [`Llama-3.3-70B-Instruct-FP8-Dynamic`](https://huggingface.co/Infermatic/Llama-3.3-70B-Instruct-FP8-Dynamic)
