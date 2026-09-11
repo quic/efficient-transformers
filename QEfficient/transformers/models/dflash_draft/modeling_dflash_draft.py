@@ -274,14 +274,13 @@ class QEffDFlashAttention(Qwen3Attention):
 
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids_target}
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-
             # first write for target positon_id
             past_key_value.write_only(k_ctx, v_ctx, self.layer_idx, cache_kwargs)
 
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(k_noise, v_noise, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_attention_forward
