@@ -36,6 +36,10 @@ _COMPUTED_INITIALIZER_NAMES = {
     "sin_cached",
     "inv_freq",
     "original_inv_freq",
+    "main_inv_freq",
+    "main_original_inv_freq",
+    "compress_inv_freq",
+    "compress_original_inv_freq",
     "embed_positions",
     "embed_scale",
 }
