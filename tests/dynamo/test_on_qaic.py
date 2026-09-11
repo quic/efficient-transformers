@@ -45,6 +45,43 @@ from ._helpers import (
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
+def test_dynamo_kv_headpar_loop_subfunctions_generate_on_qaic(tmp_export_dir):
+    """Compile and execute KV-headpar Dynamo Loop export with ONNX subfunctions on QAIC."""
+    model_id = DYNAMO_CAUSAL_LM_MODEL_IDS["qwen2"]
+    qaic_config = {"blocking_mode": "kv_headpar", "num_kv_blocks": 2, "headpar_split": 2}
+
+    try:
+        model_hf = load_hf_model(model_id)
+        tokenizer = load_tokenizer(model_id)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, qaic_config=qaic_config)
+    qpc_path = qeff_model.compile(
+        compile_dir=str(tmp_export_dir / "kv_headpar_loop_subfunctions_compile"),
+        prefill_seq_len=PROMPT_LEN,
+        ctx_len=CTX_LEN,
+        num_cores=2,
+        batch_size=BATCH_SIZE,
+        use_onnx_subfunctions=True,
+        dynamo=True,
+        offload_pt_weights=False,
+    )
+    output = qeff_model.generate(
+        tokenizer=tokenizer,
+        prompts=["hello world"],
+        generation_len=2,
+    )
+
+    assert qpc_path is not None
+    assert output is not None
+    assert output.generated_texts is not None
+    assert len(output.generated_texts) == 1
+
+
+@pytest.mark.dynamo
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )

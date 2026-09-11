@@ -64,7 +64,12 @@ class QEffMptAttention(MptAttention):
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
 
         if use_blocking:
-            if position_bias is not None:
+            use_kv_headpar_loop = (
+                blocking_config.mode == BlockingMode.KV_HEADPAR and bool(blocking_config.use_kv_loop_op)
+            )
+            if use_kv_headpar_loop and not hasattr(self, "num_key_value_groups"):
+                self.num_key_value_groups = 1
+            if position_bias is not None and not use_kv_headpar_loop:
                 if len(position_bias.shape) != 3:
                     raise ValueError(
                         f"Expecting position_bias shape to be 3 dimensions, got {len(position_bias.shape)}"
@@ -89,7 +94,7 @@ class QEffMptAttention(MptAttention):
                 batch_index=batch_index,
                 position_ids=position_ids,
                 past_seen_tokens=past_seen_tokens,
-                position_bias=position_bias,
+                position_bias=None if use_kv_headpar_loop else position_bias,
             )
             context_states = attn_output.contiguous().view(batch_size, seq_length, -1)
             attn_output = self.out_proj(context_states)

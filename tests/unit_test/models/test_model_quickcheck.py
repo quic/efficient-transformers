@@ -113,6 +113,22 @@ CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
 
+CAUSAL_KV_HEADPAR_LOOP_MODEL_TYPES = {
+    "gpt_oss",
+    "granite",
+    "llama",
+    "mistral",
+    "mixtral",
+    "mpt",
+    "qwen2",
+    "starcoder2",
+}
+CAUSAL_KV_HEADPAR_LOOP_MODEL_IDS = {
+    model_type: model_id
+    for model_type, model_id in CAUSAL_RUNTIME_MODEL_IDS.items()
+    if model_type in CAUSAL_KV_HEADPAR_LOOP_MODEL_TYPES
+}
+
 VLM_TEXT_RUNTIME_MODEL_ID = "tiny-random/gemma-3"
 VLM_EXPORT_MODEL_IDS = {
     "gemma3": "tiny-random/gemma-3",
@@ -378,6 +394,27 @@ def _function_op_types(onnx_model, function_names: Set[str]) -> Set[str]:
         if function_proto.name in function_names
         for node in function_proto.node
     }
+
+
+def _collect_onnx_graph_nodes(graph: onnx.GraphProto) -> list[onnx.NodeProto]:
+    nodes = []
+
+    def visit(node_list):
+        for node in node_list:
+            nodes.append(node)
+            for attr in node.attribute:
+                if attr.type == onnx.AttributeProto.GRAPH:
+                    visit(attr.g.node)
+                elif attr.type == onnx.AttributeProto.GRAPHS:
+                    for nested_graph in attr.graphs:
+                        visit(nested_graph.node)
+
+    visit(graph.node)
+    return nodes
+
+
+def _metadata_value(onnx_model: onnx.ModelProto, key: str) -> str:
+    return {entry.key: entry.value for entry in onnx_model.metadata_props}.get(key, "")
 
 
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
@@ -1506,6 +1543,83 @@ def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_pa
 
     assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
     assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+@pytest.mark.dynamo
+@pytest.mark.dynamo_export
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_KV_HEADPAR_LOOP_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_KV_HEADPAR_LOOP_MODEL_IDS),
+)
+def test_causal_kv_headpar_dynamo_subfunction_export_static_loop_supported_models(
+    model_type, model_id, tmp_path, monkeypatch
+):
+    ctx_len = 128
+    prefill_seq_len = 64
+    num_kv_blocks = 2
+    qaic_config = {"blocking_mode": "kv_headpar", "num_kv_blocks": num_kv_blocks, "headpar_split": 2}
+
+    try:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            **MODEL_KWARGS,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        ).eval()
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False, qaic_config=deepcopy(qaic_config))
+    qeff_model.transform(
+        ctx_len=ctx_len,
+        seq_len=prefill_seq_len,
+        bs=1,
+        num_devices=1,
+        qaic_config=qaic_config,
+        dynamo=True,
+        num_cores=2,
+        prefill_seq_len=prefill_seq_len,
+    )
+
+    from QEfficient.utils import constants
+
+    monkeypatch.setattr(constants, "ONNX_EXPORT_EXAMPLE_SEQ_LEN", ctx_len)
+    try:
+        onnx_path = _exported_onnx_path(
+            qeff_model.export(
+                tmp_path / f"{model_type}-kv-headpar-dynamo-subfunctions",
+                dynamo=True,
+                use_onnx_subfunctions=True,
+                offload_pt_weights=False,
+                prefill_seq_len=prefill_seq_len,
+            )
+        )
+    except AssertionError as exc:
+        if "requires the Dynamo export environment" in str(exc):
+            pytest.skip(str(exc))
+        raise
+
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    transform_metadata = _metadata_value(onnx_model, "qeff_transforms")
+    assert "InlineTorchSubgraphFunctionsTransform" in transform_metadata
+    assert "StaticLoopInputsTransform" in transform_metadata
+    graph_loop_nodes = [node for node in _collect_onnx_graph_nodes(onnx_model.graph) if node.op_type == "Loop"]
+    assert graph_loop_nodes, f"Expected {model_type} kv_headpar Dynamo export to contain ONNX Loop nodes"
+
+    function_loop_nodes = [
+        node for function_proto in onnx_model.functions for node in function_proto.node if node.op_type == "Loop"
+    ]
+    assert not function_loop_nodes, "Loop nodes must be inlined out of FunctionProto bodies for QAIC subfunctions"
+
+    initializers = {initializer.name: initializer for initializer in onnx_model.graph.initializer}
+    for loop_node in graph_loop_nodes:
+        assert loop_node.input[0].startswith("qeff_static_loop_trip_count_")
+        assert loop_node.input[1].startswith("qeff_static_loop_cond_true_")
+        assert onnx.numpy_helper.to_array(initializers[loop_node.input[0]]).item() == num_kv_blocks
+        assert onnx.numpy_helper.to_array(initializers[loop_node.input[1]]).item() is True
 
 
 @pytest.mark.llm_model

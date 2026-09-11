@@ -192,7 +192,7 @@ def blocked_kv_attention_forward(
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -297,7 +297,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         skip_future = None
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -460,7 +460,7 @@ def blocked_kv_attention_forward_headpar_offline(
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -870,7 +870,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             skip_future = None
             if skip_kv:
                 skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-                if not is_export and skip_future.item():
+                if not is_export and not _is_dynamo_compiling() and skip_future.item():
                     break
 
             k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
@@ -1006,7 +1006,7 @@ def blocked_qkv_attention_forward_prefill_online(
             skip_future = None
             if skip_kv:
                 skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-                if not is_export and skip_future.item():
+                if not is_export and not _is_dynamo_compiling() and skip_future.item():
                     break
 
             k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
@@ -1097,7 +1097,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
         skip_future = None
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -1366,7 +1366,7 @@ def blocked_qkv_attention_forward(
             if skip_kv:
                 skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
                 # Eager mode Only
-                if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                     if skip_future.item():
                         break
 
@@ -1522,7 +1522,7 @@ def blocked_hqkv_attention_forward(
                 if skip_kv:
                     skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
                     # Eager mode Only
-                    if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                    if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                         if skip_future.item():
                             break
 
@@ -1702,7 +1702,7 @@ def blocked_bhqkv_attention_forward(
                     if skip_kv:
                         skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
                         # Eager mode Only
-                        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                             if skip_future.item():
                                 break
 
@@ -1974,7 +1974,7 @@ def blocked_kv_mla_attention_forward(
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
