@@ -48,7 +48,7 @@ BS = 1
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 
-qaic_config = {"qeff_chunk_size": PREFILL_SEQ_LEN}
+qaic_config = {}
 
 # Update qaic_config here for Blocking settings.
 # qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})
