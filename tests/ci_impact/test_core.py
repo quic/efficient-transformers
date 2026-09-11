@@ -52,11 +52,16 @@ def test_jenkins_impact_gates_run_after_plan_loading() -> None:
         not re.search(r"impactStageEnabled|env\.CI_IMPACT_MODE|env(?:\[['\"]|\.)IMPACT_", block)
         for block in when_blocks
     )
+    assert "def impactStageEnabled" not in source
+    assert "def loadImpactEnvironment" not in source
+    assert "def readImpactPlan()" in source
+    assert "withEnv(impactRuntimeEnv(plan, profile))" in source
 
     impact_stages = re.findall(r"--impact-stage=([a-z0-9_]+)", source)
     assert impact_stages
     for stage_key in set(impact_stages):
-        assert f"runImpactStage('{stage_key}'" in source
+        assert f"runImpactStage('{stage_key}'," in source
+        assert re.search(rf"runImpactStage\('{stage_key}', [^,]+, params\.TEST_PROFILE\)", source)
 
 
 def _git(repo: Path, *args: str) -> str:
