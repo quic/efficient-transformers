@@ -20,6 +20,8 @@ Supported Features
      - Supports standard/custom pooling with AI 100 acceleration and sentence embedding. Enables efficient sentence embeddings via Efficient-Transformers. Compile with one or multiple seq_len; optimal graph auto-selected at runtime. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/embeddings/sentence_embeddings.py>`_ for more **details**.
    * - `SpD, multiprojection heads <https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding>`_
      - Implemented post-attention hidden size projections to speculate tokens ahead of the base model. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/performance/speculative_decoding/multi_projection.py>`_ for more **details**.
+   * - `DFlash: Block Diffusion Speculative Decoding <https://github.com/quic/efficient-transformers/tree/main/examples/performance/dflash>`_
+     - Block-diffusion speculative decoding where a lightweight draft model predicts a block of tokens jointly with a two-stream (context/noise) attention mechanism, verified by the target model in a single pass. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/performance/dflash/README.md>`_ for more **details**.
    * - `QNN Compilation support <https://github.com/quic/efficient-transformers/pull/374>`_
      - Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models.
    * - `Disaggregated serving <https://github.com/quic/efficient-transformers/pull/365>`_
