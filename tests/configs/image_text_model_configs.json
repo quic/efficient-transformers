@@ -806,7 +806,7 @@
       }
     }
   ],
-  "_comment": "Qwen3-VL blocking is tested in tests/transformers/models/image_text_to_text/test_qwen3_vl_moe_disagg_blocked.py.",
+  "_comment": "Qwen3-VL blocking is tested in tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_blocked_tiny_model.py.",
   "image_text_subfunction_models": [
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",

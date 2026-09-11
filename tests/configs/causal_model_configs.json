@@ -554,6 +554,7 @@
       "supports_blocking": false,
       "config_attr": "text_config",
       "num_hidden_layers": 4,
+      "known_ccl_export_or_compile_issue": "Llama4 CCL subfunction compilation fails because qaic-compile does not support the dynamic Slice ends tensor in the prefill decoder layer.",
       "config_overrides": {
         "rope_parameters": {
           "rope_type": "llama3",
@@ -639,6 +640,7 @@
       "supports_disagg": false,
       "supports_blocking": false,
       "use_text_config": true,
+      "known_ccl_export_or_compile_issue": "Gemma3 CCL subfunction compilation fails because the attention mask and attention weights have incompatible context dimensions.",
       "layer_types": [
         "sliding_attention",
         "full_attention"
@@ -844,7 +846,8 @@
       "is_moe": true,
       "supports_disagg": true,
       "supports_blocking": false,
-      "num_hidden_layers": 2
+      "num_hidden_layers": 2,
+      "known_ccl_export_or_compile_issue": "GPT-OSS CCL subfunction compilation fails because qaic-compile does not support the dynamic Slice ends tensor in the prefill decoder layer."
     },
     {
       "id": "glm4_moe_text",
