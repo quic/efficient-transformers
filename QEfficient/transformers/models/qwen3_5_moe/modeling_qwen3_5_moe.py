@@ -590,7 +590,6 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
-                prefill_only=blocking_config.mode.is_prefill,
             )
         else:
             if past_key_values is not None:
@@ -993,12 +992,14 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
                     conv_state.shape[0], *([1] * (conv_state.ndim - 1))
                 )
-                conv_state = torch.where(conv_reset_mask, torch.zeros_like(conv_state), conv_state)
+                # Blend the small reset mask instead of broadcasting it through
+                # a full Select/Where tensor in the folded decode graph.
+                conv_keep = (~conv_reset_mask).to(conv_state.dtype)
+                conv_state = conv_state * conv_keep
 
-                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device).reshape(
-                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
-                )
-                recurrent_state = torch.where(recurrent_reset_mask, torch.zeros_like(recurrent_state), recurrent_state)
+                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device)
+                recurrent_keep = (~recurrent_reset_mask).to(recurrent_state.dtype)
+                recurrent_state = recurrent_state * recurrent_keep
 
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
@@ -2217,13 +2218,13 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
         inputs_shapes["image_grid_thw"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             1,
             86,
             128,
         )
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             2752,
             self.model.config.text_config.hidden_size,
         )

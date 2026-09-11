@@ -835,6 +835,23 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
+                conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
+                    conv_state.shape[0], *([1] * (conv_state.ndim - 1))
+                )
+                # Blend the small reset mask instead of broadcasting it through
+                # a full Select/Where tensor in the folded decode graph.
+                conv_keep = (~conv_reset_mask).to(conv_state.dtype)
+                conv_state = conv_state * conv_keep
+
+                recurrent_reset_mask = conv_reset_mask.reshape(
+                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
+                ).to(device=recurrent_state.device)
+                recurrent_keep = (~recurrent_reset_mask).to(recurrent_state.dtype)
+                recurrent_state = recurrent_state * recurrent_keep
+
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
                 conv_state,
@@ -1900,13 +1917,13 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
         inputs_shapes["image_grid_thw"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             1,
             86,
             128,
         )
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             2752,
             self.model.config.text_config.hidden_size,
         )

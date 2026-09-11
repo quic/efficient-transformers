@@ -243,6 +243,8 @@ def generic_blocked_attention_interface(
     prefill_only: bool = False,
     **kwargs,
 ):
+    blocking_mode = BlockingMode.resolve(blocking_config.mode)
+    prefill_only = prefill_only or blocking_mode.is_prefill
     strategy = _STRATEGIES[
         BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
     ]
@@ -262,7 +264,7 @@ def generic_blocked_attention_interface(
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
+            if blocking_mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
