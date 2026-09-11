@@ -1191,8 +1191,10 @@ class QEFFBaseModel(ABC):
             command.append("-sub-functions")
 
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_")
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
+            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
+            for key, value in custom_io.items()
         )
         custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
 
