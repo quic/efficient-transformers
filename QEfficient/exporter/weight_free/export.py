@@ -260,11 +260,16 @@ def link_prepared_checkpoint_dir(onnx_path: Path, weight_spec_path: Path) -> Non
     it consumes the embedded weight spec.
     """
     spec = load_weight_spec(Path(weight_spec_path))
-    prepared_out = Path(spec.model_id)
+    prepared_out = Path(spec.model_id).expanduser()
     symlink = Path(onnx_path).parent / prepared_out.name
-    if prepared_out.exists() and not symlink.exists():
+    if prepared_out.exists():
+        prepared_out = prepared_out.resolve()
+        if symlink.is_symlink() and symlink.resolve(strict=False) != prepared_out:
+            symlink.unlink()
+        if symlink.exists():
+            return
         try:
-            symlink.symlink_to(prepared_out)
+            symlink.symlink_to(prepared_out, target_is_directory=prepared_out.is_dir())
         except OSError as exc:
             logger.warning(
                 "Could not create symlink %s -> %s: %s. "
