@@ -349,8 +349,8 @@ def run_spd_inference_gemma4(
     input_ids: np.ndarray | None = None,
     mm_token_type_ids: np.ndarray | None = None,
     vision_embeds: np.ndarray | None = None,
+    batch_size: int = 1,
 ) -> SpecDecodingMetrics:
-    batch_size = 1
     mm_full = None
     if input_ids is None:
         padded_ids, position_ids = _prepare_text_inputs(tokenizer, prompt_text, prompt_chunk_size)
@@ -646,9 +646,9 @@ def run_spd_inference_qwen3_vl(
     vision_session: QAICInferenceSession | None = None,
     compiled_height: int = 354,
     compiled_width: int = 536,
+    batch_size: int = 1,
 ) -> SpecDecodingMetrics:
     """Run Qwen3-VL DFlash inference for a text-only or single-image prompt."""
-    batch_size = 1
     metrics = SpecDecodingMetrics(block_size=block_size)
     image_processing_start = time.time()
 
