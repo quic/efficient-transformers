@@ -26,6 +26,7 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
+    PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
@@ -37,6 +38,7 @@ from QEfficient.compile.mdp_generator import (
     generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
 from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
@@ -518,6 +520,7 @@ class QEFFBaseModel(ABC):
         export_kwargs["custom_translation_table"] = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
             **DYNAMO_CUSTOM_OP_TABLE,
+            **_build_blocked_translation_table(self.model),
         }
 
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
