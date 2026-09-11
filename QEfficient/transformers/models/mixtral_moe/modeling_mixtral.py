@@ -320,7 +320,7 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
             router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
             routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-            routing_weights = routing_weights / torch.einsum("bi->b", routing_weights)[:, None]
+            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True)
             routing_weights = routing_weights.to(x.dtype)
         return (selected_experts, routing_weights), router_logits
 

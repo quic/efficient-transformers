@@ -1385,7 +1385,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),
     ids=sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS),
 )
-def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, config_kwargs, tmp_path):
+def test_moe_prefill_subfunction_export_uses_reduce_sum_reductions(model_type, config_kwargs, tmp_path):
     config = AutoConfig.for_model(model_type, **config_kwargs)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
@@ -1419,7 +1419,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     decoder_op_types = _function_op_types(onnx_model, decoder_function_names)
 
     assert len(decoder_function_names) == config.num_hidden_layers
-    assert "Einsum" in decoder_op_types
+    assert "ReduceSum" in decoder_op_types
     assert "CtxGather3D" in decoder_op_types
     assert "CtxScatter3D" in decoder_op_types
     assert "CtxScatter3DInt" in decoder_op_types
