@@ -117,13 +117,32 @@ def parse_args():
     p.add_argument("--prefill_seq_len", type=int, default=128)
     p.add_argument("--generation_len", type=int, default=256)
     p.add_argument("--iteration", type=int, default=300)
+    p.add_argument(
+        "--batch_size",
+        type=int,
+        default=1,
+        help="Requested batch size. QEfficient currently supports batch_size=1 only; higher values fall back to 1.",
+    )
 
     p.add_argument("--hf_token", default=os.environ.get("HF_TOKEN"))
     return p.parse_args()
 
 
+def _resolve_batch_size(batch_size):
+    if batch_size < 1:
+        raise ValueError("--batch_size must be at least 1.")
+    if batch_size > 1:
+        logger.warning(
+            "QEfficient currently does not support batch sizes greater than 1. "
+            "Falling back to batch_size=1; use vLLM for higher batch sizes."
+        )
+        return 1
+    return batch_size
+
+
 def main():
     args = parse_args()
+    batch_size = _resolve_batch_size(args.batch_size)
 
     tlm_repo_default, dlm_repo = MODEL_MAP[args.model_name]
     tlm_repo = args.tlm_hf_path or tlm_repo_default
@@ -188,6 +207,7 @@ def main():
         max_iterations=args.iteration,
         hidden_size=config.hidden_size,
         generation_len=args.generation_len,
+        batch_size=batch_size,
     )
 
     output_parts = ["Output: "]
