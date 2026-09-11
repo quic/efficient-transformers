@@ -15,29 +15,52 @@ def testFilter(String profile) {
 }
 
 
-def impactStageEnabled(String stageKey, boolean requested) {
-    if (!requested) {
-        return false
-    }
-    return env.CI_IMPACT_MODE == 'full' || env["IMPACT_${stageKey.toUpperCase()}"] == 'true'
+def readImpactPlan() {
+    return new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
 }
 
 
-def runImpactStage(String stageKey, boolean requested, Closure body) {
-    if (!impactStageEnabled(stageKey, requested)) {
+def impactRuntimeEnv(Map plan, String profile) {
+    def mode = plan.mode.toString()
+    def values = [
+        "CI_IMPACT_MODE=${mode}",
+        "IMPACT_TEST_FILTER=${mode == 'full' ? testFilter(profile) : noopMarkerFilter()}",
+        "CI_SELECTIVE_LAYER_FILTER=${mode == 'full' ? noopMarkerFilter() : '(not full_layers)'}",
+        "CI_QAIC_WORKERS=${qaicWorkerCount(mode, profile)}",
+    ]
+    plan.stages.each { currentStageKey, stagePlan ->
+        values << "IMPACT_${currentStageKey.toUpperCase()}=${stagePlan.enabled.toString()}"
+    }
+    return values
+}
+
+
+def planStageEnabled(Map plan, String stageKey, boolean requested) {
+    return requested && (plan.mode == 'full' || plan.stages[stageKey].enabled)
+}
+
+
+def runImpactStage(String stageKey, boolean requested, String profile, Closure body) {
+    def plan = readImpactPlan()
+    if (!planStageEnabled(plan, stageKey, requested)) {
         echo "Skipping ${stageKey}: not requested or not selected by CI impact plan"
         return
     }
-    body.call()
+    withEnv(impactRuntimeEnv(plan, profile)) {
+        body.call()
+    }
 }
 
 
-def runFullImpactStage(String stageName, boolean requested, Closure body) {
-    if (!requested || env.CI_IMPACT_MODE != 'full') {
-        echo "Skipping ${stageName}: not requested or CI impact mode is ${env.CI_IMPACT_MODE}"
+def runFullImpactStage(String stageName, boolean requested, String profile, Closure body) {
+    def plan = readImpactPlan()
+    if (!requested || plan.mode != 'full') {
+        echo "Skipping ${stageName}: not requested or CI impact mode is ${plan.mode}"
         return
     }
-    body.call()
+    withEnv(impactRuntimeEnv(plan, profile)) {
+        body.call()
+    }
 }
 
 
@@ -66,17 +89,6 @@ def pipelinePrNumber() {
         positiveIntegerOrEmpty(params.get('PR_NUMBER')) ?:
         positiveIntegerOrEmpty(env.PR_NUMBER) ?:
         positiveIntegerOrEmpty(env.CHANGE_ID)
-}
-
-
-def loadImpactEnvironment(Map plan, String profile) {
-    env.CI_IMPACT_MODE = plan.mode
-    env.IMPACT_TEST_FILTER = plan.mode == 'full' ? env.TEST_FILTER : noopMarkerFilter()
-    env.CI_SELECTIVE_LAYER_FILTER = plan.mode == 'full' ? noopMarkerFilter() : '(not full_layers)'
-    env.CI_QAIC_WORKERS = qaicWorkerCount(plan.mode, profile)
-    plan.stages.each { stageKey, stagePlan ->
-        env["IMPACT_${stageKey.toUpperCase()}"] = stagePlan.enabled.toString()
-    }
 }
 
 
@@ -302,7 +314,6 @@ pipeline {
                     }
                     def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
                     def llmDecisionText = fileExists('.ci-impact-llm.json') ? readFile('.ci-impact-llm.json').trim() : '<missing>'
-                    loadImpactEnvironment(plan, params.TEST_PROFILE)
                     def prPrefix = env.CI_IMPACT_PR_NUMBER ? "PR-${env.CI_IMPACT_PR_NUMBER}; " : ''
                     currentBuild.description = "${prPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
                     echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
@@ -318,6 +329,7 @@ pipeline {
                         }
                         echo "Final selected tests:\n${selectedTests ? selectedTests.join('\n') : '<none>'}"
                     }
+                    echo "CI impact stage flags:\n${impactRuntimeEnv(plan, params.TEST_PROFILE).sort().join('\n')}"
                     archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', fingerprint: true
                 }
             }
@@ -339,7 +351,7 @@ pipeline {
                 stage('Export & Compile') {
                     steps {
                         script {
-                            runImpactStage('export_compile', true) {
+                            runImpactStage('export_compile', true, params.TEST_PROFILE) {
                                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                                     sh '''
                                     sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
@@ -361,7 +373,7 @@ pipeline {
                 stage('QAIC LLM') {
                     steps {
                         script {
-                            runImpactStage('qaic_llm', true) {
+                            runImpactStage('qaic_llm', true, params.TEST_PROFILE) {
                                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                                     sh '''
                                     sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
@@ -386,7 +398,7 @@ pipeline {
         stage('QAIC FEATURE') {
             steps {
                 script {
-                    runImpactStage('qaic_feature', params.RUN_QAIC_FEATURE) {
+                    runImpactStage('qaic_feature', params.RUN_QAIC_FEATURE, params.TEST_PROFILE) {
                         timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
@@ -404,7 +416,7 @@ pipeline {
         stage('QAIC Multimodal') {
             steps {
                 script {
-                    runImpactStage('qaic_multimodal', params.RUN_QAIC_MM) {
+                    runImpactStage('qaic_multimodal', params.RUN_QAIC_MM, params.TEST_PROFILE) {
                         timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
@@ -421,7 +433,7 @@ pipeline {
         stage('QAIC DISAGG TESTS') {
             steps {
                 script {
-                    runImpactStage('qaic_disagg', params.RUN_QAIC_DISAGG) {
+                    runImpactStage('qaic_disagg', params.RUN_QAIC_DISAGG, params.TEST_PROFILE) {
                         timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_disagg -e QAIC_MARKEXPR="(on_qaic) and (disagg_dma) and ${CI_SELECTIVE_LAYER_FILTER}" -e CI_QAIC_WORKERS="${CI_QAIC_WORKERS}" ${BUILD_TAG} bash -c '
@@ -453,7 +465,7 @@ pipeline {
         stage('QAIC Reranker Tests') {
             steps {
                 script {
-                    runImpactStage('qaic_reranker', params.RUN_QAIC_MM) {
+                    runImpactStage('qaic_reranker', params.RUN_QAIC_MM, params.TEST_PROFILE) {
                         timeout(time: 20, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
@@ -471,7 +483,7 @@ pipeline {
         stage('QAIC Diffusion Models Tests') {
             steps {
                 script {
-                    runImpactStage('qaic_diffusion', params.RUN_QAIC_DIFFUSION) {
+                    runImpactStage('qaic_diffusion', params.RUN_QAIC_DIFFUSION, params.TEST_PROFILE) {
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
@@ -489,7 +501,7 @@ pipeline {
         stage('CLI Tests') {
             steps {
                 script {
-                    runImpactStage('cli', params.RUN_CLI) {
+                    runImpactStage('cli', params.RUN_CLI, params.TEST_PROFILE) {
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
@@ -507,7 +519,7 @@ pipeline {
         stage('QAIC DYNAMO') {
             steps {
                 script {
-                    runImpactStage('dynamo_qaic', params.RUN_DYNAMO_QAIC) {
+                    runImpactStage('dynamo_qaic', params.RUN_DYNAMO_QAIC, params.TEST_PROFILE) {
                         timeout(time: 240, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
@@ -525,7 +537,7 @@ pipeline {
         stage('QAIC WEIGHT FREE') {
             steps {
                 script {
-                    runImpactStage('weight_free_qaic', params.RUN_WEIGHT_FREE_QAIC) {
+                    runImpactStage('weight_free_qaic', params.RUN_WEIGHT_FREE_QAIC, params.TEST_PROFILE) {
                         timeout(time: 360, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic ${BUILD_TAG} bash -c "
@@ -544,7 +556,7 @@ pipeline {
         stage('Finetune Tests') {
             steps {
                 script {
-                    runFullImpactStage('finetune', params.RUN_FINETUNE) {
+                    runFullImpactStage('finetune', params.RUN_FINETUNE, params.TEST_PROFILE) {
                         timeout(time: 20, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "

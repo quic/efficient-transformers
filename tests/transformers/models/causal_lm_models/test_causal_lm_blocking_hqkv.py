@@ -90,12 +90,18 @@ def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, blo
         n_layer = get_custom_n_layers(model_name)
         hf_config = None
     qaic_config = _build_qaic_config(blocking_mode)
+    is_gemma = getattr(hf_config, "model_type", "").startswith("gemma")
+    skip_ort = is_gemma and blocking_mode in ("qkv", "hqkv")
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         qaic_config=qaic_config,
         n_layer=n_layer,
         config=hf_config,
         manual_cleanup=manual_cleanup,
+        # Gemma's qkv/hqkv blocked graph is not executable by CPU ORT; keep
+        # the export and QAIC compile coverage for these modes.
+        compile_only=skip_ort,
+        skip_onnxruntime=skip_ort,
     )
 
 
