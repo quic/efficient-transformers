@@ -703,8 +703,8 @@ class TestCausalLMONNXStructure:
     def test_gpt2_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT prefill must produce logits matching QEff PyTorch."""
         pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_gpt2, "GPT2", tmp_export_dir)
-        pt_token = int(pt_logits.argmax(-1))
-        ort_token = int(ort_logits.argmax(-1))
+        pt_token = pt_logits.argmax(-1).item()
+        ort_token = ort_logits.argmax(-1).item()
         assert pt_token == ort_token, f"Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_llama_ort_session_creation_succeeds(self, tmp_export_dir):
@@ -786,8 +786,8 @@ class TestCausalLMONNXStructure:
     def test_llama_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Llama prefill must produce logits matching QEff PyTorch."""
         pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_llama, "Llama", tmp_export_dir)
-        pt_token = int(pt_logits.argmax(-1))
-        ort_token = int(ort_logits.argmax(-1))
+        pt_token = pt_logits.argmax(-1).item()
+        ort_token = ort_logits.argmax(-1).item()
         assert pt_token == ort_token, f"[Llama] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_mistral_ort_prefill_produces_correct_logits(self, tmp_export_dir):
@@ -795,22 +795,22 @@ class TestCausalLMONNXStructure:
         pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
             make_tiny_mistral, "Mistral", tmp_export_dir
         )
-        pt_token = int(pt_logits.argmax(-1))
-        ort_token = int(ort_logits.argmax(-1))
+        pt_token = pt_logits.argmax(-1).item()
+        ort_token = ort_logits.argmax(-1).item()
         assert pt_token == ort_token, f"[Mistral] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_qwen2_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Qwen2 prefill must produce logits matching QEff PyTorch."""
         pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_qwen2, "Qwen2", tmp_export_dir)
-        pt_token = int(pt_logits.argmax(-1))
-        ort_token = int(ort_logits.argmax(-1))
+        pt_token = pt_logits.argmax(-1).item()
+        ort_token = ort_logits.argmax(-1).item()
         assert pt_token == ort_token, f"[Qwen2] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_phi3_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Phi3 prefill must produce logits matching QEff PyTorch."""
         pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_phi3, "Phi3", tmp_export_dir)
-        pt_token = int(pt_logits.argmax(-1))
-        ort_token = int(ort_logits.argmax(-1))
+        pt_token = pt_logits.argmax(-1).item()
+        ort_token = ort_logits.argmax(-1).item()
         assert pt_token == ort_token, f"[Phi3] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_gpt2_ort_logits_are_finite(self, tmp_export_dir):
