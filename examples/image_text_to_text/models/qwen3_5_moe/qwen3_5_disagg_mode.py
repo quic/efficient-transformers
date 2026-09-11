@@ -53,10 +53,10 @@ PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 BS = 1
 
-# Enable KV blocking for full-attention layers with 2 KV blocks
-# To disable KV blocking, comment out the qaic_config line below
-# Set skip_kv=True to skip future KV blocks during inference (optimization)
-qaic_config = {"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True}
+qaic_config = {"qeff_chunk_size": PREFILL_SEQ_LEN}
+
+# Update qaic_config here for Blocking settings.
+# qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})
 
 enable_blocking = False  ## By default it is false
 
@@ -101,7 +101,7 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+    qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
 
@@ -122,7 +122,7 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+    qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
 
