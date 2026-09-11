@@ -513,9 +513,6 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
-        past_seen_tokens = (
-            past_key_values.get_seq_length() if past_key_values is not None else 0
-        )  # TODO: adding get_seq_length(self.layer_idx) here makes dynamo export go through strict=False mode and without this it goes through strict=True mode.
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
