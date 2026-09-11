@@ -38,8 +38,8 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
-    ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+    GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
@@ -56,10 +56,6 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.proxy.modeling_utils import (
-    apply_proxy_layer_config,
-    prepare_proxy_config,
-)
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
@@ -106,11 +102,10 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
-from QEfficient.utils.logging_utils import QEFFLogger, log_from_pretrained_call, log_generate_call
+from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
-logger = QEFFLogger.get_logger("MODEL")
 CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
@@ -1591,8 +1586,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         _resolve_torch_dtype(kwargs)
-        if enable_proxy:
-            prepare_proxy_config(pretrained_model_name_or_path, kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2303,7 +2296,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.qpc_paths.update({qpc_key: lang_qpc_path})
         return self.qpc_paths
 
-    @log_generate_call
     def generate(
         self,
         inputs: torch.Tensor | None = None,
@@ -2875,12 +2867,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         from transformers import AutoConfig
 
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
-        if enable_proxy:
-            explicit_num_hidden_layers = kwargs.pop("num_hidden_layers", None)
-            if explicit_num_hidden_layers is None:
-                apply_proxy_layer_config(config)
-            else:
-                apply_proxy_layer_config(config, num_hidden_layers=explicit_num_hidden_layers)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)
@@ -3490,7 +3476,6 @@ class QEFFAutoModelForImageTextToText:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, qaic_config=qaic_config, **kwargs)
 
     @classmethod
-    @log_from_pretrained_call
     @with_replaced_quantizers
     def from_pretrained(
         cls,
@@ -3552,8 +3537,6 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
-        if enable_proxy:
-            prepare_proxy_config(pretrained_model_name_or_path, kwargs)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
@@ -3628,7 +3611,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
         MoEFusedExpertSplitCheckpointTransform,
-        ExpertParallelPackingCheckpointTransform,
+        GraniteMoeFusedExpertSplitCheckpointTransform,
         DtypeConversionCheckpointTransform,
     ]
 
@@ -3873,8 +3856,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
         _resolve_torch_dtype(kwargs)
-        if enable_proxy:
-            prepare_proxy_config(pretrained_model_name_or_path, kwargs)
         if layerwise:
             warnings.warn(
                 "layerwise export is deprecated and will be removed in a future release. "
@@ -4890,6 +4871,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config.qeff_swa_prefill_only = prefill_only is True
             self.model.config.qeff_csa_prefill_only = prefill_only is True
             self.model.config.qeff_hca_prefill_only = prefill_only is True
+
+        if getattr(self, "_weight_free", False) and prefill_only is True:
+            raise NotImplementedError(
+                "weight_free=True is not supported with disaggregated prefill compile (prefill_only=True)."
+            )
 
         _decode_ks = (
             sorted(set(num_speculative_tokens))

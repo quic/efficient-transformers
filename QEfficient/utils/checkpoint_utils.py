@@ -120,8 +120,9 @@ def requires_dtype_conversion(src: Path, weight_map: dict[str, str], target_dtyp
     """Return True when any floating-point checkpoint tensor differs from ``target_dtype``."""
     for shard_name in sorted(set(weight_map.values())):
         with safe_open(str(src / shard_name), framework="pt") as handle:
-            keys = handle.keys()
-            for key in keys:
+            for key in handle.keys():
+                if key not in weight_map:
+                    continue
                 dtype = safetensors_dtype_to_torch(handle.get_slice(key).get_dtype())
                 if dtype is not None and dtype != target_dtype:
                     return True
