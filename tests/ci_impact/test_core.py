@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -39,6 +40,23 @@ from scripts.ci_impact.llm import (
 from scripts.ci_impact.tool_policy import evaluate
 
 __test__ = False
+
+
+def test_jenkins_impact_gates_run_after_plan_loading() -> None:
+    jenkinsfile = Path(__file__).resolve().parents[2] / "scripts/Jenkinsfile"
+    source = jenkinsfile.read_text(encoding="utf-8")
+
+    when_blocks = re.findall(r"(?m)^\s*when\s*\{(.*?)\}\s*$", source)
+    assert when_blocks
+    assert all(
+        not re.search(r"impactStageEnabled|env\.CI_IMPACT_MODE|env(?:\[['\"]|\.)IMPACT_", block)
+        for block in when_blocks
+    )
+
+    impact_stages = re.findall(r"--impact-stage=([a-z0-9_]+)", source)
+    assert impact_stages
+    for stage_key in set(impact_stages):
+        assert f"runImpactStage('{stage_key}'" in source
 
 
 def _git(repo: Path, *args: str) -> str:
