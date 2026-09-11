@@ -615,6 +615,115 @@ class RenameWsubNodesTransform(BaseOnnxTransform):
         return transformed
 
 
+class ReduceSumAxesToAttrTransform(BaseOnnxTransform):
+    """Convert ReduceSum axes-as-input-tensor to axes-as-attribute inside ONNX functions.
+
+    In opset 13+ the ReduceSum axes moved from an attribute to a second input tensor.
+    The QAIC compiler's subfunction loader rejects this form, so we fold any
+    statically-known axes input back into an ``axes`` attribute (opset 12 style).
+
+    Resolution order for the axes tensor inside a function body:
+    1. Produced by a ``Constant`` node inside the same function.
+    2. A function-level formal input whose value is resolved via call-site actual
+       argument, which is then looked up in the outer graph's constant map.
+
+    Nodes whose axes cannot be resolved statically are left unchanged.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        # Outer-graph constant map: output-name → numpy array.
+        outer_const: dict = {}
+        for node in model.graph.node:
+            if node.op_type == "Constant":
+                for attr in node.attribute:
+                    if attr.name == "value" and node.output:
+                        try:
+                            outer_const[node.output[0]] = numpy_helper.to_array(attr.t)
+                        except Exception:
+                            pass
+        # Initializers that live entirely in-memory (no external data).
+        for init in model.graph.initializer:
+            if init.data_location != 1:  # 1 == EXTERNAL
+                try:
+                    outer_const[init.name] = numpy_helper.to_array(init)
+                except Exception:
+                    pass
+
+        # Build call-site maps: for each function, map formal-input-name → actual-outer-name.
+        # There may be multiple call sites for the same function (one per layer); we only
+        # need one since the axes constant is always the same value.
+        formal_to_actual: dict = {}  # func_name → {formal: actual_outer_name}
+        for node in model.graph.node:
+            func = next((f for f in model.functions if f.name == node.op_type), None)
+            if func is None or func.name in formal_to_actual:
+                continue
+            formal_to_actual[func.name] = {
+                formal: actual
+                for formal, actual in zip(func.input, node.input)
+            }
+
+        transformed = False
+        for func in model.functions:
+            # Build a map of values that are statically known inside this function.
+            local_const: dict = {}
+            # Inline Constant nodes inside the function body.
+            for node in func.node:
+                if node.op_type == "Constant":
+                    for attr in node.attribute:
+                        if attr.name == "value" and node.output:
+                            try:
+                                local_const[node.output[0]] = numpy_helper.to_array(attr.t)
+                            except Exception:
+                                pass
+            # Resolve formal function inputs via call-site.
+            call_map = formal_to_actual.get(func.name, {})
+            for formal in func.input:
+                actual = call_map.get(formal)
+                if actual is not None and actual in outer_const:
+                    local_const[formal] = outer_const[actual]
+
+            new_nodes = []
+            remove_outputs: set = set()
+            for node in func.node:
+                if node.op_type != "ReduceSum" or len(node.input) < 2 or not node.input[1]:
+                    new_nodes.append(node)
+                    continue
+                axes_name = node.input[1]
+                if axes_name not in local_const:
+                    new_nodes.append(node)
+                    continue
+                axes_val = local_const[axes_name].flatten().tolist()
+                keepdims = next((int(a.i) for a in node.attribute if a.name == "keepdims"), 1)
+                noop_with_empty = next((int(a.i) for a in node.attribute if a.name == "noop_with_empty_axes"), 0)
+                new_node = onnx.helper.make_node(
+                    "ReduceSum",
+                    inputs=[node.input[0]],
+                    outputs=list(node.output),
+                    axes=[int(a) for a in axes_val],
+                    keepdims=keepdims,
+                    noop_with_empty_axes=noop_with_empty,
+                )
+                new_nodes.append(new_node)
+                remove_outputs.add(axes_name)
+                transformed = True
+
+            if not remove_outputs:
+                continue
+
+            # Remove Constant nodes that only existed to supply the now-folded axes.
+            final_nodes = []
+            for node in new_nodes:
+                if node.op_type == "Constant" and node.output and node.output[0] in remove_outputs:
+                    continue
+                final_nodes.append(node)
+
+            del func.node[:]
+            func.node.extend(final_nodes)
+
+        return transformed
+
+
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
@@ -690,6 +799,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if RenameWsubNodesTransform in requested:
             applied[RenameWsubNodesTransform] = RenameWsubNodesTransform.apply(model)
+
+        if ReduceSumAxesToAttrTransform in requested:
+            applied[ReduceSumAxesToAttrTransform] = ReduceSumAxesToAttrTransform.apply(model)
 
         if PreserveNestedCacheRetainedStateTransform in requested:
             applied[PreserveNestedCacheRetainedStateTransform] = PreserveNestedCacheRetainedStateTransform.apply(model)
