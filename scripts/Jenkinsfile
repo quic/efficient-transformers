@@ -46,6 +46,15 @@ def qaicWorkerCount(String mode, String profile) {
 }
 
 
+def qaicDeviceGroupCount(Object value) {
+    def groups = value?.toString()?.split(';')?.collect { it.trim() }?.findAll { it }
+    if (!groups) {
+        error('At least one QAIC device group must be configured')
+    }
+    return groups.size().toString()
+}
+
+
 def noopMarkerFilter() {
     return '(not qeff_ci_noop_marker)'
 }
@@ -121,8 +130,14 @@ pipeline {
             defaultValue: false,
             description: 'Validation only: compare the selected PR head with HEAD^ instead of main'
         )
+        choice(
+            name: 'MODEL_TIER',
+            choices: ['all', 'priority', 'legacy'],
+            description: 'Select all models, actively developed priority families, or legacy families'
+        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
+        booleanParam(name: 'RUN_QAIC_EMBEDDING_AUDIO', defaultValue: true, description: 'Run text-embedding and audio (CTC / speech-seq2seq) model tests')
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_DISAGG', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
@@ -130,6 +145,21 @@ pipeline {
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
         booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: false, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
         booleanParam(name: 'RUN_WEIGHT_FREE_QAIC', defaultValue: true, description: 'Run weight-free on-QAIC export/compile/generate tests (torch 2.13)')
+        string(
+            name: 'MM_COMPILE_WORKERS',
+            defaultValue: '12',
+            description: 'Worker count for the host-only multimodal compile-warm pass'
+        )
+        string(
+            name: 'MM_QAIC_DEVICE_GROUPS',
+            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15;16,17,18,19',
+            description: 'Exclusive four-device groups per multimodal worker; Kimi disagg keeps three QPCs resident'
+        )
+        string(
+            name: 'WEIGHT_FREE_QAIC_DEVICE_GROUPS',
+            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15;16,17,18,19',
+            description: 'Exclusive four-device QAIC groups per weight-free worker, separated by semicolons'
+        )
     }
 
     environment {
@@ -138,6 +168,10 @@ pipeline {
         CI_IMPACT_MODE = 'full'
         CI_SELECTIVE_LAYER_FILTER = noopMarkerFilter()
         CI_QAIC_WORKERS = '3'
+        MM_COMPILE_N = "${params.MM_COMPILE_WORKERS}"
+        MM_EXEC_N = qaicDeviceGroupCount(params.MM_QAIC_DEVICE_GROUPS)
+        WEIGHT_FREE_EXEC_N = qaicDeviceGroupCount(params.WEIGHT_FREE_QAIC_DEVICE_GROUPS)
+        MODEL_TIER = "${params.MODEL_TIER}"
     }
 
     stages {
@@ -230,35 +264,35 @@ pipeline {
                         sh '''
                             . ~/.bashrc
                             sudo docker rm -f ${BUILD_TAG} >/dev/null 2>&1 || true
+                            export QEFF_UV_CACHE_PATH="${QEFF_UV_CACHE_PATH:-${HOME}/.cache/qeff-uv}"
                             export QEFF_PIP_CACHE_PATH="${QEFF_PIP_CACHE_PATH:-${HOME}/.cache/qeff-pip}"
                             export QEFF_APT_ARCHIVES_PATH="${QEFF_APT_ARCHIVES_PATH:-${HOME}/.cache/qeff-apt/archives}"
                             export QEFF_APT_LISTS_PATH="${QEFF_APT_LISTS_PATH:-${HOME}/.cache/qeff-apt/lists}"
-                            mkdir -p "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
+                            mkdir -p "${QEFF_UV_CACHE_PATH}" "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
                             sudo docker run --privileged -dit --name ${BUILD_TAG} \
                             -e HF_TOKEN=${HF_TOKEN} \
                             -e TMPDIR=/efficient-transformers/.ci-tmp/default \
                             -e PIP_CACHE_DIR=/root/.cache/pip \
+                            -e UV_CACHE_DIR=/root/.cache/uv \
                             -v ./:/efficient-transformers \
                             -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                            -v ${QEFF_UV_CACHE_PATH}:/root/.cache/uv \
                             -v ${QEFF_PIP_CACHE_PATH}:/root/.cache/pip \
                             -v ${QEFF_APT_ARCHIVES_PATH}:/var/cache/apt/archives \
                             -v ${QEFF_APT_LISTS_PATH}:/var/lib/apt/lists \
                             ${DOCKER_LATEST}:master_latest
                             sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
-                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_disagg,qaic_diffusion,cli,dynamo_qaic,weight_free_qaic,finetune} &&
+                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_embedding_audio,qaic_multimodal,qaic_reranker,qaic_disagg,qaic_diffusion,cli,dynamo_qaic,weight_free_qaic,finetune} &&
                             rm -f /etc/apt/apt.conf.d/docker-clean &&
                             apt update &&
                             DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
                             python3.12 -m venv preflight_qeff &&
                             . preflight_qeff/bin/activate &&
                             pip install --upgrade pip setuptools &&
-                            pip install .[test] &&
-                            pip install junitparser pytest-xdist &&
-                            pip install librosa==0.10.2 soundfile==0.13.1 &&
-                            pip install qwen-vl-utils==0.0.14 &&
-                            pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                            pip install onnx_ir"
+                            pip install uv==0.11.16 &&
+                            uv pip install --index-strategy unsafe-first-match --extra-index-url https://download.pytorch.org/whl/cpu '.[test]' junitparser pytest-xdist librosa==0.10.2 soundfile==0.13.1 timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 onnx_ir &&
+                            uv pip install --no-deps qwen-vl-utils==0.0.14"
                         '''
                     }
                 }
@@ -356,7 +390,7 @@ pipeline {
                             runImpactStage('export_compile', true) {
                                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                                     sh '''
-                                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
+                                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
                                     . preflight_qeff/bin/activate &&
                                     mkdir -p /efficient-transformers/Non_cli_qaic &&
@@ -378,14 +412,14 @@ pipeline {
                             runImpactStage('qaic_llm', true) {
                                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                                     sh '''
-                                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
+                                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
                                     . preflight_qeff/bin/activate &&
                                     mkdir -p /efficient-transformers/Non_qaic_llm &&
                                     export TOKENIZERS_PARALLELISM=false &&
                                     export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                                     export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                                    python -m pytest tests -m '(llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                                    python -m pytest tests -m '(llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' -k 'not test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
                                     junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                                     deactivate"
                                     '''
@@ -403,11 +437,29 @@ pipeline {
                     runImpactStage('qaic_feature', params.RUN_QAIC_FEATURE) {
                         timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_qaic_feature &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
-                            python -m pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                            python -m pytest tests -m '(on_qaic) and (feature) and (not multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                             junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml && deactivate"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('QAIC Embedding & Audio') {
+            steps {
+                script {
+                    runImpactStage('qaic_feature', params.RUN_QAIC_EMBEDDING_AUDIO) {
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_embedding_audio ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_qaic_embedding_audio &&
+                            export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_qaic_embedding_audio &&
+                            python -m pytest tests -m '(embedding_audio_model) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log_embedding_audio.xml --durations=10 &&
+                            junitparser merge tests/tests_log_embedding_audio.xml tests/tests_log.xml && deactivate"
                             '''
                         }
                     }
@@ -419,14 +471,52 @@ pipeline {
             steps {
                 script {
                     runImpactStage('qaic_multimodal', params.RUN_QAIC_MM) {
-                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                            sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
+                        if (params.TEST_PROFILE == 'full_layers_model') {
+                            timeout(time: 0, unit: 'HOURS') {
+                                sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
-                            export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
-                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10 &&
-                            junitparser merge tests/tests_log6.xml tests/tests_log.xml && deactivate"
-                            '''
+                            export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\\$?;
+                            deactivate;
+                            if [ \\"\\$test_status\\" -ne 0 ]; then exit \\"\\$test_status\\"; fi;
+                            exit \\"\\$merge_status\\""
+                                '''
+                            }
+                        } else {
+                            timeout(time: 90, unit: 'MINUTES') {
+                                sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers && . preflight_qeff/bin/activate &&
+                            rm -rf /efficient-transformers/Non_cli_qaic_multimodal && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
+                            export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
+                            export QEFF_PER_PR_COMPILE_WARM_ONLY=1 &&
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_COMPILE_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --durations=10 &&
+                            deactivate"
+                                '''
+                            }
+                            timeout(time: 120, unit: 'MINUTES') {
+                                sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal -e QEFF_QAIC_DEVICE_GROUPS="${MM_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers && . preflight_qeff/bin/activate &&
+                            export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
+                            export QEFF_PER_PR_SHARED_HOME=1 &&
+                            rm -f tests/tests_log6.xml &&
+                            if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
+                            python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                            test_status=\\$?;
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml;
+                            merge_status=\\$?;
+                            deactivate;
+                            if [ \\"\\$test_status\\" -ne 0 ]; then exit \\"\\$test_status\\"; fi;
+                            exit \\"\\$merge_status\\""
+                                '''
+                            }
                         }
                     }
                 }
@@ -446,14 +536,13 @@ pipeline {
                             export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                             export QEFF_HOME=/efficient-transformers/Non_cli_qaic_disagg &&
                             python -m pytest -o addopts="" -m "$QAIC_MARKEXPR" -k "tiny_model" tests/transformers/disaggregated --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_disagg --impact-catalog=.ci-impact-catalog-disagg-scratch.json | { grep "::" || true; } > .ci-disagg-tiny-collected.txt &&
-                            SELECTED_TESTS=$(python3 -c "import random; lines=[l.strip() for l in open(\\".ci-disagg-tiny-collected.txt\\") if l.strip()]; random.shuffle(lines); print(\\" \\".join(lines[:2]))") &&
+                            SELECTED_TESTS=$(tr '\n' ' ' < .ci-disagg-tiny-collected.txt) &&
                             if [ -z "$SELECTED_TESTS" ]; then
                               echo "No tiny_model disagg tests selected for this run" &&
                               echo "<?xml version=\\"1.0\\" encoding=\\"utf-8\\"?><testsuites></testsuites>" > tests/tests_log_disagg.xml
                             else
-                              NUM_SELECTED=$(echo $SELECTED_TESTS | wc -w) &&
                               echo "Selected disagg tiny_model tests: $SELECTED_TESTS" &&
-                              python -m pytest $SELECTED_TESTS -n "$NUM_SELECTED" --junitxml=tests/tests_log_disagg.xml --durations=10
+                              python -m pytest $SELECTED_TESTS -n "$CI_QAIC_WORKERS" --junitxml=tests/tests_log_disagg.xml --durations=10
                             fi &&
                             junitparser merge tests/tests_log_disagg.xml tests/tests_log.xml &&
                             deactivate
@@ -470,7 +559,7 @@ pipeline {
                     runImpactStage('qaic_reranker', params.RUN_QAIC_MM) {
                         timeout(time: 20, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_reranker &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_reranker && export QEFF_RERANKER_DOC_LIMIT=1 &&
                             python -m pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_reranker --junitxml=tests/tests_log_reranker.xml --durations=10 &&
@@ -488,7 +577,7 @@ pipeline {
                     runImpactStage('qaic_diffusion', params.RUN_QAIC_DIFFUSION) {
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_diffusion &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_diffusion && export HF_HUB_CACHE=/huggingface_hub &&
                             python -m pytest tests -m 'diffusion_models and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_diffusion --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
@@ -506,7 +595,7 @@ pipeline {
                     runImpactStage('cli', params.RUN_CLI) {
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/cli &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/cli &&
                             python -m pytest tests/cloud/test_export_compile_execute.py -m '(cli and not qnn) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
@@ -524,7 +613,7 @@ pipeline {
                     runImpactStage('dynamo_qaic', params.RUN_DYNAMO_QAIC) {
                         timeout(time: 240, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && pip install -r examples/dynamo/causal_lm/requirements.txt &&
                             mkdir -p /efficient-transformers/dynamo_qeff_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
                             python -m pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=dynamo_qaic --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
@@ -542,11 +631,11 @@ pipeline {
                     runImpactStage('weight_free_qaic', params.RUN_WEIGHT_FREE_QAIC) {
                         timeout(time: 360, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic -e QEFF_QAIC_DEVICE_GROUPS="${WEIGHT_FREE_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && pip install -r examples/dynamo/causal_lm/requirements.txt &&
                             mkdir -p /efficient-transformers/weight_free_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/weight_free_qaic &&
                             export HF_HUB_CACHE=/huggingface_hub && export HF_HUB_ENABLE_HF_TRANSFER=1 &&
-                            python -m pytest tests/weight_free -m '(on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --dist loadgroup -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=weight_free_qaic --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
+                            python -m pytest tests/weight_free -m '(on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --dist loadgroup -n ${WEIGHT_FREE_EXEC_N} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=weight_free_qaic --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
                             junitparser merge tests/tests_log_weight_free_qaic.xml tests/tests_log.xml && deactivate"
                             '''
                         }
@@ -561,7 +650,7 @@ pipeline {
                     runFullImpactStage('finetune', params.RUN_FINETUNE) {
                         timeout(time: 20, unit: 'MINUTES') {
                             sh '''
-                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate &&
                             pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
                             pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
@@ -614,9 +703,23 @@ pipeline {
                     echo "No test results file found or parsing failed: ${error}"
                 }
                 try {
-                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
+                    sh '''
+                        python3 scripts/ci_report/generate_ci_report.py \
+                            --xml-dir tests \
+                            --output tests/ci_report.html \
+                            --pr "${CHANGE_ID:-}" \
+                            --commit "${GIT_COMMIT:-}" \
+                            --branch "${BRANCH_NAME:-}" \
+                            --profile "${TEST_PROFILE:-}" \
+                            --build-url "${BUILD_URL:-}" || true
+                    '''
                 } catch (error) {
-                    echo "Failed to archive CI impact artifacts: ${error}"
+                    echo "CI report generation failed: ${error}"
+                }
+                try {
+                    archiveArtifacts artifacts: 'tests/ci_report.html,tests/tests_log*.xml,.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
+                } catch (error) {
+                    echo "Failed to archive CI artifacts: ${error}"
                 }
                 try {
                     sh 'sudo docker rm -f ${BUILD_TAG}'

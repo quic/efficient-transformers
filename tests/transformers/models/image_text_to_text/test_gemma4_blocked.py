@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import load_vlm_model_from_config
+from tests.two_phase import resolve_two_phase_cleanup
 
 from .test_image_text_to_text_models import model_config_dict
 
@@ -43,9 +45,13 @@ def _assert_lang_only_compile(qeff_model, qpc_paths: dict, qpc_keys: tuple[str, 
     assert getattr(qeff_model.vision_model, "onnx_path", None) is None, "Vision export should be skipped"
 
 
-def _assert_distinct_onnx_paths(onnx_paths: dict[str, Path]):
-    unique_paths = {str(path) for path in onnx_paths.values()}
-    assert len(unique_paths) == len(onnx_paths), f"Expected distinct ONNX paths per compile, got: {onnx_paths}"
+def _assert_qaic_config_in_export_hash(onnx_path: Path, qaic_config: dict):
+    hash_params_path = onnx_path.parent / "hashed_export_params.json"
+    assert hash_params_path.is_file(), f"Export hash metadata does not exist: {hash_params_path}"
+    hash_params = json.loads(hash_params_path.read_text())
+    assert hash_params.get("qaic_config") == qaic_config, (
+        f"ONNX export hash does not capture the QAIC config: {hash_params_path}"
+    )
 
 
 def _build_qaic_blocking_config(blocking_mode: str) -> dict:
@@ -131,70 +137,73 @@ def _load_gemma4_qeff_model_for_compile_only(
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-def test_gemma4_blocked_prefill_mdp_intersection_compile_and_distinct_prefill_onnx(manual_cleanup):
+@pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
+def test_gemma4_blocked_prefill_mdp_intersection_compile_and_distinct_prefill_onnx(blocking_mode, manual_cleanup):
     torch.manual_seed(42)
-    compiled_onnx_paths: dict[str, Path] = {}
+    manual_cleanup, _ = resolve_two_phase_cleanup(manual_cleanup, compile_only=True)
     prefill_seq_len = model_config_dict[MODEL_NAME]["prompt_len"]
     ctx_len = model_config_dict[MODEL_NAME]["ctx_len"]
+    qeff_model = _load_gemma4_qeff_model_for_compile_only(num_hidden_layers=2, include_sliding_attention=False)
+    qaic_config = _build_gemma4_prefill_mdp_qaic_config(blocking_mode, prefill_seq_len, ctx_len)
+    onnx_path = None
 
     try:
-        for blocking_mode in ("prefill_qkv", "prefill_online"):
-            qeff_model = _load_gemma4_qeff_model_for_compile_only(num_hidden_layers=2, include_sliding_attention=False)
-            prefill_qpc_paths = qeff_model.compile(
-                batch_size=1,
-                prefill_seq_len=prefill_seq_len,
-                ctx_len=ctx_len,
-                num_cores=16,
-                num_devices=PREFILL_MDP_NUM_DEVICES,
-                mdp_num_partitions=PREFILL_MDP_NUM_PARTITIONS,
-                mdp_strategy="intersection",
-                retain_full_kv=True,
-                split_model_io=True,
-                prefill_only=True,
-                enable_chunking=True,
-                skip_vision=True,
-                use_onnx_subfunctions=False,
-                layerwise=False,
-                qaic_config=_build_gemma4_prefill_mdp_qaic_config(blocking_mode, prefill_seq_len, ctx_len),
-            )
-            compiled_onnx_paths[blocking_mode] = _assert_onnx_path(qeff_model.lang_model.onnx_path, blocking_mode)
-            _assert_lang_only_compile(qeff_model, prefill_qpc_paths, ("lang_prefill_qpc_path", "lang_qpc_path"))
-
-        _assert_distinct_onnx_paths(compiled_onnx_paths)
+        prefill_qpc_paths = qeff_model.compile(
+            batch_size=1,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            num_cores=16,
+            num_devices=PREFILL_MDP_NUM_DEVICES,
+            mdp_num_partitions=PREFILL_MDP_NUM_PARTITIONS,
+            mdp_strategy="intersection",
+            retain_full_kv=True,
+            split_model_io=True,
+            prefill_only=True,
+            enable_chunking=True,
+            skip_vision=True,
+            use_onnx_subfunctions=False,
+            layerwise=False,
+            qaic_config=qaic_config,
+        )
+        onnx_path = _assert_onnx_path(qeff_model.lang_model.onnx_path, blocking_mode)
+        _assert_lang_only_compile(qeff_model, prefill_qpc_paths, ("lang_prefill_qpc_path", "lang_qpc_path"))
+        _assert_qaic_config_in_export_hash(onnx_path, qaic_config)
     finally:
-        manual_cleanup(list(compiled_onnx_paths.values()))
+        if onnx_path is not None:
+            manual_cleanup(onnx_path)
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-def test_gemma4_blocked_decode_compile_and_distinct_decode_onnx(manual_cleanup):
+@pytest.mark.parametrize("blocking_mode", ALL_BLOCKING_MODES)
+def test_gemma4_blocked_decode_compile_and_distinct_decode_onnx(blocking_mode, manual_cleanup):
     torch.manual_seed(42)
-    compiled_onnx_paths: dict[str, Path] = {}
+    manual_cleanup, _ = resolve_two_phase_cleanup(manual_cleanup, compile_only=True)
     ctx_len = model_config_dict[MODEL_NAME]["ctx_len"]
+    qeff_model = _load_gemma4_qeff_model_for_compile_only(num_hidden_layers=2, include_sliding_attention=False)
+    qaic_config = _build_qaic_blocking_config(blocking_mode)
+    qaic_config["ctx_len"] = ctx_len
+    onnx_path = None
 
     try:
-        for blocking_mode in ALL_BLOCKING_MODES:
-            qeff_model = _load_gemma4_qeff_model_for_compile_only(num_hidden_layers=2, include_sliding_attention=False)
-            qaic_config = _build_qaic_blocking_config(blocking_mode)
-            qaic_config["ctx_len"] = ctx_len
-            decode_qpc_paths = qeff_model.compile(
-                batch_size=1,
-                prefill_seq_len=1,
-                ctx_len=ctx_len,
-                num_cores=16,
-                num_devices=1,
-                retain_full_kv=True,
-                split_model_io=True,
-                prefill_only=False,
-                skip_vision=True,
-                use_onnx_subfunctions=False,
-                layerwise=False,
-                qaic_config=qaic_config,
-            )
-            compiled_onnx_paths[blocking_mode] = _assert_onnx_path(qeff_model.lang_model.onnx_path, blocking_mode)
-            _assert_lang_only_compile(qeff_model, decode_qpc_paths, ("lang_decode_qpc_path", "lang_qpc_path"))
-
-        _assert_distinct_onnx_paths(compiled_onnx_paths)
+        decode_qpc_paths = qeff_model.compile(
+            batch_size=1,
+            prefill_seq_len=1,
+            ctx_len=ctx_len,
+            num_cores=16,
+            num_devices=1,
+            retain_full_kv=True,
+            split_model_io=True,
+            prefill_only=False,
+            skip_vision=True,
+            use_onnx_subfunctions=False,
+            layerwise=False,
+            qaic_config=qaic_config,
+        )
+        onnx_path = _assert_onnx_path(qeff_model.lang_model.onnx_path, blocking_mode)
+        _assert_lang_only_compile(qeff_model, decode_qpc_paths, ("lang_decode_qpc_path", "lang_qpc_path"))
+        _assert_qaic_config_in_export_hash(onnx_path, qaic_config)
     finally:
-        manual_cleanup(list(compiled_onnx_paths.values()))
+        if onnx_path is not None:
+            manual_cleanup(onnx_path)

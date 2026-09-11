@@ -11,8 +11,9 @@ from time import perf_counter
 
 import numpy as np
 import pytest
-from peft import LoraConfig
-from transformers import AutoConfig, AutoModelForCausalLM
+import torch
+from peft import LoraConfig, get_peft_model
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEffAutoPeftModelForCausalLM
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
@@ -45,14 +46,62 @@ configs = [
     ),
 ]
 
-model_samples = [
-    pytest.param("mistralai/Mistral-7B-v0.1", "predibase/gsm8k", "predibase/dbpedia"),
-    pytest.param(
-        "meta-llama/Meta-Llama-3-8B",
-        "hallisky/lora-type-narrative-llama-3-8b",
-        "hallisky/lora-grade-elementary-llama-3-8b",
-    ),
+# (model_type, architecture, lora_alpha) for the two tiny base+adapter profiles built by
+# lora_model_samples below. Index 0 stands in for the former Mistral-7B sample, index 1 for
+# the former Meta-Llama-3-8B sample, so model_samples[:1]/model_samples[1:] call sites keep
+# selecting the same relative profile after switching to fixture indices.
+_TINY_LORA_PROFILES = [
+    ("mistral", "MistralForCausalLM", 6),
+    ("llama", "LlamaForCausalLM", 8),
 ]
+
+
+def _build_tiny_lora_profile(tmp_path_factory, model_type, architecture, lora_alpha):
+    """Build a tiny base model plus two LoRA adapters trained on top of it.
+
+    Real community adapters (e.g. predibase/gsm8k) are shape-locked to their original
+    multi-billion-parameter base model, so a tiny stand-in base model needs its own
+    from-scratch adapters rather than a swapped-in base checkpoint.
+    """
+    tmp_path = tmp_path_factory.mktemp(f"lora_{model_type}")
+
+    base_config = AutoConfig.for_model(
+        model_type,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        hidden_size=128,
+        architectures=[architecture],
+    )
+    base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
+    base_path = tmp_path / "base"
+    base_model.save_pretrained(base_path)
+    AutoTokenizer.from_pretrained("hf-internal-testing/llama-tokenizer").save_pretrained(base_path)
+
+    adapter_paths = []
+    for i in range(2):
+        adapter_base = AutoModelForCausalLM.from_pretrained(base_path, attn_implementation="eager")
+        lora_config = LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=lora_alpha)
+        adapted_model = get_peft_model(adapter_base, lora_config, adapter_name=f"adapter_{i}")
+        # Add random noise to adapter weights to avoid onnx export deduplicating all-zero weights
+        for name, param in adapted_model.named_parameters():
+            if name.endswith(f".adapter_{i}.weight") and torch.all(param == 0.0):
+                param.data.add_(torch.rand(param.shape))
+        adapter_dir = tmp_path / f"adapter_{i}"
+        adapted_model.save_pretrained(adapter_dir)
+        adapter_paths.append(str(adapter_dir / f"adapter_{i}"))
+
+    return str(base_path), adapter_paths[0], adapter_paths[1]
+
+
+@pytest.fixture(scope="session")
+def lora_model_samples(tmp_path_factory):
+    """Tiny stand-ins for the (base_model_name, adapter_id_0, adapter_id_1) samples.
+
+    Built once per session; tests parametrize on the index into this list rather than on
+    literal Hugging Face identifiers, since the fixture values only exist after building.
+    """
+    return [_build_tiny_lora_profile(tmp_path_factory, *profile) for profile in _TINY_LORA_PROFILES]
 
 
 def create_lora_base_model(base_config):
@@ -63,8 +112,9 @@ def create_lora_base_model(base_config):
 
 
 # test model initialization using __init__ approach
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
-def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapter_id_1):
+@pytest.mark.parametrize("sample_idx", [0, 1])
+def test_auto_lora_model_for_causal_lm_init(sample_idx, lora_model_samples):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
     qeff_model = QEffAutoLoraModelForCausalLM(model_hf)
 
@@ -74,8 +124,9 @@ def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapt
 
 
 # test model initialization using from_pretrained approach
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
-def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
+@pytest.mark.parametrize("sample_idx", [0, 1])
+def test_auto_lora_model_for_causal_lm_from_pretrained(sample_idx, lora_model_samples):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=base_model_name, num_hidden_layers=1
     )
@@ -86,8 +137,9 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
 
 
 # test peft model initialization using from_pretrained approach
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
-def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
+@pytest.mark.parametrize("sample_idx", [0, 1])
+def test_auto_peft_model_for_causal_lm_from_pretrained(sample_idx, lora_model_samples):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
         adapter_id_0, "id_0", finite_adapters=True, num_hidden_layers=1
     )
@@ -196,8 +248,9 @@ def test_auto_lora_model_for_causal_lm_hash():
 
 
 # test download_adapter(), load_adapter() and unload_adapter()
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[1:])
-def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adapter_id_0, adapter_id_1):
+@pytest.mark.parametrize("sample_idx", [1])
+def test_auto_lora_model_for_causal_lm_load_unload_adapter(sample_idx, lora_model_samples):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
     qeff_model.download_adapter(adapter_id_0, "adapter_0")
@@ -212,10 +265,9 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
 # test the export, export caching, compile and generate workflow in noncb mode
 @pytest.mark.on_qaic
 @pytest.mark.feature
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
-def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
-    base_model_name, adapter_id_0, adapter_id_1, tmp_path
-):
+@pytest.mark.parametrize("sample_idx", [0])
+def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(sample_idx, lora_model_samples, tmp_path):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
     qeff_model.load_adapter(adapter_id_0, "adapter_0")
@@ -254,8 +306,9 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
 # test the compile and generate workflow in cb mode
 @pytest.mark.on_qaic
 @pytest.mark.feature
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
-def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
+@pytest.mark.parametrize("sample_idx", [0])
+def test_auto_lora_model_for_causal_lm_cb_compile_generate(sample_idx, lora_model_samples, tmp_path):
+    base_model_name, adapter_id_0, adapter_id_1 = lora_model_samples[sample_idx]
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
         base_model_name, continuous_batching=True, num_hidden_layers=1
     )

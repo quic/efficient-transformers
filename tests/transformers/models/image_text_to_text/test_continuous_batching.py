@@ -31,11 +31,11 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 from tests.utils.image_utils import load_test_image
 from tests.utils.load_kimi_utils import (
     get_kimi_k25_test_config,
     is_kimi_k25,
-    load_kimi_k25_layer_subset_model,
     load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch_CB,
 )
@@ -53,6 +53,15 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 NEW_GENERATION_TOKENS = 10
 
 
+def _assert_runtime_token_parity(reference_tokens, qpc_tokens, message, parity_issue=None):
+    """Compare HF and QAIC tokens, xfail only a configured numerical parity mismatch."""
+    if (reference_tokens == qpc_tokens).all():
+        return
+    if parity_issue:
+        pytest.xfail(parity_issue)
+    pytest.fail(message)
+
+
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     model_name: str,
     manual_cleanup: callable,
@@ -62,7 +71,15 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    kv_cache_batch_size: Optional[int] = None,
+    compile_only: bool = False,
+    known_runtime_parity_issue: Optional[str] = None,
 ):
+    # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
+    # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
+    # warm QPCs) and force compile-only in the warm phase. A no-op in normal runs.
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
+    parity_issue = known_runtime_parity_issue or model_config_dict[model_name].get("known_runtime_parity_issue")
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
@@ -71,19 +88,21 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     n_layer = num_hidden_layers
     batch_size = model_config_dict[model_name]["batch_size"]
     full_batch_size = model_config_dict[model_name]["full_batch_size"]
-    max_gen_len = NEW_GENERATION_TOKENS
+    # Prefix caching sizes the KV cache from kv_cache_batch_size, and the decode
+    # specialization records that value as its full_batch_size (modeling_auto.py:4149/4215).
+    # The runtime reads the batch count back from the QPC, so the running batch has to match
+    # kv_cache_batch_size or prefill runs out of prompts -- exactly like the causal-LM helper,
+    # which sets `full_batch_size = kv_cache_batch_size or 4` (check_causal_models.py:175).
+    # The image/prompt lists below are tiled to full_batch_size, so they follow along.
+    if kv_cache_batch_size is not None:
+        full_batch_size = kv_cache_batch_size
+    max_gen_len = model_config_dict[model_name].get("generation_len", NEW_GENERATION_TOKENS)
 
-    if is_kimi_k25(model_name) and config is None:
-        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
-        config = model_hf.config
-        qeff_model = QEFFAutoModelForImageTextToText(
-            copy.deepcopy(model_hf),
-            kv_offload=kv_offload,
-            config=model_hf.config,
-            torch_dtype=torch.float32,
-            continuous_batching=True,
-        )
-    elif is_kimi_k25(model_name):
+    if is_kimi_k25(model_name):
+        if config is None:
+            # Build the reduced Kimi architecture directly with random weights. Loading a
+            # checkpoint subset first would snapshot the complete ~595 GB model repository.
+            config = get_kimi_k25_test_config(model_name, model_config_dict)
         model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -103,6 +122,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         if hasattr(config, "model_type") and config.model_type in ["gemma4"]:
             config.text_config.num_kv_shared_layers = 0
             config.text_config.layer_types = ["sliding_attention"]
+            # Keep the sliding window below ctx_len (512). The hub value (1024) exceeds ctx_len --
+            # a degenerate setup where the window never slides -- and that path crashes qaic-compile's
+            # rolling-cache `where` selector once the decode batch reaches 4 (prefix caching uses fbs=4).
+            config.text_config.sliding_window = 256
         if hasattr(config, "model_type") and config.model_type in ["qwen3_5"]:
             config.text_config.layer_types = [
                 "linear_attention",
@@ -152,6 +175,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         "mxfp6_matmul": False,
         "split-model-io": True,
     }
+    # Sizes the KV cache independently of full_batch_size (prefix caching). Left out unless
+    # requested so the default CB runs keep inferring it from full_batch_size.
+    if kv_cache_batch_size is not None:
+        compile_kwargs["kv_cache_batch_size"] = kv_cache_batch_size
     if model_name in ["qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe", "gemma4"]:
         compile_kwargs["use_onnx_subfunctions"] = True
 
@@ -181,7 +208,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         # For same prompt
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
         compile_kwargs["num_patches"] = 1
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
@@ -205,9 +233,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
-            model_hf, image_list, prompt_list, generation_config
-        )
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
+                model_hf, image_list, prompt_list, generation_config
+            )
         compile_kwargs["img_size"] = img_size
     elif is_kimi_k25(model_name):
         for img_url in image_urls:
@@ -216,9 +245,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
-            copy.deepcopy(model_hf), processor, image_list, prompt_list, max_gen_len
-        )
+        if not compile_only:
+            pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
+                copy.deepcopy(model_hf), processor, image_list, prompt_list, max_gen_len
+            )
         image_height = images[0].height
         image_width = images[0].width
         compile_kwargs.update(
@@ -230,13 +260,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        use_fast = model_name != "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+        use_fast = model_name != "tiny-random/mistral-3"
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
         image_height = None
         image_width = None
         for img_url in image_urls:
             image = load_test_image(img_url, session=_session)
-            if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+            if model_name == "tiny-random/mistral-3":
                 image_height = 1540
                 image_width = 1540
                 image = image.resize((image_height, image_width))
@@ -266,10 +296,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
         compile_kwargs["img_size"] = img_size
 
-    qeff_model.compile(**compile_kwargs)
+    with model_export_compile_lock(model_name):
+        qeff_model.compile(**compile_kwargs)
+
+    if compile_only:
+        manual_cleanup(qeff_model.onnx_path)
+        return
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
@@ -285,30 +321,41 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     print("QPC Outputs (QAIC) for Continuous Batching with same prompt:")
     print(exec_info.generated_texts)
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
+        _assert_runtime_token_parity(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            f"Tokens don't match for prompt {i} between HF and QPC output for same prompts",
+            parity_issue,
         )
+    # The distinct-prompt leg runs full_batch_size prompts. Prefix caching bumps
+    # full_batch_size above the config's 2-entry prompt/image lists, so tile them to
+    # full_batch_size (modulo) exactly as the causal helper does (check_causal_models.py:177).
+    # A no-op when full_batch_size == len(queries) (the plain-CB case), so existing CB runs
+    # are unchanged; without it the shorter lists under-fill the prompt queue and prefill
+    # pops an empty deque (vlm_generation.py:935).
+    diff_images = [images[i % len(images)] for i in range(full_batch_size)]
+    diff_queries = [queries[i % len(queries)] for i in range(full_batch_size)]
     if model_name in ModelConfig.MOLMO_MODELS:
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
-            model_hf, images, queries, generation_config=generation_config
+            model_hf, diff_images, diff_queries, generation_config=generation_config
         )
     else:
         if is_kimi_k25(model_name):
             # Kimi-K2.5 is compiled for the first image shape in this test; QPC generation resizes
             # each image to that shape, so resize HF reference images the same way while keeping content different.
-            images = [image.resize((image_width, image_height)) for image in images]
+            diff_images = [image.resize((image_width, image_height)) for image in diff_images]
             pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
-                copy.deepcopy(model_hf), processor, images, queries, max_gen_len
+                copy.deepcopy(model_hf), processor, diff_images, diff_queries, max_gen_len
             )
         else:
-            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, diff_images, diff_queries)
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
         processor=processor,
-        images=images,
-        prompts=queries,
+        images=diff_images,
+        prompts=diff_queries,
         generation_len=max_gen_len,
         image_height=image_height,
         image_width=image_width,
@@ -317,8 +364,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     print("QPC Outputs (QAIC) for Continuous Batching with different prompt:")
     print(exec_info.generated_texts)
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for different prompts"
+        _assert_runtime_token_parity(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            f"Tokens don't match for prompt {i} between HF and QPC output for different prompts",
+            parity_issue,
         )
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
 
@@ -380,7 +430,11 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
     if is_kimi_k25(model_name):
         hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
@@ -388,7 +442,11 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
         hf_config.name_or_path = model_name
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
@@ -396,4 +454,56 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
             num_hidden_layers=model_config_dict[model_name]["num_layers"],
             kv_offload=kv_offload,
             manual_cleanup=manual_cleanup,
+        )
+
+
+# Larger than every config's full_batch_size (2) so the KV-cache buffer is sized apart from
+# the plain-CB default and the kv_cache_batch_size compile arg is genuinely exercised. Capped
+# at 4: Qwen-VL runs the shared base CB decode loop (run_continuous_batching_decode), which
+# indexes the 4-D mrope decode_pos_ids `(4, batch, 1)` on axis 0 by decode_batch_id
+# (text_generation_inference.py:964), so a running batch >4 IndexErrors. This is a pre-existing
+# Qwen-VL CB ceiling -- reproducible with the plain CB test at full_batch_size=8 -- not a
+# prefix-caching bug. The causal side runs 8; VLMs stay at 4 until that loop is generalized.
+PREFIX_CACHING_KV_CACHE_BATCH_SIZE = 4
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
+def test_dummy_image_text_to_text_prefix_caching_cb(model_name, kv_offload, manual_cleanup):
+    """Prefix-caching (``kv_cache_batch_size``) parity for VLMs.
+
+    Mirrors ``test_per_pr_causal_fp16_subfunction_cb_prefix_caching`` on the causal-LM side.
+    Lives with the CB tests because ``compile()`` rejects ``kv_cache_batch_size`` unless
+    continuous batching is on.
+    """
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
+    hf_config = None
+    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+        model_type = model_config_dict[model_name].get("model_type", None)
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        hf_config.name_or_path = model_name
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            kv_cache_batch_size=PREFIX_CACHING_KV_CACHE_BATCH_SIZE,
+            known_runtime_parity_issue=model_config_dict[model_name].get("known_dummy_runtime_parity_issue"),
+        )
+    else:
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
+            model_name,
+            num_hidden_layers=model_config_dict[model_name]["num_layers"],
+            kv_offload=kv_offload,
+            manual_cleanup=manual_cleanup,
+            kv_cache_batch_size=PREFIX_CACHING_KV_CACHE_BATCH_SIZE,
         )

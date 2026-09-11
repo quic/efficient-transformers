@@ -706,7 +706,7 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
         hidden_states = hidden_states[
             torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_index
         ]
-        logits = self.lm_head(hidden_states).to(hidden_states.dtype)
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
             loss=None,

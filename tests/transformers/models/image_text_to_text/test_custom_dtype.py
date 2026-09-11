@@ -56,6 +56,7 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(
     )
 
 
+@pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_custom_dtype_support_models)

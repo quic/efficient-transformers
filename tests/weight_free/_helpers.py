@@ -48,7 +48,7 @@ WEIGHT_FREE_CAUSAL_LM_MODEL_IDS = {
     "gpt_oss": "tiny-random/gpt-oss-mxfp4",
     "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
     "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
-    "granitemoe": "ibm-granite/granite-3.1-1b-a400m-instruct",
+    "granitemoe": "hf-internal-testing/tiny-random-GraniteMoeForCausalLM",
     "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
     "mixtral": "hf-internal-testing/tiny-random-MixtralForCausalLM",
@@ -60,6 +60,16 @@ WEIGHT_FREE_CAUSAL_LM_MODEL_IDS = {
     "qwen3_moe": "tiny-random/qwen3-moe",
     "starcoder2": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
 }
+
+WEIGHT_FREE_QAIC_MODEL_PARAMS = [
+    pytest.param(
+        model_type,
+        model_id,
+        marks=pytest.mark.xdist_group(name=f"qaic-runtime-{model_type}"),
+        id=model_type,
+    )
+    for model_type, model_id in sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items())
+]
 
 # ---------------------------------------------------------------------------
 # Constants

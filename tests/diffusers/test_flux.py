@@ -505,6 +505,15 @@ def _run_flux_pipeline_test_case(
         release_pipeline_qpc_sessions(pipeline, ["text_encoder", "text_encoder_2", "transformer", "vae_decode"])
 
 
+# The FLUX T5 text encoder (text_encoder_2) ships bf16 weights. QEfficient converts bf16
+# to fp16 for ai100, which activates upstream T5Block's fp16-only torch.isinf clamp. The
+# legacy ONNX exporter lowers torch.isinf as Cast(to=DOUBLE) -> IsInf, and the QAIC compiler
+# rejects the DOUBLE tensor (MODEL_LOADER_UNSUPPORTED_DATATYPE). Track as a known limitation
+# until bf16 export is supported for diffusion text encoders.
+BF16_EXPORT_XFAIL_REASON = "Diffusion models do not yet support bf16 export (T5 text encoder emits ONNX DOUBLE cast)"
+
+
+@pytest.mark.xfail(reason=BF16_EXPORT_XFAIL_REASON)
 @pytest.mark.flux
 @pytest.mark.diffusion_models
 @pytest.mark.on_qaic
@@ -520,6 +529,7 @@ def test_flux_pipeline(flux_pipeline):
     )
 
 
+@pytest.mark.xfail(reason=BF16_EXPORT_XFAIL_REASON)
 @pytest.mark.flux
 @pytest.mark.diffusion_models
 @pytest.mark.on_qaic
