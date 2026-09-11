@@ -34,7 +34,7 @@ BATCH_SIZE = 1
 GENERATION_LEN = 4
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
 TEXT_PROMPT = "Describe this image."
-CONFIG_PATH = Path(__file__).parents[3] / "configs" / "image_text_model_configs.json"
+CONFIG_PATH = Path(__file__).parents[2] / "configs" / "image_text_model_configs.json"
 
 
 def _prepare_inputs(processor):
@@ -278,8 +278,9 @@ def _run_disagg_qaic_generation(
     return np.concatenate(generated_ids, axis=1)[0]
 
 
+@pytest.mark.dummy_layers
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_kimi_k25_disagg_qaic_vs_hf_fp32(manual_cleanup):
     manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup)
     model, tokenizer, processor = _load_kimi_random_model()

@@ -433,7 +433,7 @@ def _load_qeff_model(num_hidden_layers: int = 1):
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 @pytest.mark.parametrize("blocking_mode", ["h", "q", "kv", "qkv"])
 def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_cleanup):
     _run_disagg_blocked(
@@ -445,7 +445,7 @@ def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_clean
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 @pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
 def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup):
     torch.manual_seed(42)

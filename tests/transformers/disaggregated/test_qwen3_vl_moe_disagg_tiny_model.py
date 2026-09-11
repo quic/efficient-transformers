@@ -244,7 +244,7 @@ def _run_disagg_qaic_generation(
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
