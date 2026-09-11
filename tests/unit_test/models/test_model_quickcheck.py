@@ -2564,6 +2564,85 @@ def test_qwen3_5_batch_fold_dynamic_axes_separate_input_and_cache_batches():
     assert regular_axes["batch_index"][0] == "batch_size"
 
 
+@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_moe"])
+def test_qwen3_5_decoder_wrapper_folds_decode_only(model_type):
+    from types import SimpleNamespace
+
+    if model_type == "qwen3_5":
+        from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5DecoderWrapper
+
+        wrapper_cls = QEffQwen3_5DecoderWrapper
+    else:
+        from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeDecoderWrapper
+
+        wrapper_cls = QEffQwen3_5MoeDecoderWrapper
+
+    class RecordingLanguageModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = [
+                SimpleNamespace(
+                    self_attn=SimpleNamespace(
+                        attn_blocking_config=SimpleNamespace(batch_fold=True),
+                    )
+                )
+            ]
+            self.calls = []
+
+        def forward(self, *, inputs_embeds, batch_index, batch_fold, **kwargs):
+            self.calls.append((batch_index, batch_fold))
+            return SimpleNamespace(last_hidden_state=inputs_embeds, past_key_values=[])
+
+    class Embedding(nn.Module):
+        def forward(self, input_ids):
+            return input_ids.to(torch.float32).unsqueeze(-1).expand(-1, -1, 2)
+
+    language_model = RecordingLanguageModel()
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            language_model=language_model,
+            get_input_embeddings=lambda: Embedding(),
+        ),
+        config=SimpleNamespace(image_token_id=99),
+        lm_head=nn.Identity(),
+    )
+    wrapper = wrapper_cls(model)
+    batch_index = torch.tensor([[1], [0]], dtype=torch.long)
+    vision_embeds = torch.zeros(2, 1, 2)
+    image_idx = torch.zeros(2, 1, dtype=torch.long)
+
+    for seq_len in (3, 1):
+        language_model.calls.clear()
+        input_ids = torch.tensor([[1] * seq_len, [2] * seq_len])
+        position_ids = torch.arange(seq_len).view(1, 1, seq_len).expand(1, 2, seq_len)
+
+        if model_type == "qwen3_5":
+            wrapper(
+                input_ids,
+                vision_embeds,
+                position_ids,
+                image_idx,
+                [],
+                batch_index=batch_index,
+            )
+        else:
+            wrapper(
+                input_ids=input_ids,
+                vision_embeds=vision_embeds,
+                position_ids=position_ids,
+                image_idx=image_idx,
+                past_key_values=[],
+                batch_index=batch_index,
+            )
+
+        received_batch_index, batch_fold = language_model.calls[0]
+        assert batch_fold is (seq_len == 1)
+        if seq_len == 1:
+            assert received_batch_index is None
+        else:
+            torch.testing.assert_close(received_batch_index, batch_index)
+
+
 def test_qwen3_5_moe_decode_expert_parallel_selection():
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
 

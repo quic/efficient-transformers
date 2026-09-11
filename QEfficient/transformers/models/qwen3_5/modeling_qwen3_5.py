@@ -1555,7 +1555,9 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        batch_fold_cb = batch_index is not None and self._uses_batch_folded_attention()
+        # Continuous batching also supplies batch_index for prefill. Folded
+        # attention is decode-only, so do not infer it from batch_index alone.
+        batch_fold_cb = batch_index is not None and input_ids.shape[1] == 1 and self._uses_batch_folded_attention()
         if batch_fold_cb:
             # Folded attention consumes physical batch rows; restore logical
             # request order only at the decoder output boundary.
