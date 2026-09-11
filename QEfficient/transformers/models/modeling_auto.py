@@ -1668,7 +1668,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             "continuous_batching": self.continuous_batching,
             "comp_ctx_lengths": self.comp_ctx_lengths_decode,
         }
-        if getattr(self.model.config, "model_type", None) == "qwen3_vl_moe":
+        if (
+            getattr(self.model.config, "model_type", None) == "qwen3_vl_moe"
+            or getattr(self.model.config, "model_type", None) == "qwen3_5_moe"
+        ):
             _blocking_cfg = self.lang_model.hash_params.get("blocking_kwargs", None)
             batch_fold = (
                 not prefill_only and _blocking_cfg is not None and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD

@@ -211,11 +211,54 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
 
+    def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_K(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_V(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_K_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_K_batch(start_index, end_index, cache_kwargs, folded_cache=folded_cache)
+
+    def read_only_blocked_V_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_V_batch(start_index, end_index, cache_kwargs, folded_cache=folded_cache)
+
     def write_only(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.write_only(key_states, value_states, cache_kwargs)
+
+    def get_batch_folded_kv(self, layer_idx):
+        """Return retained K/V cache for one layer in batch-folded compute layout."""
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.get_batch_folded_kv()
+
+    def write_only_batch(
+        self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict
+    ):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.write_only_batch(key_states, value_states, cache_kwargs)
 
     def has_previous_state(self, layer_idx=None) -> bool:
         if layer_idx is not None:
@@ -2033,10 +2076,15 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
+        input_batch_axis_name = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -2044,8 +2092,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         }
 
         lang_dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {1: "batch_size", 2: "seq_len"},
+            "input_ids": {0: input_batch_axis_name, 1: "seq_len"},
+            "position_ids": {1: input_batch_axis_name, 2: "seq_len"},
             "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
@@ -2058,7 +2106,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
-            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+            lang_dynamic_axes["batch_index"] = {0: input_batch_axis_name}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -2081,25 +2129,31 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         continuous_batching: bool = False,
         **kwargs,
     ):
+        batch_fold = kwargs.pop("batch_fold", False)
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        if continuous_batching and batch_fold:
+            bs = fbs
+
         inputs_shapes = {}
 
         dummy_seq_len = 32
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
+        inputs_shapes["input_ids"] = (bs, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
             4,
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             dummy_seq_len,
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
         inputs_shapes["image_grid_thw"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             1,
             86,
             128,
         )
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             2752,
             self.model.config.text_config.hidden_size,
         )
@@ -2114,18 +2168,11 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=float_dtype)
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(dummy_seq_len, dtype=torch.int64)
-                .view(1, dummy_seq_len)
-                .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-            )
+            (torch.arange(dummy_seq_len, dtype=torch.int64).view(1, dummy_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
