@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .core import STAGES, ImpactPlan, build_plan, write_plan
+from .core import STAGES, ImpactPlan, build_plan, is_hard_full_path, write_plan
 from .llm import (
     LLMSelection,
     LLMStageError,
@@ -78,7 +78,8 @@ def _plan(args: argparse.Namespace) -> int:
         catalog = load_catalog(args.catalog, plan.head)
         plan = expand_plan_with_catalog(plan, catalog)
         write_plan(plan, args.deterministic_output)
-        if plan.mode == "full":
+        hard_full_change = any(is_hard_full_path(path) for path in plan.changed_files)
+        if plan.mode == "full" and (args.force_full or hard_full_change):
             selection = _skipped_llm_selection()
             plan.llm = selection.to_dict()
             write_llm_artifact(selection, args.llm_output)

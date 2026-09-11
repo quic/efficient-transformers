@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -39,6 +40,23 @@ from scripts.ci_impact.llm import (
 from scripts.ci_impact.tool_policy import evaluate
 
 __test__ = False
+
+
+def test_jenkins_impact_gates_run_after_plan_loading() -> None:
+    jenkinsfile = Path(__file__).resolve().parents[2] / "scripts/Jenkinsfile"
+    source = jenkinsfile.read_text(encoding="utf-8")
+
+    when_blocks = re.findall(r"(?m)^\s*when\s*\{(.*?)\}\s*$", source)
+    assert when_blocks
+    assert all(
+        not re.search(r"impactStageEnabled|env\.CI_IMPACT_MODE|env(?:\[['\"]|\.)IMPACT_", block)
+        for block in when_blocks
+    )
+
+    impact_stages = re.findall(r"--impact-stage=([a-z0-9_]+)", source)
+    assert impact_stages
+    for stage_key in set(impact_stages):
+        assert f"runImpactStage('{stage_key}'" in source
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -564,13 +582,23 @@ def test_llm_can_escalate_to_full_ci() -> None:
     assert all(stage["enabled"] for stage in merged.stages.values())
 
 
-def test_llm_can_refine_static_analysis_full_plan() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "unsafe static analysis for QEfficient/base/modeling_qeff.py",
+        "unclassified production/configuration changes",
+        "unparsable model inventory: tests/configs/models.json",
+        "production changes produced no confident deterministic test matches",
+        "dependency closure reaches every Jenkins stage",
+    ],
+)
+def test_llm_can_refine_deterministic_full_plan(reason: str) -> None:
     deterministic = ImpactPlan(
         mode="full",
         base="base",
         head="head",
         changed_files=["QEfficient/base/modeling_qeff.py"],
-        reasons=["unsafe static analysis for QEfficient/base/modeling_qeff.py"],
+        reasons=[reason],
         unresolved=["QEFFBaseModel: dynamic reflection"],
         stages=_stage_plans(enabled=True),
     )
@@ -938,6 +966,9 @@ def test_external_llm_selector_does_not_require_api_credentials(
 ) -> None:
     repo, base = repository
     monkeypatch.setenv("LLM_SELECTOR_COMMAND", "llm-launcher exec")
+    monkeypatch.delenv("LLM_CI_MODEL", raising=False)
+    monkeypatch.delenv("LLM_CI_COORDINATOR_MODEL", raising=False)
+    monkeypatch.delenv("LLM_CI_SUBAGENT_MODEL", raising=False)
     monkeypatch.delenv("LLM_STAGE_KEY", raising=False)
     monkeypatch.delenv("LLM_API_BASE", raising=False)
     decision = json.dumps(
@@ -968,15 +999,86 @@ def test_external_llm_selector_does_not_require_api_credentials(
     assert selection.tests == ("tests/test_component.py::test_calculate",)
     selector.assert_called_once()
     assert selector.call_args.args[1] == "llm-launcher exec"
-    context = json.loads(selector.call_args.args[3])
+    assert selector.call_args.args[2] == "gpt-5.5"
+    assert selector.call_args.args[3] == "gpt-5.6-terra"
+    context = json.loads(selector.call_args.args[4])
     assert context["library_root"] == "QEfficient"
     assert "eligible_tests_catalog" not in context
     assert "deterministic_plan" not in context
     assert "changed_files" not in context
     assert "eligible_tests" not in context
-    assert len(selector.call_args.args[3].encode("utf-8")) < 2_000
+    assert len(selector.call_args.args[4].encode("utf-8")) < 2_000
     assert "diff" not in context
     assert not selection.context_incomplete
+
+
+def test_external_llm_selector_model_overrides_are_independent(
+    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = repository
+    monkeypatch.setenv("LLM_SELECTOR_COMMAND", "llm-launcher exec")
+    monkeypatch.setenv("LLM_CI_COORDINATOR_MODEL", "coordinator-model")
+    monkeypatch.setenv("LLM_CI_SUBAGENT_MODEL", "subagent-model")
+    decision = json.dumps(
+        {
+            "run_full_ci": False,
+            "tests": ["tests/test_component.py::test_calculate"],
+            "unnecessary_tests": [],
+            "reason": "external selection",
+        }
+    )
+    catalog_path = repo / ".ci-impact-catalog.json"
+    catalog_path.write_text("{}", encoding="utf-8")
+    deterministic_plan_path = repo / ".ci-impact-deterministic-plan.json"
+
+    with patch("scripts.ci_impact.llm._run_external_selector", return_value=decision) as selector:
+        selection = select_tests(
+            repo,
+            build_plan(repo, base),
+            _catalog(),
+            catalog_path=catalog_path,
+            deterministic_plan_path=deterministic_plan_path,
+        )
+
+    assert selection.model == "coordinator-model"
+    selector.assert_called_once()
+    assert selector.call_args.args[2] == "coordinator-model"
+    assert selector.call_args.args[3] == "subagent-model"
+
+
+def test_legacy_llm_ci_model_only_overrides_external_coordinator(
+    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = repository
+    monkeypatch.setenv("LLM_SELECTOR_COMMAND", "llm-launcher exec")
+    monkeypatch.setenv("LLM_CI_MODEL", "legacy-coordinator-model")
+    monkeypatch.delenv("LLM_CI_COORDINATOR_MODEL", raising=False)
+    monkeypatch.delenv("LLM_CI_SUBAGENT_MODEL", raising=False)
+    decision = json.dumps(
+        {
+            "run_full_ci": False,
+            "tests": ["tests/test_component.py::test_calculate"],
+            "unnecessary_tests": [],
+            "reason": "external selection",
+        }
+    )
+    catalog_path = repo / ".ci-impact-catalog.json"
+    catalog_path.write_text("{}", encoding="utf-8")
+    deterministic_plan_path = repo / ".ci-impact-deterministic-plan.json"
+
+    with patch("scripts.ci_impact.llm._run_external_selector", return_value=decision) as selector:
+        selection = select_tests(
+            repo,
+            build_plan(repo, base),
+            _catalog(),
+            catalog_path=catalog_path,
+            deterministic_plan_path=deterministic_plan_path,
+        )
+
+    assert selection.model == "legacy-coordinator-model"
+    selector.assert_called_once()
+    assert selector.call_args.args[2] == "legacy-coordinator-model"
+    assert selector.call_args.args[3] == "gpt-5.6-terra"
 
 
 def test_external_llm_prompt_rejects_catalog_outside_repository(repository: tuple[Path, str], tmp_path: Path) -> None:
@@ -1021,7 +1123,15 @@ def test_external_llm_selector_uses_restricted_noninteractive_arguments(reposito
         patch("scripts.ci_impact.llm._preflight_external_tools"),
         patch("scripts.ci_impact.llm.subprocess.run", side_effect=run_selector) as process,
     ):
-        output = _run_external_selector(repo, "llm-launcher exec", "test-model", context, catalog_path, plan_path)
+        output = _run_external_selector(
+            repo,
+            "llm-launcher exec",
+            "coordinator-model",
+            "subagent-model",
+            context,
+            catalog_path,
+            plan_path,
+        )
 
     assert json.loads(output)["reason"] == "none"
     arguments = process.call_args.args[0]
@@ -1033,8 +1143,9 @@ def test_external_llm_selector_uses_restricted_noninteractive_arguments(reposito
     assert "multi_agent" in arguments
     assert "agents.enabled=true" in arguments
     assert "agents.max_concurrent_threads_per_session=4" in arguments
-    assert 'agents.default_subagent_model="test-model"' in arguments
+    assert 'agents.default_subagent_model="subagent-model"' in arguments
     assert 'agents.default_subagent_reasoning_effort="high"' in arguments
+    assert arguments[arguments.index("--model") + 1] == "coordinator-model"
     assert "--dangerously-bypass-hook-trust" in arguments
     assert any(argument.startswith("hooks.PreToolUse=") for argument in arguments)
     assert process.call_args.kwargs["timeout"] == 600
