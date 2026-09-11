@@ -79,11 +79,29 @@ def parse_args():
     parser.add_argument("--prefill_seq_len", type=int, default=128)
     parser.add_argument("--generation_len", type=int, default=1800)
     parser.add_argument("--iteration", type=int, default=300)
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1,
+        help="Requested batch size. QEfficient currently supports batch_size=1 only; higher values fall back to 1.",
+    )
     parser.add_argument("--hf_token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--precision", choices=["fp16", "fp6"], default="fp6", help="Model precision")
     return parser.parse_args()
+
+
+def _resolve_batch_size(batch_size):
+    if batch_size < 1:
+        raise ValueError("--batch_size must be at least 1.")
+    if batch_size > 1:
+        logger.warning(
+            "QEfficient currently does not support batch sizes greater than 1. "
+            "Falling back to batch_size=1; use vLLM for higher batch sizes."
+        )
+        return 1
+    return batch_size
 
 
 def _get_mask_token_id(config):
@@ -100,6 +118,7 @@ def _run_gemma(
     tlm_session,
     prompt_chunk_size,
     vision_qpc,
+    batch_size,
 ):
     input_ids = None
     mm_token_type_ids = None
@@ -157,6 +176,7 @@ def _run_gemma(
         input_ids=input_ids,
         mm_token_type_ids=mm_token_type_ids,
         vision_embeds=vision_embeds,
+        batch_size=batch_size,
     )
     return metrics, {"vision_encode_time_s": vision_encode_time}
 
@@ -171,6 +191,7 @@ def _run_qwen3_vl(
     tlm_session,
     prompt_chunk_size,
     vision_qpc,
+    batch_size,
 ):
     if processor is None:
         raise RuntimeError("Qwen3-VL requires a processor, which failed to load.")
@@ -209,12 +230,14 @@ def _run_qwen3_vl(
         vision_session=vision_session,
         compiled_height=args.height if args.height is not None else 354,
         compiled_width=args.width if args.width is not None else 536,
+        batch_size=batch_size,
     )
     return metrics, {"vision_encode_time_s": metrics.vision_prefill_time if args.image else None}
 
 
 def main():
     args = parse_args()
+    batch_size = _resolve_batch_size(args.batch_size)
     if not args.image and not args.prompt:
         raise ValueError("Provide --prompt for text mode, or --image for image mode.")
 
@@ -285,6 +308,7 @@ def main():
             tlm_session,
             prompt_chunk_size,
             vision_qpc,
+            batch_size,
         )
     else:
         metrics, output_extra = _run_gemma(
@@ -296,6 +320,7 @@ def main():
             tlm_session,
             prompt_chunk_size,
             vision_qpc,
+            batch_size,
         )
 
     output_parts = ["Output: "]
