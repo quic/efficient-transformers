@@ -145,22 +145,24 @@ For pipeline-parallel prefill, use `--stage prefill --mdp-num-partitions N` or
 the complete `--disaggregated` recipe above. The prefill device count must be
 divisible by the number of MDP partitions.
 
-### Production validation matrix
+### Hardware validation matrix
 
-Run the full text-generation matrix (dense FP32/FP16/BF16 compile, ONNX
-subfunctions, CCL, continuous batching, tensor slicing, blocking modes, MDP,
-and GPT-OSS disaggregated serving) with:
+Run the text-generation validation matrix with:
 
 ```bash
 bash scripts/test_text_generation_matrix.sh
 ```
 
-The runner activates the `mainline` pyenv, uses
-`HF_HUB_CACHE=/home/huggingface_hub` and `QEFF_HOME=/home/rishinr/tmpdir`,
-continues after individual failures, and writes a final summary plus per-case
-logs. Set `SUITE=smoke` for the short contract/baseline subset or
-`CASE_FILTER='ccl|mdp'` to select case names. Set `DRY_RUN=1` to validate the
-entire command matrix without loading models or compiling.
+The default suite covers FP32 and FP16 inference, BF16 compilation, ONNX
+subfunctions, CCL, continuous batching, tensor slicing, blocking modes, MDP,
+and GPT-OSS disaggregated serving. Its default device assignment uses devices
+0-3 for prefill and 4-5 for decode, so adjust the device-group variables in the
+script when running on a different topology.
+
+Each case has a separate log and artifact directory. The runner continues after
+a failure and writes `summary.md` and `summary.tsv` at the end. Use
+`SUITE=smoke` for the short baseline, `CASE_FILTER='ccl|mdp'` to select cases,
+or `DRY_RUN=1` to validate the commands without loading models or compiling.
 
 ### Speculative decoding (TLM side)
 
