@@ -4012,12 +4012,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if prefill_only and "DeepseekV3ForCausalLM" not in (
                 getattr(self.model.config, "architectures", None) or []
             ):
-                if enable_chunking:
-                    if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
-                        seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-
-                elif self.model.config.model_type == "gpt_oss":
-                    seq_len = self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
+                if self.model.config.model_type == "gpt_oss":
+                    seq_len = (
+                        max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                        if enable_chunking
+                        else self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
+                    )
                 sliding_window = getattr(self.model.config, "sliding_window", None)
                 kv_cache_shape[2] = (
                     seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
