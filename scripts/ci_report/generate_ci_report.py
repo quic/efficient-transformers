@@ -51,6 +51,7 @@ from pathlib import Path
 MERGED_XML = "tests_log.xml"  # aggregate of all per-stage files; parsed only as a fallback
 MAX_LOG_CHARS = 20_000  # cap captured stdout/log per test to keep the HTML bounded
 MAX_TB_CHARS = 40_000  # cap tracebacks (kept longer — they matter most for fixing)
+XML_READ_CHUNK_BYTES = 64 * 1024
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
@@ -662,9 +663,10 @@ def parse_stage_file(path, stage):
     """Populate ``stage`` from a per-stage JUnit XML file, deduping by nodeid (last wins)."""
     try:
         parser = ET.XMLParser(target=_NoDoctypeTreeBuilder())
-        root = ET.parse(  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
-            path, parser=parser
-        ).getroot()
+        with open(path, "rb") as xml_stream:
+            for chunk in iter(lambda: xml_stream.read(XML_READ_CHUNK_BYTES), b""):
+                parser.feed(chunk)
+        root = parser.close()
     except ET.ParseError as exc:
         stage.parse_error = str(exc)
         stage.ran = True
