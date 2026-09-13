@@ -41,8 +41,6 @@ API_SERVER_READY_MARKERS = (
 )
 DISAGG_READY_MARKERS = (
     "Press Ctl-C once to shutdown all services.",
-    "Application startup complete",
-    "Uvicorn running on",
 )
 
 SKIPPED_MODELS = {
@@ -400,6 +398,7 @@ def build_disagg_server_command(row: dict, args) -> list[str]:
     python_bin = value(row, "python_bin", default=args.python_bin)
     cmd = [python_bin, "-m", "qaic_disagg"]
 
+    add_value_arg(cmd, "--host", row, "host")
     add_value_arg(cmd, "--port", row, "port", "server_port")
     add_many_token_arg(cmd, "--encode-port", row, "encode_port")
     add_many_token_arg(cmd, "--encode-device-group", row, "encode_device_group")
