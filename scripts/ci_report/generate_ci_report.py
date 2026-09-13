@@ -54,6 +54,13 @@ MAX_TB_CHARS = 40_000  # cap tracebacks (kept longer — they matter most for fi
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
+class _NoDoctypeTreeBuilder(ET.TreeBuilder):
+    """Reject DTDs, which JUnit XML does not need and may use for entity expansion."""
+
+    def doctype(self, name, pubid, system):
+        raise ET.ParseError("DTD declarations are forbidden in JUnit XML")
+
+
 class Outcome(enum.Enum):
     """Test outcome. The value doubles as a CSS-friendly status token."""
 
@@ -654,7 +661,10 @@ def parse_testcase(tc_elem, stage_display):
 def parse_stage_file(path, stage):
     """Populate ``stage`` from a per-stage JUnit XML file, deduping by nodeid (last wins)."""
     try:
-        root = ET.parse(path).getroot()
+        parser = ET.XMLParser(target=_NoDoctypeTreeBuilder())
+        root = ET.parse(  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+            path, parser=parser
+        ).getroot()
     except ET.ParseError as exc:
         stage.parse_error = str(exc)
         stage.ran = True

@@ -238,6 +238,32 @@ def test_console_style_row_without_double_colon_does_not_crash(gcr, tmp_path):
     assert out.exists()
 
 
+def test_parse_stage_file_rejects_dtd_and_external_entities(gcr, tmp_path):
+    """JUnit parsing must reject DTDs before an external entity can be resolved."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("must-not-be-read")
+    xml = tmp_path / "tests_log2.xml"
+    xml.write_text(
+        f"""<?xml version='1.0'?>
+<!DOCTYPE testsuites [<!ENTITY secret SYSTEM '{secret.as_uri()}'>]>
+<testsuites>
+  <testsuite name='pytest' tests='1'>
+    <testcase classname='tests.test_example' name='test_example'>
+      <system-out>&secret;</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>
+"""
+    )
+    stage = gcr.Stage(spec=gcr.STAGE_MAP["tests_log2.xml"])
+
+    gcr.parse_stage_file(xml, stage)
+
+    assert stage.ran
+    assert not stage.cases
+    assert stage.parse_error == "DTD declarations are forbidden in JUnit XML"
+
+
 # ── Regression tests for correctness fixes (Aug 2026 review) ─────────────────
 
 
