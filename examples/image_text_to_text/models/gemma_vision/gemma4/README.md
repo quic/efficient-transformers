@@ -12,6 +12,7 @@ using QEfficient.
 | `gemma4_example.py` | Regular batching | Standard single-request inference; text-only or image+text |
 | `gemma4_cb.py` | Continuous batching | Multiple concurrent requests via CB scheduler |
 | `gemma4_diss.py` | Dissected (split QPC) | Separate prefill-only and decode-only QPCs, raw session management |
+| `gemma_blocked_disagg.py` | Disaggregated  + blocking | Split-QPC flow with explicit prefill/decode blocking configs |
 | `gemma4_utils.py` | — | Shared helpers: chat template, prompt builders, compile-kwarg helpers |
 
 ---
@@ -90,6 +91,19 @@ is passed per-chunk during prefill but is not required at decode time.
 
 ```bash
 python examples/image_text_to_text/models/gemma_vision/gemma4/gemma4_diss.py
+```
+
+---
+
+### `gemma_blocked_disagg.py` — Dissected flow with blocking
+
+Same split-QPC flow as `gemma4_diss.py`, but with explicit attention blocking config for:
+
+1. **Prefill** (`prefill_qkv`/`prefill_online`) using `num_kv_blocks`, `num_q_blocks`, and optional `n_rep_chunk`
+2. **Decode** (`kv` / `kv_headpar` / `kv_batch_fold`) using `num_kv_blocks`
+
+```bash
+python examples/image_text_to_text/models/gemma_vision/gemma4/gemma_blocked_disagg.py
 ```
 
 ---
