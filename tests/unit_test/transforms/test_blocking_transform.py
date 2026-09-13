@@ -26,6 +26,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from QEfficient.blocking import attention_blocking
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 
 VOCAB_SIZE = 500
@@ -298,6 +299,42 @@ class TestBlockingModes:
             assert c.head_block_size == 8
             assert c.skip_kv is False
             assert c.num_batch_blocks == 1
+
+
+@pytest.mark.transforms
+def test_generic_blocked_attention_infers_prefill_only_from_mode(monkeypatch):
+    class Cache:
+        def __init__(self):
+            self.write_only_calls = []
+
+        def write_only(self, key, value, layer_idx, cache_kwargs):
+            self.write_only_calls.append((key, value, layer_idx, cache_kwargs))
+
+    cache = Cache()
+    query = torch.ones(1, 1, 1, 1)
+    key = torch.ones(1, 1, 1, 1)
+    value = torch.ones(1, 1, 1, 1)
+    strategy_calls = []
+
+    def prefill_strategy(**kwargs):
+        strategy_calls.append(kwargs)
+        return kwargs["query"], None
+
+    monkeypatch.setitem(attention_blocking._STRATEGIES, BlockingMode.PREFILL_Q, prefill_strategy)
+
+    output, weights = attention_blocking.generic_blocked_attention_interface(
+        module=type("Attention", (), {"layer_idx": 0})(),
+        query=query,
+        key=key,
+        value=value,
+        past_key_value=cache,
+        blocking_config=AttentionBlockingConfig(mode=BlockingMode.PREFILL_Q, num_q_blocks=1),
+    )
+
+    assert torch.equal(output, query)
+    assert weights is None
+    assert len(cache.write_only_calls) == 1
+    assert len(strategy_calls) == 1
 
 
 # ---------------------------------------------------------------------------
