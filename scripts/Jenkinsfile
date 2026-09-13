@@ -502,7 +502,7 @@ pipeline {
                             }
                             timeout(time: 120, unit: 'MINUTES') {
                                 sh '''
-                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal -e QEFF_QAIC_DEVICE_GROUPS="${MM_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal -e QEFF_ISOLATE_QAIC_WORKERS=1 -e QEFF_QAIC_DEVICE_GROUPS="${MM_QAIC_DEVICE_GROUPS}" -e QEFF_QAIC_DEVICES_PER_WORKER=4 ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                             export QEFF_PER_PR_SHARED_HOME=1 &&
