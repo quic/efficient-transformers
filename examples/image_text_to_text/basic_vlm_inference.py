@@ -26,7 +26,7 @@ def run_model(
     img_size=336,
     num_cores=16,
     num_devices=1,
-    artifact_only=False,
+    artifacts=False,
 ):
     ## STEP 1: Load the Processor and Model
 
@@ -53,19 +53,19 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
-        artifact_only=artifact_only,
+        artifacts=artifacts,
     )
 
-    if not artifact_only:
+    if not artifacts:
         print(f"Model compiled to: {qpc_path}")
 
-    if artifact_only:
+    if artifacts:
         artifact_inputs = {
             "processor": processor,
             "images": [image_url],
             "prompts": [query],
             "generation_len": generation_len,
-            "artifact_only": True,
+            "artifacts": True,
         }
         if kv_offload:
             print(f"Vision compiler artifacts written to: {model.vision_model.compile_artifacts_path}")
@@ -142,7 +142,7 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of devices")
     parser.add_argument(
-        "--artifact-only",
+        "--artifacts",
         action="store_true",
         help="Write compiler and runner artifacts without executing either tool",
     )
@@ -162,7 +162,7 @@ def main():
         img_size=args.img_size,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
-        artifact_only=args.artifact_only,
+        artifacts=args.artifacts,
     )
 
 

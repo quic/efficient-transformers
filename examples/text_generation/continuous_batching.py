@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
-        "--artifact-only",
+        "--artifacts",
         action="store_true",
         help="Write compiler and runner artifacts without executing either tool",
     )
@@ -60,9 +60,9 @@ def main():
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=True,
-        artifact_only=args.artifact_only,
+        artifacts=args.artifacts,
     )
-    if args.artifact_only:
+    if args.artifacts:
         print(f"Compiler artifacts written to: {compile_path}")
     else:
         print(f"Model compiled to: {compile_path}")
@@ -73,10 +73,10 @@ def main():
         prompts=prompt_list,
         device_id=args.device_group,
         generation_len=args.generation_len,
-        artifact_only=args.artifact_only,
+        artifacts=args.artifacts,
     )
 
-    if args.artifact_only:
+    if args.artifacts:
         print(f"Runner inputs written to: {exec_info}")
         return
 

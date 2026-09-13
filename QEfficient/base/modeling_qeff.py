@@ -69,11 +69,17 @@ logger = logging.getLogger(__name__)
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
     "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
+_LEGACY_ARTIFACT_ONLY_ERROR = "artifact_only is no longer supported; use artifacts instead."
 
 
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
     if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
+
+
+def reject_legacy_artifact_only(kwargs: Optional[dict]) -> None:
+    if kwargs and "artifact_only" in kwargs:
+        raise TypeError(_LEGACY_ARTIFACT_ONLY_ERROR)
 
 
 def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Path) -> None:
@@ -1063,7 +1069,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1084,7 +1090,7 @@ class QEFFBaseModel(ABC):
             :num_speculative_tokens (int | List[int], optional): Number of speculative tokens for TLM decode. A plain int K compiles one decode specialization (seq_len=K+1). A list [K0, K1, ...] compiles one specialization per value, enabling per-step dispatch to the cheapest kernel.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
-            :artifact_only (bool): Export the model and write compiler inputs and a replay script without invoking the compiler. ``Defaults to False.``
+            :artifacts (bool): Export the model and write compiler inputs and a replay script without invoking the compiler. ``Defaults to False.``
             :compiler_options: Pass any compiler option as input.
                 Any flag that is supported by `qaic-compile` can be passed. Params are converted to flags as below:
 
@@ -1095,7 +1101,7 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-
+        reject_legacy_artifact_only(compiler_options)
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
 
         for removed_option in ("compile_only", "compile-only"):
@@ -1143,7 +1149,7 @@ class QEFFBaseModel(ABC):
             onnx_path = Path(onnx_path)
             return onnx_path
         onnx_path = Path(onnx_path)
-        if artifact_only:
+        if artifacts:
             self.onnx_path = onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
@@ -1152,8 +1158,8 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
-            if artifact_only:
-                raise NotImplementedError("`artifact_only` is not supported by the QNN compilation path.")
+            if artifacts:
+                raise NotImplementedError("`artifacts` is not supported by the QNN compilation path.")
             if compiler_options:
                 logger.warning(
                     f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
@@ -1292,7 +1298,7 @@ class QEFFBaseModel(ABC):
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
-        if not artifact_only:
+        if not artifacts:
             if (qpc_path / "programqpc.bin").is_file():
                 self.qpc_path = qpc_path
                 self.compile_artifacts_path = compile_dir
@@ -1331,12 +1337,12 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
-        if artifact_only:
+        if artifacts:
             logger.info(f"Writing compiler replay command: {' '.join(command)}")
         else:
             logger.info(f"Running compiler: {' '.join(command)}")
 
-        if artifact_only:
+        if artifacts:
             _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
             path_flags = {
                 "-aic-binary-dir",

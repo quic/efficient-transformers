@@ -688,7 +688,14 @@ class TestMdpCompileIntegration:
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
 
-    def test_compile_artifact_only_writes_replay_without_invoking_compiler(self, tmp_path):
+    def test_compile_artifacts_rejects_legacy_artifact_only_key(self, tmp_path):
+        model_hf, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model_hf)
+
+        with pytest.raises(TypeError, match="artifacts"):
+            qeff._compile(onnx_path=str(tmp_path / "missing.onnx"), artifact_only=True)
+
+    def test_compile_artifacts_writes_replay_without_invoking_compiler(self, tmp_path):
         onnx_path = tmp_path / "model.onnx"
         npi_path = tmp_path / "node_precision_info.yaml"
         compile_root = tmp_path / "compile"
@@ -707,7 +714,7 @@ class TestMdpCompileIntegration:
                     specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
                     custom_io={"input_ids": "int64"},
                     node_precision_info=str(npi_path),
-                    artifact_only=True,
+                    artifacts=True,
                 )
 
             compiler_run.assert_not_called()
@@ -725,7 +732,7 @@ class TestMdpCompileIntegration:
             assert 'cd -- "$(dirname -- "$0")"' in replay_command
             assert "-aic-binary-dir=qpc" in replay_command
             assert f"-node-precision-info={npi_path.name}" in replay_command
-            assert "-artifact-only" not in replay_command
+            assert "-artifacts" not in replay_command
             assert str(tmp_path) not in replay_command
             assert not (compile_dir / "qpc").exists()
         finally:

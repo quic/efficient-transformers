@@ -7,7 +7,7 @@
 
 """Shared helpers for preparing text prefill inputs.
 
-The generation runtime and artifact-only bundle writers both need identical
+The generation runtime and artifacts mode bundle writers both need identical
 tokenizer setup, padded prefill tensors, and per-chunk input slicing. Keeping
 that logic here ensures runtime execution and replay artifact generation use the
 same host input preparation path.

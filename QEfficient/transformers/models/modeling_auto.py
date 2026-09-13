@@ -30,7 +30,11 @@ from transformers import (
 )
 
 import QEfficient
-from QEfficient.base.modeling_qeff import QEFFBaseModel, reject_legacy_moe_prefill_packed_chunk_size
+from QEfficient.base.modeling_qeff import (
+    QEFFBaseModel,
+    reject_legacy_artifact_only,
+    reject_legacy_moe_prefill_packed_chunk_size,
+)
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
@@ -1934,7 +1938,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1993,8 +1997,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
             If both `skip_lang` and `skip_vision` are True.
         """
-        if artifact_only:
-            compiler_options["artifact_only"] = True
+        reject_legacy_artifact_only(compiler_options)
+        if artifacts:
+            compiler_options["artifacts"] = True
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
@@ -2278,7 +2283,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_frames: Optional[int] = None,
         skip_vision: bool = False,
         skip_lang: bool = False,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray, Path]:
         """
@@ -2310,7 +2315,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         generation_len : int, optional
             The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
 
-        artifact_only : bool, optional
+        artifacts : bool, optional
             Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
         Returns
         -------
@@ -2322,7 +2327,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        if artifact_only:
+        reject_legacy_artifact_only(kwargs)
+        if artifacts:
             return write_dual_qpc_vlm_runner_bundle(
                 model=self,
                 processor=processor,
@@ -2916,7 +2922,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         use_onnx_subfunctions: bool = False,
         qaic_config: Optional[dict] = None,
         kv_cache_prefix: Optional[str] = None,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2969,6 +2975,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ValueError
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
         """
+        reject_legacy_artifact_only(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
@@ -2985,8 +2992,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        if artifact_only:
-            compiler_options["artifact_only"] = True
+        if artifacts:
+            compiler_options["artifacts"] = True
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
                 logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
@@ -3072,7 +3079,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         processor: Optional[AutoImageProcessor] = None,
         images: List[str] = None,
         prompts: List[str] = None,
-        artifact_only: bool = False,
+        artifacts: bool = False,
     ) -> Union[torch.Tensor, np.ndarray, Path]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
@@ -3093,7 +3100,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generation_len : int, optional
             The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
 
-        artifact_only : bool, optional
+        artifacts : bool, optional
             Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
         Returns
         -------
@@ -3105,7 +3112,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        if artifact_only:
+        if artifacts:
             return write_single_qpc_vlm_runner_bundle(model=self, processor=processor, images=images, prompts=prompts)
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
@@ -4451,7 +4458,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -4537,8 +4544,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if artifact_only:
-            compiler_options["artifact_only"] = True
+        reject_legacy_artifact_only(compiler_options)
+        if artifacts:
+            compiler_options["artifacts"] = True
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
         enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
@@ -4835,7 +4843,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prompts: List[str],
         device_id: List[int] = None,
         runtime_ai100: bool = True,
-        artifact_only: bool = False,
+        artifacts: bool = False,
         **kwargs,
     ) -> Union[CloudAI100ExecInfoNew, Path]:
         """
@@ -4859,7 +4867,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
             - `write_io (bool, optional)`: Whether to save the io files.
 
-        artifact_only : bool, optional
+        artifacts : bool, optional
             Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
         Returns
         -------
@@ -4873,10 +4881,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
+        reject_legacy_artifact_only(kwargs)
         write_io = kwargs.pop("write_io", False)
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
-        if artifact_only:
+        if artifacts:
             return write_causal_lm_runner_bundle(
                 model=self,
                 tokenizer=tokenizer,

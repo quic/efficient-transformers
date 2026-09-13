@@ -28,7 +28,7 @@ def main():
         "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="Version of aic hardware"
     )
     parser.add_argument(
-        "--artifact-only",
+        "--artifacts",
         action="store_true",
         help="Write compiler and runner artifacts without executing either tool",
     )
@@ -56,9 +56,9 @@ def main():
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=args.use_onnx_subfunctions,
-        artifact_only=args.artifact_only,
+        artifacts=args.artifacts,
     )
-    if args.artifact_only:
+    if args.artifacts:
         print(f"Compiler artifacts written to: {compile_path}")
     else:
         print(f"Model compiled to: {compile_path}")
@@ -69,10 +69,10 @@ def main():
         prompts=[args.prompt],
         device_id=args.device_group,
         generation_len=args.generation_len,
-        artifact_only=args.artifact_only,
+        artifacts=args.artifacts,
     )
 
-    if args.artifact_only:
+    if args.artifacts:
         print(f"Runner inputs written to: {exec_info}")
         return
 

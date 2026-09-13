@@ -133,13 +133,13 @@ CausalLM and ImageTextToText external harnesses can request the files for compil
 compile_dir = model.compile(
     prefill_seq_len=32,
     ctx_len=128,
-    artifact_only=True,
+    artifacts=True,
 )
 
 io_dir = model.generate(
     tokenizer=tokenizer,
     prompts=["Hello"],
-    artifact_only=True,
+    artifacts=True,
 )
 ```
 

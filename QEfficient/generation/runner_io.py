@@ -11,7 +11,7 @@ This module prepares one host-side inference invocation from exported ONNX
 metadata and compile artifacts. It serializes input tensors as raw files and
 writes an ``aic_batch_io.json`` descriptor that external harnesses can replay
 with ``qaic-runner``. The public helpers cover CausalLM, single-QPC VLM, and
-dual-QPC VLM artifact-only generation flows.
+dual-QPC VLM artifacts mode generation flows.
 """
 
 import json
@@ -106,7 +106,7 @@ def _concat_input_batches(input_batches: Sequence[Mapping[str, np.ndarray]]) -> 
         try:
             merged_inputs[input_name] = np.concatenate(values, axis=0)
         except ValueError as error:
-            raise ValueError(f"Processor output {input_name!r} cannot be batched for artifact-only replay.") from error
+            raise ValueError(f"Processor output {input_name!r} cannot be batched for artifacts mode replay.") from error
     return merged_inputs
 
 
@@ -364,7 +364,7 @@ def _filter_graph_inputs(onnx_path: Union[str, Path], *input_groups: Mapping[str
 def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], prompts: List[str]) -> Path:
     """Prepare and write the first fused vision-language prefill invocation."""
     if processor is None or not images or not prompts:
-        raise ValueError("`processor`, `images`, and `prompts` are required in artifact-only mode.")
+        raise ValueError("`processor`, `images`, and `prompts` are required in artifacts mode.")
 
     from QEfficient.generation.embedding_handler import VisionHandler
 
@@ -475,11 +475,11 @@ def write_dual_qpc_vlm_runner_bundle(
     """Prepare one isolated vision or language invocation for a dual-QPC VLM."""
     if skip_vision == skip_lang:
         raise ValueError(
-            "Artifact-only dual-QPC generation requires exactly one of `skip_vision=True` or `skip_lang=True`; "
+            "Artifacts mode dual-QPC generation requires exactly one of `skip_vision=True` or `skip_lang=True`; "
             "use the same component selection passed to compile()."
         )
     if processor is None or not images or not prompts:
-        raise ValueError("`processor`, `images`, and `prompts` are required in artifact-only mode.")
+        raise ValueError("`processor`, `images`, and `prompts` are required in artifacts mode.")
 
     from QEfficient.generation.embedding_handler import VisionHandler
 
