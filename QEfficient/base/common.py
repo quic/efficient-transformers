@@ -13,6 +13,7 @@ QEFFAutoModel provides a common interface for loading the HuggingFace models usi
 """
 
 import os
+import warnings
 from typing import Any
 
 from transformers import AutoConfig
@@ -40,6 +41,14 @@ class QEFFCommonLoader:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
+        qaic_config = kwargs.pop("qaic_config", None)
+        if qaic_config is not None:
+            warnings.warn(
+                "Passing `qaic_config` to `from_pretrained()` is deprecated and will be removed in a future "
+                "release. Pass `qaic_config` to `compile()` instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         class_name = (
@@ -66,4 +75,11 @@ class QEFFCommonLoader:
             continuous_batching=continuous_batching,
             **kwargs,
         )
+        if qaic_config is not None:
+            if hasattr(qeff_model, "_activate_qaic_config"):
+                qeff_model._activate_qaic_config(qaic_config)
+            elif hasattr(qeff_model, "_resolve_qaic_config"):
+                qeff_model._resolve_qaic_config(qaic_config)
+            elif hasattr(qeff_model, "_set_qaic_config"):
+                qeff_model._set_qaic_config(qaic_config)
         return qeff_model

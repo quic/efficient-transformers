@@ -37,13 +37,14 @@ def run_model(
     # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
+    qaic_config = {
+        "ccl_enabled": ccl_enabled,
+    }
+
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_name,
         token=token,
         kv_offload=kv_offload,
-        qaic_config={
-            "ccl_enabled": ccl_enabled,
-        },
     )
 
     ## STEP - 2 Export & Compile the Model
@@ -57,6 +58,7 @@ def run_model(
         mxfp6_matmul=False,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+        qaic_config=qaic_config,
     )
 
     ## STEP - 3 Load and process the inputs for Inference

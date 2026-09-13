@@ -1036,6 +1036,8 @@ def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
         config=model_hf.config,
         torch_dtype=torch.float32,
     )
+    seq_len = inputs["input_ids"].shape[1]
+    qeff_model.transform(ctx_len=seq_len, seq_len=seq_len, bs=inputs["input_ids"].shape[0])
     grid_thws = inputs["grid_thws"].to(torch.int64)
     h_shape = torch.ones((int(grid_thws[0, 1].item()),), dtype=torch.int64)
     w_shape = torch.ones((int(grid_thws[0, 2].item()),), dtype=torch.int64)
@@ -1084,6 +1086,7 @@ def test_causal_lm_cpu_runtime_parity_with_api_runner(model_type, model_id, tmp_
 
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, bs=1)
     kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path))
     ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
@@ -1113,6 +1116,7 @@ def test_vlm_text_side_runtime_parity_and_full_export(tmp_path):
 
     hf_tokens = api_runner.run_hf_model_on_pytorch(text_model)
     qeff_text_model = QEFFAutoModelForCausalLM(text_model)
+    qeff_text_model.transform(ctx_len=8, seq_len=4, bs=1)
     kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_text_model.model)
     onnx_path = _exported_onnx_path(qeff_text_model.export(tmp_path / "vlm-text"))
     ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
@@ -1345,7 +1349,8 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     )
     torch.manual_seed(0)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
-    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"replicate_kv_heads": True})
+    qaic_config = {"replicate_kv_heads": True}
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf))
 
     input_ids = torch.arange(1, 5, dtype=torch.int64).view(1, 4)
     position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
@@ -1361,7 +1366,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     with torch.no_grad():
         hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids).logits[:, -1:, :].detach().numpy()
 
-    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, num_devices=4, qaic_config=qeff_model.model.qaic_config)
+    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, num_devices=4, qaic_config=qaic_config)
     with torch.no_grad():
         qeff_logits = qeff_model.model(**inputs).logits.detach().numpy()
 
@@ -1500,6 +1505,7 @@ def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_pa
 
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, bs=1)
     kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "with-subfunctions-all", use_onnx_subfunctions=True))
     ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
@@ -2749,12 +2755,13 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
     torch.manual_seed(0)
     hf = Qwen3MoeForCausalLM(cfg).eval()
     qeff_model = QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False)
-    inner = qeff_model.model.model
 
     B, S, ctx, num_layers = 1, 8, 16, cfg.num_hidden_layers
     n_kv, head_dim = cfg.num_key_value_heads, cfg.head_dim
     ids = torch.randint(0, cfg.vocab_size, (B, S))
     position_ids = torch.arange(S).view(1, -1)
+    qeff_model.transform(ctx_len=ctx, seq_len=S, bs=B)
+    inner = qeff_model.model.model
 
     def fresh_pkv():
         return tuple(
@@ -2815,10 +2822,11 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
         dtype=torch.float32,
         layerwise=False,
     )
-    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    qeff_model.transform(ctx_len=16, seq_len=8, bs=1)
     lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
     lang_inputs["input_ids"][0, 0] = qeff_model.model.config.image_token_id
     lang_inputs["vision_embeds"].normal_()
+    wrapper = qeff_model.lang_model.model.eval()
 
     with torch.no_grad():
         default_out = wrapper(**lang_inputs)
@@ -2872,8 +2880,9 @@ def test_layerwise_matches_default_path_for_qwen3_vl_moe():
         dtype=torch.float32,
         layerwise=False,
     )
-    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    qeff_model.transform(ctx_len=16, seq_len=8, bs=1)
     lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+    wrapper = qeff_model.lang_model.model.eval()
 
     with torch.no_grad():
         default_out = wrapper(**lang_inputs)

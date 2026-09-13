@@ -14,7 +14,6 @@
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate
 ```
@@ -40,7 +39,6 @@ Do not pass `mdp_ts_num_devices` to this public `compile()` API. It is ignored w
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.generate
 ```
@@ -60,7 +58,6 @@ Do not pass `mdp_ts_num_devices` to this public `compile()` API. It is ignored w
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.generate
 ```
@@ -80,7 +77,6 @@ Do not pass `mdp_ts_num_devices` to this public `compile()` API. It is ignored w
 
 ```{eval-rst}
 .. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained
-.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export
 .. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile
 .. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate
 ```
@@ -100,7 +96,6 @@ Do not pass `mdp_ts_num_devices` to this public `compile()` API. It is ignored w
 
 ```{eval-rst}
 .. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained
-.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export
 .. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.compile
 .. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate
 ```
@@ -143,7 +138,6 @@ Do not pass `mdp_ts_num_devices` to the public auto-model `compile()` API. It is
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate
 ```
@@ -163,7 +157,6 @@ Do not pass `mdp_ts_num_devices` to the public auto-model `compile()` API. It is
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.generate
 ```

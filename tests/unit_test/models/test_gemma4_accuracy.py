@@ -162,7 +162,9 @@ def _make_qeff_gemma4(model):
     """
     Use the ImageTextToText auto-wrapper for this Gemma4 test model.
     """
-    return QEFFAutoModelForImageTextToText(model)
+    qeff = QEFFAutoModelForImageTextToText(model)
+    qeff.transform(ctx_len=CTX_LEN, seq_len=PREFILL_LEN, bs=1)
+    return qeff
 
 
 def _qeff_forward(qeff, **inputs):
