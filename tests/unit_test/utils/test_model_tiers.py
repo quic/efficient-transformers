@@ -443,6 +443,40 @@ def test_explicit_qaic_device_group_is_assigned_to_worker(monkeypatch):
     assert os.environ["QAIC_VISIBLE_DEVICES"] == "4,5,6,7"
 
 
+@pytest.mark.cpu_only
+def test_empty_explicit_qaic_device_groups_fall_back_to_discovery(monkeypatch):
+    import tests.conftest as test_config
+
+    class Config:
+        @staticmethod
+        def addinivalue_line(*args):
+            return None
+
+    discovered_groups = [
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+        [8, 9, 10, 11],
+        [12, 13, 14, 15],
+        [16, 17, 18, 19],
+    ]
+
+    def discover_groups(devices_per_group):
+        assert devices_per_group == 4
+        return discovered_groups
+
+    monkeypatch.setattr(test_config, "_xdist_worker", "gw4")
+    monkeypatch.setattr(test_config, "get_qaic_mdp_device_groups", discover_groups)
+    monkeypatch.setenv("QEFF_QAIC_DEVICE_GROUPS", "")
+    monkeypatch.setenv("QEFF_QAIC_DEVICES_PER_WORKER", "4")
+    monkeypatch.setenv("QEFF_ISOLATE_QAIC_WORKERS", "1")
+    monkeypatch.setenv("QEFF_MODEL_TIER", "all")
+    monkeypatch.delenv("QAIC_VISIBLE_DEVICES", raising=False)
+
+    test_config.pytest_configure(Config())
+
+    assert os.environ["QAIC_VISIBLE_DEVICES"] == "16,17,18,19"
+
+
 # --------------------------------------------------------------------------- #
 # Tier classification
 # --------------------------------------------------------------------------- #
