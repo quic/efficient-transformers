@@ -140,7 +140,6 @@ def _get_next_token_ids(logits: np.ndarray) -> np.ndarray:
 
 
 def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, args, image: Image.Image):
-    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
     common_compile_kwargs = {
         "qaic_config": qaic_config,
         "batch_size": BS,
