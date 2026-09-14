@@ -42,12 +42,6 @@ class CtxScatterFunc(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
-        if not torch.onnx.is_in_onnx_export():
-            # Clone to avoid mutating the caller's live KV-cache buffer in place. Skipped
-            # during export: the traced ScatterND is already pure/functional at the ONNX
-            # level, and cloning here perturbs the trace enough to break cross-layer
-            # decoder subfunction dedup under use_onnx_subfunctions=True.
-            data = data.clone()
         batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_idx = position_ids.unsqueeze(1)
@@ -94,7 +88,6 @@ class CtxScatterFuncPagedAttention(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, block_index: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         if not torch.onnx.is_in_onnx_export():
-            # See CtxScatterFunc.forward above for why this is skipped during export.
             data = data.clone()
         block_index = block_index.view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
