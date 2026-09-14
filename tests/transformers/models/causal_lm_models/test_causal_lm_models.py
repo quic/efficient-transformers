@@ -305,6 +305,8 @@ def test_dummy_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_fp16_subfunction_cb(model_config, manual_cleanup):
+    if issue := model_config.get("known_fp16_subfunction_compile_issue"):
+        pytest.xfail(issue)
     _run_per_pr_causal_text_case(model_config, manual_cleanup)
 
 
@@ -313,6 +315,8 @@ def test_per_pr_causal_fp16_subfunction_cb(model_config, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_fp16_subfunction_cb_prefix_caching(model_config, manual_cleanup):
+    if issue := model_config.get("known_fp16_subfunction_compile_issue"):
+        pytest.xfail(issue)
     _run_per_pr_causal_text_case(model_config, manual_cleanup, kv_cache_batch_size=8)
 
 
@@ -422,8 +426,10 @@ def test_per_pr_causal_speculative_tlm_fp16_subfunction_cb(model_config, manual_
     via a ``known_speculative_export_or_compile_issue`` registry field, mirroring
     the CCL/BF16 escape hatches.
     """
-    if model_config.get("known_speculative_export_or_compile_issue"):
-        pytest.xfail(model_config["known_speculative_export_or_compile_issue"])
+    if issue := model_config.get("known_fp16_subfunction_compile_issue"):
+        pytest.xfail(issue)
+    if issue := model_config.get("known_speculative_export_or_compile_issue"):
+        pytest.xfail(issue)
     _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
