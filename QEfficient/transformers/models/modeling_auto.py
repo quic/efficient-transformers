@@ -2104,10 +2104,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # Apply compile-dependent transforms like blocking transform
+        moe_batch_size = (
+            full_batch_size if self.continuous_batching and not prefill_only and prefill_seq_len == 1 else batch_size
+        )
         self.transform(
             ctx_len=ctx_len,
             seq_len=prefill_seq_len,
             bs=batch_size,
+            moe_batch_size=moe_batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
             aic_num_cores=num_cores,

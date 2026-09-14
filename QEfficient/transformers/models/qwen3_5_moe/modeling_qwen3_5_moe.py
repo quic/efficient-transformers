@@ -895,45 +895,64 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
         return core_attn_out, last_recurrent_state
 
-    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state):
+    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state, num_head_blocks: int = 1):
         """
-        Pure tensor ops, no loop, no padding.
-        Works for any T but intended for T=1 decode.
-        Shapes: query/key/value (B, T, H, d_k/d_v)
+        Single-token recurrent update, optionally blocked across attention heads.
+
+        Shapes: query/key/value (B, T, H, d_k/d_v).
         """
         dtype = query.dtype
+        batch_size, sequence_length, num_heads, key_head_dim = query.shape
+        value_head_dim = value.shape[-1]
 
-        # L2 norm (matching chunk kernel behavior)
+        if sequence_length != 1:
+            raise ValueError("_recurrent_step_batched is decode-only and requires sequence_length == 1")
+
         q = query.float()
         k = key.float()
         q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
         k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-
         v = value.float()
+        b = beta.float()
+        decay = g.float().exp()
+        state = recurrent_state.float()
 
-        scale = 1.0 / (q.shape[-1] ** 0.5)
-        q = q * scale  # (B, T, H, d_k)
+        q = q * (1.0 / (key_head_dim**0.5))
+        num_blocks = max(1, min(num_heads, int(num_head_blocks)))
+        heads_per_block = -(-num_heads // num_blocks)
 
-        # For T=1 decode, this is a single step
-        # Transpose to (B, H, T, d_k/d_v) to match recurrent state layout
-        q = q.transpose(1, 2)  # (B, H, T, d_k)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-        b = beta.transpose(1, 2).float().unsqueeze(-1)  # (B, H, T, 1)
-        decay = g.transpose(1, 2).float().exp()  # (B, H, T)
-        decay = decay.unsqueeze(-1).unsqueeze(-1)  # (B, H, T, 1, 1)
+        output_blocks = []
+        state_blocks = []
+        for block_idx in range(num_blocks):
+            head_start = block_idx * heads_per_block
+            if head_start >= num_heads:
+                break
+            head_end = min(head_start + heads_per_block, num_heads)
+            block_heads = head_end - head_start
+            folded_batch_heads = batch_size * block_heads
 
-        S = recurrent_state.float()  # (B, H, d_k, d_v)
+            # T is statically one for folded decode, so relocating that unit
+            # dimension while folding B and H is a reshape rather than a data
+            # transpose. Head blocking keeps each state contraction local.
+            q_block = q[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
+            k_block = k[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
+            v_block = v[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, value_head_dim)
+            beta_block = b[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, 1)
+            decay_block = decay[:, :, head_start:head_end].reshape(1, folded_batch_heads, 1, 1)
+            state_block = state[:, head_start:head_end].reshape(1, folded_batch_heads, key_head_dim, value_head_dim)
 
-        # Single step — no loop because T=1
-        # S update
-        S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
-        S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
-        return out, S_new.to(recurrent_state.dtype)
+            decayed_state = state_block * decay_block
+            kv_memory = torch.matmul(k_block, decayed_state)
+            delta = (v_block - kv_memory) * beta_block
+            updated_state = decayed_state + k_block[:, :, 0].unsqueeze(-1) * delta[:, :, 0].unsqueeze(-2)
+            block_output = torch.matmul(q_block, updated_state)
+
+            output_blocks.append(block_output.reshape(batch_size, block_heads, sequence_length, value_head_dim))
+            state_blocks.append(updated_state.reshape(batch_size, block_heads, key_head_dim, value_head_dim))
+
+        output = torch.cat(output_blocks, dim=1).reshape(batch_size, sequence_length, num_heads, value_head_dim)
+        updated_state = torch.cat(state_blocks, dim=1)
+        return output.to(dtype), updated_state.to(recurrent_state.dtype)
 
     def forward(
         self,
@@ -944,6 +963,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         position_ids=None,
         batch_index: Optional[torch.LongTensor] = None,
         batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -1065,35 +1085,34 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ── Recurrent State ───────────────────────────────────
         if cache_params is not None:
-            # Decode branch — pure tensor ops, no loop, no padding
-            # Shape: (B, 1, H, d_v), (B, H, d_k, d_v)
-            recurrent_out, recurrent_S = self._recurrent_step_batched(query, key, value, g, beta, recurrent_state)
-
-            # Prefill branch — chunked parallel scan
-            # Shape: (B, T, H, d_v), (B, H, d_k, d_v)
-            chunk_out, chunk_S = self.chunk_gated_delta_rule(
-                query,
-                key,
-                value,
-                g=g,
-                beta=beta,
-                position_ids=position_ids,
-                initial_state=recurrent_state,
-                output_final_state=True,
-                use_qk_l2norm_in_kernel=True,
-                mask_causal=self._mask_causal,
-                mask_strict=self._mask_strict,
-                ones_lower=self._ones_lower,
-                eye=self._eye,
-            )
-
-            # Select based on seq_len
-            # is_decode is SCALAR — torch.where broadcasts efficiently
-            # HW predicates entire branch at runtime
-            is_decode = hidden_states.shape[1] == torch.tensor(1)
-
-            core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-            last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
+            if seq_len == 1:
+                # Decode uses only the single-token recurrent update.
+                core_attn_out, last_recurrent_state = self._recurrent_step_batched(
+                    query,
+                    key,
+                    value,
+                    g,
+                    beta,
+                    recurrent_state,
+                    num_head_blocks=gdn_num_head_blocks,
+                )
+            else:
+                # Prefill uses only the chunked parallel scan.
+                core_attn_out, last_recurrent_state = self.chunk_gated_delta_rule(
+                    query,
+                    key,
+                    value,
+                    g=g,
+                    beta=beta,
+                    position_ids=position_ids,
+                    initial_state=recurrent_state,
+                    output_final_state=True,
+                    use_qk_l2norm_in_kernel=True,
+                    mask_causal=self._mask_causal,
+                    mask_strict=self._mask_strict,
+                    ones_lower=self._ones_lower,
+                    eye=self._eye,
+                )
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
@@ -1160,6 +1179,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -1177,6 +1197,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 position_ids=position_ids,
                 batch_index=batch_index,
                 batch_fold=batch_fold,
+                num_head_blocks=gdn_num_head_blocks,
             )
         else:
             hidden_states, _ = self.self_attn(
@@ -1226,6 +1247,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -1308,6 +1330,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 batch_fold=batch_fold,
+                num_head_blocks=gdn_num_head_blocks,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -1765,13 +1788,13 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
 
-    def _uses_batch_folded_attention(self) -> bool:
+    def _get_attention_blocking_config(self) -> Optional[AttentionBlockingConfig]:
         for layer in getattr(self.language_model, "layers", ()):
             attention = getattr(layer, "self_attn", None)
             blocking_config = getattr(attention, "attn_blocking_config", None)
             if blocking_config is not None:
-                return bool(blocking_config.batch_fold)
-        return False
+                return blocking_config
+        return None
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
         if self.config.text_config.layer_types[layer_idx] == "full_attention":
@@ -1792,7 +1815,14 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         # Continuous batching also supplies batch_index for prefill. Folded
         # attention is decode-only, so do not infer it from batch_index alone.
         seq_len = input_ids.shape[1] if input_ids is not None else position_ids.shape[-1]
-        batch_fold_cb = batch_index is not None and seq_len == 1 and self._uses_batch_folded_attention()
+        blocking_config = self._get_attention_blocking_config()
+        batch_fold_cb = (
+            batch_index is not None
+            and seq_len == 1
+            and blocking_config is not None
+            and bool(blocking_config.batch_fold)
+        )
+        gdn_num_head_blocks = max(1, int(blocking_config.gdn_num_head_blocks or 1)) if batch_fold_cb else 1
         layerwise = is_layerwise_active()
         first_layer_window = not layerwise or QEffQwen3_5MoeTextModel._start == 0
 
@@ -1833,6 +1863,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
+                num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1862,6 +1893,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
+                num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1881,6 +1913,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
+                num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1898,6 +1931,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
+                num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)

@@ -90,3 +90,57 @@ def test_torch_chunk_gated_delta_rule_qeff_recursive_sns_matches_original_max_ab
         f"max abs deviation {max_abs_dev:.6e} exceeded threshold "
         f"{MAX_ABS_DEV_RECURSIVE_VS_ORIGINAL:.6e} for recursive_sns vs original"
     )
+
+
+def test_recurrent_step_head_blocks_match_reference():
+    torch.manual_seed(1)
+    batch_size, seq_len, num_heads, k_head_dim, v_head_dim = 3, 1, 8, 4, 5
+    layer = object.__new__(QEffQwen3_5MoeGatedDeltaNet)
+
+    query = torch.randn(batch_size, seq_len, num_heads, k_head_dim)
+    key = torch.randn(batch_size, seq_len, num_heads, k_head_dim)
+    value = torch.randn(batch_size, seq_len, num_heads, v_head_dim)
+    g = torch.randn(batch_size, seq_len, num_heads) * 0.1
+    beta = torch.sigmoid(torch.randn(batch_size, seq_len, num_heads))
+    recurrent_state = torch.randn(batch_size, num_heads, k_head_dim, v_head_dim)
+
+    query_reference = query.float().clone()
+    key_reference = key.float().clone()
+    query_reference *= torch.rsqrt((query_reference * query_reference).sum(dim=-1, keepdim=True) + 1e-6)
+    key_reference *= torch.rsqrt((key_reference * key_reference).sum(dim=-1, keepdim=True) + 1e-6)
+    query_reference *= 1.0 / (k_head_dim**0.5)
+    decayed_state = recurrent_state.float() * g[:, 0].float().exp().unsqueeze(-1).unsqueeze(-1)
+    kv_memory = (decayed_state * key_reference[:, 0].unsqueeze(-1)).sum(dim=-2)
+    delta = (value[:, 0].float() - kv_memory) * beta[:, 0].float().unsqueeze(-1)
+    expected_state = decayed_state + key_reference[:, 0].unsqueeze(-1) * delta.unsqueeze(-2)
+    expected_output = (expected_state * query_reference[:, 0].unsqueeze(-1)).sum(dim=-2).unsqueeze(1)
+
+    for num_head_blocks in (1, 2, 3, 8, 16):
+        output, state = layer._recurrent_step_batched(
+            query,
+            key,
+            value,
+            g,
+            beta,
+            recurrent_state,
+            num_head_blocks=num_head_blocks,
+        )
+        torch.testing.assert_close(output, expected_output)
+        torch.testing.assert_close(state, expected_state)
+
+
+def test_recurrent_step_rejects_non_decode_sequence():
+    layer = object.__new__(QEffQwen3_5MoeGatedDeltaNet)
+    query = torch.zeros(1, 2, 1, 2)
+    key = torch.zeros_like(query)
+    value = torch.zeros_like(query)
+    g = torch.zeros(1, 2, 1)
+    beta = torch.ones_like(g)
+    recurrent_state = torch.zeros(1, 1, 2, 2)
+
+    try:
+        layer._recurrent_step_batched(query, key, value, g, beta, recurrent_state)
+    except ValueError as error:
+        assert "sequence_length == 1" in str(error)
+    else:
+        raise AssertionError("Expected non-decode recurrence to raise ValueError")

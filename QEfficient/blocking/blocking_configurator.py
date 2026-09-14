@@ -370,6 +370,12 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))
 
+    # KV_BATCH_FOLD also uses this value to block Qwen3.5 linear-attention
+    # recurrence across the head dimension. It is a required field for BHQKV,
+    # but an optional tuning knob for the folded decode path.
+    if qaic_config.get("gdn_num_head_blocks") is not None:
+        blocking_config.gdn_num_head_blocks = _get_valid_num_blocks(qaic_config, "gdn_num_head_blocks")
+
     if qaic_config.get("ctx_len") is None:
         blocking_config.ctx_len = ctx_len
 
