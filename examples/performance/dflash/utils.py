@@ -8,7 +8,6 @@
 import argparse
 import json
 import os
-from typing import Optional
 
 import torch
 from datasets import Features, Sequence, Value, load_dataset

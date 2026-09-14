@@ -8,7 +8,6 @@
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Tuple, Type, Union
 
 import onnx
 import torch

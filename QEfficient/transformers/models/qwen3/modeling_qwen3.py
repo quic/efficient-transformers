@@ -7,8 +7,6 @@
 
 """PyTorch Qwen3 model."""
 
-from typing import List, Optional, Tuple, Type, Union
-
 import torch
 import torch.utils.checkpoint
 from torch import nn
