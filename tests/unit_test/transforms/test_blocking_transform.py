@@ -337,6 +337,28 @@ def test_generic_blocked_attention_infers_prefill_only_from_mode(monkeypatch):
     assert len(strategy_calls) == 1
 
 
+@pytest.mark.transforms
+def test_kv_batch_fold_preserves_optional_num_batch_blocks():
+    from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+    config = build_transformer_blocking_config_for_transform(
+        model_config=object(),
+        ctx_len=1024,
+        seq_len=1,
+        bs=512,
+        num_devices=4,
+        qaic_config={
+            "blocking_mode": "kv_batch_fold",
+            "num_kv_blocks": 16,
+            "num_batch_blocks": 8,
+        },
+    )
+
+    assert config.mode == BlockingMode.KV_BATCH_FOLD
+    assert config.batch_fold is True
+    assert config.num_batch_blocks == 8
+
+
 # ---------------------------------------------------------------------------
 # Tests: re-application overrides the previous config
 # ---------------------------------------------------------------------------
