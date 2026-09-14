@@ -947,7 +947,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     g,
                     beta,
                     recurrent_state,
-                    gdn_num_head_blocks=gdn_num_head_blocks,
                 )
                 chunk_out, chunk_state = self.chunk_gated_delta_rule(
                     query,
