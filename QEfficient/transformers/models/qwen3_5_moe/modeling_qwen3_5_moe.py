@@ -40,7 +40,9 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
+    blocked_gdn_decode_forward,
     generic_blocked_attention_interface,
+    get_gdn_num_head_blocks,
 )
 from QEfficient.customop import (
     CtxGatherFuncCB,
@@ -895,64 +897,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
         return core_attn_out, last_recurrent_state
 
-    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state, num_head_blocks: int = 1):
-        """
-        Single-token recurrent update, optionally blocked across attention heads.
-
-        Shapes: query/key/value (B, T, H, d_k/d_v).
-        """
-        dtype = query.dtype
-        batch_size, sequence_length, num_heads, key_head_dim = query.shape
-        value_head_dim = value.shape[-1]
-
-        if sequence_length != 1:
-            raise ValueError("_recurrent_step_batched is decode-only and requires sequence_length == 1")
-
-        q = query.float()
-        k = key.float()
-        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-        v = value.float()
-        b = beta.float()
-        decay = g.float().exp()
-        state = recurrent_state.float()
-
-        q = q * (1.0 / (key_head_dim**0.5))
-        num_blocks = max(1, min(num_heads, int(num_head_blocks)))
-        heads_per_block = -(-num_heads // num_blocks)
-
-        output_blocks = []
-        state_blocks = []
-        for block_idx in range(num_blocks):
-            head_start = block_idx * heads_per_block
-            if head_start >= num_heads:
-                break
-            head_end = min(head_start + heads_per_block, num_heads)
-            block_heads = head_end - head_start
-            folded_batch_heads = batch_size * block_heads
-
-            # T is statically one for folded decode, so relocating that unit
-            # dimension while folding B and H is a reshape rather than a data
-            # transpose. Head blocking keeps each state contraction local.
-            q_block = q[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
-            k_block = k[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
-            v_block = v[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, value_head_dim)
-            beta_block = b[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, 1)
-            decay_block = decay[:, :, head_start:head_end].reshape(1, folded_batch_heads, 1, 1)
-            state_block = state[:, head_start:head_end].reshape(1, folded_batch_heads, key_head_dim, value_head_dim)
-
-            decayed_state = state_block * decay_block
-            kv_memory = torch.matmul(k_block, decayed_state)
-            delta = (v_block - kv_memory) * beta_block
-            updated_state = decayed_state + k_block[:, :, 0].unsqueeze(-1) * delta[:, :, 0].unsqueeze(-2)
-            block_output = torch.matmul(q_block, updated_state)
-
-            output_blocks.append(block_output.reshape(batch_size, block_heads, sequence_length, value_head_dim))
-            state_blocks.append(updated_state.reshape(batch_size, block_heads, key_head_dim, value_head_dim))
-
-        output = torch.cat(output_blocks, dim=1).reshape(batch_size, sequence_length, num_heads, value_head_dim)
-        updated_state = torch.cat(state_blocks, dim=1)
-        return output.to(dtype), updated_state.to(recurrent_state.dtype)
+    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state, gdn_num_head_blocks: int = 1):
+        return blocked_gdn_decode_forward(
+            query,
+            key,
+            value,
+            g,
+            beta,
+            recurrent_state,
+            gdn_num_head_blocks=gdn_num_head_blocks,
+        )
 
     def forward(
         self,
@@ -1094,7 +1048,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     g,
                     beta,
                     recurrent_state,
-                    num_head_blocks=gdn_num_head_blocks,
+                    gdn_num_head_blocks=gdn_num_head_blocks,
                 )
             else:
                 # Prefill uses only the chunked parallel scan.
@@ -1822,9 +1776,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             and blocking_config is not None
             and bool(blocking_config.batch_fold)
         )
-        gdn_num_head_blocks = (
-            max(1, int(getattr(blocking_config, "gdn_num_head_blocks", 1) or 1)) if batch_fold_cb else 1
-        )
+        gdn_num_head_blocks = get_gdn_num_head_blocks(blocking_config, batch_fold_cb)
         layerwise = is_layerwise_active()
         first_layer_window = not layerwise or QEffQwen3_5MoeTextModel._start == 0
 

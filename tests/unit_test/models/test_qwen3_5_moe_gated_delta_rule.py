@@ -5,8 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+import pytest
 import torch
 
+from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5GatedDeltaNet
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeGatedDeltaNet
 
 MAX_ABS_DEV_RECURSIVE_VS_ORIGINAL = 1e-4
@@ -92,10 +94,11 @@ def test_torch_chunk_gated_delta_rule_qeff_recursive_sns_matches_original_max_ab
     )
 
 
-def test_recurrent_step_head_blocks_match_reference():
+@pytest.mark.parametrize("layer_type", [QEffQwen3_5GatedDeltaNet, QEffQwen3_5MoeGatedDeltaNet])
+def test_recurrent_step_head_blocks_match_reference(layer_type):
     torch.manual_seed(1)
     batch_size, seq_len, num_heads, k_head_dim, v_head_dim = 3, 1, 8, 4, 5
-    layer = object.__new__(QEffQwen3_5MoeGatedDeltaNet)
+    layer = object.__new__(layer_type)
 
     query = torch.randn(batch_size, seq_len, num_heads, k_head_dim)
     key = torch.randn(batch_size, seq_len, num_heads, k_head_dim)
@@ -115,7 +118,7 @@ def test_recurrent_step_head_blocks_match_reference():
     expected_state = decayed_state + key_reference[:, 0].unsqueeze(-1) * delta.unsqueeze(-2)
     expected_output = (expected_state * query_reference[:, 0].unsqueeze(-1)).sum(dim=-2).unsqueeze(1)
 
-    for num_head_blocks in (1, 2, 3, 8, 16):
+    for gdn_num_head_blocks in (1, 2, 3, 8, 16):
         output, state = layer._recurrent_step_batched(
             query,
             key,
@@ -123,7 +126,7 @@ def test_recurrent_step_head_blocks_match_reference():
             g,
             beta,
             recurrent_state,
-            num_head_blocks=num_head_blocks,
+            gdn_num_head_blocks=gdn_num_head_blocks,
         )
         torch.testing.assert_close(output, expected_output)
         torch.testing.assert_close(state, expected_state)
