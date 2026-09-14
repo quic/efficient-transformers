@@ -1187,16 +1187,25 @@ def parse_rows_spec(row_spec: str, total_rows: int) -> list[int]:
 def run_one(row: dict, args, config_name: str, output_csv: Path) -> bool:
     row_number = int(row["_data_row"])
     model = value(row, "model")
-    # Use pooling_method as config_name if available (for embedding models)
-    if value(row, "pooling_method"):
-        effective_config_name = value(row, "pooling_method")
-    else:
-        # For VLM/LLM: build config_name as specs/blocking/disagg_mode/enable_ccl
+
+    # Determine effective_config_name based on config_name
+    if config_name == "audio":
+        # Audio: always 'audio'
+        effective_config_name = "audio"
+    elif config_name == "embedding":
+        # Embedding: use pooling_method
+        effective_config_name = value(row, "pooling_method", default="unknown")
+    elif config_name == "vlm":
+        # VLM: specs/blocking/ccl/disagg_mode
         specs = value(row, "specialization_mode", default="single")
         blocking = "blocking" if parse_bool(row.get("enable_blocking"), default=False) else "non_blocking"
+        ccl = "ccl" if parse_bool(row.get("enable_ccl"), default=False) else "non_ccl"
         disagg_mode = value(row, "disagg_mode", default="single")
-        ccl = "ccl" if parse_bool(row.get("enable_ccl"), default=False) else "no_ccl"
-        effective_config_name = f"{specs}/{blocking}/{disagg_mode}/{ccl}"
+        effective_config_name = f"{specs}/{blocking}/{ccl}/{disagg_mode}"
+    else:
+        # LLM: use config_name as-is (default, ccl, blocking, disagg_pd)
+        effective_config_name = config_name
+
     run_id = f"{row_number:03d}_{sanitize_name(model)}_{sanitize_name(effective_config_name)}"
     log_dir = Path(args.results_dir) / "logs" / sanitize_name(config_name) / run_id
     server_log = log_dir / "server.log"
