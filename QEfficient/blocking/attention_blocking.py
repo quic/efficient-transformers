@@ -213,6 +213,40 @@ def blocked_gdn_decode_forward(
     return output.to(dtype), updated_state.to(recurrent_state.dtype)
 
 
+def recurrent_gdn_decode_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the original unblocked GDN decode update."""
+    dtype = query.dtype
+    _, _, _, key_head_dim = query.shape
+
+    query = query.float()
+    key = key.float()
+    query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+    key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
+    value = value.float()
+    state = recurrent_state.float()
+
+    query = (query * (1.0 / (key_head_dim**0.5))).transpose(1, 2)
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    beta = beta.transpose(1, 2).float().unsqueeze(-1)
+    decay = g.transpose(1, 2).float().exp().unsqueeze(-1).unsqueeze(-1)
+
+    state_decayed = state * decay[:, :, 0]
+    kv_memory = (state_decayed * key[:, :, 0].unsqueeze(-1)).sum(dim=-2)
+    delta = (value[:, :, 0] - kv_memory) * beta[:, :, 0]
+    state_new = state_decayed + key[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)
+    output = (state_new * query[:, :, 0].unsqueeze(-1)).sum(dim=-2)
+    output = output.unsqueeze(2).transpose(1, 2).to(dtype)
+    return output, state_new.to(recurrent_state.dtype)
+
+
 # Required AttentionBlockingConfig fields per blocking mode.
 BLOCKING_MODE_REQUIRED_PARAMS: Dict[BlockingMode, list] = {
     # decode

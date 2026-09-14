@@ -39,6 +39,7 @@ from QEfficient.blocking.attention_blocking import (
     blocked_gdn_decode_forward,
     generic_blocked_attention_interface,
     get_gdn_num_head_blocks,
+    recurrent_gdn_decode_forward,
 )
 from QEfficient.customop import (
     CtxGatherFuncCB,
@@ -779,6 +780,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         return core_attn_out, last_recurrent_state
 
     def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state, gdn_num_head_blocks: int = 1):
+        if query.shape[1] != 1:
+            raise ValueError("_recurrent_step_batched is decode-only and requires sequence_length == 1")
+        if gdn_num_head_blocks <= 1:
+            return recurrent_gdn_decode_forward(query, key, value, g, beta, recurrent_state)
         return blocked_gdn_decode_forward(
             query,
             key,
@@ -845,7 +850,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
-            if position_ids is not None:
+            if batch_fold and position_ids is not None:
                 text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
                 conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
@@ -921,8 +926,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # ── Recurrent State ───────────────────────────────────
         if cache_params is not None:
-            if seq_len == 1:
-                # Decode uses only the single-token recurrent update.
+            if batch_fold:
+                # Folded decode is exported with a static one-token sequence.
                 core_attn_out, last_recurrent_state = self._recurrent_step_batched(
                     query,
                     key,
@@ -933,8 +938,18 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     gdn_num_head_blocks=gdn_num_head_blocks,
                 )
             else:
-                # Prefill uses only the chunked parallel scan.
-                core_attn_out, last_recurrent_state = self.chunk_gated_delta_rule(
+                # General graphs serve both prefill and decode; select the
+                # matching branch at runtime after export.
+                recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
+                    query,
+                    key,
+                    value,
+                    g,
+                    beta,
+                    recurrent_state,
+                    gdn_num_head_blocks=gdn_num_head_blocks,
+                )
+                chunk_out, chunk_state = self.chunk_gated_delta_rule(
                     query,
                     key,
                     value,
@@ -949,6 +964,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     ones_lower=self._ones_lower,
                     eye=self._eye,
                 )
+                is_decode = hidden_states.shape[1] == torch.tensor(1)
+                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
