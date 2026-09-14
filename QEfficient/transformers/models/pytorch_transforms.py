@@ -7,8 +7,9 @@
 
 import gc
 import warnings
+from collections.abc import Callable
 from types import MethodType
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -935,7 +936,7 @@ class KVCacheTransform(ModuleMappingTransform):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
 
@@ -981,7 +982,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
     def mutate(
         cls,
         original_module: nn.Module,
-        parent_module: nn.Module,  # noqa: ARG003
+        parent_module: nn.Module,
         n_repeat: int,
         orig_kv_heads: int,
         new_kv_heads: int,
@@ -1023,7 +1024,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         return original_module
 
     @classmethod
-    def apply(cls, model: nn.Module, num_replicate_kv_heads: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, num_replicate_kv_heads: int | None = None, **kwargs) -> tuple[nn.Module, bool]:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
@@ -1135,7 +1136,7 @@ class SpDTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         transformed = False
         pretrained_model_name_or_path_temp = kwargs.pop("pretrained_model_name_or_path", None)
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
@@ -1202,7 +1203,7 @@ class SamplerTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         transformed = False
         if qaic_config is None or not qaic_config.get("include_sampler", False):
             return model, transformed
@@ -1226,7 +1227,7 @@ class DFlashTransform(ModuleMappingTransform):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         if not (qaic_config and qaic_config.get("dflash_dlm", False)):
             return model, False
         if type(model) is not QEffQwen3ForCausalLM:
@@ -1241,7 +1242,7 @@ class DFlashDLMTransform:
     """Inject lm_head/embed_tokens from the TLM checkpoint (dflash_tlm_repo) and drop fc/hidden_norm."""
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         if not (qaic_config and qaic_config.get("dflash_dlm", False)):
             return model, False
 
@@ -1267,11 +1268,12 @@ class DFlashDLMTransform:
                 model.lm_head.bias = nn.Parameter(w["lm_head.bias"].float())
         return model, True
 
+
 class DFlashTLMTransform:
     """Attach fc/hidden_norm (weights from dflash_dlm_repo, fc scaled for fp16 range) and set target_layer_ids."""
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         target_layer_ids = qaic_config.get("target_layer_ids") if qaic_config else None
         if not target_layer_ids:
             return model, False
@@ -1474,7 +1476,7 @@ class PoolingTransform:
     """
 
     @classmethod
-    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, pooling: str | Callable) -> tuple[nn.Module, bool]:
         transformed = False
         pooling_method = (
             POOLING_MAP[pooling]
@@ -1497,7 +1499,7 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     # Get all QEff classes that are decoder layers from the existing mapping
     decoder_layer_classes = set()
 
-    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
+    for qeff_class in KVCacheTransform._module_mapping.values():
         # Check if the QEff class name contains decoder layer patterns
         qeff_class_name = qeff_class.__name__
         if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
@@ -1516,7 +1518,7 @@ class BlockingAttentionTransform:
     _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, attn_blocking_config) -> tuple[nn.Module, bool]:
         transformed = False
         model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
         model_architectures = getattr(model_config, "architectures", None) or []
@@ -1548,7 +1550,7 @@ def _iter_optimized_moe_modules(model: nn.Module):
             yield module
 
 
-def _get_moe_num_experts(module: nn.Module) -> Optional[int]:
+def _get_moe_num_experts(module: nn.Module) -> int | None:
     weights = getattr(module, "moe_weights", None)
     if weights is not None:
         return int(weights.num_experts)
@@ -1573,7 +1575,7 @@ def _resolve_expert_parallel_layout(
     num_devices: int,
     num_cores: int,
     cores_per_expert: int,
-) -> tuple[int, int, int, Optional[int]]:
+) -> tuple[int, int, int, int | None]:
     if num_devices <= 0:
         raise ValueError("num_devices must be greater than zero for MoE expert parallelism")
     if num_cores <= 0:
@@ -1646,7 +1648,7 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         model, mapped = super().apply(model)
         return model, mapped or any(True for _ in _iter_optimized_moe_modules(model))
 
@@ -1697,7 +1699,7 @@ class OptimizedMoEWeightsTransform(PytorchTransform):
     """Canonicalize MoE expert weights for modules using shared MoE flavours."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         transformed = False
         for module in list(_iter_optimized_moe_modules(model)):
             if getattr(module, "weights_transformed", False):
@@ -1720,10 +1722,10 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        hash_params: Optional[dict] = None,
-    ) -> Tuple[nn.Module, bool]:
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
+        hash_params: dict | None = None,
+    ) -> tuple[nn.Module, bool]:
         from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
 
         moe_config = (qaic_config or {}).get("moe_config", {}) or {}
@@ -1851,7 +1853,7 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
     """Pack or restore MoE weights according to the selected MoE export flavour."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         transformed = False
         for module in list(_iter_optimized_moe_modules(model)):
             if not getattr(module, "weights_transformed", False):
@@ -1899,10 +1901,10 @@ class OptimizedMoETransform(PytorchTransform):
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        hash_params: Optional[dict] = None,
-    ) -> Tuple[nn.Module, bool]:
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
+        hash_params: dict | None = None,
+    ) -> tuple[nn.Module, bool]:
         model, mapped = OptimizedMoEMapperTransform.apply(model)
         model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
         if not (mapped or external_mapped):
@@ -1927,7 +1929,7 @@ class SimpleDecodeMoeTransform(OptimizedMoETransform):
     """Constructor-time MoE transform that uses legacy decode defaults."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         return OptimizedMoETransform.apply(
             model,
             prefill_only=False,
