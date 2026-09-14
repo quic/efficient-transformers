@@ -407,7 +407,7 @@
       ],
       "text_prompt_list": [
         "What are the objects in the image?",
-        "Can you describe the image in detail?"
+        "What is shown in the image?"
       ],
       "full_batch_size": 2,
       "additional_params": {
