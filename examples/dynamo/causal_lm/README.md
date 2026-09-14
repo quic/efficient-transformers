@@ -54,7 +54,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
     --prefill-seq-len 128 \
     --ctx-len 128 \
     --num-cores 16 \
-    --use-weight-free-export
+    --weight-free
 ```
 
 **Parameters:**
@@ -69,12 +69,12 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 | `--num-cores` | `16` | Number of AI 100 cores |
 | `--aic-hw-version` | `ai100` | Hardware version |
 | `--num-hidden-layers` | `-1` | Override model depth (for debugging) |
-| `--use-weight-free-export` | `False` | Build a meta-device model and load weights during compile |
+| `--weight-free` | `False` | Build a meta-device model and load weights during compile |
 | `--device-group` | `None` | Device IDs, e.g. `[0,1]` |
 
 This example:
 - Loads the model normally by default
-- Builds the model with meta tensors when `--use-weight-free-export` is set
+- Builds the model with meta tensors when `--weight-free` is set
 - Exports using `torch.export` with ONNX subfunctions enabled
 - Compiles to a QPC binary for Cloud AI 100
 - Runs token generation and prints the output

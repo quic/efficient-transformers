@@ -52,5 +52,5 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
     --prefill-seq-len 128 \
     --ctx-len 128 \
     --num-cores 16 \
-    --use-weight-free-export
+    --weight-free
 ```
