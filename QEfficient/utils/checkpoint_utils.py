@@ -9,9 +9,8 @@ import json
 import os
 import shutil
 from collections.abc import Sequence
-from functools import cache, lru_cache
+from functools import cache
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import torch
 from huggingface_hub import snapshot_download
