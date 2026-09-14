@@ -152,7 +152,8 @@ def load_dflash_checkpoint(dflash_model_path: str) -> tuple[dict, dict]:
 
     state_dict = {}
     with safe_open(bin_path, framework="pt", device="cpu") as f:
-        for key in f:
+        keys = f.keys()
+        for key in keys:
             state_dict[key] = f.get_tensor(key).to(torch.float32)
 
     return state_dict, cfg
