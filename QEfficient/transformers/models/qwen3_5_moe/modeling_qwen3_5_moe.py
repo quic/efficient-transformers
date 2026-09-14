@@ -1197,7 +1197,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 position_ids=position_ids,
                 batch_index=batch_index,
                 batch_fold=batch_fold,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
             )
         else:
             hidden_states, _ = self.self_attn(
@@ -1330,7 +1330,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 batch_fold=batch_fold,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -1822,7 +1822,9 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             and blocking_config is not None
             and bool(blocking_config.batch_fold)
         )
-        gdn_num_head_blocks = max(1, int(blocking_config.gdn_num_head_blocks or 1)) if batch_fold_cb else 1
+        gdn_num_head_blocks = (
+            max(1, int(getattr(blocking_config, "gdn_num_head_blocks", 1) or 1)) if batch_fold_cb else 1
+        )
         layerwise = is_layerwise_active()
         first_layer_window = not layerwise or QEffQwen3_5MoeTextModel._start == 0
 
@@ -1863,7 +1865,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1893,7 +1895,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1913,7 +1915,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1931,7 +1933,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=cache_batch_index,
                 batch_fold=batch_fold_cb,
-                num_head_blocks=gdn_num_head_blocks,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)

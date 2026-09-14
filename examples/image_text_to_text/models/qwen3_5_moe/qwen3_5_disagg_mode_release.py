@@ -226,60 +226,57 @@ else:
     vision_qpc_path = _compiled_qpc_path(vision_compile_result, "vision_qpc_path", "vision")
     print(f"Compiled vision QPC: {vision_qpc_path}")
 
-skip_prefill = True
-if not skip_prefill:
-    if args.prefill_qpc_path:
-        prefill_qpc_path = _validate_qpc_path(args.prefill_qpc_path, "prefill")
-        print(f"Using compiled prefill QPC: {prefill_qpc_path}")
-    else:
-        prefill_timings = {"export": 0.0, "compile": 0.0}
-        lang_export = qeff_model.lang_model.export
-        lang_compile = qeff_model.lang_model._compile
-        qeff_model.lang_model.export = _timed_call(prefill_timings, "export", lang_export)
-        qeff_model.lang_model._compile = _timed_call(prefill_timings, "compile", lang_compile)
-        prefill_total_start = perf_counter()
-        try:
-            prefill_compile_result = qeff_model.compile(
-                batch_size=BS,
-                kv_cache_batch_size=FULL_BATCH_SIZE,
-                full_batch_size=BS,
-                prefill_seq_len=PREFILL_SEQ_LEN,
-                ctx_len=CTX_LEN,
-                height=354,
-                width=536,
-                num_cores=16,
-                num_devices=1,
-                mxfp6_matmul=True,
-                mxint8_kv_cache=True,
-                retain_full_kv=True,
-                split_model_io=True,  # This should be used for disagg serving via VLLM
-                # mos=1,
-                user_tiled=True,
-                aic_enable_depth_first=False,
-                prefill_only=True,
-                enable_chunking=True,
-                skip_vision=True,
-                use_onnx_subfunctions=True,
-                stats_level=50,
-                ddr_stats=True,
-                aic_pmu_recipe="KernelUtil",
-                aic_perf_metrics=True,
-                qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
-                kv_cache_prefix="vllmKvCache",
-                allow_mxint8_mdp_io=True,
-                # custom_IO_list_file="/local/mnt/workspace/mkshirsa/qwen_36/efficient-transformers/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-3f73445da9adc289/qpc-37d931bb34ea0c73/custom_io_kvint8.yaml"
-            )
-        finally:
-            prefill_total_time = perf_counter() - prefill_total_start
-            qeff_model.lang_model.export = lang_export
-            qeff_model.lang_model._compile = lang_compile
-        prefill_qpc_path = _compiled_qpc_path(prefill_compile_result, "lang_prefill_qpc_path", "prefill")
-        print(f"Compiled prefill QPC: {prefill_qpc_path}")
-        print(f"Prefill export time: {prefill_timings['export']:.2f} secs")
-        print(f"Prefill compile time: {prefill_timings['compile']:.2f} secs")
-        print(f"Prefill export+compile total time: {prefill_total_time:.2f} secs")
+if args.prefill_qpc_path:
+    prefill_qpc_path = _validate_qpc_path(args.prefill_qpc_path, "prefill")
+    print(f"Using compiled prefill QPC: {prefill_qpc_path}")
+else:
+    prefill_timings = {"export": 0.0, "compile": 0.0}
+    lang_export = qeff_model.lang_model.export
+    lang_compile = qeff_model.lang_model._compile
+    qeff_model.lang_model.export = _timed_call(prefill_timings, "export", lang_export)
+    qeff_model.lang_model._compile = _timed_call(prefill_timings, "compile", lang_compile)
+    prefill_total_start = perf_counter()
+    try:
+        prefill_compile_result = qeff_model.compile(
+            batch_size=1,
+            kv_cache_batch_size=FULL_BATCH_SIZE,
+            full_batch_size=1,
+            prefill_seq_len=PREFILL_SEQ_LEN,
+            ctx_len=CTX_LEN,
+            height=354,
+            width=536,
+            num_cores=16,
+            num_devices=1,
+            mxfp6_matmul=True,
+            mxint8_kv_cache=True,
+            retain_full_kv=True,
+            split_model_io=True,  # This should be used for disagg serving via VLLM
+            # mos=1,
+            user_tiled=True,
+            aic_enable_depth_first=False,
+            prefill_only=True,
+            enable_chunking=True,
+            skip_vision=True,
+            use_onnx_subfunctions=True,
+            stats_level=50,
+            ddr_stats=True,
+            aic_pmu_recipe="KernelUtil",
+            aic_perf_metrics=True,
+            qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+            kv_cache_prefix="vllmKvCache",
+            allow_mxint8_mdp_io=True,
+            # custom_IO_list_file="/local/mnt/workspace/mkshirsa/qwen_36/efficient-transformers/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-3f73445da9adc289/qpc-37d931bb34ea0c73/custom_io_kvint8.yaml"
+        )
+    finally:
+        prefill_total_time = perf_counter() - prefill_total_start
+        qeff_model.lang_model.export = lang_export
+        qeff_model.lang_model._compile = lang_compile
+    prefill_qpc_path = _compiled_qpc_path(prefill_compile_result, "lang_prefill_qpc_path", "prefill")
+    print(f"Compiled prefill QPC: {prefill_qpc_path}")
+    print(f"Prefill export time: {prefill_timings['export']:.2f} secs")
+    print(f"Prefill compile time: {prefill_timings['compile']:.2f} secs")
+    print(f"Prefill export+compile total time: {prefill_total_time:.2f} secs")
 
-skip_decode = True
 if args.decode_qpc_path:
     decode_qpc_path = _validate_qpc_path(args.decode_qpc_path, "decode")
     print(f"Using compiled decode QPC: {decode_qpc_path}")
@@ -466,22 +463,41 @@ lang_prefill_session.set_buffers(vision_outputs)
 
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
+chunk_inputs["batch_index"] = np.array([[0]], dtype=np.int64)
 for i in range(num_chunks):
-    chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
-    chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
     _update_retained_states(chunk_inputs, outputs)
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
 
-all_outputs.append(np.argmax(outputs["logits"]))
+lang_prefill_session.deactivate()
+lang_decode_session = QAICInferenceSession(decode_qpc_path)
+
+next_token_id = np.argmax(outputs["logits"])
+all_outputs.append(next_token_id)
+batch_index = np.random.default_rng(1234).permutation(BS).reshape(BS, 1).astype(np.int64)
 decode_inputs = {
-    "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
+    "input_ids": np.full((BS, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
     "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
+    "batch_index": batch_index,
 }
 
-_update_retained_states(decode_inputs, outputs)
+for layer_idx, layer_type in enumerate(config.text_config.layer_types):
+    state_names = (
+        (f"past_key.{layer_idx}", f"past_value.{layer_idx}")
+        if layer_type == "full_attention"
+        else (f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}")
+    )
+    for logical_name in state_names:
+        target_name, value = _resolve_retained_state(outputs, logical_name)
+        logical_state = value[0:1]
+        physical_state = np.repeat(logical_state, BS, axis=0)
+        reordered_state = np.empty_like(physical_state)
+        reordered_state[batch_index[:, 0]] = physical_state
+        decode_inputs[target_name] = reordered_state
 
 decode_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -492,11 +508,12 @@ st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
-all_outputs.append(np.argmax(decode_out["logits"]))
-pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
+all_outputs.append(np.argmax(decode_out["logits"], axis=-1)[0, 0])
+pos_id = decode_inputs["position_ids"] + 1
 loop_decode_inputs = {
-    "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+    "input_ids": np.argmax(decode_out["logits"], axis=-1),
     "position_ids": pos_id,
+    "batch_index": batch_index,
 }
 
 _update_retained_states(loop_decode_inputs, decode_out)
@@ -510,13 +527,14 @@ if not skip_vision:
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
-    all_outputs.append(np.argmax(decode_out["logits"]))
+    all_outputs.append(np.argmax(decode_out["logits"], axis=-1)[0, 0])
     pos_id += 1
     _update_retained_states(loop_decode_inputs, decode_out)
     loop_decode_inputs.update(
         {
-            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+            "input_ids": np.argmax(decode_out["logits"], axis=-1),
             "position_ids": pos_id,
+            "batch_index": batch_index,
         }
     )
 ft = perf_counter()
