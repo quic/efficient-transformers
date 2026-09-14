@@ -169,7 +169,7 @@ pipeline {
         )
         string(
             name: 'WEIGHT_FREE_QAIC_DEVICE_GROUPS',
-            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15;16,17,18,19',
+            defaultValue: '0,1,2,3;4,5,6,7;8,9,10,11;12,13,14,15',
             description: 'Exclusive four-device QAIC groups per weight-free worker, separated by semicolons'
         )
     }
@@ -395,12 +395,6 @@ pipeline {
         }
 
         stage('HL API Tests') {
-            when {
-                expression {
-                    // Temporarily disabled while rerunning the multimodal stage.
-                    false
-                }
-            }
             parallel {
                 stage('Export & Compile') {
                     steps {
@@ -450,12 +444,6 @@ pipeline {
         }
 
         stage('QAIC FEATURE') {
-            when {
-                expression {
-                    // Temporarily disabled while rerunning the multimodal stage.
-                    false
-                }
-            }
             steps {
                 script {
                     runImpactStage('qaic_feature', params.RUN_QAIC_FEATURE, params.TEST_PROFILE) {
@@ -474,12 +462,6 @@ pipeline {
         }
 
         stage('QAIC Embedding & Audio') {
-            when {
-                expression {
-                    // Temporarily disabled while rerunning the multimodal stage.
-                    false
-                }
-            }
             steps {
                 script {
                     runImpactStage('qaic_feature', params.RUN_QAIC_EMBEDDING_AUDIO, params.TEST_PROFILE) {
@@ -498,12 +480,6 @@ pipeline {
         }
 
         stage('QAIC Multimodal') {
-            when {
-                expression {
-                    // Temporarily disabled while rerunning the disaggregated stage.
-                    false
-                }
-            }
             steps {
                 script {
                     runImpactStage('qaic_multimodal', params.RUN_QAIC_MM, params.TEST_PROFILE) {
