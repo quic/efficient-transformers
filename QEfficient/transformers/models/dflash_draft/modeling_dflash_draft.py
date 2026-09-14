@@ -36,8 +36,8 @@ def _create_mask(
     position_ids: torch.Tensor,
     target_length: int,
     # valid_kv_length: int,
-    sliding_window: Optional[int] = None,
-    start_index: Optional[int] = 0,
+    sliding_window: int | None = None,
+    start_index: int | None = 0,
 ):
     """
     Args:
@@ -197,7 +197,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
     **kwargs,
 ):
@@ -233,17 +233,17 @@ class QEffDFlashAttention(Qwen3Attention):
         self,
         hidden_states: torch.Tensor,
         target_hidden: torch.Tensor,
-        position_ids_target: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_ids_target: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_value: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
         sin_cached=None,
         cos_cached=None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len = hidden_states.shape[:-1]
@@ -313,18 +313,18 @@ class QEffDFlashDecoderLayer(Qwen3DecoderLayer):
         self,
         hidden_states: torch.Tensor,
         target_hidden: torch.Tensor = None,
-        position_ids_target: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_ids_target: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_value: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        use_cache: bool | None = False,
+        cache_position: torch.LongTensor | None = None,
         sin_cached=None,
         cos_cached=None,
         **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         """
         Args:
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
@@ -389,19 +389,19 @@ class QEffDFlashModel(Qwen3Model):
         self,
         target_hidden: torch.Tensor = None,
         noise_embeds: torch.FloatTensor = None,
-        position_ids_target: Optional[torch.LongTensor] = None,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_ids_target: torch.LongTensor | None = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+    ) -> tuple | BaseModelOutputWithPast:
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -489,21 +489,21 @@ class QEffDFlashForCausalLM(Qwen3ForCausalLM):
         self,
         target_hidden: torch.Tensor = None,
         noise_embeds: torch.FloatTensor = None,
-        position_ids_target: Optional[torch.LongTensor] = None,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        position_ids_target: torch.LongTensor | None = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | list[torch.FloatTensor] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         # block_size: Optional[torch.Tensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> tuple | CausalLMOutputWithPast:
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )

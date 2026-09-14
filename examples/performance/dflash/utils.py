@@ -106,13 +106,13 @@ def build_target_layer_ids(num_target_layers: int, num_draft_layers: int):
     start = 1
     end = num_target_layers - 3
     span = end - start
-    target_layer_ids = [int(round(start + (i * span) / (num_draft_layers - 1))) for i in range(num_draft_layers)]
+    target_layer_ids = [round(start + (i * span) / (num_draft_layers - 1)) for i in range(num_draft_layers)]
     return target_layer_ids
 
 
 def extract_context_feature(
     hidden_states: list[torch.Tensor],
-    layer_ids: Optional[list[int]],
+    layer_ids: list[int] | None,
 ) -> torch.Tensor:
     offset = 1
     selected_states = []
@@ -153,13 +153,13 @@ def load_dflash_checkpoint(dflash_model_path: str) -> tuple[dict, dict]:
 
     state_dict = {}
     with safe_open(bin_path, framework="pt", device="cpu") as f:
-        for key in f.keys():
+        for key in f:
             state_dict[key] = f.get_tensor(key).to(torch.float32)
 
     return state_dict, cfg
 
 
-def read_dlm_meta(dlm_repo: str, hf_token: Optional[str] = None):
+def read_dlm_meta(dlm_repo: str, hf_token: str | None = None):
     """Load a DFlash checkpoint and return (state_dict, target_layer_ids, block_size)."""
     state_dict, cfg = load_dflash_checkpoint(dlm_repo)
     target_layer_ids = cfg.get("dflash_config", {}).get("target_layer_ids", [])
@@ -175,7 +175,7 @@ def compile_tlm_qpc(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    hf_token: Optional[str] = None,
+    hf_token: str | None = None,
 ) -> str:
     """Build the TLM and compile it to a QPC. fc/hidden_norm are injected by
     QEfficient's DFlashTLMTransform (weights from dflash_dlm_repo)."""
@@ -213,7 +213,7 @@ def compile_dlm_qpc(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    hf_token: Optional[str] = None,
+    hf_token: str | None = None,
 ) -> str:
     """Build the DLM and compile it to a QPC. lm_head/embed_tokens are injected
     by QEfficient's DFlashDLMTransform (weights from dflash_tlm_repo)."""
@@ -256,7 +256,7 @@ def compile_gemma_vlm_qpcs(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    hf_token: Optional[str] = None,
+    hf_token: str | None = None,
 ) -> tuple[str, str]:
     """Build a vision-language model (VLM) TLM — vision encoder + language decoder — and
     compile it for SPD. Returns ``(lang_qpc, vision_qpc)``.
@@ -332,9 +332,9 @@ def compile_qwen3vl_vlm_qpcs(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    height: Optional[int] = None,
-    width: Optional[int] = None,
-    hf_token: Optional[str] = None,
+    height: int | None = None,
+    width: int | None = None,
+    hf_token: str | None = None,
 ) -> tuple[str, str]:
     """Build the qwen3-vl TLM — vision encoder + language decoder — and compile it for
     SPD. Returns ``(lang_qpc, vision_qpc)``.
@@ -525,7 +525,7 @@ def compile_gemma_vlm_dlm_qpc(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    hf_token: Optional[str] = None,
+    hf_token: str | None = None,
 ) -> str:
     """Build + compile the DFlash DLM (draft) for a vision-language model base.
 
@@ -569,7 +569,7 @@ def compile_qwen3vl_vlm_dlm_qpc(
     ctx_len: int,
     num_cores: int,
     num_devices: int,
-    hf_token: Optional[str] = None,
+    hf_token: str | None = None,
 ) -> str:
     """Build + compile the DFlash DLM (draft) for the qwen3-vl TLM.
 
