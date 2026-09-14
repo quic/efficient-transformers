@@ -96,7 +96,8 @@ def requires_dtype_conversion(src: Path, weight_map: dict[str, str], target_dtyp
     """Return True when any floating-point checkpoint tensor differs from ``target_dtype``."""
     for shard_name in sorted(set(weight_map.values())):
         with safe_open(str(src / shard_name), framework="pt") as handle:
-            for key in handle:
+            keys = handle.keys()
+            for key in keys:
                 dtype = safetensors_dtype_to_torch(handle.get_slice(key).get_dtype())
                 if dtype is not None and dtype != target_dtype:
                     return True
@@ -116,7 +117,8 @@ def read_weight_map(src: Path) -> dict[str, str]:
     weight_map: dict[str, str] = {}
     for sf in shard_files:
         with safe_open(str(sf), framework="pt") as f:
-            for k in f:
+            keys = f.keys()
+            for k in keys:
                 weight_map[k] = sf.name
     return weight_map
 
@@ -235,7 +237,8 @@ def load_checkpoint_index(checkpoint_files: list[str]) -> dict[str, str]:
     tensor_to_file = {}
     for checkpoint_file in checkpoint_files:
         with safe_open(checkpoint_file, framework="pt") as handle:
-            for key in handle:
+            keys = handle.keys()
+            for key in keys:
                 tensor_to_file[key] = checkpoint_file
     return tensor_to_file
 
