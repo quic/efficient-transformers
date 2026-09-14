@@ -1758,12 +1758,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
-<<<<<<< HEAD
-    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
-        if self.config.text_config.layer_types[layer_idx] == "full_attention":
-            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
-        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
-=======
     def _uses_batch_folded_attention(self) -> bool:
         for layer in getattr(self.language_model, "layers", ()):
             attention = getattr(layer, "self_attn", None)
@@ -1771,7 +1765,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
             if blocking_config is not None:
                 return bool(blocking_config.batch_fold)
         return False
->>>>>>> pr-1315
 
     def forward(
         self,
@@ -1784,93 +1777,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-<<<<<<< HEAD
-        if inputs_embeds is None:
-            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-
-        if not is_layerwise_active():
-            # Default (non-layerwise) path: image merge + full decoder + lm_head in
-            # a single forward, identical to the pre-layerwise behavior/output contract.
-            _, _, channel_size = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = image_input_embeds
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
-
-        if QEffQwen3_5TextModel._start == 0:
-            B, S, _ = inputs_embeds.shape
-            if input_ids is None:
-                input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
-            _, _, channel_size = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = image_input_embeds
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, image_idx, outputs.past_key_values
-
-        elif QEffQwen3_5TextModel._end == QEffQwen3_5TextModel._total_layers:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
-            return logits, outputs.past_key_values
-
-        else:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            return logits, outputs.past_key_values
-=======
         batch_fold_cb = batch_index is not None and self._uses_batch_folded_attention()
         if batch_fold_cb:
             # Folded attention consumes physical batch rows; restore logical
@@ -1906,7 +1812,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
->>>>>>> pr-1315
 
 
 class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):

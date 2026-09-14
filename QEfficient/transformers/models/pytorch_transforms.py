@@ -1591,6 +1591,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
+        batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
         qaic_config: Optional[dict] = None,
@@ -1621,7 +1622,11 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         if expert_parallel_chunk_size <= 0:
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
+        compile_batch_size = int(batch_size or 1)
+        if compile_batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero for MoE expert parallelism")
+        compile_num_tokens = compile_batch_size * compile_seq_len
+        num_packed_chunks = max(1, -(-compile_num_tokens // expert_parallel_chunk_size))
 
         transformed = False
         flavour = None
@@ -1663,10 +1668,10 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
             transformed = True
 
-        if uses_expert_parallel and compile_seq_len % expert_parallel_chunk_size != 0:
+        if uses_expert_parallel and compile_num_tokens % expert_parallel_chunk_size != 0:
             logger.warning(
                 f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
-                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
+                f"the compile token count {compile_num_tokens}; the number of packed chunks will be {num_packed_chunks}."
             )
 
         if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
@@ -1765,6 +1770,7 @@ class OptimizedMoETransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
+        batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
         qaic_config: Optional[dict] = None,
@@ -1780,6 +1786,7 @@ class OptimizedMoETransform(PytorchTransform):
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
+            batch_size=batch_size,
             num_devices=num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
