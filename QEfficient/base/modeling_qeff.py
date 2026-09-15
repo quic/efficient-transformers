@@ -48,6 +48,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     GatedDeltaConfigTransform,
     OptimizedMoETransform,
+    PagedAttentionMinimax,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -1062,6 +1063,8 @@ class QEFFBaseModel(ABC):
         else:
             self.hash_params.pop("gated_delta_kwargs", None)
         if qaic_config is not None:
+            if qaic_config.get("paged_kv", False):
+                self.model, _ = PagedAttentionMinimax.apply(self.model, qaic_config, ctx_len)
             self.hash_params["qaic_config"] = qaic_config
         else:
             self.hash_params.pop("qaic_config", None)
