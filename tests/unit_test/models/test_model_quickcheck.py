@@ -2446,7 +2446,6 @@ def test_qwen3_5_moe_conv_decode_slice_matches_gather_reference(grouped_state):
         weight,
         position_ids,
         bias,
-        use_decode_slice=True,
     )
 
     torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
@@ -2472,7 +2471,6 @@ def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
         weight,
         position_ids,
         bias,
-        use_decode_slice=True,
     )
 
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
@@ -2509,9 +2507,7 @@ def test_qwen3_5_conv_decode_slice_matches_gather_reference():
         torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
     )[:, :, -1:]
 
-    output, state = qeff_torch_causal_conv1d_update(
-        hidden_states, conv_state, weight, position_ids, bias, use_decode_slice=True
-    )
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
 
     torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
     torch.testing.assert_close(state, expected_state)
@@ -2528,9 +2524,7 @@ def test_qwen3_5_conv_decode_slice_keeps_prefill_gather_path():
     bias = torch.randn(hidden_size)
     position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
 
-    output, state = qeff_torch_causal_conv1d_update(
-        hidden_states, conv_state, weight, position_ids, bias, use_decode_slice=True
-    )
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
 
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
     order = torch.argsort(

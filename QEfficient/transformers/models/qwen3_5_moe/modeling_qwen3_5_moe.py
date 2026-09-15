@@ -497,7 +497,6 @@ def qeff_torch_causal_conv1d_update(
     weight: torch.Tensor,
     position_ids: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
-    use_decode_slice: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
     grouped_conv_state = conv_state.ndim == 4
@@ -514,28 +513,28 @@ def qeff_torch_causal_conv1d_update(
         conv_state_flat = conv_state
 
     state_len = conv_state_flat.shape[-1]
+    pos_ids = position_ids[0]
     hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    if use_decode_slice and seq_len == 1:
-        # Batch-folded decode is a fixed shift. Slicing and appending avoids the
-        # full [batch, hidden_size, state_len] expand/gather index tensor.
-        shifted_conv_state = torch.cat([conv_state_flat[..., 1:], hidden_states_new[..., -1:]], dim=-1)
-        valid_decode = (position_ids[0][:, -1:] >= 0).to(shifted_conv_state.dtype).reshape(-1, 1, 1)
-        updated_conv_state_flat = shifted_conv_state * valid_decode + conv_state_flat * (1 - valid_decode)
-    else:
-        # Prefill and non-folded execution retain the general valid-position
-        # gather because padding can be interleaved within a chunk.
-        pos_ids = position_ids[0]
-        zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
-        order = torch.argsort(torch.cat([zeros, pos_ids], dim=1), dim=1)
-        last_positions = order[:, -state_len:]
-        ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
-        updated_conv_state_flat = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+    is_decode = seq_len == torch.tensor(1)
+
+    # Decode is a fixed shift. Keep this branch tensor-only so the compiler can
+    # select it for both BS1 and folded decode graphs.
+    shifted_conv_state = torch.cat([conv_state_flat[..., 1:], hidden_states_new[..., -1:]], dim=-1)
+    valid_decode = (pos_ids[:, -1:] >= 0).to(shifted_conv_state.dtype).reshape(-1, 1, 1)
+    shifted_conv_state = shifted_conv_state * valid_decode + conv_state_flat * (1 - valid_decode)
+
+    # Prefill and padded chunks retain the general last-valid-position gather.
+    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+    order = torch.argsort(torch.cat([zeros, pos_ids], dim=1), dim=1)
+    last_positions = order[:, -state_len:]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+    gathered_conv_state = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
 
     if grouped_conv_state:
-        updated_conv_state = updated_conv_state_flat.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
-    else:
-        updated_conv_state = updated_conv_state_flat
+        shifted_conv_state = shifted_conv_state.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+        gathered_conv_state = gathered_conv_state.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+    updated_conv_state = torch.where(is_decode, shifted_conv_state, gathered_conv_state)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:]).to(hidden_states.dtype)
     return out, updated_conv_state
@@ -990,7 +989,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 self.conv1d.weight.squeeze(1),
                 position_ids,
                 self.conv1d.bias,
-                use_decode_slice=batch_fold,
             )
             if batch_index is not None:
                 if conv_state_all.ndim == 4:
