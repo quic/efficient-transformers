@@ -16,6 +16,7 @@ import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
 
@@ -585,3 +586,156 @@ def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):
 
     assert total_assertions > 0
     manual_cleanup([vanilla.onnx_path, tlm.onnx_path])
+
+
+# ---------------------------------------------------------------------------
+# Dynamic-batching — hardware-level QPC compile + per-batch execution test
+# ---------------------------------------------------------------------------
+
+_DYN_BATCH_MODEL = "JackFram/llama-68m"
+_DYN_BATCH_NUM_LAYERS = 2
+_DYN_BATCH_PREFILL_LEN = 32
+_DYN_BATCH_CTX_LEN = 128
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+def test_dynamic_batch_qpc_per_batch_execution(manual_cleanup):
+    """
+    Compile ONE continuous-batching QPC carrying one decode specialization per input batch size
+    while the retained KV cache is pinned at ``full_batch_size`` (B_max), then verify each live
+    batch executes.
+
+    This is the direct regression against the finding-doc hardware failure ("inconsistent retained
+    state"): the compile must succeed with a single retained-state shape. For each batch size ``b``
+    in the list, run a decode step with ``(b, 1)`` ``input_ids`` and a length-``b`` ``batch_index``
+    that routes those ``b`` sequences into ``b`` of the ``B_max`` KV slots, and assert finite logits
+    with batch dimension ``b``.
+    """
+    batch_sizes = [1, 2, 4]
+    b_max = max(batch_sizes)
+    tokenizer = AutoTokenizer.from_pretrained(_DYN_BATCH_MODEL, padding_side="right")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    vocab_size = len(tokenizer)
+
+    qeff_model = load_qeff_causal_lm_model(
+        _DYN_BATCH_MODEL, num_hidden_layers=_DYN_BATCH_NUM_LAYERS, continuous_batching=True
+    )
+    qpc_path = qeff_model.compile(
+        num_cores=2,
+        prefill_seq_len=_DYN_BATCH_PREFILL_LEN,
+        ctx_len=_DYN_BATCH_CTX_LEN,
+        aic_enable_depth_first=True,
+        batch_size=batch_sizes,
+        full_batch_size=b_max,
+    )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+    for bs in batch_sizes:
+        session = QAICInferenceSession(qpc_path)
+        session.skip_buffers([x for x in session.input_names if x.startswith("past_")])
+        session.skip_buffers([x for x in session.output_names if x.endswith("_RetainedState")])
+
+        ph = np.zeros((bs, 1, vocab_size), dtype=np.float32)
+        session.set_buffers({"logits": ph})
+        out = session.run(
+            {
+                "input_ids": np.zeros((bs, 1), dtype=np.int64),
+                "position_ids": np.zeros((bs, 1), dtype=np.int64),
+                "batch_index": np.arange(bs, dtype=np.int64).reshape(-1, 1),
+            }
+        )
+        logits = out["logits"]
+        assert logits.shape[0] == bs, f"batch_size={bs}: expected batch dim {bs}, got {logits.shape}"
+        assert np.isfinite(logits).all(), f"batch_size={bs}: non-finite logits"
+        del session
+
+    manual_cleanup([qeff_model.onnx_path])
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("exec_bs", [1, 2])
+def test_dynamic_batch_generation_parity(exec_bs, manual_cleanup):
+    """
+    End-to-end parity: a dynamic-batching QPC (``batch_size=[1,2,4]``, ``full_batch_size=4``) run at
+    a live batch ``exec_bs`` must produce the same generated token ids as a QPC compiled natively at
+    ``continuous_batching=True, full_batch_size=exec_bs`` (single decode spec).
+
+    Guards against the KV-slicing corrupting active-slot outputs when the live batch is smaller than
+    B_max (CLAUDE.md: never claim parity from compile success alone).
+    """
+    prompts = ["The capital of France is", "My favorite color is", "Once upon a time", "In the year 2050"][:exec_bs]
+    gen_len = 16
+    tokenizer = AutoTokenizer.from_pretrained(_DYN_BATCH_MODEL, padding_side="right")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    # Dynamic-batching QPC: many decode input batches, KV pinned at B_max=4.
+    dyn = load_qeff_causal_lm_model(_DYN_BATCH_MODEL, num_hidden_layers=_DYN_BATCH_NUM_LAYERS, continuous_batching=True)
+    dyn_qpc = dyn.compile(
+        num_cores=2,
+        prefill_seq_len=_DYN_BATCH_PREFILL_LEN,
+        ctx_len=_DYN_BATCH_CTX_LEN,
+        aic_enable_depth_first=True,
+        batch_size=[1, 2, 4],
+        full_batch_size=4,
+    )
+
+    # Reference QPC: natively compiled at full_batch_size == exec_bs (single decode spec).
+    ref = load_qeff_causal_lm_model(_DYN_BATCH_MODEL, num_hidden_layers=_DYN_BATCH_NUM_LAYERS, continuous_batching=True)
+    ref_qpc = ref.compile(
+        num_cores=2,
+        prefill_seq_len=_DYN_BATCH_PREFILL_LEN,
+        ctx_len=_DYN_BATCH_CTX_LEN,
+        aic_enable_depth_first=True,
+        full_batch_size=exec_bs,
+    )
+
+    dyn_gen = TextGeneration(tokenizer=tokenizer, qpc_path=dyn_qpc, full_batch_size=4, ctx_len=_DYN_BATCH_CTX_LEN)
+    dyn_gen.generate(prompts, generation_len=gen_len, execution_batch_size=exec_bs, stream=False)
+    dyn_ids = dyn_gen._qaic_model.generated_ids[:exec_bs]
+
+    ref_gen = TextGeneration(tokenizer=tokenizer, qpc_path=ref_qpc, full_batch_size=exec_bs, ctx_len=_DYN_BATCH_CTX_LEN)
+    ref_gen.generate(prompts, generation_len=gen_len, stream=False)
+    ref_ids = ref_gen._qaic_model.generated_ids[:exec_bs]
+
+    assert np.array_equal(dyn_ids, ref_ids), (
+        f"exec_bs={exec_bs}: dynamic-batch generation diverged from native batch-{exec_bs} reference.\n"
+        f"dyn={dyn_ids.tolist()}\nref={ref_ids.tolist()}"
+    )
+    manual_cleanup([dyn.onnx_path, ref.onnx_path])
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+def test_dynamic_batch_times_spec_len_compiles(manual_cleanup):
+    """
+    Regression: dynamic batching stacks with speculative decoding. A TLM compiled with
+    ``batch_size=[1,2]`` × ``num_speculative_tokens=[1,3]`` must produce ONE continuous-batching QPC
+    whose decode specializations vary input batch and seq_len while the retained KV stays pinned at
+    B_max (full_batch_size).
+
+    Note: dynamic batching is NOT stacked with CCL here — combining ``comp_ctx_lengths`` with
+    speculative-decoding specializations is a pre-existing QAIC compiler limitation ("No input that
+    uniquely identifies specialization") that reproduces even without a batch list, so it is out of
+    scope for this feature.
+    """
+    tlm = load_qeff_causal_lm_model(
+        _DYN_BATCH_MODEL,
+        num_hidden_layers=_DYN_BATCH_NUM_LAYERS,
+        continuous_batching=True,
+        qaic_config={"speculative_model_type": "target"},
+    )
+    qpc_path = tlm.compile(
+        num_cores=2,
+        prefill_seq_len=_DYN_BATCH_PREFILL_LEN,
+        ctx_len=_DYN_BATCH_CTX_LEN,
+        aic_enable_depth_first=True,
+        batch_size=[1, 2],
+        full_batch_size=2,
+        num_speculative_tokens=[1, 3],
+    )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+    manual_cleanup([tlm.onnx_path])

@@ -20,6 +20,9 @@ Tests verify:
 All tests run on CPU only, using tiny in-memory models.
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
@@ -221,6 +224,49 @@ class TestQEFFAutoModelForCausalLMSpecializations:
         assert isinstance(result, dict)
         # The result should reflect the speculative tokens in some way
         assert "ctx_len" in result
+
+    def test_build_decode_specialization_batch_size_from_kv_cache_batch_size(self):
+        """Non-CB decode spec batch_size is taken from kv_cache_batch_size."""
+        qeff = self._make_qeff()
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=4, kv_cache_batch_size=4, full_batch_size=None)
+        assert result["batch_size"] == 4
+
+    def test_build_decode_specialization_dynamic_batch_pins_kv_at_bmax(self):
+        """Dynamic batching: decode input batch == batch_size, KV batch == full_batch_size."""
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2(), continuous_batching=True)
+        result = qeff.build_decode_specialization(
+            ctx_len=128,
+            batch_size=2,  # live decode input batch
+            kv_cache_batch_size=4,  # retained KV pinned at B_max
+            full_batch_size=4,
+        )
+        assert result is not None
+        # Input axis follows the live batch; retained KV batch stays pinned at B_max.
+        assert result["batch_size"] == 2
+        assert result["full_batch_size"] == 4
+
+
+@pytest.mark.cpu_only
+class TestQEFFAutoModelForCausalLMGenerate:
+    def test_generate_forwards_execution_batch_size_to_cloud_runtime(self):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2())
+        qeff.onnx_path = Path("/tmp/qeff/model.onnx")
+        qeff.qpc_path = Path("/tmp/qeff/qpc")
+
+        with patch("QEfficient.cloud_ai_100_exec_kv", return_value=object()) as cloud_exec:
+            qeff.generate(
+                tokenizer=object(),
+                prompts=["one", "two"],
+                generation_len=4,
+                execution_batch_size=2,
+            )
+
+        cloud_exec.assert_called_once()
+        assert cloud_exec.call_args.kwargs["execution_batch_size"] == 2
 
 
 # ---------------------------------------------------------------------------

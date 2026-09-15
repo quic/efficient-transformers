@@ -23,6 +23,7 @@ def main(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     full_batch_size: Optional[int] = None,
+    execution_batch_size: Optional[int] = None,
 ):
     """
     Main function for the QEfficient execution CLI application.
@@ -61,6 +62,8 @@ def main(
     full_batch_size : int, optional
         Ignored in this context as continuous batching is managed by the compiled QPC.
         However, it might be passed through from CLI arguments. Default is None.
+    execution_batch_size : int, optional
+        Live decode batch for continuous-batching QPCs compiled with dynamic batching. Default is None.
 
     Example
     -------
@@ -91,6 +94,7 @@ def main(
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
+        execution_batch_size=execution_batch_size,
     )
 
 
@@ -118,6 +122,13 @@ if __name__ == "__main__":
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples/sample_prompts folder",
     )
     parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
+    parser.add_argument(
+        "--execution_batch_size",
+        "--execution-batch-size",
+        type=int,
+        default=None,
+        help="Live decode batch for continuous-batching QPCs compiled with dynamic batching",
+    )
     parser.add_argument(
         "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
     )
