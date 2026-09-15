@@ -2144,7 +2144,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         # DFlash TLM: override the lang decode spec's seq_len to dflash_block_size.
-        if self.dflash_tlm and dflash_block_size is not None:
+        if getattr(self, "dflash_tlm", None) and dflash_block_size is not None:
             for spec in specializations["lang"]:
                 if str(spec.get("seq_len")) == "1":
                     spec["seq_len"] = dflash_block_size
@@ -4054,7 +4054,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config,
             fbs if self.continuous_batching else bs,
-            seq_len * 2 if self.dflash_dlm else seq_len,
+            seq_len * 2 if getattr(self, "dflash_dlm", None) else seq_len,
         )
         if dynamo:
             kv_cache_shape = list(kv_cache_shape)
@@ -4117,7 +4117,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
 
-        if self.dflash_dlm:
+        if getattr(self, "dflash_dlm", None):
             example_inputs["target_hidden"] = torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float)
             example_inputs["position_ids"] = (
                 torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
@@ -4317,7 +4317,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        if self.dflash_tlm:
+        if getattr(self, "dflash_tlm", None):
             output_names.append("hidden_states")
 
         if QEFFBaseModel._layerwise_active:
@@ -4380,7 +4380,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if not self.continuous_batching:
             exec_batch_size = batch_size
-        elif self.dflash_dlm:
+        elif getattr(self, "dflash_dlm", None):
             # DFlash DLM: route decode_bsz rows via batch_index; use full_batch_size.
             exec_batch_size = full_batch_size or batch_size
         elif prefill_seq_len == 1:
@@ -4471,7 +4471,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
-        if self.dflash_tlm or self.dflash_dlm:
+        if getattr(self, "dflash_tlm", None) or getattr(self, "dflash_dlm", None):
             spec["seq_len"] = dflash_block_size
 
         if self.continuous_batching:
