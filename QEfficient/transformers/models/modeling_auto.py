@@ -105,6 +105,24 @@ CUSTOM_IO_DTYPE_MAP = {
     "float32": "float16",  # Since compiler doesn't support fp32
 }
 
+
+def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict) -> bool:
+    """Determine whether the compiler needs -convert-to-fp16.
+
+    On ai100 hardware, bfloat16 is not natively supported so we must downcast
+    to fp16 at compile time (same as fp32). On ai200, bfloat16 passes through
+    natively and no conversion is needed.
+    """
+    if CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16":
+        return True
+    if target_dtype == torch.bfloat16:
+        aic_hw = compiler_options.get(
+            "aic_hw_version", compiler_options.get("aic-hw-version", constants.DEFAULT_AIC_HW_VERSION)
+        )
+        return aic_hw != "ai200"
+    return False
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
@@ -710,7 +728,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -1062,7 +1080,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -2193,7 +2211,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2255,7 +2273,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -3036,7 +3054,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -4129,7 +4147,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("logits")
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
-        if (
+        if hasattr(self.model, "get_onnx_retained_state_specs"):
+            retained_state_specs = self.model.get_onnx_retained_state_specs(
+                batch_size=fbs if self.continuous_batching else bs,
+                seq_len=seq_len,
+                kv_cache_shape=kv_cache_shape,
+                continuous_batching=self.continuous_batching,
+                retain_full_kv=kwargs.get("retain_full_kv", False)
+                or (prefill_only and kwargs.get("enable_chunking", False)),
+            )
+            example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
+            dynamic_axes.update(retained_state_specs["dynamic_axes"])
+            output_names.extend(retained_state_specs["output_names"])
+        elif (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
             and hasattr(self.model, "get_dummy_pkv_cache")
@@ -4240,7 +4270,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             import functools
             import inspect
 
-            from transformers.cache_utils import Cache, DynamicCache
+            from transformers.cache_utils import Cache
 
             model_forward = self.model.forward
             model_forward_sig = inspect.signature(model_forward)
@@ -4265,9 +4295,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     return obj
 
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
-                past_key_values = bound_args.arguments.get("past_key_values", None)
-                if past_key_values is not None and not isinstance(past_key_values, Cache):
-                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
                 if torch.onnx.is_in_onnx_export():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
@@ -4802,18 +4829,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         custom_io = {}
         if not cache_compressed:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    output_name = _compile_io_name(
-                        f"past_{kv}.{i}{kv_infix}_RetainedState",
-                        use_onnx_subfunctions=use_onnx_subfunctions,
-                    )
-                    _add_retained_state_custom_io(
-                        custom_io,
-                        output_name,
-                        dtype=kv_cache_dtype,
-                        use_onnx_subfunctions=False,
-                    )
+            retained_state_names = (
+                self.model.get_retained_state_names()
+                if hasattr(self.model, "get_retained_state_names")
+                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
+            )
+            for state_name in retained_state_names:
+                output_name = _compile_io_name(
+                    f"{state_name}{kv_infix}_RetainedState",
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                )
+                _add_retained_state_custom_io(
+                    custom_io,
+                    output_name,
+                    dtype=kv_cache_dtype,
+                    use_onnx_subfunctions=False,
+                )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
@@ -4836,7 +4867,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -5201,7 +5232,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -5529,7 +5560,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
