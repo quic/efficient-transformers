@@ -144,7 +144,23 @@ def _write_safetensors_checkpoint(root, tensors):
 
 
 def _load_prepared_tensors(root):
-    index = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
+    """Load all tensors from a prepared checkpoint directory.
+
+    Reads from model.safetensors.index.json if present; otherwise scans
+    all safetensors shards directly. The index is written by the pipeline
+    Stage ⑤ finalise step. Tests that call transforms directly (without
+    going through the pipeline) will not have an index file, so the shard
+    scan fallback is needed there.
+    """
+    index_path = root / "model.safetensors.index.json"
+    if index_path.exists():
+        index = json.loads(index_path.read_text())["weight_map"]
+    else:
+        index = {}
+        for sf in sorted(root.glob("*.safetensors")):
+            with safe_open(str(sf), framework="pt") as handle:
+                for k in handle.keys():
+                    index[k] = sf.name
     loaded = {}
     for key, shard_name in index.items():
         with safe_open(str(root / shard_name), framework="pt") as handle:
