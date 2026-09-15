@@ -153,6 +153,11 @@ class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
     supports_moe_decode_bmm = True
 
+    def __qeff_init__(self):
+        QEffMoEBlockMixin.__qeff_init__(self)
+        self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
+        self.num_experts = len(self.experts)
+
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):
             return self.moe_weights
@@ -462,7 +467,9 @@ class QEffGrok1ModelForCausalLM(nn.Module):
 
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        hidden_states = outputs[0][
+            torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_idx
+        ]
         logits = self.lm_head(hidden_states)
         logits = logits * self.output_multiplier_scale
         logits = logits.float()

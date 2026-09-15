@@ -349,8 +349,8 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
@@ -553,7 +553,7 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
 
     def route(self, x: torch.Tensor):
         topk_gates, expert_mask, router_logits, _ = self.router(x)
-        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
+        routing_weights = (expert_mask.permute(2, 1, 0).to(topk_gates.dtype) * topk_gates.unsqueeze(-1)).sum(dim=1)
         return routing_weights.to(x.dtype), router_logits
 
 

@@ -215,8 +215,7 @@ def eager_attention_forward_blocked_kv(
 
         # update running denominator
         prev_denominator = current_denominator
-        # Replace .sum() to fix the ReduceSum Issuse in subfunction
-        curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
+        curr_exp_sum = current_exp.sum(dim=-1)
         current_denominator = prev_denominator * torch.exp(delta_max) + curr_exp_sum
 
         prob = current_exp / current_denominator.unsqueeze(-1)
@@ -263,6 +262,9 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGlm4MoeRotaryEmbedding(config=self.config)
+        partial_rotary_factor = self.config.rope_parameters.get("partial_rotary_factor", 1.0)
+        head_dim = getattr(self.config, "head_dim", None) or self.config.hidden_size // self.config.num_attention_heads
+        self._rotary_dim = int(head_dim * partial_rotary_factor)
 
     def forward(
         self,
@@ -294,10 +296,8 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
         if sin_cached is not None and cos_cached is not None:
             sin, cos = sin_cached, cos_cached
-            # detach().clone() avoids a dynamo arg-count mismatch at subfunction boundaries when tracing
-            rotary_dim = int(self.rotary_emb.cos_cached.detach().clone().shape[-1])
             query_states, key_states = qeff_apply_precomputed_rotary_pos_emb(
-                query_states, key_states, cos, sin, rotary_dim
+                query_states, key_states, cos, sin, self._rotary_dim
             )
         else:
             kv_seq_len = (
@@ -468,8 +468,8 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
@@ -507,11 +507,13 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
-        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.unsqueeze(0)
+        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.to(
+            device=scores.device
+        ).unsqueeze(0)
         group_scores_top2 = scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group).topk(
             2, dim=-1
         )[0]
-        group_scores = torch.einsum("bge->bg", group_scores_top2)
+        group_scores = group_scores_top2.sum(dim=-1)
         group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
         group_mask = torch.zeros_like(group_scores)
         group_mask.scatter_(1, group_idx, 1)
@@ -532,7 +534,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         topk_weights = scores.gather(1, topk_indices)
         if self.norm_topk_prob:
             # denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
-            denominator = torch.einsum("ab->a", topk_weights).unsqueeze(-1) + 1e-20
+            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
             topk_weights /= denominator
         topk_weights = topk_weights * self.routed_scaling_factor
         return topk_indices, topk_weights
@@ -547,7 +549,9 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
 
         # Only used for choosing which experts win
-        scores_for_choice = router_scores + self.e_score_correction_bias.unsqueeze(0)  # [T, 160]
+        scores_for_choice = router_scores + self.e_score_correction_bias.to(device=router_scores.device).unsqueeze(
+            0
+        )  # [T, 160]
 
         # Choose top_k experts globally (top_k == num_experts_per_tok == 8)
         topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, 8]
@@ -557,7 +561,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
 
         if self.norm_topk_prob:
             # denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
-            denominator = torch.einsum("ab->a", topk_weights).unsqueeze(-1) + 1e-20
+            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
             topk_weights /= denominator
 
         topk_weights = topk_weights * self.routed_scaling_factor  # *2.5
@@ -698,8 +702,10 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
 
         hidden_states = outputs.last_hidden_state
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).to(hidden_states.dtype)
+        hidden_states = hidden_states[
+            torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_index
+        ]
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
             loss=None,

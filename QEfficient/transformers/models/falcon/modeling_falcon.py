@@ -323,8 +323,8 @@ class QEffFalconModel(FalconModel):
 
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for i, block in enumerate(self.h):
             if output_hidden_states:

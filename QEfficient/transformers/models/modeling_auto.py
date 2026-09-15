@@ -15,7 +15,7 @@ from typing import List, Optional, Union
 import numpy as np
 import onnx
 import torch
-import torch.nn as nn
+from torch import nn
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -33,6 +33,13 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, reject_legacy_moe_prefill_packed_chunk_size
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.blocking.attention_blocking import BlockingMode
+from QEfficient.exporter.weight_free.checkpoint_transforms import (
+    DtypeConversionCheckpointTransform,
+    GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+    GraniteMoeFusedExpertSplitCheckpointTransform,
+    MoEExpertStackingCheckpointTransform,
+    MoEFusedExpertSplitCheckpointTransform,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -86,6 +93,7 @@ from QEfficient.utils import (
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 CUSTOM_IO_DTYPE_MAP = {
@@ -95,11 +103,41 @@ CUSTOM_IO_DTYPE_MAP = {
     "float32": "float16",  # Since compiler doesn't support fp32
 }
 
+
+def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict) -> bool:
+    """Determine whether the compiler needs -convert-to-fp16.
+
+    On ai100 hardware, bfloat16 is not natively supported so we must downcast
+    to fp16 at compile time (same as fp32). On ai200, bfloat16 passes through
+    natively and no conversion is needed.
+    """
+    if CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16":
+        return True
+    if target_dtype == torch.bfloat16:
+        aic_hw = compiler_options.get(
+            "aic_hw_version", compiler_options.get("aic-hw-version", constants.DEFAULT_AIC_HW_VERSION)
+        )
+        return aic_hw != "ai200"
+    return False
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
+
+
+def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) -> None:
+    """Remove unsupported weight-free mode from non-CausalLM wrappers."""
+
+    if not kwargs.pop("weight_free", False):
+        return
+
+    logger.warning(
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        qeff_auto_class_name,
+    )
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -147,6 +185,19 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["dtype"] = kwargs["torch_dtype"]
 
 
+def _ignore_public_mdp_ts_num_devices(compiler_options: dict) -> None:
+    if "mdp_ts_num_devices" not in compiler_options:
+        return
+
+    compiler_options.pop("mdp_ts_num_devices", None)
+    logger.warning(
+        "`mdp_ts_num_devices` passed to compile() is ignored. "
+        "Tensor-slice devices per MDP partition are calculated internally as "
+        "`num_devices // mdp_num_partitions`; "
+        "pass `num_devices` and `mdp_num_partitions` instead."
+    )
+
+
 def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     """Load a VLM with vision weights and only the first language window.
 
@@ -188,7 +239,17 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     architectures, and module structure are all real), but every parameter
     and buffer is a meta tensor — zero RAM. The layer-wise driver later
     rebuilds a real per-window model when ``compile()``/``export()`` runs.
+
+    Uses accelerate's ``init_empty_weights()`` rather than a raw
+    ``torch.device("meta")`` context: some models (e.g. Gemma's embed_scale)
+    compute non-persistent buffers from a plain Python constant inside
+    ``__init__`` via ``register_buffer(..., persistent=False)``. A bare
+    ``torch.device("meta")`` context turns even those constant-valued buffers
+    into empty meta tensors with no data, which later fails to serialize to
+    ONNX. ``init_empty_weights()`` only intercepts parameter/persistent-buffer
+    allocation, so such computed buffers still get their real values.
     """
+    from accelerate import init_empty_weights
     from transformers import AutoConfig
 
     config = kwargs.get("config", None)
@@ -198,8 +259,15 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
         }
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
     torch_dtype = kwargs.get("torch_dtype", torch.float32)
-    with torch.device("meta"):
-        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
+    attn_implementation = kwargs.get("attn_implementation", "eager")
+    # from_config's torch_dtype kwarg only governs newly-created parameters; internal
+    # buffers computed during __init__ (e.g. rotary sin/cos caches) are derived from
+    # config.dtype/torch_dtype directly, so those must be updated too or they end up
+    # in the checkpoint's original dtype while parameters use torch_dtype instead.
+    config.dtype = torch_dtype
+    config.torch_dtype = torch_dtype
+    with init_empty_weights():
+        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype, attn_implementation=attn_implementation)
     return model
 
 
@@ -288,6 +356,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -326,6 +395,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -494,6 +564,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -655,7 +726,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -875,6 +946,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         QEFFAutoModelForSequenceClassification
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -988,6 +1060,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         str
             Path to the compiled QPC package.
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
@@ -1005,7 +1078,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -1095,6 +1168,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1236,6 +1310,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -1439,6 +1514,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         **kwargs :
             Additional keyword arguments.
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -1482,6 +1558,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         _QEffAutoModelForImageTextToTextDualQPC
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1896,7 +1973,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         kv_cache_batch_size : int, optional
             Not supported for this model; must be None.
         num_devices : int, optional
-            Number of devices to compile for. Default is 1.
+            Total number of devices to compile for. Default is 1.
         num_cores : int, optional
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
@@ -1913,6 +1990,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
+            Use ``mdp_num_partitions`` to select the number of pipeline-parallel
+            MDP partitions.
 
         Returns
         -------
@@ -1929,6 +2008,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        _ignore_public_mdp_ts_num_devices(compiler_options)
 
         if layerwise:
             if skip_lang and not skip_vision:
@@ -2031,6 +2111,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             num_devices=num_devices,
             qaic_config=qaic_config,
             aic_num_cores=num_cores,
+            mdp_num_partitions=compiler_options.get("mdp_num_partitions", 1),
             prefill_only=prefill_only,
             prefill_seq_len=prefill_seq_len,
         )
@@ -2115,7 +2196,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2177,7 +2258,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2712,6 +2793,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         _QEFFAutoModelForImageTextToTextSingleQPC
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -2855,7 +2937,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         kv_cache_batch_size : int, optional
             Not supported for this model; must be None.
         num_devices : int, optional
-            Number of devices to compile for. Default is 1.
+            Total number of devices to compile for. Default is 1.
         num_cores : int, optional
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
@@ -2868,6 +2950,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
+            Use ``mdp_num_partitions`` to select the number of pipeline-parallel
+            MDP partitions.
 
         Returns
         -------
@@ -2879,6 +2963,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ValueError
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
@@ -2944,7 +3029,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3311,6 +3396,7 @@ class QEFFAutoModelForImageTextToText:
         Union[_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC]
             The wrapped model instance, configured for either dual or single QPC.
         """
+        _disable_unsupported_weight_free(kwargs, self.__name__)
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(
                 model, continuous_batching, qaic_config=qaic_config, **kwargs
@@ -3358,6 +3444,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
@@ -3448,6 +3535,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     ]
 
     _onnx_transforms = []
+
+    _checkpoint_transforms = [
+        GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        MoEExpertStackingCheckpointTransform,
+        MoEFusedExpertSplitCheckpointTransform,
+        GraniteMoeFusedExpertSplitCheckpointTransform,
+        DtypeConversionCheckpointTransform,
+    ]
 
     def prefill(
         self,
@@ -3586,6 +3681,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
+        weight_free: bool = False,
         *args,
         **kwargs,
     ):
@@ -3617,6 +3713,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
               The values provided in ``top_ks`` tensor must be less than this maximum limit.
             - **include_guided_decoding** (bool): If True, enables guided token-level filtering
               during decoding. Only works when include_sampler=True.
+        weight_free : bool, optional
+            If True, builds the model on the meta device instead of loading real
+            checkpoint weights — no weights are materialized into RAM. This is
+            the single place to enable weight-free export; ``export()``/``compile()``
+            automatically route through the weight-free path afterward, with no
+            further flag needed. The real checkpoint weights are supplied at
+            export time via ``pretrained_model_name_or_path``. Mutually exclusive
+            with ``layerwise=True``. Default is False.
+
+            The prepared/converted checkpoint produced during weight-free export
+            (dtype conversion, MoE expert restacking, etc.) is saved under the
+            ``QEFF_CHECKPOINT_HOME`` environment variable if set, otherwise next
+            to the source checkpoint under the Hugging Face cache.
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
@@ -3631,6 +3740,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        if layerwise and weight_free:
+            raise ValueError(
+                "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
+            )
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
+
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -3656,10 +3772,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         _resolve_torch_dtype(kwargs)
         if layerwise:
+            warnings.warn(
+                "layerwise export is deprecated and will be removed in a future release. "
+                "Use weight-free export (weight_free=True) instead, which provides "
+                "the same memory benefit without the complexity of per-window re-export.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
             # model internally via the layer-wise driver.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        elif weight_free:
+            # Weight-free mode: build the model on the meta device so no
+            # checkpoint weights are ever materialized here. The real weights
+            # are supplied later at export time via pretrained_model_name_or_path.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
@@ -3683,6 +3811,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            weight_free=weight_free,
             **kwargs,
         )
         if layerwise:
@@ -3818,7 +3947,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         kwargs["enable_chunking"] = enable_chunking
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
-
+        # Weight-free export always uses the dynamo (torch.export) path.
+        # Must be set here — @export_wrapper reads dynamo from kwargs before _export() body runs.
+        dynamo = dynamo or self._weight_free
         if (
             kwargs.get("retain_full_kv", False)
             and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
@@ -3967,7 +4098,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("logits")
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
-        if (
+        if hasattr(self.model, "get_onnx_retained_state_specs"):
+            retained_state_specs = self.model.get_onnx_retained_state_specs(
+                batch_size=fbs if self.continuous_batching else bs,
+                seq_len=seq_len,
+                kv_cache_shape=kv_cache_shape,
+                continuous_batching=self.continuous_batching,
+                retain_full_kv=kwargs.get("retain_full_kv", False)
+                or (prefill_only and kwargs.get("enable_chunking", False)),
+            )
+            example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
+            dynamic_axes.update(retained_state_specs["dynamic_axes"])
+            output_names.extend(retained_state_specs["output_names"])
+        elif (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
             and hasattr(self.model, "get_dummy_pkv_cache")
@@ -4078,7 +4221,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             import functools
             import inspect
 
-            from transformers.cache_utils import Cache, DynamicCache
+            from transformers.cache_utils import Cache
 
             model_forward = self.model.forward
             model_forward_sig = inspect.signature(model_forward)
@@ -4103,9 +4246,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     return obj
 
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
-                past_key_values = bound_args.arguments.get("past_key_values", None)
-                if past_key_values is not None and not isinstance(past_key_values, Cache):
-                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
                 if torch.onnx.is_in_onnx_export():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
@@ -4390,8 +4530,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
         if layerwise:
+            warnings.warn(
+                "layerwise export is deprecated and will be removed in a future release. "
+                "Use weight-free export (weight_free=True) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return self._run_layerwise(
                 final_compile=True,
                 layerwise_window_size=layerwise_window_size,
@@ -4476,6 +4623,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
+
+        if self._weight_free and (prefill_only is True or prefill_seq_len == 1):
+            raise NotImplementedError(
+                "weight_free=True is not supported with disaggregated compile (prefill_only=True or prefill_seq_len=1)."
+            )
 
         _decode_ks = (
             sorted(set(num_speculative_tokens))
@@ -4614,18 +4766,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         custom_io = {}
         if not cache_compressed:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    output_name = _compile_io_name(
-                        f"past_{kv}.{i}{kv_infix}_RetainedState",
-                        use_onnx_subfunctions=use_onnx_subfunctions,
-                    )
-                    _add_retained_state_custom_io(
-                        custom_io,
-                        output_name,
-                        dtype=kv_cache_dtype,
-                        use_onnx_subfunctions=False,
-                    )
+            retained_state_names = (
+                self.model.get_retained_state_names()
+                if hasattr(self.model, "get_retained_state_names")
+                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
+            )
+            for state_name in retained_state_names:
+                output_name = _compile_io_name(
+                    f"{state_name}{kv_infix}_RetainedState",
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                )
+                _add_retained_state_custom_io(
+                    custom_io,
+                    output_name,
+                    dtype=kv_cache_dtype,
+                    use_onnx_subfunctions=False,
+                )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
@@ -4648,7 +4804,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -4971,6 +5127,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Path to the compiled QPC package.
 
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         specializations, compiler_options = self.model.get_specializations(
             batch_size,
             encoder_ctx_len,
@@ -5012,7 +5169,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -5222,6 +5379,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -5327,6 +5485,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
             {"_graph_name": "CTC" if len(_seq_lens) == 1 else f"CTC_{i}", "batch_size": batch_size, "seq_len": sl}
@@ -5338,7 +5497,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,

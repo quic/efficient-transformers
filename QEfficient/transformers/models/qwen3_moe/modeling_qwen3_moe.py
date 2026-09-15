@@ -121,7 +121,7 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
         router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
         if self.norm_topk_prob:
-            router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+            router_top_value = router_top_value / router_top_value.sum(dim=-1, keepdim=True)
         router_top_value = router_top_value.to(router_logits.dtype)
         return router_logits, router_top_value, router_indices
 
@@ -178,7 +178,7 @@ class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
     def route(self, x: torch.Tensor):
         router_logits, top_w, top_i = self.gate(x)
         if self.norm_topk_prob:
-            top_w = top_w / torch.einsum("bk->b", top_w).unsqueeze(-1)
+            top_w = top_w / top_w.sum(dim=-1, keepdim=True)
         top_w = top_w.to(x.dtype)
         return (top_i, top_w), router_logits
 
@@ -372,8 +372,8 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
@@ -461,7 +461,9 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
             logits = hidden_states
         else:
             logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+            hidden_states = outputs.last_hidden_state[
+                torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_idx
+            ]
             logits = self.lm_head(hidden_states).float()
 
         return MoeCausalLMOutputWithPast(

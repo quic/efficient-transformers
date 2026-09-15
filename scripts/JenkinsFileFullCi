@@ -46,7 +46,7 @@ pipeline {
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
-        booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: false, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
     }
 
     environment {

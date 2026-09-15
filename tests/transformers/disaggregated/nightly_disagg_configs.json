@@ -1,0 +1,13 @@
+{
+  "gpt_oss": {
+    "model_id": "openai/gpt-oss-20b",
+    "test_configs": [
+      {
+        "id": "full_model_prefill8_decode4_stages4",
+        "prefill_num_devices": 8,
+        "decode_num_devices": 4,
+        "stages": 4
+      }
+    ]
+  }
+}

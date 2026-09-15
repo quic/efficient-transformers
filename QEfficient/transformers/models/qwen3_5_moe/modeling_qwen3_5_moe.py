@@ -75,6 +75,16 @@ from QEfficient.utils.logging_utils import logger
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
 
 
+def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
+    if position_ids is None:
+        return cache_position.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 1:
+        return position_ids.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 2:
+        return position_ids.unsqueeze(0).expand(4, position_ids.shape[0], -1)
+    return position_ids
+
+
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
     RMSNorm module that works by replacing the current module with compiler known custom-op.
@@ -534,6 +544,7 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
+                prefill_only=blocking_config.mode.is_prefill,
             )
         else:
             if past_key_values is not None:
@@ -613,7 +624,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
         return attn + eye.to(dtype=attn.dtype, device=attn.device)
 
     def _solve_chunk_attn_recursive_sns(
@@ -728,8 +739,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     query = l2norm(query, dim=-1, eps=1e-6)
         #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
-            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
+            query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+            key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -842,10 +853,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # L2 norm (matching chunk kernel behavior)
         q = query.float()
         k = key.float()
-        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
-        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
+        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
 
         v = value.float()
 
@@ -866,12 +875,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # Single step — no loop because T=1
         # S update
         S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
+        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
         delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
         S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
+        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
@@ -1065,8 +1072,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
-        # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
-        return self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
+        return self.out_proj(core_attn_out)
 
     @staticmethod
     def apply_mask_to_padding_states(hidden_states, attention_mask):
@@ -1195,19 +1202,20 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 cache_position = torch.arange(
                     past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
                 )
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+        position_ids = _expand_mrope_position_ids(position_ids, cache_position, inputs_embeds.shape[0])
+        text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+        rotary_position_ids = (
+            position_ids[1:] if position_ids.ndim == 3 and position_ids.shape[0] == 4 else position_ids
+        )
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
         else:
             pos_max = 0
-            if position_ids is not None:
-                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
-                pos_max = int(text_position_ids.max().item()) + 1
+            pos_max = int(text_position_ids.max().item()) + 1
             target_length = max(past_seen_tokens, pos_max)
         causal_mask = _create_causal_mask(
-            position_ids=position_ids[0], target_length=target_length, sliding_window=None
+            position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
         linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
 
@@ -1216,7 +1224,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
         mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
         cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, position_ids[1:], mrope_section, dtype=hidden_states.dtype
+            self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
         )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
@@ -1283,6 +1291,11 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
+
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def get_onnx_retained_state_specs(
         self,
@@ -2249,7 +2262,7 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
         router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value / router_top_value.sum(dim=-1, keepdim=True)
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices

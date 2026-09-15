@@ -320,7 +320,7 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
             router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
             routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-            routing_weights = routing_weights / torch.einsum("bi->b", routing_weights)[:, None]
+            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True)
             routing_weights = routing_weights.to(x.dtype)
         return (selected_experts, routing_weights), router_logits
 
@@ -473,8 +473,8 @@ class QEffMixtralModel(MixtralModel):
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -575,7 +575,9 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
 
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        hidden_states = outputs.last_hidden_state[
+            torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_idx
+        ]
         lm_head_dtype = self.lm_head.weight.dtype
         logits = self.lm_head(hidden_states.to(lm_head_dtype)).float()
 

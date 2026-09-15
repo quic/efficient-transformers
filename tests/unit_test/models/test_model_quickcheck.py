@@ -28,7 +28,9 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, Optional, Set
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
@@ -1385,7 +1387,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),
     ids=sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS),
 )
-def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, config_kwargs, tmp_path):
+def test_moe_prefill_subfunction_export_uses_reduce_sum_reductions(model_type, config_kwargs, tmp_path):
     config = AutoConfig.for_model(model_type, **config_kwargs)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
@@ -1419,7 +1421,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     decoder_op_types = _function_op_types(onnx_model, decoder_function_names)
 
     assert len(decoder_function_names) == config.num_hidden_layers
-    assert "Einsum" in decoder_op_types
+    assert "ReduceSum" in decoder_op_types
     assert "CtxGather3D" in decoder_op_types
     assert "CtxScatter3D" in decoder_op_types
     assert "CtxScatter3DInt" in decoder_op_types
@@ -3457,6 +3459,45 @@ def test_runtime_aliases_internal_retained_state_outputs():
     bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
     _add_basename_binding_aliases(binding_map, bindings)
     assert binding_map["input_ids"] == 3
+
+
+@pytest.mark.llm_model
+def test_runtime_failure_releases_qaic_program(monkeypatch):
+    from QEfficient.generation import cloud_infer
+
+    success = object()
+    monkeypatch.setattr(
+        cloud_infer,
+        "qaicrt",
+        SimpleNamespace(QStatus=SimpleNamespace(QS_SUCCESS=success)),
+        raising=False,
+    )
+
+    exec_obj = MagicMock()
+    exec_obj.setData.return_value = success
+    exec_obj.waitForCompletion.return_value = object()
+    program = MagicMock()
+    program.deactivate.return_value = success
+    program.unload.return_value = success
+    queue = MagicMock()
+    queue.enqueue.return_value = success
+
+    session = object.__new__(cloud_infer.QAICInferenceSession)
+    session.allowed_shapes = []
+    session.buf_dims = []
+    session.execObj = exec_obj
+    session.is_active = True
+    session.program = program
+    session.qbuffers = []
+    session.queue = queue
+    session.set_buffers = MagicMock()
+
+    with pytest.raises(ValueError, match="Failed to run"):
+        session.run({})
+
+    program.deactivate.assert_called_once_with()
+    program.unload.assert_called_once_with()
+    assert session.is_active is False
 
 
 @pytest.mark.llm_model
