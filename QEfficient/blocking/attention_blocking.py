@@ -136,7 +136,7 @@ class AttentionBlockingConfig:
     gdn_num_head_blocks: Optional[int] = None
     headpar_split: Optional[int] = None
     batch_fold: Optional[bool] = False
-    n_rep_chunk: Optional[int] = None
+    n_rep_chunk: Optional[int] = 1
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
 
@@ -370,8 +370,16 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
-            use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_mode == BlockingMode.KV_BATCH_FOLD:
+            mode = blocking_config.mode
+            use_kv_blocked = (
+                mode == BlockingMode.KV
+                or mode == BlockingMode.KV_HEADPAR
+                or mode == BlockingMode.QKV
+                or mode == BlockingMode.HKV
+                or mode == BlockingMode.HQKV
+                or mode == BlockingMode.BHQKV
+            ) and supports_blocked_kv(past_key_value)
+            if mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
