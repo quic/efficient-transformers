@@ -670,7 +670,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
         return attn + eye.to(dtype=attn.dtype)
 
     def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
