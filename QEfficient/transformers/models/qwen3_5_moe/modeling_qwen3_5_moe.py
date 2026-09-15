@@ -821,13 +821,14 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         #
         # chunk decay
-        # g = g.cumsum(dim=-1)
+        # Use the precomputed cumsum matrix so strict dynamo subfunctions do not alias a captured buffer.
+        if ones_lower is None:
+            idx = torch.arange(g.size(-1), device=g.device)
+            ones_lower = (idx.unsqueeze(1) >= idx.unsqueeze(0)).to(g.dtype)
+        else:
+            ones_lower = ones_lower.to(device=g.device, dtype=g.dtype).clone()
 
-        L = g.size(-1)
-        idx = torch.arange(L, device=g.device)
-        mask_g = (idx.unsqueeze(1) >= idx.unsqueeze(0)).to(g.dtype)
-
-        g = g @ mask_g.T
+        g = g @ ones_lower.T
 
         #
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
@@ -1170,8 +1171,8 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
             if isinstance(hidden_states, tuple):
                 # Write returned linear-attention cache state at layer scope so nested function outputs stay explicit.
                 hidden_states, conv_state, recurrent_state = hidden_states
-                past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state
-                past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state
+                past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state.clone()
+                past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state.clone()
         else:
             hidden_states, _ = self.self_attn(
                 hidden_states=hidden_states,
@@ -1197,24 +1198,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> List[Type[nn.Module]]:
-    if getattr(model, "_modules", None) is not None:
-        for module in model.modules():
-            if not isinstance(module, QEffQwen3_5MoeAttention):
-                continue
-            blocking_config = getattr(module, "attn_blocking_config", None)
-            if blocking_config is not None and BlockingMode.resolve(blocking_config.mode) == BlockingMode.KV_HEADPAR:
-                # KV_HEADPAR only subfunctions full attention; linear-attention functions hit compiler view handling.
-                return [QEffQwen3_5MoeAttention]
-
-    submodules = []
-    if getattr(model, "_modules", None) is not None:
-        # Keep natural module order and duplicates so dynamo gets one target per repeated subgraph.
-        for module in model.modules():
-            if isinstance(module, QEffQwen3_5MoeAttention):
-                submodules.append(QEffQwen3_5MoeAttention)
-            elif isinstance(module, QEffQwen3_5MoeGatedDeltaNet):
-                submodules.append(QEffQwen3_5MoeGatedDeltaNet)
-    return submodules or [QEffQwen3_5MoeDecoderLayer]
+    return [QEffQwen3_5MoeDecoderLayer]
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
