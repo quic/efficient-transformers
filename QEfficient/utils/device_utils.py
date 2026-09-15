@@ -17,6 +17,9 @@ from QEfficient.utils.logging_utils import logger
 
 def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) -> list[list[int]]:
     """Return ready, topology-compatible QAIC device groups suitable for parallel test workers."""
+    if devices_per_group < 1:
+        raise ValueError(f"devices_per_group must be positive, got {devices_per_group}")
+
     command = ["/opt/qti-aic/tools/qaic-util", "-q"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -45,9 +48,33 @@ def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) ->
     device_groups = []
     for device_ids in groups.values():
         device_ids.sort()
-        if len(device_ids) >= devices_per_group:
-            device_groups.append(device_ids[:devices_per_group])
+        for start in range(0, len(device_ids) - devices_per_group + 1, devices_per_group):
+            device_groups.append(device_ids[start : start + devices_per_group])
     return sorted(device_groups, key=lambda device_ids: device_ids[0])
+
+
+def parse_qaic_device_groups(value: str) -> list[list[int]]:
+    """Parse explicit semicolon-delimited QAIC groups and reject overlapping devices."""
+    device_groups = []
+    assigned_devices = set()
+    for raw_group in value.split(";"):
+        raw_group = raw_group.strip()
+        if not raw_group:
+            continue
+        try:
+            device_ids = [int(device_id.strip()) for device_id in raw_group.split(",")]
+        except ValueError as exc:
+            raise ValueError(f"Invalid QAIC device group {raw_group!r}; expected comma-separated integers") from exc
+        if any(device_id < 0 for device_id in device_ids):
+            raise ValueError(f"QAIC device ids must be non-negative: {raw_group!r}")
+        duplicate_devices = assigned_devices.intersection(device_ids)
+        if len(set(device_ids)) != len(device_ids) or duplicate_devices:
+            raise ValueError(f"QAIC devices cannot be assigned to multiple workers: {raw_group!r}")
+        assigned_devices.update(device_ids)
+        device_groups.append(device_ids)
+    if not device_groups:
+        raise ValueError("At least one QAIC device group must be provided")
+    return device_groups
 
 
 def get_available_device_id(min_nsp: int = 16) -> Optional[list[int]]:
