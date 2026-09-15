@@ -2378,8 +2378,8 @@ def test_qwen3_5_moe_gated_norm_preserves_float16():
     assert out.dtype == torch.float16
 
 
-def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_layer_types():
-    """Mixed full/linear attention configs must still expose decoder layer subfunctions."""
+def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
+    """Mixed full/linear attention configs must still expose usable subfunction targets."""
     from types import SimpleNamespace
 
     from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
@@ -2392,13 +2392,13 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
 
     causal_lm = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
     causal_lm.config = SimpleNamespace(layer_types=["full_attention", "linear_attention"])
-    assert causal_lm.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+    assert causal_lm.get_submodules_for_export() == [QEffQwen3_5MoeDecoderLayer]
     assert causal_lm.get_onnx_past_key_value_names(0) == ["past_key.0", "past_value.0"]
     assert causal_lm.get_onnx_past_key_value_names(1) == ["conv_state.1", "recurrent_state.1"]
 
     wrapper = QEffQwen3_5MoeDecoderWrapper.__new__(QEffQwen3_5MoeDecoderWrapper)
     wrapper.config = SimpleNamespace(text_config=SimpleNamespace(layer_types=["full_attention", "linear_attention"]))
-    assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+    assert wrapper.get_submodules_for_export() == [QEffQwen3_5MoeDecoderLayer]
     assert wrapper.get_onnx_past_key_value_names(0) == ["past_key.0", "past_value.0"]
     assert wrapper.get_onnx_past_key_value_names(1) == ["conv_state.1", "recurrent_state.1"]
 
@@ -2418,7 +2418,7 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
         num_kv_blocks=8,
         headpar_split=4,
     )
-    assert headpar_model.get_submodules_for_export() == {QEffQwen3_5MoeAttention}
+    assert headpar_model.get_submodules_for_export() == [QEffQwen3_5MoeAttention]
 
 
 def test_qwen3_5_moe_decode_export_uses_static_token_axis():
@@ -2446,7 +2446,7 @@ def test_qwen3_5_moe_decode_export_uses_static_token_axis():
     assert dynamic_axes["position_ids"] == {1: "batch_size"}
 
 
-def test_qwen3_5_moe_retained_state_specs_keep_recurrent_state_float32():
+def test_qwen3_5_moe_retained_state_specs_keep_flat_conv_and_recurrent_state_float32():
     from types import SimpleNamespace
 
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForCausalLM
@@ -2470,6 +2470,7 @@ def test_qwen3_5_moe_retained_state_specs_keep_recurrent_state_float32():
     specs = model.get_onnx_retained_state_specs(batch_size=2, seq_len=1, kv_cache_shape=[2, 1, 32, 8])
 
     assert specs["past_key_values"][0][0].dtype == torch.bfloat16
+    assert specs["past_key_values"][1][0].shape == (2, 16, 4)
     assert specs["past_key_values"][1][0].dtype == torch.bfloat16
     assert specs["past_key_values"][1][1].dtype == torch.float32
     assert specs["state_dtypes"]["recurrent_state.1"] == torch.float32
