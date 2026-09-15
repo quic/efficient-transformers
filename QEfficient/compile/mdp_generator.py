@@ -8,19 +8,17 @@
 
 import bisect
 import logging
-import re
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import onnx
 
-from QEfficient.utils import create_json, load_json
+from QEfficient.utils import create_json
 
 logger = logging.getLogger(__name__)
 
 _MAX_INLINABLE_NODES = 100
-_MDP_PARTITION_ORDER_ERR_RE = re.compile(r'Consumer node "([^"]+)" appears in partition before producer node "([^"]+)"')
 
 
 class MdpStrategy(str, Enum):
@@ -54,60 +52,6 @@ def _drop_mdp_nodes_inplace(mdp_json: Dict[str, Any], nodes_to_drop: Set[str]) -
         removed += len(node_list) - len(filtered)
         partition["nodeList"] = filtered
     return removed
-
-
-def drop_mdp_nodes(mdp_json_path: Path, nodes_to_drop: Set[str]) -> int:
-    """Drop specific nodes from MDP partition nodeLists and persist the JSON."""
-    if not nodes_to_drop:
-        return 0
-    mdp_json = load_json(str(mdp_json_path))
-    removed = _drop_mdp_nodes_inplace(mdp_json, nodes_to_drop)
-    if removed:
-        create_json(str(mdp_json_path), mdp_json)
-    return removed
-
-
-def autofix_mdp_partition_order_from_compiler_error(
-    mdp_json_path: Path,
-    compiler_stderr: str,
-    dropped_nodes: Optional[Set[str]] = None,
-) -> Tuple[int, Optional[str], Optional[str], Optional[str]]:
-    """Drop one offending node from MDP JSON by parsing compiler partition-order stderr.
-
-    Returns:
-        (removed_count, dropped_node, consumer_node, producer_node)
-    """
-    dropped_nodes = dropped_nodes or set()
-    match = _MDP_PARTITION_ORDER_ERR_RE.search(compiler_stderr or "")
-    if not match:
-        return 0, None, None, None
-
-    consumer_node = match.group(1)
-    producer_node = match.group(2)
-
-    # Prefer removing producer alias bases like "/Gather_5" when compiler
-    # reports producer "/Gather_5." under subfunctions.
-    drop_candidates: List[str] = []
-    if producer_node.endswith("."):
-        drop_candidates.append(producer_node[:-1])
-    drop_candidates.append(consumer_node)
-
-    node_to_drop = None
-    for candidate in drop_candidates:
-        if not candidate or candidate in dropped_nodes:
-            continue
-        if _is_decoder_layer_callsite(candidate):
-            continue
-        node_to_drop = candidate
-        break
-
-    if node_to_drop is None:
-        return 0, None, consumer_node, producer_node
-
-    removed = drop_mdp_nodes(Path(mdp_json_path), {node_to_drop})
-    if removed <= 0:
-        return 0, None, consumer_node, producer_node
-    return removed, node_to_drop, consumer_node, producer_node
 
 
 def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: Dict[str, Any]) -> List[Tuple[str, str]]:
