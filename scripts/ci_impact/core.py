@@ -502,7 +502,7 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
         stages.add("qaic_multimodal")
     if "cli" in markers:
         stages.add("cli")
-    if "on_qaic" in markers and "feature" in markers:
+    if "on_qaic" in markers and ("feature" in markers or "embedding_audio_model" in markers):
         stages.add("qaic_feature")
     if "llm_model" in markers:
         stages.add("qaic_llm")
