@@ -388,6 +388,26 @@ def blocked_kv_attention_forward_headpar_offline(
 
     query_folded = query.reshape(batch_size, num_kv_heads, seq_len * num_kv_groups, head_dim)
     query_5d = query_folded.unsqueeze(2).expand(batch_size, num_kv_heads, split, seq_len * num_kv_groups, head_dim)
+    # -------------------------------------------------------
+    # Precompute query positions once.
+    # Shape: [B, 1, G*Q, 1]
+    # -------------------------------------------------------
+    q_pos = (
+        position_ids.reshape(batch_size, 1, seq_len)
+        .unsqueeze(2)
+        .expand(-1, num_kv_groups, -1, -1)
+        .reshape(batch_size, 1, num_kv_groups * seq_len, 1)
+    )
+
+    # -------------------------------------------------------
+    # Split index template
+    # Shape: [1,1,split,1,1]
+    # -------------------------------------------------------
+    split_idx = torch.arange(
+        split,
+        device=query.device,
+        dtype=position_ids.dtype,
+    ).view(1, 1, split, 1, 1)
 
     max_blocks = []
     sum_blocks = []
@@ -430,24 +450,25 @@ def blocked_kv_attention_forward_headpar_offline(
                 pad_mask.view(1, 1, split, 1, split_block_len), HEADPAR_MASKED_ATTENTION_VALUE
             )
 
-        split_causal_masks = []
-        for s in range(split):
-            s_start = start_index + s * split_block_len
-            mask_s = _create_causal_mask(
-                position_ids=position_ids,
-                target_length=s_start + split_block_len,
-                sliding_window=sliding_window,
-                start_index=s_start,
-            )
-            # mask_s: [B, 1, Q, split_block_len]
-            # Expand to folded GQA space: [B, 1, G*Q, split_block_len]
-            mask_s = (
-                mask_s.unsqueeze(2)
-                .expand(-1, -1, num_kv_groups, -1, -1)
-                .reshape(batch_size, 1, num_kv_groups * seq_len, split_block_len)
-            )
-            split_causal_masks.append(mask_s)
-        causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, G*Q, split_block_len]
+        # Absolute KV positions for this block.
+        #
+        # Shape:
+        #   [1,1,split,1,split_block_len]
+        # -------------------------------------------------------
+        kv_idx = torch.arange(
+            split_block_len,
+            device=query.device,
+            dtype=position_ids.dtype,
+        ).view(1, 1, 1, 1, split_block_len)
+
+        abs_kv_pos = start_index + split_idx * split_block_len + kv_idx
+
+        causal_mask = abs_kv_pos > q_pos
+
+        attn_weights_block = attn_weights_block.masked_fill(
+            causal_mask,
+            HEADPAR_MASKED_ATTENTION_VALUE,
+        )
 
         attn_weights_block = attn_weights_block.masked_fill(causal_mask, HEADPAR_MASKED_ATTENTION_VALUE)
 
@@ -679,13 +700,15 @@ def blocked_qkv_attention_forward_prefill_online(
     past_key_value: Cache,
     ctx_len: int,
     n_rep_chunk: Optional[int] = 1,
+    num_cores_per_device: Optional[int] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     B, NQH, QL, D = query.shape
     num_kv_groups = getattr(module, "num_key_value_groups", None)
     Hkv = NQH // num_kv_groups
-    num_cores_per_device = getattr(module.config, "num_cores_per_device", None) if hasattr(module, "config") else None
     num_cores = num_cores_per_device if num_cores_per_device is not None else Hkv
+    if num_cores > NQH:
+        num_cores = Hkv
     kv_repeat = num_cores // Hkv
     n_rep_per_core = NQH // num_cores
     skip_kv = kwargs.get("skip_kv", False)
@@ -700,7 +723,6 @@ def blocked_qkv_attention_forward_prefill_online(
 
     q_fold = query.reshape(B, num_cores, n_rep_per_core, QL, D)
     is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
-
     t_chunks = []
     for t_start in range(0, QL, ql_chunk):
         t_end = min(t_start + ql_chunk, QL)
