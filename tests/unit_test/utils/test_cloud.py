@@ -1274,3 +1274,17 @@ QID 8
 
         with patch("QEfficient.utils.device_utils.subprocess.run", return_value=result):
             assert get_qaic_mdp_device_groups() == [[4, 5, 6, 7]]
+
+        with patch("QEfficient.utils.device_utils.subprocess.run", return_value=result):
+            assert get_qaic_mdp_device_groups(devices_per_group=2) == [[4, 5], [6, 7]]
+
+    def test_parses_explicit_non_overlapping_groups(self):
+        from QEfficient.utils.device_utils import parse_qaic_device_groups
+
+        assert parse_qaic_device_groups("0,1; 4,5") == [[0, 1], [4, 5]]
+
+    def test_rejects_overlapping_explicit_groups(self):
+        from QEfficient.utils.device_utils import parse_qaic_device_groups
+
+        with pytest.raises(ValueError, match="cannot be assigned to multiple workers"):
+            parse_qaic_device_groups("0,1;1,2")
