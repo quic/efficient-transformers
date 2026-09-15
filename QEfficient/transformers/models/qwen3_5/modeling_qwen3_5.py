@@ -947,6 +947,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         attention_mask=None,
         position_ids=None,
         batch_index: torch.LongTensor | None = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -1172,8 +1174,10 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
         past_key_values: QEffQwen3_5DynamicCache | None = None,
         comp_ctx_lengths: torch.LongTensor | None = None,
         batch_index: torch.LongTensor | None = None,
-        use_cache: bool | None = None,
-        cache_position: torch.LongTensor | None = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> torch.FloatTensor:
         del use_cache
@@ -1235,6 +1239,8 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         past_key_values: QEffQwen3_5DynamicCache | tuple[tuple[torch.FloatTensor, ...], ...] | None = None,
         comp_ctx_lengths: torch.LongTensor | None = None,
         batch_index: torch.LongTensor | None = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         cache_position: torch.LongTensor | None = None,
@@ -2096,7 +2102,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False
+        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False, batch_fold: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
