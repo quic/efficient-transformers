@@ -42,7 +42,10 @@ PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
 BS = 1
 GENERATION_LEN = 10
-qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
+qaic_config = {
+    "mla_absorption": {"cache_compressed": True, "absorption": False, "online": False},
+    "moe_config": {"flavour": "decode_bmm"},
+}
 
 
 def parse_args():
