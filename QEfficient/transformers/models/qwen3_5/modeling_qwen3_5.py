@@ -69,12 +69,14 @@ def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
         return position_ids.unsqueeze(0).expand(4, position_ids.shape[0], -1)
     return position_ids
 
+
 def _batch_index_scatter(tensor: torch.Tensor, batch_index: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
     """Place logical request rows into their physical batch slots."""
     batch_first = tensor if batch_dim == 0 else tensor.transpose(0, batch_dim)
     slots = batch_index.reshape(-1).long()
     batch_first = torch.zeros_like(batch_first).index_put((slots,), batch_first, accumulate=False)
     return batch_first if batch_dim == 0 else batch_first.transpose(0, batch_dim)
+
 
 def _batch_index_gather(tensor: torch.Tensor, batch_index: torch.Tensor) -> torch.Tensor:
     """Restore physical-slot rows to logical request order."""
