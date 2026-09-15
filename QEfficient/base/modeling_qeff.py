@@ -42,6 +42,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     OptimizedMoETransform,
+    PagedAttentionMinimax,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -1007,6 +1008,8 @@ class QEFFBaseModel(ABC):
         else:
             self.hash_params.pop("blocking_kwargs", None)
         if qaic_config is not None:
+            if qaic_config.get("paged_kv", False):
+                self.model, _ = PagedAttentionMinimax.apply(self.model, qaic_config, ctx_len)
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 

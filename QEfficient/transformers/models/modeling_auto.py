@@ -1645,6 +1645,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Sync compile-time qaic_config onto the model so get_dummy_inputs / get_specializations
         # can read DP/GP params (e.g. msa_indexer_dp) that arrive only at compile time.
         if qaic_config is not None:
+            self.model.qaic_config = qaic_config
             self.lang_model.model.qaic_config = qaic_config
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -2102,6 +2103,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             continuous_batching=self.continuous_batching,
             kv_cache_batch_size=kv_cache_batch_size,
             full_batch_size=full_batch_size,
+            qaic_config=qaic_config,
             **compiler_options,
         )
 
