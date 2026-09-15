@@ -127,7 +127,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
@@ -142,7 +142,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
@@ -161,7 +161,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
@@ -175,7 +175,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manua
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
@@ -189,7 +189,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
@@ -203,7 +203,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
@@ -220,7 +220,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cle
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name, manual_cleanup):
@@ -242,7 +242,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model, manual_cleanup):
@@ -265,7 +265,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model, manual_cleanup)
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", [embed_test_models[0]])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model, manual_cleanup):
