@@ -17,7 +17,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
-from QEfficient.generation.input_preparation import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
+from QEfficient.generation.generation_helpers import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger

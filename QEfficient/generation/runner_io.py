@@ -16,204 +16,64 @@ dual-QPC VLM artifacts mode generation flows.
 
 import json
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Union
+from typing import List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import onnx
-import yaml
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.generation.input_preparation import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
+from QEfficient.generation.generation_helpers import (
+    _add_cross_qpc_placeholders,
+    _add_specialization_control_inputs,
+    _apply_input_shapes,
+    _component_prefill_symbols,
+    _concat_input_batches,
+    _cross_qpc_output_shapes,
+    _custom_io_item_sizes,
+    _custom_io_precisions,
+    _execution_batch_size,
+    _filter_graph_inputs,
+    _first_execution_batch,
+    _get_compile_dir,
+    _prepare_vlm_execution_inputs,
+    _proxy_logits_width,
+    _required_host_input_names,
+    _resolve_output_shape,
+    _slice_vlm_prefill_inputs,
+    _specialization_symbols,
+    build_prefill_inputs,
+    load_prefill_specialization,
+    prepare_tokenizer,
+    slice_prefill_inputs,
+)
 from QEfficient.utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
-_PRECISION_ITEM_SIZES = {
-    "bfloat16": 2,
-    "float16": 2,
-    "float32": 4,
-    "int8": 1,
-    "mxint8": 1,
-}
-
-
-def _get_compile_dir(model) -> Path:
-    qpc_path = getattr(model, "qpc_path", None)
-    if qpc_path is not None:
-        return Path(qpc_path).parent
-    compile_dir = getattr(model, "compile_artifacts_path", None)
-    if compile_dir is not None:
-        return Path(compile_dir)
-    raise TypeError("Compile the model or generate compile artifacts before writing runner inputs.")
-
-
-def load_prefill_specialization(compile_dir: Union[str, Path]) -> Dict[str, int]:
-    """Return the first prefill specialization from a compile workspace."""
-    specializations_path = Path(compile_dir) / "specializations.json"
-    if not specializations_path.is_file():
-        raise FileNotFoundError(f"specializations.json not found at {specializations_path}.")
-    specializations = json.loads(specializations_path.read_text())["specializations"]
-    if not specializations:
-        raise ValueError(f"No specializations found in {specializations_path}.")
-    for specialization in specializations:
-        symbols = specialization.get("symbols", specialization)
-        if int(symbols.get("seq_len", 0)) > 1:
-            return symbols
-    return specializations[0].get("symbols", specializations[0])
-
-
-def _custom_io_precisions(compile_dir: Path) -> Dict[str, str]:
-    custom_io_path = compile_dir / "custom_io.yaml"
-    if not custom_io_path.is_file():
-        return {}
-
-    entries = yaml.safe_load(custom_io_path.read_text()) or []
-    return {entry["IOName"]: entry["Precision"] for entry in entries if entry.get("IOName") and entry.get("Precision")}
-
-
-def _custom_io_item_sizes(compile_dir: Path) -> Dict[str, int]:
-    return {
-        name: _PRECISION_ITEM_SIZES[precision]
-        for name, precision in _custom_io_precisions(compile_dir).items()
-        if precision in _PRECISION_ITEM_SIZES
-    }
-
-
-def _specialization_symbols(specialization: Mapping[str, int]) -> Dict[str, int]:
-    return {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
-
-
-def _execution_batch_size(specialization: Mapping[str, int]) -> int:
-    return int(specialization.get("batch_size", 1))
-
-
-def _first_execution_batch(values: Sequence, batch_size: int, name: str) -> List:
-    if not values:
-        raise ValueError(f"`{name}` must contain at least one value.")
-    values = list(values)
-    if len(values) < batch_size:
-        logger.warning(f"Number of {name} is less than the compiled batch size; repeating to match it.")
-        values = values * (batch_size // len(values) + 1)
-    return values[:batch_size]
-
-
-def _concat_input_batches(input_batches: Sequence[Mapping[str, np.ndarray]]) -> Dict[str, np.ndarray]:
-    merged_inputs = {}
-    input_names = set().union(*(input_batch.keys() for input_batch in input_batches))
-    for input_name in input_names:
-        values = [np.asarray(input_batch[input_name]) for input_batch in input_batches if input_name in input_batch]
-        if len(values) != len(input_batches):
-            raise ValueError(f"Processor output {input_name!r} is missing from one or more batch entries.")
-        try:
-            merged_inputs[input_name] = np.concatenate(values, axis=0)
-        except ValueError as error:
-            raise ValueError(f"Processor output {input_name!r} cannot be batched for artifacts mode replay.") from error
-    return merged_inputs
-
-
-def _prepare_vlm_execution_inputs(
-    handler, images: Sequence, prompts: Sequence[str], prefill_seq_len: int, batch_size: int
-) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    batch_images = _first_execution_batch(images, batch_size, "images")
-    batch_prompts = _first_execution_batch(prompts, batch_size, "prompts")
-    vision_batches = []
-    lang_batches = []
-    for image, prompt in zip(batch_images, batch_prompts):
-        vision_inputs, lang_inputs, _ = handler.prepare_processor_inputs(image, prompt, prefill_seq_len)
-        vision_batches.append(vision_inputs)
-        lang_batches.append(_slice_vlm_prefill_inputs(lang_inputs, prefill_seq_len))
-    return _concat_input_batches(vision_batches), _concat_input_batches(lang_batches)
-
-
-def _component_prefill_symbols(component) -> Dict[str, int]:
-    try:
-        compile_dir = _get_compile_dir(component)
-        specialization = load_prefill_specialization(compile_dir)
-    except (FileNotFoundError, TypeError, ValueError):
-        return {}
-    return _specialization_symbols(specialization)
-
-
-def _apply_input_shapes(model: onnx.ModelProto, shape_overrides: Mapping[str, Sequence[int]]) -> None:
-    for graph_input in model.graph.input:
-        shape = shape_overrides.get(graph_input.name)
-        if shape is None or len(graph_input.type.tensor_type.shape.dim) != len(shape):
-            continue
-        for dimension, value in zip(graph_input.type.tensor_type.shape.dim, shape):
-            dimension.ClearField("dim_param")
-            dimension.dim_value = int(value)
-
-
-def _resolve_output_shape(
-    output: onnx.ValueInfoProto,
-    symbols: Mapping[str, int],
-    fallback_batch_size: Optional[int],
-    fallback_logits_width: Optional[int] = None,
-) -> List[int]:
-    shape = []
-    for axis, dimension in enumerate(output.type.tensor_type.shape.dim):
-        if dimension.HasField("dim_value") and dimension.dim_value > 0:
-            shape.append(int(dimension.dim_value))
-        elif dimension.dim_param in symbols:
-            shape.append(int(symbols[dimension.dim_param]))
-        elif axis == 0 and fallback_batch_size is not None:
-            shape.append(fallback_batch_size)
-        elif output.name == "logits" and axis == 1 and "seq_len" in symbols:
-            shape.append(int(symbols["seq_len"]))
-        elif output.name == "logits" and axis == len(output.type.tensor_type.shape.dim) - 1 and fallback_logits_width:
-            shape.append(fallback_logits_width)
-        else:
-            raise RuntimeError(f"Cannot resolve dimension {axis} ('{dimension.dim_param}') of output '{output.name}'.")
-    return shape
-
-
-def _required_host_input_names(model: onnx.ModelProto) -> set[str]:
-    retained_inputs = set()
-    for output in model.graph.output:
-        for suffix in ("_InternalRetainedState", "_RetainedState"):
-            if output.name.endswith(suffix):
-                retained_inputs.add(output.name[: -len(suffix)])
-    initializer_names = {initializer.name for initializer in model.graph.initializer}
-    return {
-        graph_input.name
-        for graph_input in model.graph.input
-        if graph_input.name not in retained_inputs and graph_input.name not in initializer_names
-    }
-
-
-def _add_specialization_control_inputs(
-    onnx_path: Union[str, Path],
-    host_inputs: Dict[str, np.ndarray],
-    specialization: Mapping[str, int],
-    sampling_params: Optional[Mapping[str, np.ndarray]] = None,
-) -> None:
-    input_names = _required_host_input_names(onnx.load(str(onnx_path), load_external_data=False))
-    batch_size = int(specialization.get("batch_size", 1))
-    if "batch_index" in input_names and "batch_index" not in host_inputs:
-        host_inputs["batch_index"] = np.zeros((batch_size, 1), dtype=np.int64)
-    if "comp_ctx_lengths" in input_names and "comp_ctx_lengths" not in host_inputs:
-        host_inputs["comp_ctx_lengths"] = np.zeros(int(specialization["comp_ctx_lengths"]), dtype=np.int64)
-    if "num_logits_to_keep" in input_names and "num_logits_to_keep" not in host_inputs:
-        host_inputs["num_logits_to_keep"] = np.zeros((batch_size, 1), dtype=np.int64)
-    if "lora_ids" in input_names and "lora_ids" not in host_inputs:
-        host_inputs["lora_ids"] = np.zeros((batch_size, 1), dtype=np.int64)
-    if "last_accepted_output_tokens" in input_names and "input_ids" in host_inputs:
-        host_inputs["last_accepted_output_tokens"] = host_inputs["input_ids"].copy()
-    for name, value in (sampling_params or {}).items():
-        if name in input_names:
-            host_inputs[name] = np.asarray(value)
-
-
-def _proxy_logits_width(model) -> Optional[int]:
-    if not getattr(model, "_enable_proxy", False):
-        return None
-
-    config = model.model.config
-    candidates = [config, getattr(config, "text_config", None), getattr(config, "language_config", None)]
-    for candidate in filter(None, candidates):
-        for attribute in ("hidden_size", "n_embd", "d_model"):
-            if (hidden_size := getattr(candidate, attribute, None)) is not None:
-                return int(hidden_size)
-    raise AttributeError("Proxy model configuration does not expose its hidden size.")
+__all__ = [
+    "_add_cross_qpc_placeholders",
+    "_add_specialization_control_inputs",
+    "_apply_input_shapes",
+    "_component_prefill_symbols",
+    "_concat_input_batches",
+    "_cross_qpc_output_shapes",
+    "_custom_io_item_sizes",
+    "_custom_io_precisions",
+    "_execution_batch_size",
+    "_filter_graph_inputs",
+    "_first_execution_batch",
+    "_get_compile_dir",
+    "_prepare_vlm_execution_inputs",
+    "_proxy_logits_width",
+    "_required_host_input_names",
+    "_resolve_output_shape",
+    "_slice_vlm_prefill_inputs",
+    "_specialization_symbols",
+    "load_prefill_specialization",
+    "write_causal_lm_runner_bundle",
+    "write_dual_qpc_vlm_runner_bundle",
+    "write_runner_io_bundle",
+    "write_single_qpc_vlm_runner_bundle",
+]
 
 
 def write_runner_io_bundle(
@@ -337,30 +197,6 @@ def write_causal_lm_runner_bundle(
     )
 
 
-def _slice_vlm_prefill_inputs(lang_inputs: Mapping[str, np.ndarray], prefill_seq_len: int) -> Dict[str, np.ndarray]:
-    host_inputs = {}
-    for name, value in lang_inputs.items():
-        value = np.asarray(value)
-        if name in {"input_ids", "position_ids", "mm_token_type_ids", "token_type_ids"}:
-            host_inputs[name] = value[..., :prefill_seq_len]
-        elif name == "cross_attention_mask":
-            host_inputs[name] = value[:, :prefill_seq_len, ...]
-        elif name in {"image_idx", "batch_index"}:
-            host_inputs[name] = value
-    return host_inputs
-
-
-def _filter_graph_inputs(onnx_path: Union[str, Path], *input_groups: Mapping[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    graph = onnx.load(str(onnx_path), load_external_data=False).graph
-    graph_input_names = {graph_input.name for graph_input in graph.input}
-    return {
-        name: np.asarray(value)
-        for inputs in input_groups
-        for name, value in inputs.items()
-        if name in graph_input_names
-    }
-
-
 def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], prompts: List[str]) -> Path:
     """Prepare and write the first fused vision-language prefill invocation."""
     if processor is None or not images or not prompts:
@@ -388,79 +224,6 @@ def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], p
         host_inputs=host_inputs,
         fallback_logits_width=_proxy_logits_width(model),
     )
-
-
-def _add_cross_qpc_placeholders(model, host_inputs: Dict[str, np.ndarray], specialization: Mapping[str, int]) -> None:
-    graph = onnx.load(str(model.onnx_path), load_external_data=False).graph
-    symbols = _specialization_symbols(specialization)
-    custom_precisions = _custom_io_precisions(_get_compile_dir(model))
-    precision_dtypes = {
-        "bfloat16": np.uint16,
-        "float16": np.float16,
-        "float32": np.float32,
-        "int8": np.int8,
-        "mxint8": np.int8,
-    }
-    for graph_input in graph.input:
-        if graph_input.name in host_inputs or graph_input.name.startswith("past_"):
-            continue
-        if not any(token in graph_input.name for token in ("vision_embeds", "deepstack_features")):
-            continue
-        shape = []
-        for dimension in graph_input.type.tensor_type.shape.dim:
-            if dimension.HasField("dim_value") and dimension.dim_value > 0:
-                shape.append(int(dimension.dim_value))
-            elif dimension.dim_param in symbols:
-                shape.append(symbols[dimension.dim_param])
-            else:
-                raise RuntimeError(
-                    f"Cannot resolve placeholder dimension {dimension.dim_param!r} for {graph_input.name!r}."
-                )
-        precision = custom_precisions.get(graph_input.name)
-        dtype = precision_dtypes.get(
-            precision, onnx.helper.tensor_dtype_to_np_dtype(graph_input.type.tensor_type.elem_type)
-        )
-        host_inputs[graph_input.name] = np.zeros(shape, dtype=dtype)
-        logger.warning(
-            f"Wrote a zero placeholder for {graph_input.name!r}; replace it with the vision QPC output before replay."
-        )
-
-
-def _cross_qpc_output_shapes(model, specialization: Mapping[str, int]) -> Dict[str, List[int]]:
-    """Resolve vision outputs from the paired language input contract when available."""
-    vision_outputs = {
-        output.name for output in onnx.load(str(model.vision_model.onnx_path), load_external_data=False).graph.output
-    }
-    symbols = _specialization_symbols(specialization)
-    language_symbols = _component_prefill_symbols(getattr(model, "lang_model", None))
-    for name, value in language_symbols.items():
-        symbols.setdefault(name, value)
-    if "batch_size" in symbols:
-        symbols.setdefault("vision_batch_size", symbols["batch_size"])
-
-    language_onnx_path = getattr(model.lang_model, "onnx_path", None)
-    if language_onnx_path and Path(language_onnx_path).is_file():
-        language_inputs = onnx.load(str(language_onnx_path), load_external_data=False).graph.input
-        return {
-            graph_input.name: _resolve_output_shape(graph_input, symbols, fallback_batch_size=None)
-            for graph_input in language_inputs
-            if graph_input.name in vision_outputs
-        }
-
-    config = model.model.config
-    text_config = getattr(config, "text_config", None) or getattr(config, "language_config", None) or config
-    hidden_size = int(text_config.hidden_size)
-    output_shapes = {}
-    if "vision_embeds" in vision_outputs:
-        output_shapes["vision_embeds"] = [symbols["batch_size"], symbols["vision_size"], hidden_size]
-    if "deepstack_features" in vision_outputs:
-        output_shapes["deepstack_features"] = [
-            symbols["num_feature_layers"],
-            symbols["batch_size"],
-            symbols["vision_size"],
-            hidden_size,
-        ]
-    return output_shapes
 
 
 def write_dual_qpc_vlm_runner_bundle(

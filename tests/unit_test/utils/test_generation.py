@@ -1337,7 +1337,7 @@ class TestGemma4DissVariant:
 def test_runner_io_resolves_exporter_generated_logits_symbols():
     from onnx import TensorProto, helper
 
-    from QEfficient.generation.runner_io import _resolve_output_shape
+    from QEfficient.generation.generation_helpers import _resolve_output_shape
 
     logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["Castlogits_dim_0", "Castlogits_dim_1", 32000])
 
@@ -1349,7 +1349,7 @@ def test_graph_input_filter_selects_model_specific_vision_metadata(tmp_path):
     import onnx
     from onnx import TensorProto, helper
 
-    from QEfficient.generation.runner_io import _filter_graph_inputs
+    from QEfficient.generation.generation_helpers import _filter_graph_inputs
 
     pixel_values = helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [1, 3, 2, 2])
     image_grid_thw = helper.make_tensor_value_info("image_grid_thw", TensorProto.INT64, [1, 3])
@@ -1374,7 +1374,7 @@ def test_cross_qpc_output_shapes_follow_language_input_contract(tmp_path):
     import onnx
     from onnx import TensorProto, helper
 
-    from QEfficient.generation.runner_io import _cross_qpc_output_shapes
+    from QEfficient.generation.generation_helpers import _cross_qpc_output_shapes
 
     vision_output = helper.make_tensor_value_info(
         "vision_embeds", TensorProto.FLOAT, ["opaque_batch", "opaque_tokens", "opaque_width"]
