@@ -11,9 +11,12 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
+    CtxGatherBlockedKVDP,
+    CtxPagedScatterDP,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
+    M3CtxScatter,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxGatherBlockedKVCB,
@@ -367,6 +370,64 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
     return torch.empty_like(data)
 
 
+# M3 INDEX-KEY SCATTER (CtxScatter with INT64 index cast — MiniMax-M3 indexer)
+@torch.library.custom_op("qefficient::m3_ctx_scatter", mutates_args=())
+def m3_ctx_scatter_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    """MiniMax-M3 index-key cache scatter. Same eager semantics as ctx_scatter but the
+    ONNX export uses M3CtxScatter which casts position_ids to INT64 before building
+    ScatterND indices, avoiding the INT32/INT64 Concat type mismatch."""
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[0]).view(-1, 1, 1)
+    head_idx = torch.arange(result.shape[1]).view(1, -1, 1)
+    ctx_idx = position_ids.unsqueeze(1)
+    result[batch_idx, head_idx, ctx_idx] = updates
+    return result
+
+
+@m3_ctx_scatter_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::ctx_paged_scatter_dp", mutates_args=())
+def ctx_paged_scatter_dp_op(
+    data: torch.Tensor,
+    block_id: torch.Tensor,
+    addr: torch.Tensor,
+    updates: torch.Tensor,
+) -> torch.Tensor:
+    """Scatter updates into a DP/CP-layout paged cache."""
+    result = data.clone()
+    batch, rows, seq_len, _ = updates.shape
+    row_idx = torch.arange(rows, device=data.device).view(1, rows, 1).expand(batch, rows, seq_len)
+    valid = block_id != torch.iinfo(torch.int32).max
+    result[block_id[valid].long(), row_idx[valid], addr[valid].long()] = updates[valid]
+    return result
+
+
+@ctx_paged_scatter_dp_op.register_fake
+def _(data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::ctx_gather_blocked_kv_dp", mutates_args=())
+def ctx_gather_blocked_kv_dp_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    """Gather a blocked KV range from a DP/CP-layout cache."""
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    row_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    return data[batch_indices, row_indices, ctx_indices.long()]
+
+
+@ctx_gather_blocked_kv_dp_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    return torch.empty(
+        (*data.shape[:2], ctx_indices.shape[-1], *data.shape[3:]),
+        dtype=data.dtype,
+        device=data.device,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
@@ -380,11 +441,14 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_scatter_cb_3d.default: get_dynamo_onnxscript_func(CtxScatterCB3D),
     torch.ops.qefficient.ctx_scatter_3d_int.default: get_dynamo_onnxscript_func(CtxScatter3DInt),
     torch.ops.qefficient.ctx_scatter_3d_generalized.default: get_dynamo_onnxscript_func(CtxScatter3D),
+    torch.ops.qefficient.m3_ctx_scatter.default: get_dynamo_onnxscript_func(M3CtxScatter),
     torch.ops.qefficient.ctx_gather.default: get_dynamo_onnxscript_func(CtxGather),
     torch.ops.qefficient.ctx_gather_3d.default: get_dynamo_onnxscript_func(CtxGather3D),
     torch.ops.qefficient.ctx_gather_cb.default: get_dynamo_onnxscript_func(CtxGatherCB),
     torch.ops.qefficient.ctx_gather_cb_3d.default: get_dynamo_onnxscript_func(CtxGatherCB3D),
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
+    torch.ops.qefficient.ctx_paged_scatter_dp.default: get_dynamo_onnxscript_func(CtxPagedScatterDP),
+    torch.ops.qefficient.ctx_gather_blocked_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVDP),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
 }

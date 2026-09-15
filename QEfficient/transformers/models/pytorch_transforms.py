@@ -10,6 +10,7 @@ import warnings
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
+import torch
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -150,6 +151,19 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
+)
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLRotaryEmbedding,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
 )
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
@@ -489,6 +503,18 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+)
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
@@ -696,6 +722,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -785,6 +812,17 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLVisionModel: QEffQwen3VLVisionModel,
         Qwen3VLTextModel: QEffQwen3VLTextModel,
         Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
+        # MiniMaxM3VL
+        MiniMaxM3SparseForConditionalGeneration: QEffMiniMaxM3SparseForConditionalGeneration,
+        MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+        MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+        MiniMaxM3VLDenseMLP: QEffMiniMaxM3VLDenseMLP,
+        MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
+        MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLRotaryEmbedding: QEffMiniMaxM3VLRotaryEmbedding,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+        MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+        MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
@@ -1221,6 +1259,44 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     }
 
 
+class PagedAttentionMinimax(PytorchTransform):
+    """Install the paged indexer local-position layout for MiniMax models."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config, ctx_len) -> tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if not isinstance(module, QEffMiniMaxM3VLIndexer):
+                continue
+            config = module.config
+            get_config = lambda name, default=None: qaic_config.get(name, getattr(config, name, default))
+            num_kv_blocks = get_config("num_kv_blocks")
+            indexer_cp = get_config("msa_indexer_cp", 1)
+            indexer_dp = get_config("msa_indexer_dp", 1)
+            indexer_hkv = get_config("indexer_n_head", 1)
+            page_block_size = get_config("page_block_size", config.index_block_size)
+            num_cores = get_config("num_cores_per_device", 1)
+            if ctx_len is None or num_kv_blocks is None:
+                raise ValueError("Paged MiniMax attention requires ctx_len and num_kv_blocks.")
+            logical_kv_block_size = ctx_len // num_kv_blocks
+            kv_block_size = logical_kv_block_size // indexer_cp
+            num_groups_blk = kv_block_size // page_block_size
+            if num_groups_blk % num_cores:
+                raise ValueError("Paged MiniMax indexer groups must divide evenly across cores.")
+            groups_per_core = num_groups_blk // num_cores
+            tokens_per_core = groups_per_core * page_block_size
+            rows = indexer_dp * indexer_cp * indexer_hkv
+            t_idx = torch.arange(tokens_per_core, device=next(module.parameters()).device).view(1, 1, 1, 1, tokens_per_core)
+            core_idx = torch.arange(num_cores, device=t_idx.device).view(1, 1, num_cores, 1, 1)
+            cp_idx = torch.arange(indexer_cp, device=t_idx.device).view(1, indexer_cp, 1, 1, 1)
+            local_group = (t_idx // page_block_size) * num_cores + core_idx
+            local_pos = (local_group * (indexer_cp * page_block_size) + cp_idx * page_block_size + t_idx % page_block_size).to(torch.int32)
+            local_pos = local_pos.view(1, 1, indexer_cp, 1, num_cores, 1, tokens_per_core).expand(1, indexer_dp, indexer_cp, indexer_hkv, num_cores, 1, tokens_per_core).reshape(1, rows, num_cores, 1, tokens_per_core)
+            module.register_buffer("indexer_paged_local_pos", local_pos)
+            transformed = True
+        return model, transformed
+
+
 class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
     _match_string_replace_method = {
@@ -1314,6 +1390,18 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3RMSNorm": {
             "forward": QEffDeepseekV3CustomRMSNormAIC.forward,
         },
+        "MiniMaxM3SparseForConditionalGeneration": {"forward": QEffMiniMaxM3SparseForConditionalGeneration.forward},
+        "MiniMaxM3VLForCausalLM": {
+            "forward": QEffMiniMaxM3VLForCausalLM.forward,
+            "get_submodules_for_export": QEffMiniMaxM3VLForCausalLM.get_submodules_for_export,
+        },
+        "MiniMaxM3VLTextModel": {"forward": QEffMiniMaxM3VLTextModel.forward},
+        "MiniMaxM3VLDecoderLayer": {"forward": QEffMiniMaxM3VLDecoderLayer.forward},
+        "MiniMaxM3VLDenseMLP": {"forward": QEffMiniMaxM3VLDenseMLP.forward},
+        "MiniMaxM3VLAttention": {"forward": QEffMiniMaxM3VLAttention.forward},
+        "MiniMaxM3VLRotaryEmbedding": {"forward": QEffMiniMaxM3VLRotaryEmbedding.forward},
+        "MiniMaxM3VLTopKRouter": {"forward": QEffMiniMaxM3VLTopKRouter.forward},
+        "MiniMaxM3VLSparseMoeBlock": {"forward": QEffMiniMaxM3VLSparseMoeBlock.forward},
     }
 
 

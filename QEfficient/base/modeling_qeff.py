@@ -43,6 +43,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     OptimizedMoETransform,
+    PagedAttentionMinimax,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -559,6 +560,14 @@ class QEFFBaseModel(ABC):
                                 f"k_pe.{i}",
                             ]
                         )
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
 
@@ -910,6 +919,14 @@ class QEFFBaseModel(ABC):
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
                         input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
@@ -1007,6 +1024,8 @@ class QEFFBaseModel(ABC):
         else:
             self.hash_params.pop("blocking_kwargs", None)
         if qaic_config is not None:
+            if qaic_config.get("paged_kv", False):
+                self.model, _ = PagedAttentionMinimax.apply(self.model, qaic_config, ctx_len)
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
