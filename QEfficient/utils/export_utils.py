@@ -256,7 +256,10 @@ def get_decoder_layer_classes_for_export(model):
         try:
             submodule_classes = get_submodules_for_export()
             if submodule_classes:
-                return {cls for cls in submodule_classes if inspect.isclass(cls)}
+                if inspect.isclass(submodule_classes):
+                    return [submodule_classes]
+                # Preserve hook order and duplicate classes because dynamo uses this list to name repeated functions.
+                return [cls for cls in submodule_classes if inspect.isclass(cls)]
         except Exception as exc:
             logger.warning(
                 f"get_submodules_for_export failed for {model.__class__.__name__}: "
@@ -269,7 +272,7 @@ def get_decoder_layer_classes_for_export(model):
             "Auto-discovered repeated submodule classes for export: "
             + ", ".join(sorted(cls.__name__ for cls in discovered))
         )
-        return discovered
+        return sorted(discovered, key=lambda cls: cls.__name__)
     return []
 
 
@@ -547,15 +550,15 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
     if decoder_layer_classes:
         if dynamo:
-            # Pass resolved classnames to RenameRepeatedSubgraphTransform; single resolution point to avoid double-call.
-            resolved_classnames = sorted(cls.__name__ for cls in decoder_layer_classes)
+            # Dynamo needs ordered duplicate names; TorchScript only accepts unique module classes below.
+            resolved_classnames = [cls.__name__ for cls in decoder_layer_classes]
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
             kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
         else:
             # TorchScript path: pass class objects for export_modules_as_functions
-            kwargs["export_modules_as_functions"] = decoder_layer_classes
+            kwargs["export_modules_as_functions"] = set(decoder_layer_classes)
 
     return (
         args,

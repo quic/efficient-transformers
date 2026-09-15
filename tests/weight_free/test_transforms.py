@@ -49,11 +49,11 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
-from QEfficient.exporter.weight_free.export import _prepared_checkpoint_name
+from QEfficient.exporter.weight_free.export import _prepared_checkpoint_name, _resolve_weight_free_target_dtype
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import runtime_requirements
-from QEfficient.utils.export_utils import _generate_export_hash
+from QEfficient.utils.export_utils import _generate_export_hash, get_decoder_layer_classes_for_export
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
@@ -675,6 +675,26 @@ class TestWeightFreeExportHash:
         assert weight_free_params["weight_free_checkpoint_layout_version"] == CHECKPOINT_LAYOUT_VERSION
 
 
+class TestWeightFreeExportDtype:
+    def test_target_dtype_prefers_normalized_torch_dtype_over_dtype(self):
+        config = SimpleNamespace(torch_dtype=torch.float32, dtype=torch.float16)
+
+        target_dtype = _resolve_weight_free_target_dtype(config)
+
+        assert target_dtype is torch.float32
+        assert config.torch_dtype is torch.float32
+        assert config.dtype is torch.float32
+
+    def test_target_dtype_accepts_string_alias_from_dtype(self):
+        config = SimpleNamespace(torch_dtype=None, dtype="fp16")
+
+        target_dtype = _resolve_weight_free_target_dtype(config)
+
+        assert target_dtype is torch.float16
+        assert config.torch_dtype is torch.float16
+        assert config.dtype is torch.float16
+
+
 class TestRuntimeRequirements:
     def test_validate_runtime_requirements_accepts_matching_requirements(self, monkeypatch):
         requirements = {"torch": "==2.13.0", "accelerate": "==1.9.0"}
@@ -920,6 +940,25 @@ class TestRenameRepeatedSubgraphTransform:
         assert changed
         fn_names = {fn.name for fn in model.functions}
         assert "MyDecoderLayer" in fn_names
+
+
+class TestSubfunctionTargetDiscovery:
+    def test_preserves_ordered_duplicate_classes_from_model_hook(self):
+        class FirstBlock(torch.nn.Module):
+            pass
+
+        class SecondBlock(torch.nn.Module):
+            pass
+
+        class ModelWithSubfunctionTargets(torch.nn.Module):
+            def get_submodules_for_export(self):
+                return [FirstBlock, FirstBlock, SecondBlock]
+
+        assert get_decoder_layer_classes_for_export(ModelWithSubfunctionTargets()) == [
+            FirstBlock,
+            FirstBlock,
+            SecondBlock,
+        ]
 
 
 # ---------------------------------------------------------------------------

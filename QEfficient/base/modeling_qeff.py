@@ -55,6 +55,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
     require_value,
+    resolve_torch_dtype,
     to_named_specializations,
 )
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
@@ -250,6 +251,8 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
         self._weight_free: bool = kwargs.get("weight_free", False)
+        # Preserve an explicit caller dtype before config normalization can fall back to stale config fields.
+        self._requested_torch_dtype = kwargs.get("torch_dtype", kwargs.get("dtype", None))
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -273,30 +276,35 @@ class QEFFBaseModel(ABC):
         to all nested configs (llm_config, vision_config, etc.) that may exist in
         multimodal models.
         """
-        top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
-
+        top_level_dtype = self._requested_torch_dtype
         if top_level_dtype is None:
-            top_level_dtype = torch.float32
-        elif isinstance(top_level_dtype, str):
-            top_level_dtype = getattr(torch, top_level_dtype, torch.float32)
+            top_level_dtype = getattr(self.config, "torch_dtype", None)
+        if top_level_dtype is None:
+            top_level_dtype = getattr(self.config, "dtype", None)
+        top_level_dtype = resolve_torch_dtype(top_level_dtype, default=torch.float32)
 
+        # Keep both dtype attributes aligned because HF config loading and weight-free export read different fields.
         self.config.torch_dtype = top_level_dtype
+        self.config.dtype = top_level_dtype
 
         # Normalize llm_config if it exists
         if hasattr(self.config, "llm_config"):
             self.config.llm_config.torch_dtype = top_level_dtype
+            self.config.llm_config.dtype = top_level_dtype
             if hasattr(self.config.llm_config, "use_bfloat16"):
                 self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize vision_config if it exists
         if hasattr(self.config, "vision_config"):
             self.config.vision_config.torch_dtype = top_level_dtype
+            self.config.vision_config.dtype = top_level_dtype
             if hasattr(self.config.vision_config, "use_bfloat16"):
                 self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize text_config if it exists (for models like Qwen2.5-VL)
         if hasattr(self.config, "text_config"):
             self.config.text_config.torch_dtype = top_level_dtype
+            self.config.text_config.dtype = top_level_dtype
 
         logger.info(f"Normalized all config torch_dtype to: {top_level_dtype}")
 

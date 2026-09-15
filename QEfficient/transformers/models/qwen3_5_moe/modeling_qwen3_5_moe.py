@@ -462,12 +462,9 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
-    # MIN_MASKED_ATTENTION_VALUE = -10000
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        # Keep the mask fill as a scalar so dynamo subfunctions do not capture a FakeTensor constant.
+        attn_weights = torch.where(attention_mask, MIN_MASKED_ATTENTION_VALUE, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -929,8 +926,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         attention_mask=None,
         position_ids=None,
         batch_index: Optional[torch.LongTensor] = None,
+        return_cache_state: bool = False,
     ):
         batch_size, seq_len, _ = hidden_states.shape
+        # Nested subfunctions cannot own cache mutation, so return new state to the decoder layer when requested.
+        new_conv_state_for_return = None
+        new_recurrent_state_for_return = None
 
         # ── Projections ──────────────────────────────────────
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
@@ -1024,9 +1025,11 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                         conv_state_all.shape[2],
                         conv_state_all.shape[3],
                     )
-                cache_params.conv_states[self.layer_idx] = scattered_conv
+                new_conv_state_for_return = scattered_conv
             else:
-                cache_params.conv_states[self.layer_idx] = new_conv_state
+                new_conv_state_for_return = new_conv_state
+            if not return_cache_state:
+                cache_params.conv_states[self.layer_idx] = new_conv_state_for_return
         else:
             recurrent_state = None
             mixed_qkv = F.silu(self.conv1d(mixed_qkv)[:, :, :seq_len])
@@ -1069,27 +1072,29 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 eye=self._eye,
             )
 
-            # Select based on seq_len
-            # is_decode is SCALAR — torch.where broadcasts efficiently
-            # HW predicates entire branch at runtime
-            is_decode = hidden_states.shape[1] == torch.tensor(1)
-
-            core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-            last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
+            # Use Python sequence length to select decode/prefill graphs without exporting a tensor predicate.
+            if seq_len == 1:
+                core_attn_out = recurrent_out
+                last_recurrent_state = recurrent_S
+            else:
+                core_attn_out = chunk_out
+                last_recurrent_state = chunk_S
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
-                cache_params.recurrent_states[self.layer_idx] = CtxScatterFuncCB.apply(
+                new_recurrent_state_for_return = CtxScatterFuncCB.apply(
                     recurrent_state_all,
                     recurrent_batch_index,
                     recurrent_position_ids,
                     last_recurrent_state.to(recurrent_state_all.dtype),
                 )
             else:
-                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state.to(recurrent_state_all.dtype)
+                new_recurrent_state_for_return = last_recurrent_state.to(recurrent_state_all.dtype)
+            if not return_cache_state:
+                cache_params.recurrent_states[self.layer_idx] = new_recurrent_state_for_return
 
         else:
             # No cache — prefill only, no state needed
@@ -1112,7 +1117,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
         # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
-        return self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        hidden_states = self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        if return_cache_state:
+            return hidden_states, new_conv_state_for_return, new_recurrent_state_for_return
+        return hidden_states
 
     @staticmethod
     def apply_mask_to_padding_states(hidden_states, attention_mask):
@@ -1157,7 +1165,13 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
+                return_cache_state=past_key_values is not None,
             )
+            if isinstance(hidden_states, tuple):
+                # Write returned linear-attention cache state at layer scope so nested function outputs stay explicit.
+                hidden_states, conv_state, recurrent_state = hidden_states
+                past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state
+                past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state
         else:
             hidden_states, _ = self.self_attn(
                 hidden_states=hidden_states,
@@ -1182,15 +1196,25 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         return hidden_states
 
 
-def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> set[Type[nn.Module]]:
+def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> List[Type[nn.Module]]:
     if getattr(model, "_modules", None) is not None:
         for module in model.modules():
             if not isinstance(module, QEffQwen3_5MoeAttention):
                 continue
             blocking_config = getattr(module, "attn_blocking_config", None)
             if blocking_config is not None and BlockingMode.resolve(blocking_config.mode) == BlockingMode.KV_HEADPAR:
-                return {QEffQwen3_5MoeAttention}
-    return {QEffQwen3_5MoeDecoderLayer}
+                # KV_HEADPAR only subfunctions full attention; linear-attention functions hit compiler view handling.
+                return [QEffQwen3_5MoeAttention]
+
+    submodules = []
+    if getattr(model, "_modules", None) is not None:
+        # Keep natural module order and duplicates so dynamo gets one target per repeated subgraph.
+        for module in model.modules():
+            if isinstance(module, QEffQwen3_5MoeAttention):
+                submodules.append(QEffQwen3_5MoeAttention)
+            elif isinstance(module, QEffQwen3_5MoeGatedDeltaNet):
+                submodules.append(QEffQwen3_5MoeGatedDeltaNet)
+    return submodules or [QEffQwen3_5MoeDecoderLayer]
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
@@ -1322,7 +1346,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> List[Type[nn.Module]]:
         return _qwen3_5_moe_submodules_for_export(self)
 
     @staticmethod
@@ -1798,7 +1822,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.language_model = self.model.model.language_model
         self.config = model.config
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> List[Type[nn.Module]]:
         return _qwen3_5_moe_submodules_for_export(self)
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
