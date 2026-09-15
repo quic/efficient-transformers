@@ -18,7 +18,7 @@ from accelerate import init_empty_weights
 
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
-from QEfficient.utils import load_json
+from QEfficient.utils import load_json, resolve_torch_dtype
 from QEfficient.utils.checkpoint_utils import read_weight_map, resolve_checkpoint_dir
 from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.torch_patches import dynamo_invoke_subgraph_fallback_env, preserve_subfunction_source_lines
@@ -90,6 +90,18 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
         qeff_model.model = qeff_model.model.to(dtype=target_dtype)
 
     return qeff_model
+
+
+def _resolve_weight_free_target_dtype(config: Any) -> torch.dtype:
+    """Return the dtype used by the weight-free graph and prepared checkpoint."""
+    target_dtype = getattr(config, "torch_dtype", None)
+    if target_dtype is None:
+        target_dtype = getattr(config, "dtype", None)
+    target_dtype = resolve_torch_dtype(target_dtype, default=torch.float32)
+    # Keep checkpoint preparation and ONNX graph export on the same dtype source of truth.
+    config.torch_dtype = target_dtype
+    config.dtype = target_dtype
+    return target_dtype
 
 
 def _prune_unused_fake_initializers(onnx_program) -> None:
@@ -271,7 +283,7 @@ def export_weight_free_onnx(
     tuple
         Meta QEfficient model, updated ONNX transform kwargs, and cleanup callback.
     """
-    target_dtype = qeff_model.model.config.dtype
+    target_dtype = _resolve_weight_free_target_dtype(qeff_model.model.config)
     meta_qeff_model = _run_quantizer_for_wf(qeff_model, target_dtype)
 
     # export_wrapper (the @export_wrapper decorator on _export) already ran
