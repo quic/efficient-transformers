@@ -76,7 +76,7 @@ def update_running_softmax(
     else:
         output_updated = output_scale.to(prev_output.dtype) * prev_output
 
-    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
         current_max = torch.where(skip_future, prev_max, current_max_updated)
         current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
         output = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
@@ -106,7 +106,7 @@ def update_running_softmax_prefill(
     current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
     prev_output = output
     output_updated = prev_output * torch.exp(delta_max.unsqueeze(-1)) + torch.matmul(current_exp, v_block)
-    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
         assert skip_future is not None
         current_max = torch.where(skip_future, prev_max, current_max_updated)
         current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
@@ -181,8 +181,9 @@ def blocked_kv_attention_forward(
         (batch_size, num_heads, seq_len),
         float(MIN_MASKED_ATTENTION_VALUE),
         device=query.device,
+        dtype=query.dtype,
     )
-    current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
 
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
@@ -190,19 +191,18 @@ def blocked_kv_attention_forward(
     position_ids = cache_kwargs.get("position_ids")
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked KV attention.")
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     block_table = None
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
     else:
         kv_block_size = -(-ctx_len // num_kv_blocks)
-
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
+
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -218,9 +218,9 @@ def blocked_kv_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -251,8 +251,8 @@ def blocked_kv_attention_forward(
         if use_causal_mask or mask_block is None:
             target_length = torch.where(
                 torch.tensor(ctx_len, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                ctx_len,
-                end_index,
+                torch.tensor(ctx_len, dtype=torch.int),
+                torch.tensor(end_index, dtype=torch.int),
             )
             causal_mask_block = _create_causal_mask(
                 position_ids=position_ids,
@@ -266,6 +266,9 @@ def blocked_kv_attention_forward(
                 mask_block = mask_block.to(torch.bool) | causal_mask_block
 
         if mask_block is not None:
+            masked_tensor = torch.full_like(
+                attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+            )
             attn_weights_block = torch.where(mask_block, masked_tensor, attn_weights_block)
 
         current_max, current_denominator, output = update_running_softmax(
@@ -313,7 +316,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     num_kv_heads = num_heads // num_kv_groups
     BH = batch_size * num_kv_heads  # static at compile time
     position_ids = cache_kwargs.get("position_ids")
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     kv_block_size = -(-ctx_len // num_kv_blocks)
     current_position = position_ids.max(dim=-1).values
 
@@ -334,8 +337,8 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            skip_future = (start_index > current_position).all()
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -364,7 +367,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
         max_block = attn_weights_block.max(dim=3).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             max_block = torch.where(skip_future, torch.full_like(max_block, MIN_MASKED_ATTENTION_VALUE), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
@@ -374,7 +377,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         )
         sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, v_block)
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
             out_block = torch.where(skip_future, torch.zeros_like(out_block), out_block)
         max_blocks.append(max_block)
@@ -426,7 +429,7 @@ def blocked_kv_attention_forward_headpar_offline(
     position_ids = cache_kwargs.get("position_ids")
     num_kv_heads = num_heads // num_kv_groups
     split = configured_split
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     current_position = position_ids.max(dim=-1).values
 
@@ -468,9 +471,9 @@ def blocked_kv_attention_forward_headpar_offline(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -491,9 +494,14 @@ def blocked_kv_attention_forward_headpar_offline(
             valid_in_chunk = kv_len_block - chunk_start
             key_idx = torch.arange(split_block_len, device=query.device)
             pad_mask = key_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
-            attn_weights_block = attn_weights_block.masked_fill(
-                pad_mask.view(1, 1, split, 1, split_block_len), HEADPAR_MASKED_ATTENTION_VALUE
+            pad_mask = pad_mask.view(1, 1, split, 1, split_block_len)
+            masked_tensor = torch.full_like(
+                attn_weights_block,
+                HEADPAR_MASKED_ATTENTION_VALUE,
+                dtype=attn_weights_block.dtype,
+                device=attn_weights_block.device,
             )
+            attn_weights_block = torch.where(pad_mask, masked_tensor, attn_weights_block)
 
         # Absolute KV positions for this block.
         #
@@ -510,16 +518,21 @@ def blocked_kv_attention_forward_headpar_offline(
 
         causal_mask = abs_kv_pos > q_pos
 
-        attn_weights_block = attn_weights_block.masked_fill(
-            causal_mask,
+        masked_tensor = torch.full_like(
+            attn_weights_block,
             HEADPAR_MASKED_ATTENTION_VALUE,
+            dtype=attn_weights_block.dtype,
+            device=attn_weights_block.device,
         )
+        attn_weights_block = torch.where(causal_mask, masked_tensor, attn_weights_block)
 
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-            max_block = torch.where(skip_future, torch.full_like(max_block, HEADPAR_MASKED_ATTENTION_VALUE), max_block)
-            exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
+            skipped_max = torch.full_like(
+                max_block, HEADPAR_MASKED_ATTENTION_VALUE, dtype=max_block.dtype, device=max_block.device
+            )
+            max_block = torch.where(skip_future, skipped_max, max_block)
 
         v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
         if pad_len > 0:
@@ -527,7 +540,7 @@ def blocked_kv_attention_forward_headpar_offline(
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
         sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, value_5d)
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
             out_block = torch.where(skip_future, torch.zeros_like(out_block), out_block)
 
@@ -605,7 +618,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     num_kv_groups = getattr(module, "num_key_value_groups", None)
     num_kv_heads = num_heads // num_kv_groups
     split = configured_split
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     kv_block_size = -(-ctx_len // num_kv_blocks)
     n_rep_chunk = num_kv_groups
     ql_chunk = -(-ctx_len // num_q_blocks)
@@ -630,8 +643,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             torch.arange(split, device=query.device)[:, None] * T_h_nom
             + torch.arange(T_h_nom, device=query.device)[None, :]
         ).repeat(num_kv_heads, 1)  # [num_kv_heads*split, T_h_nom]
-        is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
-        masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype, device=query.device)
+        is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()
 
         accs = []
         for r_start, r_end in r_ranges:
@@ -665,7 +677,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
 
             skip_future = None
             if skip_kv:
-                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+                skip_future = (start_index > current_position).all()
                 if not is_export and skip_future.item():
                     break
 
@@ -699,6 +711,9 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
                 # causal_mask_block: [B, num_kv_heads*split, tc, split_block_len] → expand to [B, num_kv_heads*split, rc*tc, split_block_len]
                 causal_rc = causal_mask_block.repeat(1, 1, rc, 1) if rc > 1 else causal_mask_block
                 attn_weights_block = torch.matmul(acc["query"], K_4d.transpose(-1, -2)) * scaling
+                masked_tensor = torch.full_like(
+                    attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype, device=query.device
+                )
                 attn_weights_block = torch.where(causal_rc, masked_tensor, attn_weights_block)
                 acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
                     acc["m_acc"],
@@ -771,7 +786,7 @@ def blocked_qkv_attention_forward_prefill_online(
     kv_repeat = num_cores // Hkv
     n_rep_per_core = NQH // num_cores
     skip_kv = kwargs.get("skip_kv", False)
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     kv_block_size = -(-ctx_len // num_kv_blocks)
     ql_chunk = -(-QL // num_q_blocks)
     position_ids = cache_kwargs.get("position_ids")
@@ -781,7 +796,7 @@ def blocked_qkv_attention_forward_prefill_online(
     )
 
     q_fold = query.reshape(B, num_cores, n_rep_per_core, QL, D)
-    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()
     t_chunks = []
     for t_start in range(0, QL, ql_chunk):
         t_end = min(t_start + ql_chunk, QL)
@@ -818,7 +833,7 @@ def blocked_qkv_attention_forward_prefill_online(
 
             skip_future = None
             if skip_kv:
-                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+                skip_future = (start_index > current_position).all()
                 if not is_export and skip_future.item():
                     break
 
@@ -883,7 +898,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     kv_lora_rank = module.head_dim
     num_kv_groups = getattr(module, "num_key_value_groups", None)
     split = configured_split
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     n_rep = num_kv_groups
     Hkv = NQH // num_kv_groups
     n_rep_chunk = n_rep
@@ -909,8 +924,8 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            skip_future = (start_index > current_position).all()
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -965,14 +980,14 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
             m_c = attn_c.max(dim=-1).values  # [B, Hkv, split, chunk, QL]
             exp_c = torch.exp(attn_c - m_c.unsqueeze(-1))
 
-            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
                 m_c = torch.where(skip_future, torch.full_like(m_c, float(MIN_MASKED_ATTENTION_VALUE)), m_c)
                 exp_c = torch.where(skip_future, torch.zeros_like(exp_c), exp_c)
 
             sum_c = exp_c.sum(dim=-1)
             out_c = torch.matmul(exp_c, V_5d.unsqueeze(3))  # [B, Hkv, split, chunk, QL, kv_lora_rank]
 
-            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
                 sum_c = torch.where(skip_future, torch.zeros_like(sum_c), sum_c)
                 out_c = torch.where(skip_future, torch.zeros_like(out_c), out_c)
 
@@ -1049,10 +1064,9 @@ def blocked_q_attention_forward_prefill(
     position_ids = cache_kwargs.get("position_ids")
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
 
     q_block_starts = [-(-i * q_len) // num_q_blocks for i in range(num_q_blocks)]
     q_output_blocks = []
@@ -1076,6 +1090,7 @@ def blocked_q_attention_forward_prefill(
             sliding_window=sliding_window,
             start_index=0,
         )
+        masked_tensor = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
         attn_weights = torch.where(causal_mask, masked_tensor, attn_weights)
 
         if sinks is not None:
@@ -1149,10 +1164,10 @@ def blocked_qkv_attention_forward(
     q_output_blocks = []
     q_attn_blocks = []
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
+
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -1171,9 +1186,9 @@ def blocked_qkv_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -1204,8 +1219,9 @@ def blocked_qkv_attention_forward(
             (batch_size, num_heads, q_len_block),
             float(MIN_MASKED_ATTENTION_VALUE),
             device=query.device,
+            dtype=query.dtype,
         )
-        current_denominator = torch.zeros(batch_size, num_heads, q_len_block, device=query.device)
+        current_denominator = torch.zeros(batch_size, num_heads, q_len_block, device=query.device, dtype=query.dtype)
         output_blocks = torch.zeros((batch_size, num_heads, q_len_block, DH), device=query.device, dtype=query.dtype)
 
         for start_index, end_index, skip_future, k_block_states, v_block_states in kv_blocks:
@@ -1224,8 +1240,8 @@ def blocked_qkv_attention_forward(
                 # target_length = min(total_seen_tokens, end_index)
                 target_length = torch.where(
                     torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                    past_seen_tokens,
-                    end_index,
+                    torch.tensor(past_seen_tokens, dtype=torch.int),
+                    torch.tensor(end_index, dtype=torch.int),
                 )
                 causal_mask_block = _create_causal_mask(
                     position_ids=position_ids,
@@ -1240,6 +1256,9 @@ def blocked_qkv_attention_forward(
 
             if mask_block is not None:
                 attn_mask_block = mask_block[:, :, q_start : q_start + q_len_block, :]
+                masked_tensor = torch.full_like(
+                    attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+                )
                 attn_weights_block = torch.where(attn_mask_block, masked_tensor, attn_weights_block)
 
             current_max, current_denominator, output_blocks = update_running_softmax(
@@ -1302,7 +1321,7 @@ def blocked_hqkv_attention_forward(
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
     block_table = None
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
@@ -1314,10 +1333,10 @@ def blocked_hqkv_attention_forward(
     h_output_blocks = []
     h_attn_blocks = []
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
+
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -1336,9 +1355,9 @@ def blocked_hqkv_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -1380,8 +1399,11 @@ def blocked_hqkv_attention_forward(
                 (batch_size, h_end - h_start, q_len_block),
                 float(MIN_MASKED_ATTENTION_VALUE),
                 device=query.device,
+                dtype=query.dtype,
             )
-            current_denominator = torch.zeros(batch_size, h_end - h_start, q_len_block, device=query.device)
+            current_denominator = torch.zeros(
+                batch_size, h_end - h_start, q_len_block, device=query.device, dtype=query.dtype
+            )
             output_blocks = torch.zeros(
                 (batch_size, h_end - h_start, q_len_block, DH), device=query.device, dtype=query.dtype
             )
@@ -1405,8 +1427,8 @@ def blocked_hqkv_attention_forward(
                     # target_length = min(total_seen_tokens, end_index)
                     target_length = torch.where(
                         torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                        past_seen_tokens,
-                        end_index,
+                        torch.tensor(past_seen_tokens, dtype=torch.int),
+                        torch.tensor(end_index, dtype=torch.int),
                     )
                     causal_mask_block = _create_causal_mask(
                         position_ids=position_ids,
@@ -1421,6 +1443,9 @@ def blocked_hqkv_attention_forward(
 
                 if mask_block is not None:
                     mask_block_g = mask_block[:, :, q_start : q_start + q_len_block, :]
+                    masked_tensor = torch.full_like(
+                        attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+                    )
                     attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
                 current_max, current_denominator, output_blocks = update_running_softmax(
@@ -1485,7 +1510,7 @@ def blocked_bhqkv_attention_forward(
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_q_blocks = max(1, _normalize_int(num_q_blocks))
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks is not None else 1
 
     block_table = None
     if paged_attention:
@@ -1504,10 +1529,9 @@ def blocked_bhqkv_attention_forward(
     batch_block_positions = [(i * batch_size) // num_batch_blocks for i in range(num_batch_blocks)]
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
 
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
@@ -1527,9 +1551,9 @@ def blocked_bhqkv_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -1583,8 +1607,11 @@ def blocked_bhqkv_attention_forward(
                     (batch_len, h_end - h_start, q_len_block),
                     float(MIN_MASKED_ATTENTION_VALUE),
                     device=query.device,
+                    dtype=query.dtype,
                 )
-                current_denominator = torch.zeros(batch_len, h_end - h_start, q_len_block, device=query.device)
+                current_denominator = torch.zeros(
+                    batch_len, h_end - h_start, q_len_block, device=query.device, dtype=query.dtype
+                )
                 output_blocks = torch.zeros(
                     (batch_len, h_end - h_start, q_len_block, DH), device=query.device, dtype=query.dtype
                 )
@@ -1608,8 +1635,8 @@ def blocked_bhqkv_attention_forward(
                         # target_length = min(total_seen_tokens, end_index)
                         target_length = torch.where(
                             torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                            past_seen_tokens,
-                            end_index,
+                            torch.tensor(past_seen_tokens, dtype=torch.int),
+                            torch.tensor(end_index, dtype=torch.int),
                         )
                         causal_mask_block = _create_causal_mask(
                             position_ids=position_ids,
@@ -1626,6 +1653,9 @@ def blocked_bhqkv_attention_forward(
                         mask_block_g = mask_block[
                             batch_start : batch_start + batch_len, :, q_start : q_start + q_len_block, :
                         ]
+                        masked_tensor = torch.full_like(
+                            attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+                        )
                         attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
                     current_max, current_denominator, output_blocks = update_running_softmax(
@@ -1679,10 +1709,9 @@ def blocked_h_attention_forward(
     h_attn_blocks = []
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -1700,6 +1729,9 @@ def blocked_h_attention_forward(
         if position_bias is not None:
             attn_weights = attn_weights + position_bias[h_start:h_end, :, :]
         if attention_mask is not None:
+            masked_tensor = torch.full_like(
+                attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+            )
             attn_weights = torch.where(attention_mask, masked_tensor, attn_weights)
         # attention sinks needed for gpt-oss
         if sinks is not None:
@@ -1750,10 +1782,9 @@ def blocked_q_attention_forward(
     q_attn_blocks = []
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = value.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -1772,6 +1803,9 @@ def blocked_q_attention_forward(
         if position_bias is not None:
             attn_weights = attn_weights + position_bias
         if attn_mask_block is not None:
+            masked_tensor = torch.full_like(
+                attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+            )
             attn_weights = torch.where(attn_mask_block, masked_tensor, attn_weights)
         # attention sinks needed for gpt-oss
         if sinks is not None:
@@ -1820,10 +1854,9 @@ def blocked_kv_mla_attention_forward(
     )
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = query.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
 
     # Initialize Running Maximum and Denominator
     current_max = torch.full(
@@ -1836,7 +1869,7 @@ def blocked_kv_mla_attention_forward(
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
 
     ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
-    kv_block_size = -(-ctx_len // num_kv_blocks)
+    kv_block_size = -(-ctx_len // num_kv_blocks) if num_kv_blocks is not None else 1
 
     position_ids = cache_kwargs.get("position_ids")
     current_position = position_ids.max(dim=-1).values
@@ -1851,9 +1884,9 @@ def blocked_kv_mla_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -1893,6 +1926,9 @@ def blocked_kv_mla_attention_forward(
             krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
+            masked_tensor = torch.full_like(
+                attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+            )
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
@@ -1913,6 +1949,9 @@ def blocked_kv_mla_attention_forward(
                 )
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
+            masked_tensor = torch.full_like(
+                attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device
+            )
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
@@ -1961,10 +2000,9 @@ def blocked_h_mla_attention_forward(
     num_head_blocks = math.ceil(num_heads / head_block_size)
 
     if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
+        mask_dtype = module.config.dtype
     else:
         mask_dtype = q_pe.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=q_pe.device)
 
     if mla_absorption is not None:
         absorption = mla_absorption.get("absorption", False)
@@ -1995,6 +2033,9 @@ def blocked_h_mla_attention_forward(
             attn_weights = torch.matmul(qrope_nope, krope_nope.transpose(2, 3)) * scaling
 
         if attention_mask is not None:
+            masked_tensor = torch.full_like(
+                attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=q_pe.device
+            )
             attn_weights = torch.where(attention_mask, masked_tensor, attn_weights)
         attn_weights = torch.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
         attn_output = torch.matmul(attn_weights, kva)
