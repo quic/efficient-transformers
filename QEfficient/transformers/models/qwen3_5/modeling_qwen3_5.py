@@ -1800,7 +1800,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
     def forward(
         self,
         input_ids=None,
-        inputs_embeds=None,
         vision_embeds=None,
         position_ids=None,
         image_idx=None,
