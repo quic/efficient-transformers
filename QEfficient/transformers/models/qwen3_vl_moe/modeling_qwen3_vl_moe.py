@@ -1252,7 +1252,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": 1,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
                 }
 
