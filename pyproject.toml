@@ -69,7 +69,7 @@ quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/d
 "QEfficient.diffusers.pipelines.configs" = ["*.json", "*.yaml"]
 
 [build-system]
-requires = ["setuptools>=62.0.0"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
