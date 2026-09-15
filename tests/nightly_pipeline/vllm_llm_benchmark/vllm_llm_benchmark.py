@@ -23,17 +23,9 @@ from __future__ import annotations
 from vllm_benchmark_common import build_arg_parser, run_benchmarks
 
 LATEST_MODELS = {
-    "allenai/OLMo-2-0425-1B",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "openai/gpt-oss-20b",
     "meta-llama/Llama-3.3-70B-Instruct",
-    "meta-llama/Llama-3.2-1B",
-    "meta-llama/Llama-3.2-3B",
-    "meta-llama/Llama-3.1-8B",
-    "meta-llama/Llama-3.1-70B",
-    "meta-llama/Meta-Llama-3-8B",
-    "meta-llama/Meta-Llama-3-70B",
-    "zai-org/GLM-4.5",
 }
 
 
