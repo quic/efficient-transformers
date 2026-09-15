@@ -688,13 +688,6 @@ class TestMdpCompileIntegration:
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
 
-    def test_compile_artifacts_rejects_legacy_artifact_only_key(self, tmp_path):
-        model_hf, _ = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model_hf)
-
-        with pytest.raises(TypeError, match="artifacts"):
-            qeff._compile(onnx_path=str(tmp_path / "missing.onnx"), artifact_only=True)
-
     def test_compile_artifacts_writes_replay_without_invoking_compiler(self, tmp_path):
         onnx_path = tmp_path / "model.onnx"
         npi_path = tmp_path / "node_precision_info.yaml"

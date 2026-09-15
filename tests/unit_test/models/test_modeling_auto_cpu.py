@@ -1435,41 +1435,6 @@ class TestArtifactsGenerationAPIs:
         assert result == expected
         assert compile_model.call_args.kwargs["artifacts"] is True
 
-    def test_causal_lm_compile_rejects_legacy_artifact_only_key(self):
-        model, _ = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-
-        with pytest.raises(TypeError, match="artifacts"):
-            qeff.compile(prefill_seq_len=8, ctx_len=32, artifact_only=True)
-
-    def test_causal_lm_generate_rejects_legacy_artifact_only_key(self):
-        model, _ = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-
-        with pytest.raises(TypeError, match="artifacts"):
-            qeff.generate(tokenizer=MagicMock(), prompts=["hello"], artifact_only=True)
-
-    def test_single_qpc_vlm_generate_rejects_legacy_artifact_only_key(self):
-        with pytest.raises(TypeError, match="artifact_only"):
-            _QEFFAutoModelForImageTextToTextSingleQPC.generate(
-                SimpleNamespace(),
-                processor=MagicMock(),
-                images=["image"],
-                prompts=["prompt"],
-                artifact_only=True,
-            )
-
-    def test_dual_qpc_vlm_generate_rejects_legacy_artifact_only_key(self):
-        with pytest.raises(TypeError, match="artifacts"):
-            _QEffAutoModelForImageTextToTextDualQPC.generate(
-                SimpleNamespace(),
-                processor=MagicMock(),
-                images=["image"],
-                prompts=["prompt"],
-                skip_lang=True,
-                artifact_only=True,
-            )
-
     def test_causal_lm_proxy_writes_artifact_bundle(self, tmp_path):
         import numpy as np
 

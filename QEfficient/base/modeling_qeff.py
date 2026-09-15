@@ -69,17 +69,11 @@ logger = logging.getLogger(__name__)
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
     "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
-_LEGACY_ARTIFACT_ONLY_ERROR = "artifact_only is no longer supported; use artifacts instead."
 
 
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
     if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
-
-
-def reject_legacy_artifact_only(kwargs: Optional[dict]) -> None:
-    if kwargs and "artifact_only" in kwargs:
-        raise TypeError(_LEGACY_ARTIFACT_ONLY_ERROR)
 
 
 def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Path) -> None:
@@ -1113,7 +1107,6 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        reject_legacy_artifact_only(compiler_options)
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
 
         for removed_option in ("compile_only", "compile-only"):

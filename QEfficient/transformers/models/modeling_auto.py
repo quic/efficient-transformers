@@ -32,7 +32,6 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import (
     QEFFBaseModel,
-    reject_legacy_artifact_only,
     reject_legacy_moe_prefill_packed_chunk_size,
 )
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -2015,7 +2014,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
             If both `skip_lang` and `skip_vision` are True.
         """
-        reject_legacy_artifact_only(compiler_options)
         if artifacts:
             compiler_options["artifacts"] = True
         if skip_lang and skip_vision:
@@ -2345,7 +2343,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        reject_legacy_artifact_only(kwargs)
         if artifacts:
             return write_dual_qpc_vlm_runner_bundle(
                 model=self,
@@ -2993,7 +2990,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ValueError
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
         """
-        reject_legacy_artifact_only(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
@@ -4571,7 +4567,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        reject_legacy_artifact_only(compiler_options)
         if artifacts:
             compiler_options["artifacts"] = True
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
@@ -4912,7 +4907,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        reject_legacy_artifact_only(kwargs)
         write_io = kwargs.pop("write_io", False)
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
