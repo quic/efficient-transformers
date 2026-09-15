@@ -305,18 +305,25 @@ class QEffQwen3Model(Qwen3Model):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        if past_seen_tokens > 0:
+            target_length = past_seen_tokens
+        elif isinstance(attention_mask, torch.Tensor):
+            target_length = attention_mask.shape[-1]
+        else:
+            target_length = inputs_embeds.shape[1]
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         )
+        if isinstance(attention_mask, torch.Tensor):
+            causal_mask = causal_mask | (attention_mask[:, None, None, :1] < 0)
 
         hidden_states = inputs_embeds
 
