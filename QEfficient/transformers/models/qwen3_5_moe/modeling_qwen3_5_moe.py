@@ -76,6 +76,35 @@ from QEfficient.utils.logging_utils import logger
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
 
 
+def _qeff_resolve_torch_dtype(dtype, default=torch.float32):
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if isinstance(dtype, str):
+        normalized = dtype.replace("torch.", "").lower()
+        return {
+            "float": torch.float32,
+            "float32": torch.float32,
+            "fp32": torch.float32,
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "half": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+        }.get(normalized, default)
+    return default
+
+
+def _qeff_custom_io_precision(dtype, default_dtype="float16"):
+    dtype = _qeff_resolve_torch_dtype(dtype, default=None)
+    if dtype == torch.float32:
+        return "float"
+    if dtype == torch.float16:
+        return "float16"
+    if dtype == torch.bfloat16:
+        return "bfloat16"
+    return default_dtype
+
+
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
     RMSNorm module that works by replacing the current module with compiler known custom-op.
@@ -1314,10 +1343,54 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
 
+    @staticmethod
+    def get_onnx_export_seq_len(
+        default_seq_len: int,
+        prefill_seq_len: Optional[int] = None,
+        prefill_only: Optional[bool] = None,
+        **kwargs,
+    ) -> int:
+        del prefill_only, kwargs
+        return 1 if prefill_seq_len == 1 else default_seq_len
+
+    @staticmethod
+    def prepare_onnx_export_inputs(
+        example_inputs: dict,
+        dynamic_axes: dict,
+        seq_len: int,
+        **kwargs,
+    ) -> Tuple[dict, dict]:
+        del kwargs
+        example_inputs["position_ids"] = example_inputs["position_ids"].unsqueeze(0).repeat(4, 1, 1)
+        dynamic_axes["position_ids"] = {1: "batch_size", 2: "seq_len"}
+        if seq_len == 1:
+            dynamic_axes["input_ids"] = {0: "batch_size"}
+            dynamic_axes["position_ids"] = {1: "batch_size"}
+        return example_inputs, dynamic_axes
+
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
         if self.config.layer_types[layer_idx] == "full_attention":
             return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
         return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
+
+    def _retained_state_dtypes(self) -> dict:
+        kv_dtype = _qeff_resolve_torch_dtype(getattr(self.config, "torch_dtype", torch.float32))
+        recurrent_dtype = _qeff_resolve_torch_dtype(getattr(self.config, "mamba_ssm_dtype", None))
+        dtypes = {}
+        for layer_idx, layer_type in enumerate(self.config.layer_types):
+            if layer_type == "full_attention":
+                dtypes[f"past_key.{layer_idx}"] = kv_dtype
+                dtypes[f"past_value.{layer_idx}"] = kv_dtype
+            else:
+                dtypes[f"conv_state.{layer_idx}"] = kv_dtype
+                dtypes[f"recurrent_state.{layer_idx}"] = recurrent_dtype
+        return dtypes
+
+    def get_retained_state_custom_io_dtypes(self, default_dtype: str = "float16") -> dict:
+        return {
+            name: _qeff_custom_io_precision(dtype, default_dtype=default_dtype)
+            for name, dtype in self._retained_state_dtypes().items()
+        }
 
     def get_onnx_retained_state_specs(
         self,
@@ -1334,15 +1407,16 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
             "input_names": [],
             "output_names": [],
             "dynamic_axes": {},
+            "state_dtypes": {},
         }
 
-        kv_dtype = getattr(self.config, "torch_dtype", torch.float32)
+        state_dtypes = self._retained_state_dtypes()
         for layer_idx, layer_type in enumerate(self.config.layer_types):
             if layer_type == "full_attention":
                 layer_names = [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(tuple(kv_cache_shape), dtype=kv_dtype),
-                    torch.zeros(tuple(kv_cache_shape), dtype=kv_dtype),
+                    torch.zeros(tuple(kv_cache_shape), dtype=state_dtypes[layer_names[0]]),
+                    torch.zeros(tuple(kv_cache_shape), dtype=state_dtypes[layer_names[1]]),
                 ]
                 layer_axes = [
                     {0: batch_axis_name, 2: "ctx_len"},
@@ -1363,8 +1437,8 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(conv_shape, dtype=kv_dtype),
-                    torch.zeros(recurrent_shape, dtype=kv_dtype),
+                    torch.zeros(conv_shape, dtype=state_dtypes[layer_names[0]]),
+                    torch.zeros(recurrent_shape, dtype=state_dtypes[layer_names[1]]),
                 ]
                 layer_axes = [{0: batch_axis_name}, {0: batch_axis_name}]
 
@@ -1373,6 +1447,7 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
                 specs["input_names"].append(name)
                 specs["output_names"].append(f"{name}_RetainedState")
                 specs["dynamic_axes"][name] = axes
+                specs["state_dtypes"][name] = state_dtypes[name]
 
         return specs
 

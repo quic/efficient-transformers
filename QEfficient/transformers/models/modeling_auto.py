@@ -286,6 +286,13 @@ def _add_retained_state_custom_io(
     custom_io[compiler_output_name] = dtype
 
 
+def _get_retained_state_custom_io_dtypes(model, *, default_dtype: str) -> dict:
+    if not hasattr(model, "get_retained_state_custom_io_dtypes"):
+        return {}
+    custom_io_dtypes = model.get_retained_state_custom_io_dtypes(default_dtype=default_dtype)
+    return custom_io_dtypes or {}
+
+
 def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
     """Keep custom-IO entries that exist in the ONNX graph.
 
@@ -3986,6 +3993,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+        if hasattr(self.model, "get_onnx_export_seq_len"):
+            seq_len = self.model.get_onnx_export_seq_len(
+                default_seq_len=seq_len,
+                prefill_seq_len=prefill_seq_len,
+                prefill_only=prefill_only,
+                dynamo=dynamo,
+                enable_chunking=enable_chunking,
+            )
 
         # TODO: Remove this hack ##################
         if dynamo:
@@ -4079,7 +4094,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             output_names.append("logits")
 
-        if self.model.config.model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
+        if hasattr(self.model, "prepare_onnx_export_inputs"):
+            example_inputs, dynamic_axes = self.model.prepare_onnx_export_inputs(
+                example_inputs,
+                dynamic_axes,
+                seq_len=seq_len,
+                prefill_seq_len=prefill_seq_len,
+                prefill_only=prefill_only,
+                dynamo=dynamo,
+            )
+        elif self.model.config.model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
             example_inputs["position_ids"] = example_inputs["position_ids"].unsqueeze(0).repeat(4, 1, 1)
             dynamic_axes["position_ids"] = {1: "batch_size", 2: "seq_len"}
 
@@ -4345,7 +4369,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
-        result["_graph_name"] = "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is False else "Prefill"
+        result["_graph_name"] = (
+            "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is not True else "Prefill"
+        )
         return result
 
     def build_decode_specialization(
@@ -4763,11 +4789,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if hasattr(self.model, "get_retained_state_names")
                 else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ("key", "value")]
             )
+            retained_state_custom_io_dtypes = _get_retained_state_custom_io_dtypes(
+                self.model,
+                default_dtype=kv_cache_dtype,
+            )
             for retained_state_name in retained_state_names:
                 _add_retained_state_custom_io(
                     custom_io,
                     f"{retained_state_name}{kv_infix}_RetainedState",
-                    dtype=kv_cache_dtype,
+                    dtype=retained_state_custom_io_dtypes.get(retained_state_name, kv_cache_dtype),
                     use_onnx_subfunctions=use_onnx_subfunctions,
                 )
         else:

@@ -1619,6 +1619,34 @@ def test_dynamo_dynamic_shapes_nest_qwen3_5_hybrid_retained_states():
     assert set(dynamic_shapes["past_key_values"][1][1]) == {0}
 
 
+def test_decode_compile_passes_seq_len_one_to_export(tmp_path):
+    from types import SimpleNamespace
+
+    qeff_model = object.__new__(QEFFAutoModelForCausalLM)
+    qeff_model.model = SimpleNamespace(config=SimpleNamespace(model_type="dummy"))
+    qeff_model.onnx_path = None
+    captured = {}
+
+    def fake_transform(**kwargs):
+        captured["transform"] = kwargs
+
+    def fake_export(**kwargs):
+        captured["export"] = kwargs
+        qeff_model.onnx_path = tmp_path / "model.onnx"
+
+    qeff_model.transform = fake_transform
+    qeff_model.export = fake_export
+
+    qeff_model.get_onnx_path(
+        prefill_only=False,
+        dynamo=True,
+        specializations=[{"batch_size": 1, "seq_len": 1, "ctx_len": 32}],
+    )
+
+    assert captured["transform"]["seq_len"] == 1
+    assert captured["export"]["prefill_seq_len"] == 1
+
+
 @pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -2391,6 +2419,61 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
         headpar_split=4,
     )
     assert headpar_model.get_submodules_for_export() == {QEffQwen3_5MoeAttention}
+
+
+def test_qwen3_5_moe_decode_export_uses_static_token_axis():
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForCausalLM
+
+    example_inputs = {
+        "input_ids": torch.zeros((2, 1), dtype=torch.int64),
+        "position_ids": torch.zeros((2, 1), dtype=torch.int64),
+    }
+    dynamic_axes = {
+        "input_ids": {0: "batch_size", 1: "seq_len"},
+        "position_ids": {0: "batch_size", 1: "seq_len"},
+    }
+
+    assert QEffQwen3_5MoeForCausalLM.get_onnx_export_seq_len(32, prefill_seq_len=1) == 1
+
+    example_inputs, dynamic_axes = QEffQwen3_5MoeForCausalLM.prepare_onnx_export_inputs(
+        example_inputs,
+        dynamic_axes,
+        seq_len=1,
+    )
+
+    assert example_inputs["position_ids"].shape == (4, 2, 1)
+    assert dynamic_axes["input_ids"] == {0: "batch_size"}
+    assert dynamic_axes["position_ids"] == {1: "batch_size"}
+
+
+def test_qwen3_5_moe_retained_state_specs_keep_recurrent_state_float32():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForCausalLM
+
+    model = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
+    model.config = SimpleNamespace(
+        layer_types=["full_attention", "linear_attention"],
+        torch_dtype=torch.bfloat16,
+        mamba_ssm_dtype="float32",
+    )
+    linear_attn = SimpleNamespace(
+        conv_dim=16,
+        num_k_heads=2,
+        conv_kernel_size=4,
+        num_v_heads=4,
+        head_k_dim=8,
+        head_v_dim=8,
+    )
+    model.model = SimpleNamespace(layers=[SimpleNamespace(), SimpleNamespace(linear_attn=linear_attn)])
+
+    specs = model.get_onnx_retained_state_specs(batch_size=2, seq_len=1, kv_cache_shape=[2, 1, 32, 8])
+
+    assert specs["past_key_values"][0][0].dtype == torch.bfloat16
+    assert specs["past_key_values"][1][0].dtype == torch.bfloat16
+    assert specs["past_key_values"][1][1].dtype == torch.float32
+    assert specs["state_dtypes"]["recurrent_state.1"] == torch.float32
+    assert model.get_retained_state_custom_io_dtypes(default_dtype="float16")["recurrent_state.1"] == "float"
 
 
 def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
@@ -3894,6 +3977,7 @@ def test_qwen3_5_moe_compile_custom_io_covers_linear_attention_states(tmp_path, 
             "conv_state.1",
             "recurrent_state.1",
         ],
+        get_retained_state_custom_io_dtypes=lambda default_dtype: {"recurrent_state.1": "float"},
     )
     qeff_model.num_layers = 2
     qeff_model.continuous_batching = False
@@ -3926,6 +4010,8 @@ def test_qwen3_5_moe_compile_custom_io_covers_linear_attention_states(tmp_path, 
     assert "conv_state.1_VLLM_InternalRetainedState" in custom_io
     assert "recurrent_state.1_VLLM" in custom_io
     assert "recurrent_state.1_VLLM_InternalRetainedState" in custom_io
+    assert custom_io["past_key.0_VLLM"] == "float16"
+    assert custom_io["recurrent_state.1_VLLM"] == "float"
     assert captured["use_onnx_subfunctions"] is True
 
 

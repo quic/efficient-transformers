@@ -700,6 +700,12 @@ class QEFFBaseModel(ABC):
             bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
             seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
             ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
+            try:
+                export_seq_len = int(seq_len)
+            except (TypeError, ValueError):
+                export_seq_len = None
+            if export_seq_len == 1 and prefill_only is not True:
+                kwargs["prefill_seq_len"] = 1
         else:
             bs = None
             seq_len = None
