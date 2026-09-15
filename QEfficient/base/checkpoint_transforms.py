@@ -153,13 +153,26 @@ def detect_group_transform(
             return MoEExpertParallelStackingCheckpointTransform.configured(int(p), int(e_p))
         return _find_transform_by_id("moe_expert_stacking_v1", transforms)
 
+    # GptOss is identified by model_type — always uses MXFP4 dequant transform.
+    model_type = getattr(config, "model_type", None) if config else None
+    if model_type == "gpt_oss":
+        if hash_params.get("moe_prefill_flavour") == "expert_parallel":
+            p = hash_params.get("moe_prefill_num_pipeline_stages")
+            e_p = hash_params.get("moe_prefill_num_parallelized_experts")
+            if p is None or e_p is None:
+                raise ValueError(
+                    "expert_parallel flavour requires moe_prefill_num_pipeline_stages "
+                    "and moe_prefill_num_parallelized_experts in hash_params."
+                )
+            from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
+                GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform,
+            )
+            return GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform.configured(int(p), int(e_p))
+        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
+
     # Pre-stacked formats — delegate detection to each transform's is_applicable().
     # FusedExpertSplitCheckpointTransform handles both Mixtral fused and GraniteMoE
     # internally via _get_key_remap() — no hardcoded patterns needed here.
-    quant_config = getattr(config, "quantization_config", None) if config else None
-    if quant_config and any("_blocks" in k for k in weight_map):
-        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
-
     fused_cls = _find_transform_by_id("fused_expert_split_v1", transforms)
     if fused_cls is not None and fused_cls.is_applicable(weight_map):
         return fused_cls
@@ -270,9 +283,9 @@ class CheckpointTransformPipeline:
         src, out = Path(src), Path(out)
 
         # ① VALIDATE
-        if list(src.glob("*.bin")):
+        if list(src.glob("*.bin")) and not list(src.glob("*.safetensors")):
             raise ValueError(
-                f"Checkpoint at {src} contains .bin files. "
+                f"Checkpoint at {src} contains .bin files but no safetensors files. "
                 "Weight-free export requires safetensors format. "
                 "Convert the checkpoint to safetensors before exporting."
             )

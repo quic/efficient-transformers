@@ -7,7 +7,7 @@
 
 from pathlib import Path
 from typing import Dict, List, Optional
-
+import json
 import onnx_ir as ir
 from torch import nn
 
@@ -77,7 +77,7 @@ def _moe_weight_aliases(name: str) -> List[str]:
 
 def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
     """Return the unique matching checkpoint key, or fail on ambiguous matches."""
-    seen = set()
+    seen: set = set()
     matches = []
     for candidate in candidates:
         if candidate in seen:
@@ -168,8 +168,8 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         Specification mapping promoted ONNX inputs to checkpoint tensor locations.
     """
     model_ir = onnx_program.model
-    parameter_names = {name for name, _ in qeff_model.model.named_parameters()}
-    buffer_names = {name for name, _ in qeff_model.model.named_buffers()}
+    parameter_names = {name for name, _ in qeff_model.model.named_parameters(remove_duplicate=False)}
+    buffer_names = {name for name, _ in qeff_model.model.named_buffers(remove_duplicate=False)}
     model_names = parameter_names | buffer_names
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
@@ -188,18 +188,33 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         for checkpoint_file in checkpoint_files
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
-    # Identify the active layout transform so find_checkpoint_key() can use
-    # its explicit resolve_onnx_key() mapping instead of hardcoded fallbacks.
-    from QEfficient.base.checkpoint_transforms import detect_group_transform  # noqa: PLC0415
-    from QEfficient.utils.checkpoint_utils import read_weight_map  # noqa: PLC0415
 
-    _wm = read_weight_map(Path(model_ref))
-    active_transform = detect_group_transform(
-        getattr(qeff_model.model, "config", None),
-        _wm,
-        getattr(qeff_model, "hash_params", {}),
-        getattr(qeff_model, "_checkpoint_transforms", []),
+    # Identify the active layout transform from the prepared checkpoint manifest.
+    # The manifest stores active_group: TRANSFORM_ID written during pipeline Stage ⑤.
+    # Reading from the manifest avoids re-running detection on the prepared checkpoint
+    # (which would fail — the prepared checkpoint has canonical output keys like
+    # moe_weights.gate, not the original per-expert keys that trigger detection).
+    
+
+    from QEfficient.base.checkpoint_transforms import (  # noqa: PLC0415
+        CHECKPOINT_PREPARED_MANIFEST,
+        _find_transform_by_id,
     )
+
+    active_transform = None
+    manifest_path = Path(model_ref) / CHECKPOINT_PREPARED_MANIFEST
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            transform_id = manifest.get("active_group", "none")
+            if transform_id and transform_id != "none":
+                active_transform = _find_transform_by_id(
+                    transform_id,
+                    getattr(qeff_model, "_checkpoint_transforms", []),
+                )
+        except (OSError, json.JSONDecodeError):
+            pass  # no manifest → active_transform stays None, fallback to legacy aliases
+
     promoted_inputs: List[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
