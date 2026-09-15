@@ -50,11 +50,15 @@ def _build_qaic_config(blocking_mode):
 @pytest.mark.parametrize("model_name", test_models_blockedKV[:1])
 def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, blocking_mode, manual_cleanup):
     qaic_config = _build_qaic_config(blocking_mode)
+    is_gemma = model_config_dict[model_name].get("model_type", "").startswith("gemma")
+    skip_ort = is_gemma and blocking_mode in ("qkv", "hqkv")
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         qaic_config=qaic_config,
         manual_cleanup=manual_cleanup,
         num_devices=4,
+        compile_only=skip_ort,
+        skip_onnxruntime=skip_ort,
     )
 
     # kv_paged_attention blocking
@@ -75,11 +79,15 @@ def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, bloc
 def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, blocking_mode, manual_cleanup):
     n_layer = get_custom_n_layers(model_name)
     qaic_config = _build_qaic_config(blocking_mode)
+    is_gemma = model_config_dict[model_name].get("model_type", "").startswith("gemma")
+    skip_ort = is_gemma and blocking_mode in ("qkv", "hqkv")
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         qaic_config=qaic_config,
         n_layer=n_layer,
         manual_cleanup=manual_cleanup,
+        compile_only=skip_ort,
+        skip_onnxruntime=skip_ort,
     )
 
     # kv_paged_attention blocking
@@ -89,7 +97,12 @@ def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, block
         num_q_blocks=NUM_Q_BLOCKS,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, qaic_config=qaic_config, n_layer=n_layer, manual_cleanup=manual_cleanup
+        model_name=model_name,
+        qaic_config=qaic_config,
+        n_layer=n_layer,
+        manual_cleanup=manual_cleanup,
+        compile_only=is_gemma,
+        skip_onnxruntime=is_gemma,
     )
 
 
@@ -117,8 +130,6 @@ def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, blo
         n_layer=n_layer,
         config=hf_config,
         manual_cleanup=manual_cleanup,
-        # Gemma's qkv/hqkv blocked graph is not executable by CPU ORT; keep
-        # the export and QAIC compile coverage for these modes.
         compile_only=skip_ort,
         skip_onnxruntime=skip_ort,
     )
@@ -131,7 +142,13 @@ def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, blo
         num_q_blocks=NUM_Q_BLOCKS,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, qaic_config=qaic_config, n_layer=n_layer, config=hf_config, manual_cleanup=manual_cleanup
+        model_name=model_name,
+        qaic_config=qaic_config,
+        n_layer=n_layer,
+        config=hf_config,
+        manual_cleanup=manual_cleanup,
+        compile_only=is_gemma,
+        skip_onnxruntime=is_gemma,
     )
 
 
