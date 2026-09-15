@@ -267,10 +267,14 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         """Convert checkpoint shards to ``target_dtype`` in a prepared output directory."""
         out.mkdir(parents=True, exist_ok=True)
 
-        weight_map = read_weight_map(src)
+        weight_map = kwargs.pop("weight_map", None) or read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
+        # Always use "base-XXXX.safetensors" naming to avoid colliding with layout
+        # transform output shards.  Layout transforms write to original shard names
+        # (e.g. "model.safetensors" for single-file checkpoints); using the same name
+        # would cause DtypeConversion to overwrite the layout transform's output.
         new_name_for = {
-            shard: (f"model_{idx:04d}.safetensors" if len(shard_names) > 1 else "model.safetensors")
+            shard: f"base-{idx:04d}.safetensors"
             for idx, shard in enumerate(shard_names)
         }
 
@@ -278,10 +282,17 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         # at 256 — beyond that OS scheduling overhead outweighs I/O parallelism gains.
         n_workers = max_workers if max_workers is not None else min(len(shard_names), cpu_count() * 4, 256)
 
+        shard_keys: Dict[str, set] = {}
+        for k, v in weight_map.items():
+            shard_keys.setdefault(v, set()).add(k)
+
         def _process_shard(shard_name: str) -> None:
+            allowed = shard_keys[shard_name]
             tensors: Dict[str, torch.Tensor] = {}
             with safe_open(str(src / shard_name), framework="pt") as f:
                 for key in f.keys():
+                    if key not in allowed:
+                        continue
                     t = f.get_tensor(key)
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
             atomic_save(tensors, out / new_name_for[shard_name])
@@ -780,10 +791,91 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 
 
 # ---------------------------------------------------------------------------
-# Transform 4: split already-stacked fused MoE experts
-# Unified implementation — architecture subclasses declare CHECKPOINT_KEY_REMAP
-# so a single algorithm handles Mixtral fused and GraniteMoE.
+# Transform 3b: GptOss MXFP4 dequant + expert-parallel repacking
 # ---------------------------------------------------------------------------
+
+
+class GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform(GptOssMxfp4ExpertDequantSplitCheckpointTransform):
+    """GptOss MXFP4 dequant + expert-parallel weight repacking for prefill.
+
+    Extends GptOssMxfp4ExpertDequantSplitCheckpointTransform by applying
+    pack_moe_weights_for_expert_parallel() after dequantization, producing
+    the [E/P, P, H, I] layout required for the expert_parallel prefill flavour.
+
+    ``P``   = num_pipeline_stages
+    ``E/P`` = num_parallelized_experts
+    """
+
+    TRANSFORM_ID = "gptoss_mxfp4_dequant_expert_parallel_v1"
+
+    _num_pipeline_stages: int = 1
+    _num_parallelized_experts: int = 1
+
+    @classmethod
+    def configured(cls, num_pipeline_stages: int, num_parallelized_experts: int):
+        """Return a configured subclass with P and E/P baked in."""
+        return type(
+            f"GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform"
+            f"[P={num_pipeline_stages},E_P={num_parallelized_experts}]",
+            (cls,),
+            {
+                "_num_pipeline_stages": num_pipeline_stages,
+                "_num_parallelized_experts": num_parallelized_experts,
+                "TRANSFORM_ID": "gptoss_mxfp4_dequant_expert_parallel_v1",
+            },
+        )
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        weight_map: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Dict[str, str]:
+        """Dequantize GptOss MXFP4 experts then repack for expert-parallel."""
+        from QEfficient.transformers.moe.weights import _pack_expert_parallel_tensor  # noqa: PLC0415
+
+        # Step 1: standard dequant → moe_weights.gate/up/down [E, H, I]
+        new_weight_map = super().apply(src, out, target_dtype=target_dtype, weight_map=weight_map, **kwargs)
+
+        # Step 2: repack [E, H, I] → [E/P, P, H, I] — parallel per output shard.
+        # Identical repacking logic as MoEExpertParallelStackingCheckpointTransform.
+        unique_shards = sorted(set(new_weight_map.values()))
+
+        def _repack_shard(shard_name: str) -> None:
+            shard_path = out / shard_name
+            if not shard_path.exists():
+                return
+            tensors: Dict[str, torch.Tensor] = {}
+            with safe_open(str(shard_path), framework="pt") as f:
+                for k in f.keys():
+                    t = f.get_tensor(k)
+                    if t.is_floating_point():
+                        packed = _pack_expert_parallel_tensor(
+                            t,
+                            num_pipeline_stages=cls._num_pipeline_stages,
+                            num_parallelized_experts=cls._num_parallelized_experts,
+                        )
+                        tensors[k] = packed.data if hasattr(packed, "data") else packed
+                    else:
+                        tensors[k] = t
+            atomic_save(tensors, shard_path)
+
+        n_workers = max(1, min(len(unique_shards), cpu_count()))
+        logger.info(
+            f"GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform: repacking "
+            f"{len(unique_shards)} shards | P={cls._num_pipeline_stages} "
+            f"E/P={cls._num_parallelized_experts} | workers={n_workers}..."
+        )
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            futures = [ex.submit(_repack_shard, s) for s in unique_shards]
+            for fut in as_completed(futures):
+                fut.result()
+
+        logger.info(f"GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform: done → {out}")
+        return new_weight_map
 
 
 class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
