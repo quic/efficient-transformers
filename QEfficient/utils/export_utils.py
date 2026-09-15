@@ -23,6 +23,7 @@ from torch.export import Dim
 from QEfficient.base.checkpoint_transforms import CHECKPOINT_LAYOUT_VERSION
 from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
+    DeduplicateRepeatedSubgraphTransform,
     LocalizeFunctionReduceSumAxesTransform,
     DeduplicateRepeatedSubgraphTransform,
     PreserveNestedCacheRetainedStateTransform,
@@ -92,7 +93,7 @@ def build_dynamo_export_kwargs(export_kwargs):
     from QEfficient.utils import constants
 
     kwargs = dict(export_kwargs)
-    kwargs.setdefault("report", False)
+    kwargs.setdefault("report", True)
     kwargs.setdefault("optimize", False)
     kwargs["dynamo"] = True
     kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
@@ -669,9 +670,11 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
 
     # Add subfunction-specific ONNX transforms based on export path
     if dynamo:
-        # Dynamo: repair retained cache outputs, then assign semantic names.
+        # Dynamo repairs retained cache outputs, collapses duplicate local functions, then assigns semantic names.
         if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
+        if DeduplicateRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(DeduplicateRepeatedSubgraphTransform)
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
     else:
