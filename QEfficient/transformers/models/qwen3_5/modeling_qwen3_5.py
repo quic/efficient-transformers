@@ -2102,7 +2102,11 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False, batch_fold: bool = False,
+        self,
+        comp_ctx_lengths: list[int] | None = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
