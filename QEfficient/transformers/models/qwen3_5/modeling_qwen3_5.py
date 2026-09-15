@@ -461,7 +461,8 @@ def qeff_torch_causal_conv1d_update(
     shifted_conv_state = shifted_conv_state * valid_decode + conv_state_flat * (1 - valid_decode)
 
     # Prefill and padded chunks retain the general last-valid-position gather.
-    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+    # Derive zeros from an existing state view; torch.zeros emits a dynamic ConstantOfShape in subfunctions.
+    zeros = conv_state_flat[:, 0, :].to(pos_ids.dtype) * 0
     order = torch.argsort(torch.cat([zeros, pos_ids], dim=1), dim=1)
     last_positions = order[:, -state_len:]
     ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
