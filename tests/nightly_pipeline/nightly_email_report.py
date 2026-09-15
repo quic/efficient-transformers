@@ -36,6 +36,7 @@ MODEL_CLASS_LABELS = {
     "audio_embedding_model": "Audio Embedding Models",
     "audio_model": "Audio Models",
     "causal_model": "Causal LM Models",
+    "diffuser_model": "Diffusion Models",
     "embedding_model": "Embedding Models",
     "image_text_to_text_model": "Image Text-to-Text Models",
     "sequence_model": "Sequence Models",
@@ -48,6 +49,7 @@ VALIDATION_FILE_ORDER = [
     "audio_model_validation.csv",
     "audio_embedding_model_validation.csv",
     "sequence_model_validation.csv",
+    "diffuser_model_validation.csv",
 ]
 
 PIPELINE_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "pipeline_configs.json"
@@ -59,6 +61,10 @@ PIPELINE_CONFIG_ORDER = [
     ("audio_model", "audio_model_configs"),
     ("audio_embedding_model", "audio_embedding_model_configs"),
     ("sequence_model", "sequence_model_configs"),
+    ("diffuser_model (Flux)", "diffuser_flux_configs"),
+    ("diffuser_model (WAN T2V)", "diffuser_wan_configs"),
+    ("diffuser_model (WAN T2V non-unified)", "diffuser_wan_non_unified_configs"),
+    ("diffuser_model (WAN I2V)", "diffuser_wan_i2v_configs"),
 ]
 
 REPORT_TITLE = "QEFF Nightly Report"

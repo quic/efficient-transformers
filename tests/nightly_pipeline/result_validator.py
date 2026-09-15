@@ -20,6 +20,7 @@ from .model_age_utils import get_model_age, is_newer_model, load_validated_model
 COMMON_COLUMNS = [
     "model_name",
     "model_age",
+    "export_dtype",
     "status",
     "failure_reason",
     "export_time_before",
@@ -63,6 +64,10 @@ MODEL_CLASS_TO_REPORT_CLASS = {
     "audio_embedding_model_configs": "audio_embedding_model",
     "audio_model_configs": "audio_model",
     "causal_pipeline_configs": "causal_model",
+    "diffuser_flux_configs": "diffuser_model",
+    "diffuser_wan_configs": "diffuser_model",
+    "diffuser_wan_non_unified_configs": "diffuser_model",
+    "diffuser_wan_i2v_configs": "diffuser_model",
     "embedding_model_configs": "embedding_model",
     "image_text_to_text_model_configs": "image_text_to_text_model",
     "sequence_model_configs": "sequence_model",
@@ -94,9 +99,30 @@ FAMILY_SPECS = {
         "mad_key": "generated_ids",
         "include_perf": True,
     },
+    "diffuser_flux_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_non_unified_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
+    "diffuser_wan_i2v_configs": {
+        "mad_column": "image_mean",
+        "mad_key": "image_mean",
+        "extra_info_columns": ["image_shape", "image_max"],
+    },
     "embedding_model_configs": {
-        "mad_column": "embedding",
-        "mad_key": "embedding",
+        "mad_column": "embedding_mean",
+        "mad_key": "embedding_mean",
+        "extra_info_columns": ["pooling", "seq_len", "embedding_shape", "embedding_max"],
     },
     "sequence_model_configs": {
         "text_column": "prediction",
@@ -145,6 +171,17 @@ def validate_artifact_file(
 ) -> list[dict[str, Any]]:
     previous_artifacts = load_json(previous_artifact_file) if previous_artifact_file is not None else {}
     rows = validate_artifacts(load_json(current_artifact_file), previous_artifacts, model_class, tolerances)
+    failure_rows = {
+        row.get("model_name"): row for row in load_recorded_test_failure_rows(current_artifact_file.parent, model_class)
+    }
+    for row in rows:
+        failure = failure_rows.get(row.get("model_name"))
+        if failure:
+            row["status"] = failure["status"]
+            row["failure_reason"] = failure["failure_reason"]
+    for model_name, failure in failure_rows.items():
+        if not any(row.get("model_name") == model_name for row in rows):
+            rows.append(failure)
     write_validation_csv(output_csv_file, model_class, rows)
     return rows
 
@@ -166,16 +203,62 @@ def load_recorded_test_failure_rows(artifacts_dir: Path, model_class: str) -> li
     return sorted(rows, key=lambda row: row.get("model_name", ""))
 
 
+def _flatten_for_validator(data: dict[str, Any]) -> dict[str, Any]:
+    """Flatten nested artifact JSON into a flat {composite_key: payload} dict.
+
+    Supports:
+      - 4-level [model][dtype][pooling][payload]  → embedding
+      - 3-level [model][dtype][payload]            → audio / audio_embedding
+      - 2-level [model][payload]                   → causal / image-text / sequence
+    """
+    flattened: dict[str, Any] = {}
+    for model_name, model_data in data.items():
+        if not isinstance(model_data, dict):
+            flattened[model_name] = model_data
+            continue
+
+        first_val = next(iter(model_data.values()), None)
+
+        # 2-level: already flat payload
+        if not isinstance(first_val, dict):
+            flattened[model_name] = model_data
+            continue
+
+        inner_val = next(iter(first_val.values()), None)
+
+        # 3-level: {model: {dtype: {payload}}}
+        if not isinstance(inner_val, dict):
+            for dtype_key, payload in model_data.items():
+                row = dict(payload)
+                row["dtype"] = dtype_key
+                flattened[f"{model_name}|{dtype_key}"] = row
+            continue
+
+        # 4-level: {model: {dtype: {pooling: {payload}}}}
+        for dtype_key, pooling_dict in model_data.items():
+            for pooling_key, payload in pooling_dict.items():
+                if not isinstance(payload, dict):
+                    continue
+                row = dict(payload)
+                row["dtype"] = dtype_key
+                row["pooling"] = pooling_key
+                flattened[f"{model_name}|{dtype_key}|{pooling_key}"] = row
+
+    return flattened
+
+
 def validate_artifacts(
     current_artifacts: dict[str, Any],
     previous_artifacts: dict[str, Any],
     model_class: str,
     tolerances: ValidationTolerances,
 ) -> list[dict[str, Any]]:
+    current_flat = _flatten_for_validator(current_artifacts)
+    previous_flat = _flatten_for_validator(previous_artifacts)
     rows = []
     validated_models_config = load_validated_models_config()
-    for model_name, current_payload in sorted(current_artifacts.items()):
-        previous_payload = previous_artifacts.get(model_name)
+    for model_name, current_payload in sorted(current_flat.items()):
+        previous_payload = previous_flat.get(model_name)
         if previous_payload is None:
             rows.append(_current_only_model_row(model_name, current_payload, model_class, validated_models_config))
             continue
@@ -217,11 +300,20 @@ def get_csv_columns(model_class: str) -> list[str]:
     if spec.get("include_perf"):
         columns.extend(PERF_COLUMNS)
 
+    for col in spec.get("extra_info_columns", []):
+        if col not in columns:
+            columns.append(col)
+
     return columns
 
 
 def all_rows_passed(rows: list[dict[str, Any]]) -> bool:
     return all(row.get("status") in {"passed", "warning"} for row in rows)
+
+
+def _base_model_name(composite_key: str) -> str:
+    """Extract the bare HF model name from a composite key like 'model|dtype|pooling'."""
+    return composite_key.split("|")[0]
 
 
 def _validate_model(
@@ -235,8 +327,17 @@ def _validate_model(
     columns = get_csv_columns(model_class)
     spec = _get_family_spec(model_class)
     row = {column: "N/A" for column in columns}
-    row["model_name"] = model_name
-    row["model_age"] = get_model_age(model_name, model_class, validated_models_config)
+    base_name = _base_model_name(model_name)
+    row["model_name"] = base_name
+    row["model_age"] = get_model_age(base_name, model_class, validated_models_config)
+    row["export_dtype"] = current_payload.get("dtype", "-")
+
+    for col in spec.get("extra_info_columns", []):
+        val = current_payload.get(col, "N/A")
+        if col == "golden_comparison_passed":
+            gc = current_payload.get("golden_comparison")
+            val = gc.get("passed", "N/A") if isinstance(gc, dict) else "N/A"
+        row[col] = val
 
     _add_percentage_metric(row, "export_time", previous_payload.get("export_time"), current_payload.get("export_time"))
     _add_percentage_metric(
@@ -256,7 +357,7 @@ def _validate_model(
     failures = _collect_failures(row, spec, tolerances)
     if not failures:
         row["status"] = "passed"
-    elif is_newer_model(model_name, model_class, validated_models_config):
+    elif is_newer_model(base_name, model_class, validated_models_config):
         row["status"] = "failed"
     else:
         row["status"] = "warning"
@@ -269,8 +370,14 @@ def _current_only_model_row(
 ) -> dict[str, Any]:
     spec = _get_family_spec(model_class)
     row = {column: "N/A" for column in get_csv_columns(model_class)}
-    row["model_name"] = model_name
-    row["model_age"] = get_model_age(model_name, model_class, validated_models_config)
+    base_name = _base_model_name(model_name)
+    row["model_name"] = base_name
+    row["model_age"] = get_model_age(base_name, model_class, validated_models_config)
+    row["export_dtype"] = current_payload.get("dtype", "-")
+
+    for col in spec.get("extra_info_columns", []):
+        val = current_payload.get(col, "N/A")
+        row[col] = val
 
     _add_percentage_metric(row, "export_time", None, current_payload.get("export_time"))
     _add_percentage_metric(row, "compile_time", None, current_payload.get("compile_time"))
@@ -456,9 +563,15 @@ def _extract_total_size_bytes(payload: dict[str, Any]) -> float | None:
     for key, value in payload.items():
         if not _is_artifact_size_key(key):
             continue
-        parsed_size = _parse_size_bytes(value)
-        if parsed_size is not None:
-            sizes.append(parsed_size)
+        if isinstance(value, dict):
+            for v in value.values():
+                parsed = _parse_size_bytes(v)
+                if parsed is not None:
+                    sizes.append(parsed)
+        else:
+            parsed_size = _parse_size_bytes(value)
+            if parsed_size is not None:
+                sizes.append(parsed_size)
     if not sizes:
         return None
     return float(sum(sizes))
@@ -466,7 +579,11 @@ def _extract_total_size_bytes(payload: dict[str, Any]) -> float | None:
 
 def _is_artifact_size_key(key: str) -> bool:
     key_lower = key.lower()
-    return key_lower == "size" or ("size" in key_lower and ("onnx" in key_lower or "qpc" in key_lower))
+    return (
+        key_lower == "size"
+        or "onnx_and_qpc_dir size" in key_lower
+        or ("size" in key_lower and ("onnx" in key_lower or "qpc" in key_lower))
+    )
 
 
 def _parse_size_bytes(value: Any) -> float | None:
