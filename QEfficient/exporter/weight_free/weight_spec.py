@@ -42,10 +42,17 @@ class WeightSpecLocation:
 
 @dataclass
 class WeightSpecInput:
-    """Mapping from an ONNX input name to its external checkpoint tensor."""
+    """Mapping from an ONNX graph value to its external checkpoint tensor.
+
+    Entries use the same file/key location contract regardless of whether the
+    checkpoint tensor is consumed directly or through an export-time transform.
+    """
 
     name: str
     location: WeightSpecLocation  # required: every spec entry must point to a file
+    role: str = "weight"
+    weight_input: str | None = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,7 +60,7 @@ class WeightSpec:
     """Serializable weight-free export metadata.
 
     The spec records the checkpoint files shipped beside the ONNX model and
-    maps promoted ONNX weight inputs back to tensor keys in those files.
+    maps ONNX weight graph values back to tensor keys in those files.
     """
 
     model_name: str
@@ -66,6 +73,13 @@ class WeightSpec:
         """Return a JSON-serializable representation of the weight spec."""
         data = asdict(self)
         data["model_id"] = str(data["model_id"])
+        for entry in data["inputs"]:
+            if entry.get("role") == "weight":
+                entry.pop("role", None)
+            if entry.get("weight_input") is None:
+                entry.pop("weight_input", None)
+            if not entry.get("metadata"):
+                entry.pop("metadata", None)
         return data
 
 
@@ -129,6 +143,9 @@ def load_weight_spec(path: Path) -> WeightSpec:
             WeightSpecInput(
                 name=entry["name"],
                 location=_load_location(entry["location"]),
+                role=entry.get("role", "weight"),
+                weight_input=entry.get("weight_input"),
+                metadata=entry.get("metadata", {}),
             )
             for entry in data["inputs"]
             if entry.get("location") is not None  # backward compat: skip old buffer-only entries

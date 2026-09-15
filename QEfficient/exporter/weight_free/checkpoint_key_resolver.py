@@ -180,6 +180,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
     promoted_inputs: List[WeightSpecInput] = []
+    spec_input_names = set()
 
     for name, init_value in list(model_ir.graph.initializers.items()):
         if name not in model_names:
@@ -211,6 +212,31 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
                 location=WeightSpecLocation(file=checkpoint_files.index(checkpoint_file), key=checkpoint_key),
             )
         )
+        spec_input_names.add(name)
+
+    for value in model_ir.graph.inputs:
+        name = value.name
+        if name in spec_input_names or name not in model_names:
+            continue
+
+        onnx_name = tied_weight_map.get(name, name)
+        checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
+        if checkpoint_key is None:
+            if _is_computed_initializer(onnx_name):
+                continue
+            raise ValueError(
+                f"Could not resolve model graph input '{name}' to a safetensors checkpoint key "
+                f"(resolved name: '{onnx_name}', model: '{model_ref}')."
+            )
+
+        checkpoint_file = checkpoint_index[checkpoint_key]
+        promoted_inputs.append(
+            WeightSpecInput(
+                name=name,
+                location=WeightSpecLocation(file=checkpoint_files.index(checkpoint_file), key=checkpoint_key),
+            )
+        )
+        spec_input_names.add(name)
 
     return WeightSpec(
         model_name=model_name,
