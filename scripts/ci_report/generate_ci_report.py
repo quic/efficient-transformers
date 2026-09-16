@@ -92,7 +92,7 @@ class StageSpec:
     order: int
 
 
-# Full 11-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
+# Full 12-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
 # This is the source of truth for the stage list, so absent files render as "Not Run".
 STAGE_MAP = OrderedDict(
     [
@@ -142,19 +142,23 @@ STAGE_MAP = OrderedDict(
             ),
         ),
         (
-            "tests_log_reranker.xml",
-            StageSpec("QAIC Reranker", "tests/transformers/models/reranker/test_reranker_mad.py", "RUN_QAIC_MM", 6),
+            "tests_log_disagg.xml",
+            StageSpec("QAIC DISAGG", "(on_qaic) and (disagg_dma) and <PROFILE>", "RUN_QAIC_DISAGG", 6),
         ),
-        ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 7)),
-        ("tests_log3.xml", StageSpec("CLI", "(cli) and (not finetune)", "RUN_CLI", 8)),
+        (
+            "tests_log_reranker.xml",
+            StageSpec("QAIC Reranker", "tests/transformers/models/reranker/test_reranker_mad.py", "RUN_QAIC_MM", 7),
+        ),
+        ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 8)),
+        ("tests_log3.xml", StageSpec("CLI", "(cli) and (not finetune)", "RUN_CLI", 9)),
         (
             "tests_log_dynamo_qaic.xml",
-            StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 9),
+            StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 10),
         ),
-        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 10)),
+        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 11)),
         (
             "tests_log_reproducer.xml",
-            StageSpec("Reproducer Configs", "tests/reproducer_configs/test_reported_reproducer_configs.py", "", 11),
+            StageSpec("Reproducer Configs", "tests/reproducer_configs/test_reported_reproducer_configs.py", "", 12),
         ),
     ]
 )
@@ -1657,6 +1661,7 @@ _STAGE_FEEDS_CATEGORIES = {
     "tests_log2_feature.xml": (CAT_CAUSAL,),
     "tests_log_embedding_audio.xml": (CAT_EMBEDDING, CAT_AUDIO),
     "tests_log6.xml": (CAT_VLM,),
+    "tests_log_disagg.xml": (CAT_CAUSAL,),
     "tests_log_reranker.xml": (CAT_SEQ_RERANKER,),
     "tests_log_diffusion.xml": (CAT_DIFFUSION,),
 }
