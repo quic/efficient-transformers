@@ -64,6 +64,7 @@ def _run_pytorch_parity_test(
         num_devices=num_devices,
         use_onnx_subfunctions=False,
         skip_vision=True,
+        node_precision_info=True,
         offload_pt_weights=False,
         weight_free=True,
         qaic_config={
@@ -157,6 +158,7 @@ def main():
         mxint8_kv_cache=True,
         use_onnx_subfunctions=True,
         skip_vision=True,
+        node_precision_info=True,
         offload_pt_weights=False,
         log_times=True,
         qaic_config={
