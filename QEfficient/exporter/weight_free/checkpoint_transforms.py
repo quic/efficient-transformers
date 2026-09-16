@@ -32,14 +32,11 @@ from QEfficient.transformers.quantizers.quantizer_utils import convert_moe_packe
 from QEfficient.utils.checkpoint_utils import (
     atomic_save,
     available_ram_gb,
-    copy_checkpoint_aux_files,
     cpu_count,
     read_weight_map,
     requires_dtype_conversion,
-    write_index,
 )
 from QEfficient.utils.logging_utils import logger
-
 
 # ---------------------------------------------------------------------------
 # Canonical key mapping helpers
@@ -82,6 +79,7 @@ def build_canonical_maps(
                 break
         canonical_index[canonical_key] = shard_file
     return canonical_index, key_translation
+
 
 # ---------------------------------------------------------------------------
 # MoE-specific memory estimation — tied to _LayerStacker's tensor layout below,
@@ -273,10 +271,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         # transform output shards.  Layout transforms write to original shard names
         # (e.g. "model.safetensors" for single-file checkpoints); using the same name
         # would cause DtypeConversion to overwrite the layout transform's output.
-        new_name_for = {
-            shard: f"base-{idx:04d}.safetensors"
-            for idx, shard in enumerate(shard_names)
-        }
+        new_name_for = {shard: f"base-{idx:04d}.safetensors" for idx, shard in enumerate(shard_names)}
 
         # I/O-bound: one thread per shard, capped at 4× CPU count and hard-capped
         # at 256 — beyond that OS scheduling overhead outweighs I/O parallelism gains.
@@ -670,8 +665,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
     def get_consumed_keys(cls, weight_map: Dict[str, str]) -> set:
         _SCALES_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_scales$")
         _BIAS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_bias$")
-        return {k for k in weight_map
-                if cls._BLOCKS_RE.match(k) or _SCALES_RE.match(k) or _BIAS_RE.match(k)}
+        return {k for k in weight_map if cls._BLOCKS_RE.match(k) or _SCALES_RE.match(k) or _BIAS_RE.match(k)}
 
     @classmethod
     def resolve_onnx_key(cls, onnx_key: str, checkpoint_index: Dict[str, str]) -> Optional[str]:
@@ -911,7 +905,7 @@ class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         """
         if any("input_linear.weight" in k for k in weight_map):
             return {
-                r"\.input_linear\.weight$":  ".experts.gate_up_proj",
+                r"\.input_linear\.weight$": ".experts.gate_up_proj",
                 r"\.output_linear\.weight$": ".experts.down_proj",
             }
         return {}
@@ -939,10 +933,12 @@ class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                 if remapped != actual_key:
                     canonical_key = remapped
                     break
-            if (cls._FUSED_GATE_UP_RE.match(canonical_key)
-                    or cls._FUSED_DOWN_RE.match(canonical_key)
-                    or cls._FUSED_GATE_UP_BIAS_RE.match(canonical_key)
-                    or cls._FUSED_DOWN_BIAS_RE.match(canonical_key)):
+            if (
+                cls._FUSED_GATE_UP_RE.match(canonical_key)
+                or cls._FUSED_DOWN_RE.match(canonical_key)
+                or cls._FUSED_GATE_UP_BIAS_RE.match(canonical_key)
+                or cls._FUSED_DOWN_BIAS_RE.match(canonical_key)
+            ):
                 consumed.add(actual_key)
         return consumed
 
