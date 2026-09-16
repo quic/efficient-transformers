@@ -340,13 +340,6 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             scatter_nodes = [
                 fn_node for fn_node in fn.node if fn_node.op_type in cls._SCATTER_OP_TYPES and fn_node.output
             ]
-            if len(scatter_nodes) != 2:
-                logger.debug(
-                    "PreserveNestedCacheRetainedStateTransform: function '%s' has %d scatter node(s), expected 2 — skipping.",
-                    node.op_type,
-                    len(scatter_nodes),
-                )
-                continue
 
             scatter_nodes.sort(key=cls._scatter_sort_key)
             # Only the first two scatter outputs map to key / value respectively.
