@@ -42,7 +42,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
 )
 from QEfficient.customop import CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP
-from QEfficient.customop.utils import ctx_gather_blocked_kv_dp, ctx_paged_scatter_dp
+from QEfficient.customop.utils import ctx_gather_3d, ctx_gather_blocked_kv_dp, ctx_paged_scatter_dp, ctx_scatter_3d
 
 MASKED_ATTENTION_LOGIT = -3.0e4
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -167,6 +167,31 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         ctx_indices = torch.where(ctx_indices > gather_limit.unsqueeze(-1), invalid_idx, ctx_indices)
         ctx_indices = ctx_indices.to(torch.int32).expand(batch_local, rows, block_len)
         return ctx_gather_blocked_kv_dp(index_key_cache, ctx_indices)
+
+
+    @staticmethod
+    def _read_blocked_k_flat_dp(
+        index_key_cache: torch.Tensor, position_ids_dp: torch.Tensor, start_index: int, end_index: int,
+        index_block_size: int, cp: int, hkv: int,
+    ) -> torch.Tensor:
+        """Gather one compact GP cache range from row-folded 3D retained state."""
+        batch_local, dp, _ = position_ids_dp.shape
+        flat_rows, _, head_dim = index_key_cache.shape
+        rows = flat_rows // batch_local
+        block_len = end_index - start_index
+        pos_max = position_ids_dp.max(dim=-1).values
+        dp_lane_per_row = torch.arange(rows, device=index_key_cache.device) // (cp * hkv)
+        pos_max_rows = pos_max[:, dp_lane_per_row]
+        way = torch.arange(rows, device=index_key_cache.device).remainder(cp * hkv) // hkv
+        cycle_size = index_block_size * cp
+        offset_in_way = pos_max_rows.remainder(cycle_size) - way * index_block_size
+        offset_in_way = torch.where(offset_in_way >= 0, offset_in_way.clamp_max(index_block_size - 1), torch.full_like(offset_in_way, -1))
+        gather_limit = (pos_max_rows // cycle_size) * index_block_size + offset_in_way
+        ctx_indices = torch.arange(start_index, end_index, device=index_key_cache.device).view(1, 1, block_len)
+        ctx_indices = torch.where(ctx_indices > gather_limit.unsqueeze(-1), torch.zeros_like(ctx_indices), ctx_indices)
+        ctx_indices = ctx_indices.to(torch.int32).expand(batch_local, rows, block_len)
+        gathered = ctx_gather_3d(index_key_cache, ctx_indices.reshape(flat_rows, block_len))
+        return gathered.reshape(batch_local, rows, block_len, head_dim)
 
     def _read_paged_kv_dp(
         self,
@@ -317,6 +342,16 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         """
         B, _, T, D = cache.shape
         return cache.reshape(B // dp, rows, T // cp, D)
+
+
+    @staticmethod
+    def _is_dp_cache_shape(cache: torch.Tensor, batch_local: int, rows: int, cache_slots: int) -> bool:
+        return cache.ndim == 4 and cache.shape[0] == batch_local and cache.shape[1] == rows and cache.shape[2] == cache_slots
+
+
+    @staticmethod
+    def _is_flat_dp_cache_shape(cache: torch.Tensor, flat_rows: int, cache_slots: int) -> bool:
+        return cache.ndim == 3 and cache.shape[0] == flat_rows and cache.shape[1] == cache_slots
 
     @staticmethod
     def _from_dp_cache_shape(
@@ -691,10 +726,18 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         cache_slots = ctx_len // cp
         dim = cfg.index_head_dim
         index_key_cache = past_key_values.index_keys.get(layer_idx)
+        flat_rows = batch_local * rows
+        index_cache_is_flat_dp_layout = False
+        index_cache_is_dp_layout = False
         if index_key_cache is None:
-            index_key_cache = torch.zeros((batch, 1, ctx_len, dim), dtype=hidden_states.dtype, device=hidden_states.device)
-        expected_cache_shape = (batch_local, rows, cache_slots, dim)
-        index_key_cache = self._to_dp_cache_shape(index_key_cache, dp, rows, cp)
+            index_cache_is_flat_dp_layout = cp > 1
+            cache_shape = (flat_rows, cache_slots, dim) if index_cache_is_flat_dp_layout else (batch, 1, ctx_len, dim)
+            index_key_cache = torch.zeros(cache_shape, dtype=hidden_states.dtype, device=hidden_states.device)
+        else:
+            index_cache_is_flat_dp_layout = cp > 1 and self._is_flat_dp_cache_shape(index_key_cache, flat_rows, cache_slots)
+            index_cache_is_dp_layout = cp > 1 and self._is_dp_cache_shape(index_key_cache, batch_local, rows, cache_slots)
+        if not index_cache_is_dp_layout and not index_cache_is_flat_dp_layout:
+            index_key_cache = self._to_dp_cache_shape(index_key_cache, dp, rows, cp)
 
         # if tuple(index_key_cache.shape) != expected_cache_shape:
         #     raise ValueError(
@@ -762,9 +805,15 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         batch_id = torch.arange(batch_local, device=hidden_states.device).view(batch_local, 1, 1).expand(batch_local, rows, query_len)
         block_id = torch.where(row_live, batch_id, torch.iinfo(torch.int32).max).to(torch.int32)
         addr = (((logical_index_block // cp) * cfg.index_block_size + position_ids_dp % cfg.index_block_size).to(torch.int32)[:, :, None, None, :].expand(batch_local, dp, cp, hkv, query_len).reshape(batch_local, rows, query_len))
-        index_key_cache = ctx_paged_scatter_dp(
-            index_key_cache, block_id, addr, k_updates
-        )
+        if index_cache_is_flat_dp_layout:
+            row_live_flat = row_live.reshape(flat_rows, query_len)
+            addr_flat = addr.reshape(flat_rows, query_len)
+            safe_addr = torch.where(row_live_flat, addr_flat, torch.zeros_like(addr_flat)).to(torch.int32)
+            previous_updates = ctx_gather_3d(index_key_cache, torch.zeros_like(safe_addr))
+            scatter_updates = torch.where(row_live_flat.unsqueeze(-1), k_updates.reshape(flat_rows, query_len, dim), previous_updates)
+            index_key_cache = ctx_scatter_3d(index_key_cache, safe_addr, scatter_updates)
+        else:
+            index_key_cache = ctx_paged_scatter_dp(index_key_cache, block_id, addr, k_updates)
 
         q_heads_per_kv = num_index_heads // hkv
         ql_eff = q_heads_per_kv * query_len
@@ -805,7 +854,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             batch_end = min(batch_start + local_batch_size, batch_local)
             local = batch_end - batch_start
             q_local = q_rows[batch_start:batch_end]
-            key_local = index_key_cache[batch_start:batch_end]
+            key_local = index_key_cache[batch_start:batch_end] if not index_cache_is_flat_dp_layout else index_key_cache
             pos_local = position_ids_dp[batch_start:batch_end]
             q_5d = q_local.unsqueeze(2).expand(local, rows, num_cores, ql_eff, dim)
             # q_5d: [local, rows, num_cores, ql_eff, dim]
@@ -813,14 +862,13 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             device_block_id_groups: list[torch.Tensor] = []
             for block_idx, (start, end) in enumerate(block_ranges):
                 # end - start == num_cores * tokens_per_core
-                key_flat = self._read_blocked_k_dp(
-                    key_local,
-                    pos_local,
-                    start,
-                    end,
-                    cfg.index_block_size,
-                    cp,
-                    hkv,
+                key_flat = (
+                    self._read_blocked_k_flat_dp(
+                        key_local.reshape(batch_local, rows, cache_slots, dim)[batch_start:batch_end].reshape(local * rows, cache_slots, dim),
+                        pos_local, start, end, cfg.index_block_size, cp, hkv,
+                    )
+                    if index_cache_is_flat_dp_layout
+                    else self._read_blocked_k_dp(key_local, pos_local, start, end, cfg.index_block_size, cp, hkv)
                 )
                 # key_flat: [local, rows, end - start, dim]
                 key_5d = key_flat.view(
@@ -976,13 +1024,13 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         token_indices = token_indices[:, :, 0]
         token_valid = token_valid[:, :, 0]
         safe_indices = torch.where(token_valid, token_indices, torch.zeros_like(token_indices)).to(torch.int32)
+        if not index_cache_is_dp_layout and not index_cache_is_flat_dp_layout:
+            index_key_cache = self._from_dp_cache_shape(index_key_cache, dp, cp)
+        past_key_values.index_keys[layer_idx] = index_key_cache
         if not torch.onnx.is_in_onnx_export():
             self.last_block_indices = block_indices.detach()
         # safe_indices:    [B, index_n_heads, selected_blocks, index_block_size]
         # token_valid:     [B, index_n_heads, selected_blocks, index_block_size]
-        # index_key_cache: [B/DP, DP*cp*indexer_n_head, T/cp, D]
-        index_key_cache = self._from_dp_cache_shape(index_key_cache, dp, cp)
-        past_key_values.index_keys[layer_idx] = index_key_cache
         return safe_indices, token_valid
 
 
@@ -1026,6 +1074,9 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         hkv = self.config.num_key_value_heads
         num_kv_groups = self.num_key_value_groups
         rows = dp * hkv
+        cp = blocking_config.msa_attn_cp if blocking_config and blocking_config.msa_attn_cp else 1
+        if cp > 1:
+            return self._baseline_attention_gp_cp(query_states, token_indices, token_valid, key_cache, value_cache, dp, cp, blocking_config)
 
         if query_len != 1:
             raise ValueError("MSA attention GP is decode-only; QL must be 1.")
@@ -1034,8 +1085,6 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
         batch_local = batch // dp
         page_block_size = key_cache.shape[2]
-        if blocking_config is not None and blocking_config.msa_attn_cp not in (None, 1):
-            raise ValueError("MSA attention GP currently supports msa_attn_cp=1 only.")
         if tuple(key_cache.shape[:2]) != (batch_local, rows):
             raise ValueError(
                 f"GP key cache shape {tuple(key_cache.shape)} must start with "
@@ -1120,6 +1169,68 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             .permute(1, 0, 2, 3, 4, 5)
             .reshape(batch, hkv * num_kv_groups, query_len, head_dim)
         )
+        return out, key_cache, value_cache
+
+    def _baseline_attention_gp_cp(
+        self, query_states, token_indices, token_valid, key_cache, value_cache, dp, cp, blocking_config
+    ):
+        """Run retained sparse attention with contiguous context partitioning."""
+        batch, _, query_len, head_dim = query_states.shape
+        hkv = self.config.num_key_value_heads
+        num_kv_groups = self.num_key_value_groups
+        if query_len != 1 or batch % dp:
+            raise ValueError("Retained MSA attention CP is decode-only and requires DP-divisible batch.")
+        batch_local = batch // dp
+        rows = dp * hkv * cp
+        local_ctx_len = key_cache.shape[2]
+        if tuple(key_cache.shape[:2]) != (batch_local, rows) or tuple(value_cache.shape) != tuple(key_cache.shape):
+            raise ValueError(f"Retained CP key/value cache shape must start with {(batch_local, rows)}.")
+        if token_indices.ndim == 4:
+            selected_len = token_indices.shape[-2] * token_indices.shape[-1]
+            global_idx, global_valid = token_indices.flatten(-2), token_valid.flatten(-2)
+        elif token_indices.ndim == 3 and tuple(token_indices.shape[:2]) == (batch, hkv):
+            selected_len = token_indices.shape[-1]
+            global_idx, global_valid = token_indices, token_valid
+        else:
+            raise ValueError("Retained CP attention requires token indices shaped [batch, Hkv, ...].")
+        global_idx = global_idx.reshape(dp, batch_local, hkv, selected_len).permute(1, 0, 2, 3)
+        global_valid = global_valid.reshape(dp, batch_local, hkv, selected_len).permute(1, 0, 2, 3)
+        token_cp = global_idx // local_ctx_len
+        token_cp_valid = (token_cp >= 0) & (token_cp < cp)
+        gather_idx_local = global_idx - token_cp * local_ctx_len
+        cp_idx = torch.arange(cp, device=query_states.device).view(1, 1, 1, cp, 1)
+        valid_cp = global_valid.unsqueeze(3) & token_cp_valid.unsqueeze(3) & (token_cp.unsqueeze(3) == cp_idx)
+        gather_idx = gather_idx_local.unsqueeze(3).expand(batch_local, dp, hkv, cp, selected_len).reshape(batch_local, rows, selected_len)
+        valid_idx = valid_cp.expand(batch_local, dp, hkv, cp, selected_len).reshape(batch_local, rows, selected_len)
+        gather_idx = torch.where(valid_idx, gather_idx, torch.zeros_like(gather_idx)).to(torch.int32)
+        num_cores = blocking_config.num_cores_per_device if blocking_config and blocking_config.num_cores_per_device else 1
+        if num_kv_groups % num_cores:
+            raise ValueError("MSA Q-head groups must be divisible by num_cores_per_device.")
+        groups_per_core = num_kv_groups // num_cores
+        selected_k = ctx_gather_blocked_kv_dp(key_cache, gather_idx).unsqueeze(2).expand(-1, -1, num_cores, -1, -1)
+        selected_v = ctx_gather_blocked_kv_dp(value_cache, gather_idx).unsqueeze(2).expand(-1, -1, num_cores, -1, -1)
+        q = query_states.reshape(dp, batch_local, hkv, num_kv_groups, query_len, head_dim).permute(1, 0, 2, 3, 4, 5)
+        q = q.unsqueeze(2).expand(batch_local, dp, cp, hkv, num_kv_groups, query_len, head_dim).reshape(batch_local, rows, num_kv_groups, query_len, head_dim)
+        q = q.reshape(batch_local, rows, num_cores, groups_per_core * query_len, head_dim)
+        valid = valid_idx.unsqueeze(2).expand(-1, -1, num_cores, -1)
+        scores = torch.matmul(q.float(), selected_k.float().transpose(-1, -2)) * (head_dim**-0.5)
+        scores = scores.masked_fill(~valid.unsqueeze(3), -1.0e30)
+        local_max = scores.max(dim=-1).values
+        exp_scores = torch.exp(scores - local_max.unsqueeze(-1))
+        exp_scores = torch.where(valid.unsqueeze(3), exp_scores, torch.zeros_like(exp_scores))
+        local_sum = exp_scores.sum(dim=-1)
+        local_out = torch.matmul(exp_scores.to(selected_v.dtype), selected_v)
+        local_max = local_max.reshape(batch_local, dp, hkv, cp, num_cores, groups_per_core * query_len)
+        local_sum = local_sum.reshape(batch_local, dp, hkv, cp, num_cores, groups_per_core * query_len)
+        local_out = local_out.reshape(batch_local, dp, hkv, cp, num_cores, groups_per_core * query_len, head_dim)
+        global_max = local_max.max(dim=3).values
+        cp_weight = torch.exp(local_max - global_max.unsqueeze(3))
+        global_sum = (cp_weight * local_sum).sum(dim=3)
+        global_out = (cp_weight.unsqueeze(-1) * local_out).sum(dim=3)
+        safe_sum = torch.where(global_sum == 0, torch.ones_like(global_sum), global_sum)
+        out = global_out / safe_sum.unsqueeze(-1)
+        out = torch.where(global_sum.unsqueeze(-1) == 0, torch.zeros_like(out), out).to(query_states.dtype)
+        out = out.reshape(batch_local, dp, hkv, num_kv_groups, query_len, head_dim).permute(1, 0, 2, 3, 4, 5).reshape(batch, hkv * num_kv_groups, query_len, head_dim)
         return out, key_cache, value_cache
 
     def _paged_attention(
@@ -1399,6 +1510,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             if blocking_config:
                 cache_kwargs["dp"] = getattr(blocking_config, "msa_attn_dp", 1)
                 cache_kwargs["hkv"] =  self.config.num_key_value_heads
+                cache_kwargs["cp"] = getattr(blocking_config, "msa_attn_cp", 1) or 1
 
             indexer_block_table = kwargs.get("msa_indexer_block_table")
             token_indices, token_valid = self.indexer._select_blocks(
@@ -1410,6 +1522,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             attention_block_table = kwargs.get("msa_attn_block_table")
             paged = attention_block_table is not None
             attn_dp = blocking_config.msa_attn_dp if (blocking_config and blocking_config.msa_attn_dp) else 1
+            attn_cp = blocking_config.msa_attn_cp if (blocking_config and blocking_config.msa_attn_cp) else 1
             if paged:
                 layer = past_key_values.layers[self.layer_idx]
                 key_cache = layer.keys
@@ -1430,19 +1543,23 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
                 return self.o_proj(attn_output.contiguous()), None
             past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
-            if attn_dp > 1:
+            if attn_dp > 1 or attn_cp > 1:
                 dp = cache_kwargs["dp"]
                 batch = input_shape[0]
                 batch_local = batch // dp
                 hkv = self.config.num_key_value_heads
-                rows = dp * hkv
+                rows = dp * attn_cp * hkv
                 key_cache = past_key_values.layers[self.layer_idx].keys.reshape(batch_local, rows, -1, self.head_dim)
                 value_cache = past_key_values.layers[self.layer_idx].values.reshape(batch_local, rows, -1, self.head_dim)
                 attn_output, key_cache, value_cache = self._baseline_attention_gp(
                     query_states, token_indices, token_valid, key_cache, value_cache, dp=attn_dp, blocking_config=blocking_config,
                 )
-                past_key_values.layers[self.layer_idx].keys = key_cache.reshape(batch, hkv, -1, self.head_dim)
-                past_key_values.layers[self.layer_idx].values = value_cache.reshape(batch, hkv, -1, self.head_dim)
+                if attn_cp > 1:
+                    past_key_values.layers[self.layer_idx].keys = key_cache
+                    past_key_values.layers[self.layer_idx].values = value_cache
+                else:
+                    past_key_values.layers[self.layer_idx].keys = key_cache.reshape(batch, hkv, -1, self.head_dim)
+                    past_key_values.layers[self.layer_idx].values = value_cache.reshape(batch, hkv, -1, self.head_dim)
             else:
                 selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
                     self.layer_idx, token_indices, token_valid
@@ -1811,6 +1928,31 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         self.model.language_model.config._attn_implementation = "eager"
         self.model.vision_tower.config._attn_implementation = "eager"
 
+    def _qaic_config(self) -> dict:
+        return getattr(self, "qaic_config", None) or {}
+
+    def _msa_execution_factor(self) -> int:
+        qaic_config = self._qaic_config()
+        return lcm(
+            int(qaic_config.get("msa_indexer_dp", 1) or 1),
+            int(qaic_config.get("msa_attn_dp", 1) or 1),
+        )
+
+    def _execution_batch_size(self, requested_batch_size: int) -> int:
+        msa_factor = self._msa_execution_factor()
+        if requested_batch_size % msa_factor == 0:
+            return requested_batch_size
+        return requested_batch_size * msa_factor
+
+    def _uses_context_partitioned_main_kv(self) -> bool:
+        qaic_config = self._qaic_config()
+        if int(qaic_config.get("msa_attn_cp", 1) or 1) <= 1:
+            return False
+        try:
+            return BlockingMode.resolve(qaic_config.get("blocking_mode")) == BlockingMode.KV_BATCH_FOLD
+        except ValueError:
+            return False
+
     def get_qeff_vision_encoder(self):
         return QEffMiniMaxM3VLEncoderWrapper(self)
 
@@ -1878,6 +2020,43 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 present = legacy_cache
         return logits, pixel_values, image_idx, present
 
+    def _uses_context_partitioned_indexer_kv(self) -> bool:
+        qaic_config = self._qaic_config()
+        return int(qaic_config.get("msa_indexer_cp", 1) or 1) > 1
+
+    def _indexer_kv_partition_shape(self, config, batch_size: int, seq_len: int) -> tuple[int, ...]:
+        if not self._uses_context_partitioned_indexer_kv():
+            return (batch_size, 1, seq_len, config.index_head_dim)
+        qaic_config = self._qaic_config()
+        dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
+        cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
+        hkv = int(qaic_config.get("indexer_n_head", 1) or 1)
+        batch_size = self._execution_batch_size(batch_size)
+        if batch_size % dp:
+            raise ValueError(f"Indexer CP cache batch size {batch_size} must be divisible by msa_indexer_dp={dp}.")
+        if seq_len % cp:
+            raise ValueError(f"Indexer context length {seq_len} must be divisible by msa_indexer_cp={cp}.")
+        if config.index_n_heads % hkv:
+            raise ValueError(f"index_n_heads must be divisible by indexer_n_head={hkv}.")
+        return ((batch_size // dp) * dp * cp * hkv, seq_len // cp, config.index_head_dim)
+
+    def _main_kv_partition_shape(self, config, batch_size: int, seq_len: int) -> tuple[int, int, int, int]:
+        kv_cache_shape = get_padding_shape_from_config(config=config, batch_size=batch_size, seq_len=seq_len)
+        if not self._uses_context_partitioned_main_kv():
+            return tuple(kv_cache_shape)
+
+        qaic_config = self._qaic_config()
+        dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
+        cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
+        batch_size = self._execution_batch_size(batch_size)
+        if batch_size % dp:
+            raise ValueError(f"Main-KV CP cache batch size {batch_size} must be divisible by msa_attn_dp={dp}.")
+
+        _, num_kv_heads, cache_len, head_dim = kv_cache_shape
+        local_cache_len = max(1, cache_len // cp)
+        return (batch_size // dp, dp * num_kv_heads * cp, local_cache_len, head_dim)
+
+
     def get_specializations(
         self,
         batch_size: int,
@@ -1901,16 +2080,41 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         num_images = int(compiler_options.pop("num_images", 1))
         vision_size = int(compiler_options.pop("vision_size", num_image_patches))
 
-        qaic_config = compiler_options.pop("qaic_config", None) or {}
+        qaic_config = compiler_options.pop("qaic_config", None)
+        self.qaic_config = qaic_config
+        msa_attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
+        msa_attn_cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
-        attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
-        dp_multiplier = lcm(indexer_dp, attn_dp)
-        if batch_size < dp_multiplier or batch_size % dp_multiplier:
+        indexer_cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
+        indexer_hkv = int(qaic_config.get("indexer_n_head", 1) or 1)
+        paged_kv = bool(qaic_config.get("paged_kv", False))
+        export_batch_size = self._execution_batch_size(batch_size)
+        use_context_kv = self._uses_context_partitioned_main_kv() and not paged_kv
+        use_context_indexer_kv = self._uses_context_partitioned_indexer_kv() and not paged_kv
+        if paged_kv and msa_attn_cp != 1:
+            raise ValueError("paged_kv supports msa_attn_cp=1 only.")
+        if use_context_kv and ctx_len % msa_attn_cp:
+            raise ValueError(f"Main-KV context length {ctx_len} must be divisible by msa_attn_cp={msa_attn_cp}.")
+        kv_batch_size = kv_cache_batch_size if (continuous_batching and kv_cache_batch_size) else export_batch_size
+        if use_context_kv and kv_batch_size % msa_attn_dp:
+            raise ValueError(f"Main-KV cache batch size {kv_batch_size} must be divisible by msa_attn_dp={msa_attn_dp}.")
+        if use_context_indexer_kv and ctx_len % indexer_cp:
+            raise ValueError(f"Indexer context length {ctx_len} must be divisible by msa_indexer_cp={indexer_cp}.")
+        if use_context_indexer_kv and kv_batch_size % indexer_dp:
+            raise ValueError(f"Indexer cache batch size {kv_batch_size} must be divisible by msa_indexer_dp={indexer_dp}.")
+        main_kv_batch_size = kv_batch_size // msa_attn_dp if use_context_kv else None
+        main_kv_ctx_len = ctx_len // msa_attn_cp if use_context_kv else None
+        indexer_kv_batch_size = kv_batch_size // indexer_dp if use_context_indexer_kv else None
+        indexer_kv_rows = (
+            indexer_kv_batch_size * indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
+        )
+        indexer_kv_ctx_len = ctx_len // indexer_cp if use_context_indexer_kv else None
+        dp_multiplier = lcm(indexer_dp, msa_attn_dp)
+        if export_batch_size < dp_multiplier or export_batch_size % dp_multiplier:
             raise ValueError(
-                f"batch_size ({batch_size}) must be at least and divisible by "
+                f"batch_size ({export_batch_size}) must be at least and divisible by "
                 f"the combined MSA DP factor ({dp_multiplier})."
             )
-        export_batch_size = batch_size
 
         def _build_spec(seq_len, comp_ctx_lengths=None):
             spec = {
@@ -1920,6 +2124,13 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 "num_image_patches": num_image_patches,
                 "num_images": num_images,
             }
+            if use_context_kv:
+                spec["main_kv_batch_size"] = main_kv_batch_size
+                spec["main_kv_ctx_len"] = main_kv_ctx_len
+            if use_context_indexer_kv:
+                spec["indexer_kv_batch_size"] = indexer_kv_batch_size
+                spec["indexer_kv_rows"] = indexer_kv_rows
+                spec["indexer_kv_ctx_len"] = ctx_len // indexer_cp
             if qaic_config.get("paged_kv", False):
                 page_size = int(qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128)))
                 cache_batch_size = kv_cache_batch_size if continuous_batching else export_batch_size
@@ -1944,6 +2155,13 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 "vision_size": vision_size,
                 "vision_batch_size": batch_size,
             }
+            if use_context_kv:
+                spec["main_kv_batch_size"] = main_kv_batch_size
+                spec["main_kv_ctx_len"] = main_kv_ctx_len
+            if use_context_indexer_kv:
+                spec["indexer_kv_batch_size"] = indexer_kv_batch_size
+                spec["indexer_kv_rows"] = indexer_kv_rows
+                spec["indexer_kv_ctx_len"] = ctx_len // indexer_cp
             if qaic_config.get("paged_kv", False):
                 page_size = int(qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128)))
                 cache_batch_size = kv_cache_batch_size if continuous_batching else export_batch_size
@@ -1995,22 +2213,37 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         }
 
         lm_config = self.model.language_model.config
+        qaic_config = self._qaic_config()
+        paged_kv = bool(qaic_config.get("paged_kv", False))
+        use_context_indexer_kv = int(qaic_config.get("msa_indexer_cp", 1) or 1) > 1 and not paged_kv
+        use_context_main_kv = self._uses_context_partitioned_main_kv() and not paged_kv
+        past_batch_axis = (
+            "main_kv_batch_size"
+            if use_context_main_kv
+            else ("full_batch_size" if continuous_batching else "batch_size")
+        )
+        past_ctx_axis = "main_kv_ctx_len" if use_context_main_kv else "ctx_len"
+        indexer_batch_axis = "full_batch_size" if continuous_batching else "batch_size"
+        indexer_ctx_axis = "ctx_len"
         layer_types = getattr(lm_config, "layer_types", None) or ["full_attention"] * lm_config.num_hidden_layers
         for i in range(lm_config.num_hidden_layers):
             lang_dynamic_axes[f"past_key.{i}"] = {
-                0: "full_batch_size" if continuous_batching else "batch_size",
-                2: "ctx_len",
+                0: past_batch_axis,
+                2: past_ctx_axis,
             }
             lang_dynamic_axes[f"past_value.{i}"] = {
-                0: "full_batch_size" if continuous_batching else "batch_size",
-                2: "ctx_len",
+                0: past_batch_axis,
+                2: past_ctx_axis,
             }
             if i < len(layer_types) and layer_types[i] == "minimax_m3_sparse":
-                lang_dynamic_axes[f"index_key.{i}"] = {
-                    0: "full_batch_size" if continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
-        qaic_config = getattr(self, "qaic_config", None) or {}
+                if use_context_indexer_kv:
+                    lang_dynamic_axes[f"index_key.{i}"] = {0: "indexer_kv_rows", 1: "indexer_kv_ctx_len"}
+                else:
+                    lang_dynamic_axes[f"index_key.{i}"] = {
+                        0: indexer_batch_axis,
+                        2: indexer_ctx_axis,
+                    }
+        qaic_config = self._qaic_config()
         if qaic_config.get("paged_kv", False):
             for i in range(lm_config.num_hidden_layers):
                 if i < len(layer_types) and layer_types[i] == "minimax_m3_sparse":
@@ -2053,10 +2286,10 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         return output_names
 
     def get_dummy_pkv_cache(
-        self, config, batch_size, seq_len, dtype=None, *, paged=False, dp=1, page_block_size=128, hkv=None
+        self, config, batch_size, seq_len, dtype=None, *, paged=False, dp=1, cp=1, page_block_size=128, hkv=None
     ):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32) or torch.float32
-        kv_cache_shape = get_padding_shape_from_config(config=config, batch_size=batch_size, seq_len=seq_len)
+        kv_cache_shape = self._main_kv_partition_shape(config=config, batch_size=batch_size, seq_len=seq_len)
         layer_types = getattr(config, "layer_types", None) or ["full_attention"] * config.num_hidden_layers
         batch_local = batch_size // dp
         num_pages = (seq_len + page_block_size - 1) // page_block_size
@@ -2087,7 +2320,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         batch_local = batch_size // dp
         num_pages = (seq_len + page_block_size - 1) // page_block_size
         physical_pages = dp * batch_local * num_pages
-        index_key_shape = (batch_size, 1, seq_len, config.index_head_dim)
+        index_key_shape = self._indexer_kv_partition_shape(config, batch_size, seq_len)
         paged_shape = (physical_pages, dp * (hkv or getattr(config, "indexer_n_head", 1)), page_block_size, config.index_head_dim)
         index_keys = []
         for i in range(config.num_hidden_layers):
@@ -2108,9 +2341,10 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
-        qaic_config = getattr(self, "qaic_config", None) or {}
+        qaic_config = self._qaic_config()
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
         attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
+        attn_cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
         dp_multiplier = lcm(indexer_dp, attn_dp)
         requested_batch_size = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -2161,6 +2395,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             dtype=dtype,
             paged=paged_kv,
             dp=attn_dp,
+            cp=attn_cp,
             page_block_size=page_block_size,
         )
         index_keys = self.get_dummy_index_keys(
@@ -2225,7 +2460,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             IOInfo(name="pixel_values", datatype=self.config.torch_dtype, shape=("num_image_patches", patch_dim)),
             IOInfo(name="image_grid_thw", datatype=torch.int64, shape=("num_images", 3)),
         ]
-        qaic_config = getattr(self, "qaic_config", None) or {}
+        qaic_config = self._qaic_config()
         if qaic_config.get("paged_kv", False):
             inputs_info.extend(
                 [

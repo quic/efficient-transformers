@@ -1156,6 +1156,34 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
             dp = cache_kwargs.get("dp")
             batch_local = batch // dp
             hkv = cache_kwargs.get("hkv")
+            cp = cache_kwargs.get("cp", 1) or 1
+            if cp > 1:
+                rows = dp * hkv * cp
+                local_ctx_len = layer.keys.shape[2]
+                if tuple(layer.keys.shape[:2]) != (batch_local, rows):
+                    raise ValueError(f"CP sparse cache shape {tuple(layer.keys.shape)} does not match {(batch_local, rows)}.")
+                key_dp = key_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
+                value_dp = value_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
+                key_updates = key_dp.unsqueeze(3).expand(batch_local, dp, hkv, cp, query_len, head_dim).reshape(batch_local, rows, query_len, head_dim)
+                value_updates = value_dp.unsqueeze(3).expand(batch_local, dp, hkv, cp, query_len, head_dim).reshape(batch_local, rows, query_len, head_dim)
+                position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
+                owner_cp = position_ids_dp // local_ctx_len
+                owner_valid = (owner_cp >= 0) & (owner_cp < cp)
+                local_pos = position_ids_dp - owner_cp * local_ctx_len
+                row_cp = torch.arange(rows, device=layer.keys.device).remainder(hkv * cp).remainder(cp)
+                row_live = row_cp.view(1, 1, hkv, cp, 1) == owner_cp.view(batch_local, dp, 1, 1, query_len)
+                row_live = row_live & owner_valid.view(batch_local, dp, 1, 1, query_len)
+                row_live = row_live.expand(batch_local, dp, hkv, cp, query_len).reshape(batch_local, rows, query_len)
+                addr = local_pos.view(batch_local, dp, 1, 1, query_len).expand(batch_local, dp, hkv, cp, query_len).reshape(batch_local, rows, query_len).to(torch.int32)
+                flat_keys = layer.keys.reshape(batch_local * rows, local_ctx_len, head_dim)
+                flat_values = layer.values.reshape(batch_local * rows, local_ctx_len, head_dim)
+                flat_addr = torch.where(row_live, addr, torch.zeros_like(addr)).reshape(batch_local * rows, query_len)
+                flat_key_updates = torch.where(row_live.unsqueeze(-1), key_updates, ctx_gather_3d(flat_keys, torch.zeros_like(flat_addr)).reshape(batch_local, rows, query_len, head_dim)).reshape(batch_local * rows, query_len, head_dim)
+                flat_value_updates = torch.where(row_live.unsqueeze(-1), value_updates, ctx_gather_3d(flat_values, torch.zeros_like(flat_addr)).reshape(batch_local, rows, query_len, head_dim)).reshape(batch_local * rows, query_len, head_dim)
+                layer.keys = ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(batch_local, rows, local_ctx_len, head_dim)
+                layer.values = ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(batch_local, rows, local_ctx_len, head_dim)
+                layer._mark_initialized(layer.keys)
+                return
             rows = dp * hkv
 
             key_states = key_states.reshape(batch_local, rows, query_len, head_dim)
