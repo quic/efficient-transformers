@@ -5,9 +5,10 @@
 #
 # ----------------------------------------------------------------------------
 
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
-import json
+
 import onnx_ir as ir
 from torch import nn
 
@@ -194,7 +195,6 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     # Reading from the manifest avoids re-running detection on the prepared checkpoint
     # (which would fail — the prepared checkpoint has canonical output keys like
     # moe_weights.gate, not the original per-expert keys that trigger detection).
-    
 
     from QEfficient.base.checkpoint_transforms import (  # noqa: PLC0415
         CHECKPOINT_PREPARED_MANIFEST,
