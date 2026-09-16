@@ -39,7 +39,7 @@ CTX_LEN = 8192
 NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, weight_free=True)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
 
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
@@ -52,7 +52,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     use_onnx_subfunctions=True,
-    offload_pt_weights=True,  # Need the weights in memory for prefill-model export/compilation in the next step
+    offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
     # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
     node_precision_info=non_subfunc_npi_file_path,
