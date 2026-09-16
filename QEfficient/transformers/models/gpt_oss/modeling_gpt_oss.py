@@ -648,7 +648,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
 
-        if past_key_values is not None:
+        if past_key_values is not None and not use_blocking:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin_cached,
@@ -685,7 +685,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
             sliding_window=self.sliding_window,
-            s_aux=self.sinks,  # diff with Llama
+            sinks=self.sinks,
             layer_idx=self.layer_idx,
             blocking_config=blocking_config,
             position_ids=position_ids,

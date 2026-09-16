@@ -22,10 +22,7 @@ To enable proxy models, use the `enable_proxy=True` parameter when loading a mod
 ```python
 from QEfficient import QEFFAutoModelForCausalLM
 
-model = QEFFAutoModelForCausalLM.from_pretrained(
-    model_name, 
-    enable_proxy=True
-)
+model = QEFFAutoModelForCausalLM.from_pretrained(model_name, enable_proxy=True)
 ```
 
 ### Saving Input/Output Files
@@ -35,7 +32,7 @@ Generate IO files during inference using `write_io=True`:
 ```python
 model.generate(
     inputs=...,
-    write_io=True  # Saves input/output tensors to .npy files
+    write_io=True,  # Saves input/output tensors to .npy files
 )
 ```
 
