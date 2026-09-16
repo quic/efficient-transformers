@@ -161,7 +161,8 @@ def prepare_config(model_path: Path):
     return config
 
 
-def get_kimi_k25_test_config(model_name: str, model_config_dict):
+def get_kimi_k25_test_config(model_name: str, model_config_dict, *, seed: int = 42):
+    set_deterministic(seed)
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     config._attn_implementation = "eager"
     config.torch_dtype = torch.float32
@@ -220,14 +221,16 @@ def _simulate_kimi_k25_quantized_experts(model):
             _attach_fake_gptq_weight(expert.down_proj)
 
 
-def load_kimi_k25_model_from_config(config):
+def load_kimi_k25_model_from_config(config, *, seed: int = 42):
     kimi_cls = load_kimi_k25_class(config._name_or_path)
+    set_deterministic(seed)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
         model = model.to(torch.float32)
     _simulate_kimi_k25_quantized_experts(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
+    model.language_model.lm_head.weight.data.zero_()
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
     processor = AutoProcessor.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
