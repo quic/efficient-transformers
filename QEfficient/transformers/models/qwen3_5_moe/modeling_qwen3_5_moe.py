@@ -1198,23 +1198,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> List[Type[nn.Module]]:
-    headpar_attention = False
-    has_linear_attention = False
-    for module in model.modules() if "_modules" in model.__dict__ else ():
-        if isinstance(module, QEffQwen3_5MoeGatedDeltaNet):
-            has_linear_attention = True
-        if isinstance(module, QEffQwen3_5MoeAttention):
-            blocking_config = getattr(module, "attn_blocking_config", None)
-            if getattr(blocking_config, "mode", None) == BlockingMode.KV_HEADPAR:
-                headpar_attention = True
-
-    if headpar_attention:
-        submodules = []
-        if has_linear_attention:
-            submodules.append(QEffQwen3_5MoeGatedDeltaNet)
-        submodules.append(QEffQwen3_5MoeAttention)
-        return submodules
-
+    # Keep one decoder function per layer so weight-free export can deduplicate repeated layer bodies.
     return [QEffQwen3_5MoeDecoderLayer]
 
 

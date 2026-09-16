@@ -2418,7 +2418,7 @@ def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
         num_kv_blocks=8,
         headpar_split=4,
     )
-    assert headpar_model.get_submodules_for_export() == [QEffQwen3_5MoeAttention]
+    assert headpar_model.get_submodules_for_export() == [QEffQwen3_5MoeDecoderLayer]
 
 
 def test_qwen3_5_moe_decode_export_uses_static_token_axis():
