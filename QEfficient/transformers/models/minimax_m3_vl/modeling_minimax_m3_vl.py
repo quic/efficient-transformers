@@ -6,10 +6,13 @@
 # -----------------------------------------------------------------------------
 
 from math import lcm
+from pathlib import Path
 from typing import List, Optional, Tuple, Type, Union
 
+import onnx
 import torch
 import torch.nn.functional as F
+import yaml
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
@@ -49,6 +52,39 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+
+_MINIMAX_NPI_OUTPUT_SUFFIXES = (
+    "/Add_output_0",
+    "/Add_1_output_0",
+    "/input_layernorm/CustomRMSNorm_output_0",
+    "/post_attention_layernorm/CustomRMSNorm_output_0",
+    "/self_attn/q_norm/CustomRMSNorm_output_0",
+    "/self_attn/k_norm/CustomRMSNorm_output_0",
+    "/norm/CustomRMSNorm_output_0",
+)
+
+
+def _generate_minimax_npi_file(onnx_path: Union[str, Path]) -> str:
+    """Generate Minimax's graph-specific FP32 node placement file."""
+    onnx_path = Path(onnx_path)
+    npi_path = onnx_path.with_name(f"{onnx_path.stem}_minimax_npi.yaml")
+    model = onnx.load(str(onnx_path), load_external_data=False)
+
+    fp32_names = [
+        output_name
+        for node in model.graph.node
+        for output_name in node.output
+        if output_name and output_name.endswith(_MINIMAX_NPI_OUTPUT_SUFFIXES)
+    ]
+    fp32_names = list(dict.fromkeys(fp32_names))
+    if not fp32_names:
+        raise ValueError(f"Could not find Minimax FP32 NPI nodes in ONNX graph: {onnx_path}")
+
+    with npi_path.open("w") as fp:
+        yaml.safe_dump({"FP32NodeInstanceNames": fp32_names}, fp, sort_keys=False)
+    return str(npi_path)
+
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     first, second = x.chunk(2, dim=-1)
@@ -1760,6 +1796,10 @@ class QEffMiniMaxM3VLForCausalLM(MiniMaxM3VLForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffMiniMaxM3VLDecoderLayer}
 
+    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+        del model_name
+        return _generate_minimax_npi_file(onnx_path)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -1922,6 +1962,10 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
 
 
 class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalGeneration):
+    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+        del model_name
+        return _generate_minimax_npi_file(onnx_path)
+
     def __qeff_init__(self):
         self.language_model = self.model.language_model
         self.config._attn_implementation = "eager"
@@ -2341,6 +2385,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
+        past_seq_len = int(kwargs.get("past_seq_len", prefill_seq_len))
         qaic_config = self._qaic_config()
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
         attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
@@ -2391,7 +2436,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         past_key_values = self.get_dummy_pkv_cache(
             config=self.model.language_model.config,
             batch_size=cache_batch_size if continuous_batching else batch_size,
-            seq_len=prefill_seq_len,
+            seq_len=past_seq_len,
             dtype=dtype,
             paged=paged_kv,
             dp=attn_dp,

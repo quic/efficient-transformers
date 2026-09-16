@@ -111,6 +111,7 @@ def main() -> None:
         num_cores=args.num_cores,
         num_devices=args.num_devices,
         skip_vision=True,
+        node_precision_info=True,
         use_onnx_subfunctions=True,
         mxint8_kv_cache=True,
         qaic_config=qaic_config,

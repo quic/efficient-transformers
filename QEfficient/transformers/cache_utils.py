@@ -1150,12 +1150,12 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
             layer._mark_initialized(layer.keys)
         else:
             layer._mark_initialized(layer.keys)
-            batch, _, query_len, head_dim = key_states.shape
+            batch, nh, query_len, head_dim = key_states.shape
 
             position_ids = cache_kwargs.get("position_ids")
-            dp = cache_kwargs.get("dp")
+            dp = cache_kwargs.get("dp", 1)
             batch_local = batch // dp
-            hkv = cache_kwargs.get("hkv")
+            hkv = cache_kwargs.get("hkv", nh)
             cp = cache_kwargs.get("cp", 1) or 1
             if cp > 1:
                 rows = dp * hkv * cp

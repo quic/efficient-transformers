@@ -1637,7 +1637,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         ctx_len = constants.ONNX_EXPORT_CTX_LEN if ctx_len is None else int(ctx_len)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = prefill_seq_len if prefill_seq_len is not None else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         if qaic_config is not None and (qaic_config.get("msa_indexer_dp", 0) > 1 or qaic_config.get("msa_attn_dp", 0) > 1):
             bs = bs * math.lcm(qaic_config.get("msa_indexer_dp"), qaic_config.get("msa_attn_dp"))
@@ -1653,7 +1653,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+        onnx_kwargs = {"prefill_seq_len": seq_len, "past_seq_len": ctx_len if seq_len == 1 else seq_len, "batch_size": bs}
         dynamic_axes_kwargs = {
             "kv_offload": True,
             "continuous_batching": self.continuous_batching,
@@ -2995,7 +2995,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+        if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
+            if isinstance(compiler_options["node_precision_info"], bool) and compiler_options["node_precision_info"]:
+                compiler_options["node_precision_info"] = self.model.generate_npi_file(onnx_path)
+            elif isinstance(compiler_options["node_precision_info"], bool) and not compiler_options["node_precision_info"]:
+                compiler_options.pop("node_precision_info", None)
+        elif hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
