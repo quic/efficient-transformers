@@ -24,8 +24,8 @@ def load_checkpoint_weights(checkpoint_path: str, keys: set[str]) -> dict[str, t
     """Read selected tensors from safetensors; pickle-backed PyTorch checkpoints are unsupported for security."""
     path = Path(checkpoint_path)
     if not path.is_dir():
-<<<<<<< HEAD
         path = Path(hf_download(repo_id=checkpoint_path, allow_patterns=["*.safetensors"]))
+    found: dict[str, torch.Tensor] = {}
     safetensors_files = sorted(path.glob("*.safetensors"))
     if not safetensors_files:
         raise ValueError(
