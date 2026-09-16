@@ -304,6 +304,22 @@ class TestBlockingModes:
 
         assert _uses_blocked_kv_cache(BlockingMode.KV_HEADPAR)
 
+    def test_decode_kv_blocking_does_not_pad_export_query_axis(self):
+        from QEfficient.transformers.models.modeling_auto import _blocking_requires_query_axis_export_padding
+
+        assert not _blocking_requires_query_axis_export_padding(
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=8)
+        )
+        assert not _blocking_requires_query_axis_export_padding(
+            AttentionBlockingConfig(mode=BlockingMode.KV_HEADPAR, num_kv_blocks=8, headpar_split=4)
+        )
+        assert _blocking_requires_query_axis_export_padding(
+            AttentionBlockingConfig(mode=BlockingMode.Q, num_q_blocks=8)
+        )
+        assert _blocking_requires_query_axis_export_padding(
+            AttentionBlockingConfig(mode=BlockingMode.PREFILL_KV, num_kv_blocks=8)
+        )
+
     def test_qwen3_5_moe_hybrid_cache_supports_kv_headpar_split_reads(self):
         from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
 
