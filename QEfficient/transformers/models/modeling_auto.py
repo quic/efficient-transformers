@@ -2508,7 +2508,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         }
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in vision_inputs_fp16:
+            if k not in vision_inputs:
+                continue
+            if self.vision_model.qpc_path and vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
 
         # Required for KIMI-K25
         grid_thws_val = inputs.pop("grid_thws", None)
@@ -3235,7 +3243,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs[k] = np.array(v)
 
         if "pixel_values_RetainedState" in qpc_session.output_names:
-            inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+            if qpc_session.binding_is_bfloat16("pixel_values"):
+                inputs["pixel_values"] = (
+                    torch.from_numpy(inputs["pixel_values"])
+                    .to(torch.bfloat16)
+                    .view(torch.int16)
+                    .numpy()
+                    .view(np.float16)
+                )
+            else:
+                inputs["pixel_values"] = inputs["pixel_values"].astype(np.float16)
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
         inputs["image_idx"] = np.array([[0]])

@@ -661,7 +661,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         }
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in vision_inputs_fp16:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
 
         vision_outputs = {}
         if vision_inputs:
