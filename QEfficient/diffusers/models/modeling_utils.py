@@ -198,7 +198,7 @@ def apply_kv_blocking(
 
                 # Update running sum of exponentials
                 prev_exp_sum = running_exp_sum.clone()
-                curr_exp_sum = torch.einsum("bhqk->bhq", curr_exp)
+                curr_exp_sum = curr_exp.sum(dim=-1)
                 running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
 
                 # Compute normalized attention weights
@@ -413,7 +413,7 @@ def apply_qkv_blocking(
 
                     # Online softmax: Update running sum of exponentials
                     prev_exp_sum = running_exp_sum.clone()
-                    curr_exp_sum = torch.einsum("bhqk->bhq", curr_exp)
+                    curr_exp_sum = curr_exp.sum(dim=-1)
                     running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
 
                     # Compute normalized attention weights for this block

@@ -1568,6 +1568,26 @@ class TestSplitOptimizedMoETransform:
             "moe_prefill_num_packed_chunks": 3,
         }
 
+    def test_export_config_transform_uses_flattened_decode_token_count_for_packing(self, caplog):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=False,
+            batch_size=512,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "expert_parallel_chunk_size": 256}},
+            prefill_seq_len=1,
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+        assert model.block.expert_parallel_num_packed_chunks == 2
+        assert hash_params["moe_prefill_num_packed_chunks"] == 2
+        assert "does not evenly divide" not in caplog.text
+
     def test_export_config_transform_sets_cores_per_expert_tree_reduce_and_multi_device_attrs(self):
         model = _DummyOptimizedMoEModel()
         hash_params = {}
