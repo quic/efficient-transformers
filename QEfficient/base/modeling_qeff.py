@@ -191,14 +191,14 @@ def _write_unified_accum_npi(onnx_path):
     for node in keep_nodes:
         if is_moe_node(node) or is_excluded_npi_node(node):
             continue
-        for output_index, output_name in enumerate(node.output):
+        for output_name in node.output:
             if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
                 continue
             output_basename = output_name.rsplit("/", maxsplit=1)[-1]
             if is_diffusion_gemma_sampler and (
                 output_basename in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OUTPUTS
                 or node.op_type in DIFFUSION_GEMMA_DISCRETE_SAMPLER_OPS
-                or (node.op_type == "TopK" and output_index == 1)
+                or node.op_type == "TopK"
                 or (
                     output_name in tensor_dtypes
                     and tensor_dtypes[output_name] not in FLOATING_POINT_TENSOR_TYPES
