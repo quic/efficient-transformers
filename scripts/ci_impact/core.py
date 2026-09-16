@@ -23,12 +23,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 STAGES = (
     "export_compile",
     "qaic_llm",
     "qaic_feature",
+    "qaic_embedding_audio",
     "qaic_multimodal",
     "qaic_reranker",
     "qaic_disagg",
@@ -494,7 +495,7 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
     if path == "tests/transformers/models/reranker/test_reranker_mad.py":
         return {"qaic_reranker"}
     stages = set()
-    if "disagg_dma" in markers:
+    if "on_qaic" in markers and "disagg_dma" in markers:
         stages.add("qaic_disagg")
     if "diffusion_models" in markers:
         stages.add("qaic_diffusion")
@@ -502,8 +503,10 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
         stages.add("qaic_multimodal")
     if "cli" in markers:
         stages.add("cli")
-    if "on_qaic" in markers and ("feature" in markers or "embedding_audio_model" in markers):
+    if "on_qaic" in markers and "feature" in markers and "multimodal" not in markers:
         stages.add("qaic_feature")
+    if "on_qaic" in markers and "embedding_audio_model" in markers:
+        stages.add("qaic_embedding_audio")
     if "llm_model" in markers:
         stages.add("qaic_llm")
     if "on_qaic" not in markers and "finetune" not in markers:

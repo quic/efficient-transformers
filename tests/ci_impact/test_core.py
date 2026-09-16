@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from scripts.ci_impact.cli import _plan
-from scripts.ci_impact.core import HARD_FULL_FILES, STAGES, ImpactPlan, TestCase, build_plan
+from scripts.ci_impact.core import HARD_FULL_FILES, STAGES, ImpactPlan, TestCase, _stages_for, build_plan
 from scripts.ci_impact.llm import (
     HOOK_AUDIT_NAME,
     QUERY_TOOL_PATH,
@@ -262,6 +262,20 @@ def test_full_layer_tests_are_omitted_from_selective_plan(repository: tuple[Path
     assert plan.stages["export_compile"]["nodeids"] == []
 
 
+@pytest.mark.parametrize(
+    ("markers", "expected_stages"),
+    [
+        ({"on_qaic", "feature"}, {"qaic_feature"}),
+        ({"on_qaic", "feature", "multimodal"}, {"qaic_multimodal"}),
+        ({"on_qaic", "embedding_audio_model"}, {"qaic_embedding_audio"}),
+        ({"disagg_dma"}, {"export_compile"}),
+        ({"on_qaic", "disagg_dma"}, {"qaic_disagg"}),
+    ],
+)
+def test_stage_mapping_matches_jenkins_marker_filters(markers: set[str], expected_stages: set[str]) -> None:
+    assert _stages_for("tests/example.py", markers) == expected_stages
+
+
 def test_model_wrapper_matches_callspec_dictionary(repository: tuple[Path, str]) -> None:
     repo, _ = repository
     _write(repo, "QEfficient/transformers/models/llama/modeling_llama.py", "class QEffLlama:\n    pass\n")
@@ -364,7 +378,7 @@ def _catalog() -> dict[str, TestCase]:
 
 def _write_catalog(path: Path, head: str, tests: list[dict[str, object]]) -> None:
     path.write_text(
-        json.dumps({"schema_version": 2, "head": head, "tests": tests}, indent=2, sort_keys=True),
+        json.dumps({"schema_version": 3, "head": head, "tests": tests}, indent=2, sort_keys=True),
         encoding="utf-8",
     )
 
