@@ -997,6 +997,7 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
+        moe_batch_size = compiler_options.pop("moe_batch_size", bs)
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -1045,6 +1046,7 @@ class QEFFBaseModel(ABC):
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
+            batch_size=moe_batch_size,
             num_devices=moe_num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
