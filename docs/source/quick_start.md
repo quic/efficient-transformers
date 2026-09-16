@@ -225,7 +225,7 @@ Benchmark the model on Cloud AIxxx (AI100, AI200 and so on), run the infer API t
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on Cloud AIxxx (AI100, AI200 and so on)
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
+qeff_model.generate(prompts=["My name is"], tokenizer=tokenizer)
 ```
 
 ### Local Model Execution

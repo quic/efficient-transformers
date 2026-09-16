@@ -22,11 +22,11 @@ profiler.mark_operation("Loading model")
 model = QEFFAutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
 
-# Mark the export operation 
+# Mark the export operation
 profiler.mark_operation("Export")
 model.export()
 
-# Mark the compilation operation 
+# Mark the compilation operation
 profiler.mark_operation("Compile")
 model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16)
 
@@ -50,11 +50,11 @@ profiler.generate_memory_graph("profile.png")
 
 ```python
 profiler = QEffMemoryProfiler(
-    sampling_interval=0.1,           # Sample every 100ms
-    output_file="my_profile.png",    # Custom output file
-    verbose=True,                    # Enable detailed logging
-    enable_cpu_monitoring=True,      # Monitor CPU usage
-    enable_disk_monitoring=True,     # Monitor disk I/O
+    sampling_interval=0.1,  # Sample every 100ms
+    output_file="my_profile.png",  # Custom output file
+    verbose=True,  # Enable detailed logging
+    enable_cpu_monitoring=True,  # Monitor CPU usage
+    enable_disk_monitoring=True,  # Monitor disk I/O
 )
 ```
 
@@ -159,9 +159,9 @@ The profiler generates a comprehensive 4-panel visualization:
 ```python
 # Get synchronized data arrays
 data = profiler.get_synchronized_data()
-timestamps = data['timestamps']
-memory_usage = data['rss_memory']
-cpu_usage = data['cpu_usage']
+timestamps = data["timestamps"]
+memory_usage = data["rss_memory"]
+cpu_usage = data["cpu_usage"]
 
 # Access individual samples
 for sample in profiler.samples:

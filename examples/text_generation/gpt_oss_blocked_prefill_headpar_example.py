@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument("--ctx-len", type=int, default=8192, help="Context length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of decode tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores per device")
-    parser.add_argument("--num-layers", type=int, default=None, help="Override number of layers (for quick testing)")
+    parser.add_argument("--num-layers", type=int, default=5, help="Override number of layers (for quick testing)")
     parser.add_argument("--num-kv-blocks", type=int, default=2, help="Number of KV blocks for blocked attention")
     parser.add_argument(
         "--full-batch-size",
@@ -179,9 +179,19 @@ def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
     # argmax returns index of highest position value = last valid token in chunk
     # All batch items share the same effective_len (replicated prompt), so [0] suffices
     last_valid_idx = int(np.argmax(last_chunk_pos[0]))
+    logits = qpc_out["logits"]
+    if logits.ndim == 3 and logits.shape[1] == 1:
+        next_token_logits = logits[:, 0, :]
+    elif logits.ndim == 3:
+        next_token_logits = logits[:, last_valid_idx, :]
+    elif logits.ndim == 2:
+        next_token_logits = logits
+    else:
+        raise ValueError(f"Unsupported prefill logits shape: {logits.shape}")
+
     decode_inputs = {
         # [B, 1]: argmax over vocab at the last valid position of the last chunk
-        "input_ids": select_next_token_ids(qpc_out["logits"], token_idx=last_valid_idx),
+        "input_ids": np.argmax(next_token_logits, axis=-1, keepdims=True),
         # [B, 1]: per-batch next decode position
         "position_ids": np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1,
     }
@@ -223,7 +233,7 @@ def main():
         "num_kv_blocks": 2,
         "num_q_blocks": 2,
         "ctx_len": args.ctx_len,
-        "moe_config": {"expert_prefill_chunk_size": args.moe_prefill_packed_chunk_size},
+        "moe_config": {"expert_parallel_chunk_size": args.moe_prefill_packed_chunk_size},
     }
 
     compile_kwargs = dict(
@@ -281,6 +291,7 @@ def main():
             prefill_only=True,
             enable_chunking=True,
             aic_enable_depth_first=True,
+            qaic_config={"moe_config": {"expert_parallel_chunk_size": args.moe_prefill_packed_chunk_size}},
             **compile_kwargs,
         )
         print(f"  -> decode:  {baseline_decode_qpc}")
