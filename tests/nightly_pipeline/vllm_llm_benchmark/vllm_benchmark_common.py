@@ -39,9 +39,7 @@ API_SERVER_READY_MARKERS = (
     "Application startup complete",
     "Uvicorn running on",
 )
-DISAGG_READY_MARKERS = (
-    "Press Ctl-C once to shutdown all services.",
-)
+DISAGG_READY_MARKERS = ("Press Ctl-C once to shutdown all services.",)
 
 SKIPPED_MODELS = {
     "zai-org/GLM-4.5",
@@ -779,13 +777,27 @@ def kill_ports(ports: Iterable[int]) -> None:
                 text=True,
             )
         except FileNotFoundError:
+            print(f"  Warning: lsof not found, skipping port {port} cleanup")
             return
         pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
         if not pids:
+            print(f"  Port {port}: free (no processes)")
             continue
-        print(f"  Clearing port {port}: killing pid(s) {', '.join(pids)}")
+        print(f"  Port {port}: found pid(s) {', '.join(pids)}, killing...")
         subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
-        time.sleep(1)
+        time.sleep(0.5)
+        # Verify port is actually free
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        remaining_pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+        if remaining_pids:
+            print(f"  Warning: Port {port} still has pid(s) {', '.join(remaining_pids)} after kill")
+        else:
+            print(f"  Port {port}: successfully freed")
 
 
 def write_log_header(log_path: Path, command: list[str], title: str) -> None:
@@ -807,7 +819,9 @@ def launch_server(
 ) -> ServerProcess:
     ports = server_ports_from_command(command)
     if ports:
+        print(f"  Final port cleanup check before server launch for ports: {ports}")
         kill_ports(ports)
+        time.sleep(0.5)  # Brief wait to ensure ports are released
 
     write_log_header(log_path, command, "Server Command")
     env = os.environ.copy()
@@ -863,7 +877,7 @@ def launch_server(
 def server_ports_from_command(command: list[str]) -> list[int]:
     ports = []
     for index, token in enumerate(command):
-        if token in {"--port", "--prefill-port", "--decode-port", "--encode-port"}:
+        if token in {"--port", "--prefill-port", "--decode-port", "--encode-port", "--kv-handOff-port", }:
             cursor = index + 1
             while cursor < len(command) and not command[cursor].startswith("--"):
                 ports.extend(iter_ports(command[cursor]))
@@ -1213,6 +1227,17 @@ def run_one(row: dict, args, config_name: str, output_csv: Path) -> bool:
 
     server_cmd = build_server_command(row, args)
     client_cmd = build_client_command(row, args)
+
+    # Pre-check and cleanup ports before starting server
+    ports_to_use = server_ports_from_command(server_cmd)
+    if ports_to_use:
+        print()
+        print("=" * 80)
+        print(f"Pre-flight port check for ports: {ports_to_use}")
+        print("=" * 80)
+        kill_ports(ports_to_use)
+        print("  Ports cleaned and ready for use")
+        time.sleep(1)  # Wait for ports to fully release
 
     print()
     print("=" * 80)
