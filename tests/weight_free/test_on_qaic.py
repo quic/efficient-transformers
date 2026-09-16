@@ -20,9 +20,10 @@ Covers:
 """
 
 from __future__ import annotations
-import torch
+
 import numpy as np
 import pytest
+import torch
 from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
