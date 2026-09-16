@@ -447,8 +447,8 @@ class DiffusionGemmaSingleQPCGenerator:
             argmax_canvas_history.append(argmax_canvas)
             if len(argmax_canvas_history) > stability_threshold:
                 argmax_canvas_history.pop(0)
-            accepted_mask = accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
-            # accepted_mask = newly_accepted #accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
+            # accepted_mask = accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
+            accepted_mask = newly_accepted #accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
             canvas = np.where(
                 ~accepted_mask,
                 self.rng.randint(0, self.vocab_size, size=(1, self.canvas_length)).astype(np.int64),

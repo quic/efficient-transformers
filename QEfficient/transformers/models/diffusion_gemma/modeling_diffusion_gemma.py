@@ -387,67 +387,6 @@ class QEffDiffusionGemmaEncoderTextModel(DiffusionGemmaEncoderTextModel):
             setattr(self, f"{layer_type}_cos_cached", nn.Parameter(cos_cached))
 
 
-class QEffDiffusionGemmaVisionEncoderWrapper(nn.Module):
-    """
-    Standalone vision encoder wrapper for dual-QPC export.
-
-    Runs vision_tower + embed_vision from the encoder model and clips
-    outputs to FP16 range.
-    """
-
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
-        super().__init__()
-        self.model = model
-        self.mm_tokens_per_image = getattr(model.config, "mm_tokens_per_image", 256)
-
-    def get_submodules_for_export(self) -> Type[nn.Module]:
-        encoder_model = self.model.model.encoder
-        return {encoder_model.vision_tower.encoder.layers[0].__class__}
-
-    def forward(self, pixel_values: torch.Tensor, image_position_ids: torch.Tensor) -> torch.Tensor:
-        encoder_model = self.model.model.encoder
-        vision_tower = encoder_model.vision_tower
-        padding_positions = (image_position_ids == -1).all(dim=-1)
-
-        inputs_embeds = vision_tower.patch_embedder(pixel_values, image_position_ids, padding_positions)
-        valid_tokens = ~padding_positions
-        vision_attention_mask = (~valid_tokens).unsqueeze(1).unsqueeze(2).to(dtype=inputs_embeds.dtype)
-        vision_attention_mask = vision_attention_mask * torch.finfo(inputs_embeds.dtype).min
-        vision_attention_mask = vision_attention_mask.expand(-1, 1, inputs_embeds.shape[1], -1)
-
-        hidden_states = inputs_embeds
-        position_embeddings = vision_tower.encoder.rotary_emb(hidden_states, image_position_ids)
-        for layer in vision_tower.encoder.layers[: vision_tower.encoder.config.num_hidden_layers]:
-            hidden_states = layer(
-                hidden_states,
-                attention_mask=vision_attention_mask,
-                position_embeddings=position_embeddings,
-                position_ids=image_position_ids,
-            )
-
-        output_length = getattr(vision_tower.config, "default_output_length", None)
-        if output_length is None:
-            output_length = pixel_values.shape[-2] // (
-                vision_tower.config.pooling_kernel_size * vision_tower.config.pooling_kernel_size
-            )
-        hidden_states, _ = vision_tower.pooler(
-            hidden_states=hidden_states,
-            pixel_position_ids=image_position_ids,
-            padding_positions=padding_positions,
-            output_length=output_length,
-        )
-        if vision_tower.config.standardize:
-            hidden_states = (hidden_states - vision_tower.std_bias) * vision_tower.std_scale
-
-        vision_embeds = encoder_model.embed_vision(inputs_embeds=hidden_states)
-        if vision_embeds.dim() == 2:
-            vision_embeds = vision_embeds.unsqueeze(0)
-
-        # clamp vision projector output to FP16 range
-        vision_embeds = vision_embeds.clamp(-60000.0, 60000.0)
-        return vision_embeds[:, : self.mm_tokens_per_image, :]
-
-
 class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
     """Single-QPC shared DiffusionGemma transformer path.
 
@@ -587,20 +526,38 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         )
 
     def get_dummy_inputs(self, **kwargs):
-        encoder = QEffDiffusionGemmaEncoderPrefillWrapper(self.model)
-        encoder_inputs = encoder.get_dummy_inputs()
-
-        batch_size, block_length = encoder_inputs["input_ids"].shape
+        batch_size = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        block_length = 32
         text_config = self.text_config
-        full_kv_length = encoder_inputs["past_key_values"][
+        mm_tokens_per_image = self.model._get_mm_tokens_per_image()
+        input_ids = torch.zeros((batch_size, block_length), dtype=torch.int64)
+        mm_token_type_ids = torch.zeros((batch_size, block_length), dtype=torch.int64)
+        image_start = min(5, block_length)
+        image_end = min(image_start + mm_tokens_per_image, block_length)
+        input_ids[:, image_start:image_end] = self.config.image_token_id
+        mm_token_type_ids[:, image_start:image_end] = 1
+        position_ids = torch.arange(block_length, dtype=torch.int64).view(1, block_length).repeat(batch_size, 1)
+        past_key_values = self.model.get_dummy_pkv_cache(
+            config=text_config,
+            batch_size=batch_size,
+            seq_len=block_length,
+        )
+        full_kv_length = past_key_values[
             next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "full_attention")
         ][0].shape[-2]
-        sliding_kv_length = encoder_inputs["past_key_values"][
+        sliding_kv_length = past_key_values[
             next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "sliding_attention")
         ][0].shape[-2]
         return {
-            **encoder_inputs,
-            "cache_position_ids": encoder_inputs["position_ids"].clone(),
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "cache_position_ids": position_ids.clone(),
+            "vision_embeds": torch.zeros(
+                (batch_size, mm_tokens_per_image, text_config.hidden_size), dtype=torch.float32
+            ),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "mm_token_type_ids": mm_token_type_ids,
+            "past_key_values": past_key_values,
             "full_attention_mask": torch.zeros(
                 (batch_size, 1, block_length, full_kv_length + block_length), dtype=torch.float32
             ),
@@ -681,134 +638,6 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         return names
 
 
-class QEffDiffusionGemmaEncoderPrefillWrapper(nn.Module):
-    """Standalone encoder-prefill QPC: prompt(+vision) → filled KV cache.
-
-    No decoder path, no is_encode gate. The encoder writes the KV cache via
-    past_key_values.update(); we return the filled KV as _RetainedState outputs.
-    """
-
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
-        super().__init__()
-        self.model = model
-        self.config = model.config
-        self.text_config = model.config.text_config
-
-    def get_submodules_for_export(self) -> Type[nn.Module]:
-        return {QEffDiffusionGemmaEncoderTextLayer}
-
-    def forward(
-        self,
-        input_ids: torch.LongTensor,
-        position_ids: torch.LongTensor,
-        vision_embeds: Optional[torch.Tensor] = None,
-        image_idx: Optional[torch.Tensor] = None,
-        mm_token_type_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Cache] = None,
-        **kwargs,
-    ):
-        del kwargs
-        text_cfg = self.config.text_config
-        if past_key_values is not None and not isinstance(past_key_values, QEffGemma4DynamicCache):
-            past_key_values = QEffGemma4DynamicCache.from_legacy_cache(text_cfg, past_key_values)
-
-        inputs_embeds, next_image_idx = self.model._inject_vision_embeds(input_ids, vision_embeds, image_idx)
-
-        enc_outputs = self.model.model.encoder.language_model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=None,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            use_cache=True,
-            mm_token_type_ids=None,
-        )
-
-        hidden_states = enc_outputs.last_hidden_state
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        last_hidden = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        enc_logits = self.model._apply_logit_softcapping(self.model.lm_head(last_hidden).float())
-
-        pkv = [
-            (past_key_values.layers[i].keys, past_key_values.layers[i].values)
-            for i in range(text_cfg.num_hidden_layers)
-        ]
-        return enc_logits, next_image_idx, pkv
-
-    # -- export metadata (single Prefill specialization) --
-
-    def get_specializations(
-        self,
-        batch_size: int,
-        prefill_seq_len: int,
-        ctx_len: int,
-        canvas_length: Optional[int] = None,
-        **compiler_options,
-    ):
-        prefill_seq_len = prefill_seq_len or 32
-        ctx_len = ctx_len or constants.INTERN_CTX_LEN
-        text_cfg = self.config.text_config
-        mm_tokens_per_image = self.model._get_mm_tokens_per_image()
-        spec = {
-            "batch_size": batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-            "sliding_window": text_cfg.sliding_window,
-            "vision_batch_size": batch_size,
-            "vision_tokens": mm_tokens_per_image,
-        }
-        return [spec], compiler_options
-
-    def get_onnx_dynamic_axes(self, **kwargs):
-        text_cfg = self.config.text_config
-        axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
-            "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
-        }
-        for i, layer_type in enumerate(text_cfg.layer_types):
-            ctx_axis = {0: "batch_size", 2: "sliding_window" if layer_type == "sliding_attention" else "ctx_len"}
-            for kv in ("key", "value"):
-                axes[f"past_{kv}.{i}"] = ctx_axis
-        return axes
-
-    def get_output_names(self, **kwargs):
-        text_cfg = self.config.text_config
-        # enc_logits is a graph-liveness anchor (not consumed by the runner) — see forward().
-        # past_*_keyout / past_*_valout are the encoder-filled KV emitted as REGULAR outputs
-        # (not _RetainedState). Single-spec encoder QPCs have their _RetainedState pathway
-        # dead-elimed by qaic-compile (no in-graph consumer); regular outputs are user-visible
-        # and survive. The runner host-copies them into the decoder QPC's past_*.{i} inputs.
-        names = ["enc_logits", "image_idx_output"]
-        for i in range(text_cfg.num_hidden_layers):
-            for kv in ("key", "value"):
-                names.append(f"past_{kv}.{i}_out")
-        return names
-
-    def get_dummy_inputs(self, **kwargs):
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        mm_tokens_per_image = self.model._get_mm_tokens_per_image()
-        text_cfg = self.config.text_config
-        seq_len = 32  # max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
-
-        input_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
-        mm_token_type_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
-        text_prefix_len = min(5, seq_len)
-        image_start = text_prefix_len
-        image_end = min(image_start + mm_tokens_per_image, seq_len)
-        input_ids[:, image_start:image_end] = self.config.image_token_id
-        mm_token_type_ids[:, image_start:image_end] = 1
-
-        return {
-            "input_ids": input_ids,
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "vision_embeds": torch.zeros((bs, mm_tokens_per_image, text_cfg.hidden_size), dtype=torch.float32),
-            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
-            "mm_token_type_ids": mm_token_type_ids,
-            "past_key_values": self.model.get_dummy_pkv_cache(config=text_cfg, batch_size=bs, seq_len=seq_len),
-        }
-
-
 # ---------------------------------------------------------------------------
 # Top-level model class — registered to AutoModelForImageTextToText
 # ---------------------------------------------------------------------------
@@ -820,24 +649,12 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
 
     Registered to AutoModelForImageTextToText.
 
-    Supports:
-      - Single-QPC: encoder prefill + decoder canvas-denoise in one compiled graph
-      - Dual-QPC  : separate vision and language QPCs (kv_offload=True)
+    Supports a single QPC containing encoder prefill and decoder canvas denoising.
     """
-
-    def get_qeff_vision_encoder(self) -> QEffDiffusionGemmaVisionEncoderWrapper:
-        return QEffDiffusionGemmaVisionEncoderWrapper(self)
-
-    def get_qeff_language_decoder(self) -> QEffDiffusionGemmaUnifiedWrapper:
-        return QEffDiffusionGemmaUnifiedWrapper(self)
 
     def get_qeff_unified_wrapper(self) -> QEffDiffusionGemmaUnifiedWrapper:
         """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
         return QEffDiffusionGemmaUnifiedWrapper(self)
-
-    def get_qeff_encoder_prefill(self) -> QEffDiffusionGemmaEncoderPrefillWrapper:
-        """Disaggregated dual-QPC: standalone encoder-prefill QPC."""
-        return QEffDiffusionGemmaEncoderPrefillWrapper(self)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffDiffusionGemmaEncoderTextLayer}
