@@ -87,20 +87,23 @@ def requires_dtype_conversion(src: Path, weight_map: Dict[str, str], target_dtyp
 
 def read_weight_map(src: Path) -> Dict[str, str]:
     """Return {tensor_key: shard_filename} from model.safetensors.index.json,
-    or by scanning all *.safetensors for single-file checkpoints."""
+    or from model.safetensors directly for single-file checkpoints."""
     index_path = src / "model.safetensors.index.json"
     if index_path.exists():
         return json.loads(index_path.read_text())["weight_map"]
-    # TODO(wf): This is un-necessary and we should error out when index map is missing.
     shard_files = sorted(src.glob("*.safetensors"))
-    if not shard_files:
-        raise FileNotFoundError(f"No safetensors files found in {src}")
-    weight_map: Dict[str, str] = {}
-    for sf in shard_files:
-        with safe_open(str(sf), framework="pt") as f:
-            for k in f.keys():
-                weight_map[k] = sf.name
-    return weight_map
+    if len(shard_files) == 1:
+        with safe_open(str(shard_files[0]), framework="pt") as f:
+            return {k: shard_files[0].name for k in f.keys()}
+    if len(shard_files) == 0:
+        raise FileNotFoundError(
+            f"No safetensors files found in {src}. Weight-free export requires a safetensors checkpoint."
+        )
+    raise FileNotFoundError(
+        f"{len(shard_files)} safetensors shards found in {src} but no "
+        "model.safetensors.index.json. The checkpoint is malformed — "
+        "re-download or regenerate the index file."
+    )
 
 
 @lru_cache(maxsize=None)
