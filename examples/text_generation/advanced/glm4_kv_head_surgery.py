@@ -5,6 +5,20 @@
 #
 # -----------------------------------------------------------------------------
 
+"""GLM-4 MoE: replicate KV heads before compile.
+
+GLM-4's default ``num_key_value_heads`` doesn't evenly divide across the target
+``num_devices`` for tensor-parallel deployments. Replicating KV heads N-way (via
+``torch.repeat_interleave`` on ``k_proj`` / ``v_proj`` weights and biases) makes
+the head count evenly shardable at the cost of extra KV traffic. Live weight
+surgery keeps the change local to the compiled QPC — the HF checkpoint is
+untouched.
+
+This surgery is intentionally out of the main ``QEFFAutoModelForCausalLM``
+pipeline: it's a deployment-shape workaround, not a general transform. The
+canonical scalable entry point is ``examples/text_generation/basic_inference.py``.
+"""
+
 import argparse
 
 import torch
