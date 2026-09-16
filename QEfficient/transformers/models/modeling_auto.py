@@ -195,6 +195,12 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["dtype"] = kwargs["torch_dtype"]
 
 
+def _blocking_requires_query_axis_export_padding(blocking_config) -> bool:
+    if blocking_config is None:
+        return False
+    return blocking_config.mode.is_prefill or blocking_config.num_q_blocks is not None
+
+
 def _ignore_public_mdp_ts_num_devices(compiler_options: dict) -> None:
     if "mdp_ts_num_devices" not in compiler_options:
         return
@@ -4163,11 +4169,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
 
         expert_parallel_is_triggered = self.hash_params.get("moe_prefill_flavour") == MoEFlavour.EXPERT_PARALLEL
-        blocking_enabled = self.hash_params.get("blocking_kwargs", None) is not None
+        blocking_config = self.hash_params.get("blocking_kwargs", None)
         for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_num_packed_chunks", None)
-        if blocking_enabled:
+        query_axis_blocking_enabled = _blocking_requires_query_axis_export_padding(blocking_config)
+        if query_axis_blocking_enabled:
             max_blocks = -1
-            for key, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
+            for key, num_blocks in blocking_config.__dict__.items():
                 if isinstance(num_blocks, int) and key in ["num_kv_blocks", "num_q_blocks"]:
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
@@ -4177,7 +4184,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = (for_loop_number_forced_by_expert_parallel * seq_len) // math.gcd(
                 for_loop_number_forced_by_expert_parallel, seq_len
             )
-        if blocking_enabled:
+        if query_axis_blocking_enabled:
             seq_len = (for_loop_number_forced_by_blocking * seq_len) // math.gcd(
                 for_loop_number_forced_by_blocking, seq_len
             )
