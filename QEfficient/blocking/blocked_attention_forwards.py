@@ -397,6 +397,7 @@ def blocked_kv_attention_forward_headpar_offline(
         .unsqueeze(2)
         .expand(-1, num_kv_groups, -1, -1)
         .reshape(batch_size, 1, num_kv_groups * seq_len, 1)
+        .unsqueeze(2)
     )
 
     # -------------------------------------------------------
