@@ -96,6 +96,6 @@ def test_collect_only_catalog_contains_exact_nodeids_and_runtime_stages(tmp_path
     payload = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert payload == {
         "head": "abc123",
-        "schema_version": 2,
+        "schema_version": 3,
         "tests": [{"nodeid": "tests/test_models.py::test_model[case0]", "stages": ["export_compile", "qaic_llm"]}],
     }
