@@ -44,8 +44,8 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
-from QEfficient.customop import CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP
 from QEfficient.customop.utils import ctx_gather_3d, ctx_gather_blocked_kv_dp, ctx_paged_scatter_dp, ctx_scatter_3d
+from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP
 
 MASKED_ATTENTION_LOGIT = -3.0e4
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -1074,6 +1074,74 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         # token_valid:     [B, index_n_heads, selected_blocks, index_block_size]
         return safe_indices, token_valid
 
+    def _select_blocks_prefill(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values: "QEffMiniMaxSparseCache",
+        layer_idx: int,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        blocking_config: AttentionBlockingConfig,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Select sparse MSA blocks for every token in a prefill sequence."""
+        cfg = self.config
+        batch, query_len = hidden_states.shape[:2]
+        if query_len <= 1:
+            raise ValueError("MSA prefill selection requires QL > 1.")
+        if getattr(blocking_config, "msa_indexer_dp", 1) not in (None, 1) or getattr(
+            blocking_config, "msa_indexer_cp", 1
+        ) not in (None, 1):
+            raise ValueError("MSA prefill selection currently requires DP=1 and CP=1.")
+        ctx_len = (getattr(blocking_config, "ctx_len", None) or past_key_values.layers[layer_idx].keys.shape[2])
+        block_size = cfg.index_block_size
+        if ctx_len % block_size:
+            raise ValueError("MSA prefill selection requires ctx_len divisible by index_block_size.")
+        num_blocks = ctx_len // block_size
+        topk = min(cfg.index_topk_blocks, num_blocks)
+        index_q = self._project_index_q_prefill(hidden_states)[
+            ..., : cfg.index_n_heads * cfg.index_head_dim
+        ].view(batch, query_len, cfg.index_n_heads, cfg.index_head_dim).transpose(1, 2)
+        index_k = self.k_proj(hidden_states)[
+            ..., : cfg.indexer_n_head * cfg.index_head_dim
+        ].view(batch, query_len, cfg.indexer_n_head, cfg.index_head_dim).transpose(1, 2)
+        index_q = self.q_norm(index_q)
+        index_k = self.k_norm(index_k)
+        rotary_dim = int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0))
+        index_q, index_k = qeff_apply_rotary_pos_emb(
+            index_q, index_k, cos[..., : cfg.index_head_dim], sin[..., : cfg.index_head_dim], rotary_dim
+        )
+        index_key_cache = past_key_values.update_index_key_cache(index_k, layer_idx, position_ids)
+        selected_indices, selected_valid = [], []
+        key_positions = torch.arange(ctx_len, device=hidden_states.device).view(1, 1, 1, ctx_len)
+        block_ids = torch.arange(num_blocks, device=hidden_states.device).view(1, 1, 1, num_blocks)
+        for q_start in range(0, query_len, 512):
+            q_end = min(q_start + 512, query_len)
+            q_positions = position_ids[:, q_start:q_end]
+            scores = torch.matmul(
+                index_q[:, :, q_start:q_end].float(), index_key_cache.float().transpose(-1, -2)
+            )
+            scores = scores.masked_fill(key_positions > q_positions[:, None, :, None], -1.0e30)
+            scores = scores.view(batch, cfg.index_n_heads, q_end - q_start, num_blocks, block_size).amax(dim=-1)
+            for local_offset in range(cfg.index_local_blocks):
+                local_block = (q_positions // block_size - local_offset).clamp(min=0)
+                scores = torch.where(
+                    block_ids == local_block[:, None, :, None], torch.full_like(scores, 1.0e30), scores
+                )
+            top_scores, top_order = torch.topk(scores, k=topk, dim=-1)
+            offsets = torch.arange(block_size, device=hidden_states.device).view(1, 1, 1, 1, block_size)
+            indices = torch.gather(block_ids.expand_as(scores).to(torch.int32), -1, top_order)
+            indices = indices.unsqueeze(-1) * block_size + offsets
+            valid = (top_scores.unsqueeze(-1) > -1.0e29) & (indices < ctx_len)
+            valid = valid & (indices <= q_positions[:, None, :, None, None])
+            selected_indices.append(torch.where(valid, indices, torch.zeros_like(indices)))
+            selected_valid.append(valid)
+        token_indices = torch.cat(selected_indices, dim=2).to(torch.int32)
+        token_valid = torch.cat(selected_valid, dim=2)
+        if not torch.onnx.is_in_onnx_export():
+            self.last_block_indices = token_indices.detach()
+        return token_indices, token_valid
+
 
 class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
     def _baseline_attention(
@@ -1538,16 +1606,18 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 cache_kwargs["cp"] = getattr(blocking_config, "msa_attn_cp", 1) or 1
 
             indexer_block_table = kwargs.get("msa_indexer_block_table")
-            token_indices, token_valid = self.indexer._select_blocks(
-                hidden_states,
-                position_ids,
-                past_key_values,
-                self.layer_idx,
-                cos,
-                sin,
-                blocking_config=blocking_config,
-                block_table=indexer_block_table,
-            )
+            if input_shape[1] > 1:
+                if indexer_block_table is not None:
+                    raise ValueError("Paged MSA prefill is not yet supported")
+                token_indices, token_valid = self.indexer._select_blocks_prefill(
+                    hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin, blocking_config
+                )
+            else:
+                token_indices, token_valid = self.indexer._select_blocks(
+                    hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin,
+                    blocking_config=blocking_config,
+                    block_table=indexer_block_table,
+                )
 
             attention_block_table = kwargs.get("msa_attn_block_table")
             paged = attention_block_table is not None
@@ -1606,6 +1676,23 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
                 return self.o_proj(attn_output.contiguous()), None
             past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
+            if input_shape[1] > 1:
+                selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
+                    self.layer_idx, token_indices, token_valid
+                )
+                selected_len = token_indices.shape[-2] * token_indices.shape[-1]
+                selected_k = selected_k.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len, self.head_dim)
+                selected_v = selected_v.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len, self.head_dim)
+                selected_k = selected_k.repeat_interleave(self.num_key_value_groups, dim=1)
+                selected_v = selected_v.repeat_interleave(self.num_key_value_groups, dim=1)
+                valid = flat_valid.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len)
+                valid = valid.repeat_interleave(self.num_key_value_groups, dim=1)
+                q = query_states.unsqueeze(3)
+                scores = torch.matmul(q.float(), selected_k.transpose(-1, -2).float()) * (self.head_dim ** -0.5)
+                scores = scores.masked_fill(~valid.unsqueeze(3), -1.0e30)
+                probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(selected_v.dtype)
+                attn_output = torch.matmul(probs, selected_v).squeeze(3).transpose(1, 2).reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
+                return self.o_proj(attn_output.contiguous()), None
             if attn_dp > 1 or attn_cp > 1:
                 dp = cache_kwargs["dp"]
                 batch = input_shape[0]
