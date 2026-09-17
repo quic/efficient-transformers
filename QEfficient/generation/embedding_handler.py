@@ -91,6 +91,28 @@ class VisionHandler:
             return Image.open(BytesIO(response.content)).convert("RGB")
         return Image.open(image_source).convert("RGB")
 
+    def _cast_vision_inputs(self, vision_inputs: Dict[str, np.ndarray], keys: set) -> None:
+        """
+        Cast the given vision_inputs entries to the dtype the vision session's
+        compiled binding actually expects, in place.
+
+        The pixel_values/image_masks bindings are exported at the model's
+        configured torch_dtype, which may be real float16 or bfloat16. numpy has
+        no native bfloat16, so a bfloat16 binding is carried on the host as a
+        float16-sized byte buffer holding real bfloat16 bit patterns; numerically
+        casting with `.astype(np.float16)` would instead produce IEEE float16
+        values and corrupt the buffer once its raw bytes are shipped to the device.
+        """
+        for k in keys:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
+
     def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
@@ -143,11 +165,7 @@ class VisionHandler:
             }:
                 vision_inputs[k] = np.array(v)
 
-        # Convert specific inputs to float16
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        for k in vision_inputs_fp16:
-            if k in vision_inputs:
-                vision_inputs[k] = vision_inputs[k].astype("float16")
+        self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -192,11 +210,7 @@ class VisionHandler:
                 }:
                     vision_inputs[k] = np.array(v)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -319,11 +333,7 @@ class VisionHandler:
                 vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
                 vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
