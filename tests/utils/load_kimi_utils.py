@@ -543,9 +543,7 @@ def run_kimi_k25_hf_model_on_pytorch_CB(model, processor, images, queries, max_g
                 return_dict=True,
             )
             logits = outputs[0] if isinstance(outputs, tuple) else outputs.logits
-            # QAIC decode runs in fp16; cast HF logits to fp16 before argmax so parity
-            # checks compare against the same effective precision.
-            next_token = logits[:, -1, :].to(torch.float16).argmax(dim=-1, keepdim=True)
+            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             new_tokens.append(next_token)
 
             generated_ids = torch.cat([generated_ids, next_token], dim=1)
