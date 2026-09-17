@@ -221,7 +221,7 @@ def parse_json_cell(raw: str, field_name: str) -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError(f"{field_name}: invalid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
-        raise ValueError(f"{field_name}: expected a JSON object")
+        raise TypeError(f"{field_name}: expected a JSON object")
     return parsed
 
 
@@ -769,35 +769,112 @@ def server_ports(row: dict) -> list[int]:
 
 def kill_ports(ports: Iterable[int]) -> None:
     for port in ports:
+        pids = []
+
+        # Method 1: Try lsof (preferred, fast)
         try:
             result = subprocess.run(
                 ["lsof", "-ti", f":{port}"],
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=5,
             )
-        except FileNotFoundError:
-            print(f"  Warning: lsof not found, skipping port {port} cleanup")
-            return
-        pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
-        if not pids:
-            print(f"  Port {port}: free (no processes)")
+            pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+            if pids:
+                print(f"  Port {port}: found pid(s) {', '.join(pids)} (via lsof), killing...")
+                subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
+                time.sleep(0.5)
+                continue
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Method 2: Try ss (common in containers)
+        try:
+            result = subprocess.run(
+                ["ss", "-tlnp"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line:
+                    match = re.search(r"pid=(\d+)", line)
+                    if match:
+                        pids.append(match.group(1))
+            if pids:
+                print(f"  Port {port}: found pid(s) {', '.join(pids)} (via ss), killing...")
+                subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
+                time.sleep(0.5)
+                continue
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Method 3: Try fuser
+        try:
+            result = subprocess.run(
+                ["fuser", f"{port}/tcp"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            pids = [p.strip() for p in result.stdout.split() if p.strip()]
+            if pids:
+                print(f"  Port {port}: found pid(s) {', '.join(pids)} (via fuser), killing...")
+                subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
+                time.sleep(0.5)
+                continue
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Method 4: Try /proc/net/tcp (works in Linux containers without tools)
+        try:
+            with open("/proc/net/tcp", "r") as f:
+                lines = f.readlines()
+            port_hex = f"{port:X}"
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) >= 10:
+                    local_addr = parts[1]
+                    if local_addr.endswith(f":{port_hex}"):
+                        inode = parts[9]
+                        for proc_dir in Path("/proc").glob("*/fd/*"):
+                            try:
+                                if proc_dir.is_symlink():
+                                    target = str(proc_dir.resolve())
+                                    if f"socket:[{inode}]" in target:
+                                        pid = proc_dir.parent.parent.name
+                                        if pid.isdigit() and pid not in pids:
+                                            pids.append(pid)
+                            except (OSError, ValueError):
+                                pass
+            if pids:
+                print(f"  Port {port}: found pid(s) {', '.join(pids)} (via /proc), killing...")
+                subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
+                time.sleep(0.5)
+                continue
+        except (FileNotFoundError, OSError, ValueError):
+            pass
+
+        # Method 5: Try Python socket (universal, always available)
+        try:
+            import socket
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(("127.0.0.1", port))
+            sock.close()
+            if result == 0:
+                print(f"  Port {port}: in use but cannot determine PID (socket check)")
+            else:
+                print(f"  Port {port}: free (no processes)")
             continue
-        print(f"  Port {port}: found pid(s) {', '.join(pids)}, killing...")
-        subprocess.run(["kill", "-9", *pids], check=False, capture_output=True)
-        time.sleep(0.5)
-        # Verify port is actually free
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        remaining_pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
-        if remaining_pids:
-            print(f"  Warning: Port {port} still has pid(s) {', '.join(remaining_pids)} after kill")
-        else:
-            print(f"  Port {port}: successfully freed")
+        except (OSError, ImportError):
+            pass
+
+        print(f"  Port {port}: unable to check (no tools available)")
 
 
 def write_log_header(log_path: Path, command: list[str], title: str) -> None:
@@ -835,7 +912,7 @@ def launch_server(
         bufsize=1,
         env=env,
         cwd=cwd,
-        preexec_fn=os.setsid,
+        preexec_fn=os.setsid,  # noqa: PLW1509
     )
 
     ready_event = threading.Event()
@@ -877,7 +954,13 @@ def launch_server(
 def server_ports_from_command(command: list[str]) -> list[int]:
     ports = []
     for index, token in enumerate(command):
-        if token in {"--port", "--prefill-port", "--decode-port", "--encode-port", "--kv-handOff-port", }:
+        if token in {
+            "--port",
+            "--prefill-port",
+            "--decode-port",
+            "--encode-port",
+            "--kv-handOff-port",
+        }:
             cursor = index + 1
             while cursor < len(command) and not command[cursor].startswith("--"):
                 ports.extend(iter_ports(command[cursor]))
@@ -1013,6 +1096,7 @@ def get_qaic_sdk_version() -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -1284,7 +1368,7 @@ def run_one(row: dict, args, config_name: str, output_csv: Path) -> bool:
         client_returncode = run_client(client_cmd, client_log, cwd=args.base_dir)
         parsed_runs = parse_benchmark_output(client_log)
         status = result_status(client_returncode, parsed_runs)
-    except Exception as exc:
+    except (BenchmarkError, OSError, subprocess.TimeoutExpired, ValueError) as exc:
         status = "error"
         error = str(exc)
         print(f"  ERROR: {error}")
