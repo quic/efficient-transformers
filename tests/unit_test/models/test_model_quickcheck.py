@@ -1895,7 +1895,7 @@ class TestToNamedSpecializations:
         flat = [
             {
                 "_graph_name": "Vision",
-                "batch_size": "1",
+                "vision_batch_size": "1",
                 "vision_size": "247",
                 "grid_height": "988",
                 "grid_width": "1176",
@@ -1906,6 +1906,7 @@ class TestToNamedSpecializations:
         result = to_named_specializations(flat)
         assert len(result) == 1
         assert result[0]["name"] == "Vision"
+        assert result[0]["symbols"]["vision_batch_size"] == "1"
         assert result[0]["symbols"]["vision_size"] == "247"
         assert "_graph_name" not in result[0]["symbols"]
 
@@ -2349,7 +2350,10 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
 
     model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
-    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
 
     specs, _ = model.get_specializations(
         batch_size=1,
@@ -2368,6 +2372,71 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     expected_vision_size = max(spec["vision_size"] * frames for spec, frames in zip(vision_specs, [1, 2]))
     assert all(spec["vision_size"] == expected_vision_size for spec in lang_specs)
     assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
+
+
+def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
+
+
+def test_qwen3_vl_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffQwen3VLMoeForConditionalGeneration,
+    )
+
+    model = QEffQwen3VLMoeForConditionalGeneration.__new__(QEffQwen3VLMoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1, deepstack_visual_indexes=[]),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+    model.model = SimpleNamespace(language_model=SimpleNamespace(layers=[]))
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
 def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
