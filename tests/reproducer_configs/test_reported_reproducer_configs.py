@@ -48,6 +48,8 @@ try:
 except ImportError:  # pragma: no cover - Linux CI has fcntl.
     fcntl = None
 
+pytestmark = pytest.mark.reproducer
+
 Stage = Literal["import_install", "download", "export", "compile", "inference"]
 ModelAPI = Literal["causal_lm", "image_text_to_text", "wan_t2v", "wan_i2v", "replicate_kv_heads", "embedding"]
 
