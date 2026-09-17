@@ -6,8 +6,8 @@
 # ----------------------------------------------------------------------------
 
 import math
-import os
-from typing import Dict, List, Optional, Tuple, Type, Union
+from functools import partial
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -18,11 +18,21 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     generic_blocked_attention_interface,
-    generic_blocked_mla_attention_interface,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+    stack_expert_linears,
+)
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
 
 
@@ -75,7 +85,7 @@ class QEffDeepseekV3CustomRMSNormAIC(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor.
         """
-        return CustomRMSNormFunc.apply(
+        return select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
             hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
@@ -114,16 +124,6 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
 
 
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
@@ -184,7 +184,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def orig_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -205,8 +205,6 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
     q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
@@ -272,6 +270,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -293,31 +293,33 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(kva, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
-        attn_output, attn_weights = generic_blocked_mla_attention_interface(
+        attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
-            q_a_proj_out=q_a_proj_out,
-            fusedqk=self.fusedqk,
-            q_nope=q_nope,
-            q_pe=q_pe,
-            kva=kva,
-            k_pe=k_pe,
-            per_head_q_up=self.per_head_q_up,
-            per_head_k_up=self.per_head_k_up,
-            per_head_v_up=self.per_head_v_up,
-            per_head_k_up_normal=self.per_head_k_up_normal,
             attention_mask=attention_mask,
             scaling=self.softmax_scale,
-            mla_absorption=mla_absorption,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            is_mla=True,
+            mla_kwargs=dict(
+                q_a_proj_out=q_a_proj_out,
+                fusedqk=self.fusedqk,
+                q_nope=q_nope,
+                q_pe=q_pe,
+                kva=kva,
+                k_pe=k_pe,
+                per_head_q_up=self.per_head_q_up,
+                per_head_k_up=self.per_head_k_up,
+                per_head_v_up=self.per_head_v_up,
+                per_head_k_up_normal=self.per_head_k_up_normal,
+                mla_absorption=mla_absorption,
+            ),
             **kwargs,
         )
 
@@ -339,10 +341,13 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
+        # -- KV compression (write to cache) ----------------------------------
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
 
@@ -360,8 +365,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -378,28 +382,30 @@ class QEffDeepseekV3Attention(nn.Module):
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:
                 dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
-            qkupTrope_nope = torch.cat((dq_qup_kupT, q_pe), dim=-1)
-            query = qkupTrope_nope
+            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)  # [B, num_heads, q_len, d_abs]
         else:
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
-            qnope_rope = torch.cat((q_nope, q_pe), dim=-1)
-            query = qnope_rope
+            query = torch.cat((q_nope, q_pe), dim=-1)
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
-        attn_output, attn_weights = generic_blocked_mla_attention_interface(
+        attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
             query=query,
-            per_head_k_up_normal=self.per_head_k_up_normal,
-            per_head_v_up=self.per_head_v_up,
             attention_mask=attention_mask,
+            batch_index=batch_index,
             scaling=self.softmax_scale,
             layer_idx=self.layer_idx,
-            compressed_kvs=compressed_kvs,
-            mla_absorption=mla_absorption,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            is_mla=True,
+            mla_kwargs=dict(
+                per_head_k_up_normal=self.per_head_k_up_normal,
+                per_head_v_up=self.per_head_v_up,
+                compressed_kvs=compressed_kvs,
+                mla_absorption=mla_absorption,
+            ),
             **kwargs,
         )
 
@@ -421,6 +427,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -452,8 +460,7 @@ class QEffDeepseekV3Attention(nn.Module):
             absorption = False
 
         # ---- Rotary ----
-        cos, sin = self.rotary_emb(q_pe, seq_len=32 * 1024)  # Doesn't need q_pe as head_dim is initialized
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -503,7 +510,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1, 0, 2)
             )
             k_nope = torch.matmul(kva_expanded, k_up_per_head)
-            if k_heads <= 1:
+            if k_heads == 1:
                 k_pe_expanded = (
                     k_pe_expanded.unsqueeze(1)
                     .expand(-1, self.num_heads, -1, -1, -1)
@@ -513,12 +520,11 @@ class QEffDeepseekV3Attention(nn.Module):
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-                attn_weights,
-            )
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
         ## Do v_proj here
         attn_output = torch.matmul(attn_weights, value_states)
@@ -540,6 +546,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -556,6 +564,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         elif getattr(blocking_config, "mode", None) == "kv":
@@ -571,6 +581,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -586,6 +598,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
@@ -600,6 +614,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -627,23 +643,28 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
         key_states = torch.cat((k_nope, k_pe_new), -1)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin_cached,
+                "cos": cos_cached,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+
+        if attention_mask is not None:
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
@@ -665,6 +686,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -686,17 +709,14 @@ class QEffDeepseekV3Attention(nn.Module):
 
         kv = (
             self.kv_b_proj(self.kv_a_layernorm(kva))
-            .view(
-                bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
-            )  # TODO : split this matmul #with k_up and v_up
+            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
             .transpose(1, 2)
         )
 
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
@@ -733,6 +753,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -747,6 +769,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -760,151 +784,182 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
 
-class QEffDeepseekV3MoE(nn.Module):
+def _deepseek_expert_weight(proj: nn.Module) -> torch.Tensor:
+    if hasattr(proj, "compressor"):
+        return proj.compressor.decompress_module(proj)
+    return proj.weight
+
+
+def _deepseek_has_quantized_expert_projection(proj: nn.Module) -> bool:
+    return all(hasattr(proj, name) for name in ("qweight", "qzeros", "scales", "bits", "group_size"))
+
+
+def _deepseek_first_unfused_expert(experts: nn.Module) -> Optional[nn.Module]:
+    if hasattr(experts, "gate_up_proj"):
+        return None
+    if not hasattr(experts, "__getitem__"):
+        return None
+    try:
+        return experts[0]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _deepseek_act_fn(experts: nn.Module) -> Callable:
+    if hasattr(experts, "act_fn"):
+        return experts.act_fn
+    return experts[0].act_fn
+
+
+def _deepseek_route_tokens(module: nn.Module, hidden_states: torch.Tensor):
+    router_output = module.gate(hidden_states)
+    if isinstance(router_output, tuple):
+        topk_indices, topk_weights = router_output
+        return topk_indices, topk_weights, None
+    topk_indices, topk_weights = module.route_tokens_to_experts(router_output)
+    return topk_indices, topk_weights, router_output
+
+
+class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM, MoEFlavour.EXPERT_PARALLEL)
+    quantized_supported_moe_flavours = (MoEFlavour.DECODE_BMM, MoEFlavour.EXPERT_PARALLEL)
+    supports_moe_decode_bmm = True
+
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
+        QEffMoEBlockMixin.__qeff_init__(self)
+        if hasattr(self, "all_gate_qweight"):
+            self._qeff_quantized_experts = True
+            return
+        self.act_fn = _deepseek_act_fn(self.experts)
+        first_expert = _deepseek_first_unfused_expert(self.experts)
+        self._qeff_quantized_experts = (
+            first_expert is not None
+            and hasattr(first_expert, "gate_proj")
+            and _deepseek_has_quantized_expert_projection(first_expert.gate_proj)
+        )
+
+    def _stack_quantized_projection_params(self, projection_name: str) -> None:
+        first_projection = getattr(self.experts[0], projection_name)
+        name_prefix = projection_name[: -len("_proj")]
+        in_features = first_projection.in_features
+        out_features = first_projection.out_features
+
+        setattr(self, f"in_features_{name_prefix}", in_features)
+        setattr(self, f"out_features_{name_prefix}", out_features)
+        setattr(
+            self,
+            f"all_{name_prefix}_qweight",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).qweight for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // 2
+                ),
+                requires_grad=False,
+            ),
+        )
+        setattr(
+            self,
+            f"all_{name_prefix}_scales",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).scales for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // self.group_size
+                ),
+                requires_grad=False,
+            ),
+        )
+        setattr(
+            self,
+            f"all_{name_prefix}_qzeros",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).qzeros for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // (self.group_size * 2)
+                ),
+                requires_grad=False,
+            ),
+        )
+
+    def _transform_quantized_expert_weights(self) -> None:
+        if hasattr(self, "all_gate_qweight"):
+            return
+
+        first_expert = _deepseek_first_unfused_expert(self.experts)
+        if first_expert is None:
+            raise RuntimeError("Quantized DeepSeek experts must use an unfused expert container.")
+
+        projections = tuple(
+            getattr(expert, projection_name)
+            for expert in self.experts
+            for projection_name in ("gate_proj", "up_proj", "down_proj")
+        )
+        if any(projection.bits != 4 for projection in projections):
+            raise NotImplementedError("Quantized DeepSeek experts require 4-bit projections.")
+        if any(projection.act_order for projection in projections):
+            raise NotImplementedError("Quantized DeepSeek experts with act_order=True are not supported.")
+
+        self.group_size = first_expert.gate_proj.group_size
+        if any(projection.group_size != self.group_size for projection in projections):
+            raise ValueError("Quantized DeepSeek experts must use one shared group size.")
+
+        for projection_name in ("gate_proj", "up_proj", "down_proj"):
+            QEffDeepseekV3MoE._stack_quantized_projection_params(self, projection_name)
+        for expert in self.experts:
+            delete_module_attrs(expert, "gate_proj", "up_proj", "down_proj")
+
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            if getattr(self, "_qeff_quantized_experts", False):
+                return None
+            return self.moe_weights
+        if getattr(self, "_qeff_quantized_experts", False):
+            QEffDeepseekV3MoE._transform_quantized_expert_weights(self)
+            self.weights_transformed = True
+            return None
+        if hasattr(self.experts, "gate_up_proj"):
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.experts.gate_up_proj,
+                down=self.experts.down_proj,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+                clone=True,
             )
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-            )
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
-        self.act_fn = self.experts[0].act_fn
-
-    def moe(
-        self,
-        hidden_states: torch.Tensor,
-        topk_indices: torch.Tensor,
-        topk_weights: torch.Tensor,
-    ):
-        seq_len, _ = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-
-        gate_proj = self.all_gate_proj[topk_indices.flatten()]
-        up_proj = self.all_up_proj[topk_indices.flatten()]
-        down_proj = self.all_down_proj[topk_indices.flatten()]
-        expert_in = (
-            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
-        )
-        gate_out = torch.bmm(expert_in, gate_proj)
-        up_out = torch.bmm(expert_in, up_proj)
-        hidden = self.act_fn(gate_out) * up_out
-        expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
-        experts_out = experts_out * topk_weights.unsqueeze(-1)
-
-        final_hidden_states = torch.einsum("abc->ac", experts_out)
-
-        return final_hidden_states.type(hidden_states.dtype)
-
-    def forward(self, hidden_states):
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-        hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states
-
-
-class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-    def __qeff_init__(
-        self,
-    ):
-        for exp in self.experts:
-            gate_proj = torch.nn.Linear(self.config.hidden_size, self.config.moe_intermediate_size, bias=False)
-            up_proj = torch.nn.Linear(self.config.hidden_size, self.config.moe_intermediate_size, bias=False)
-            down_proj = torch.nn.Linear(self.config.moe_intermediate_size, self.config.hidden_size, bias=False)
-
-            gate_proj.weight = torch.nn.Parameter(exp.gate_proj.compressor.decompress_module(exp.gate_proj))
-            up_proj.weight = torch.nn.Parameter(exp.up_proj.compressor.decompress_module(exp.up_proj))
-            down_proj.weight = torch.nn.Parameter(exp.down_proj.compressor.decompress_module(exp.down_proj))
-
-            setattr(exp, "gate_proj", gate_proj)
-            setattr(exp, "up_proj", up_proj)
-            setattr(exp, "down_proj", down_proj)
-
-    def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        for expert_idx in range(num_experts):
-            expert = self.experts[expert_idx]
-            gate_out = expert.gate_proj(hidden_states)
-            up_out = expert.up_proj(hidden_states)
-            hidden = expert.act_fn(gate_out) * up_out
-            expert_output = expert.down_proj(hidden)
-            current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
-            final_hidden_states += current_hidden_states
-
-        return final_hidden_states.type(hidden_states.dtype)
-
-    def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
-        r"""
-        CALL FOR CONTRIBUTION! I don't have time to optimise this right now, but expert weights need to be fused
-        to not have to do a loop here (deepseek has 256 experts soooo yeah).
-        """
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
-        expert_mask = expert_mask.permute(2, 0, 1)
-        for expert_idx in range(len(self.experts)):
-            expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx]
-            token_indices, weight_indices = torch.where(mask)
-
-            if token_indices.numel() > 0:
-                expert_weights = topk_weights[token_indices, weight_indices]
-                expert_input = hidden_states[token_indices]
-                expert_output = expert(expert_input)
-                weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                final_hidden_states.index_add_(0, token_indices, weighted_output)
-
-        # in original deepseek, the output of the experts are gathered once we leave this module
-        # thus the moe module is itelsf an IsolatedParallel module
-        # and all expert are "local" meaning we shard but we don't gather
-        return final_hidden_states.type(hidden_states.dtype)
-
-    def forward(self, hidden_states):
-        """
-        Forward pass of MoE block.
-        """
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
-        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
-        mask.scatter_(1, topk_indices, topk_weights)
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
-            hidden_states = self.moe_blocked_weights_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
-        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            hidden_states = self.moe_blocked_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
+            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         else:
-            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
+            self.moe_weights = MoEWeights(
+                gate=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.gate_proj)),
+                up=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.up_proj)),
+                down=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.down_proj)),
+            )
+            for expert in self.experts:
+                delete_module_attrs(expert, "gate_proj", "up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
 
-        hidden_states = hidden_states + self.shared_experts(residuals)
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
+
+    def get_supported_moe_flavours(self) -> Tuple[MoEFlavour, ...]:
+        if getattr(self, "_qeff_quantized_experts", False):
+            return QEffDeepseekV3MoE.quantized_supported_moe_flavours
+        return QEffMoEBlockMixin.get_supported_moe_flavours(self)
+
+    def routing_input(self, x: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
         return hidden_states
+
+    def route(self, x: torch.Tensor):
+        topk_indices, topk_weights, router_logits = _deepseek_route_tokens(self, x)
+        return (topk_indices, topk_weights.to(x.dtype)), router_logits
+
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return out + self.shared_experts(residual)
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):
@@ -923,6 +978,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -944,6 +1001,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 mla_absorption=mla_absorption,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         else:
@@ -957,6 +1016,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         hidden_states = residual + hidden_states
@@ -1002,6 +1063,8 @@ class QEffDeepseekV3Model(nn.Module):
             base=self.config.rope_theta,
             **kwargs,
         )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached.to(torch.float16))
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached.to(torch.float16))
 
     def forward(
         self,
@@ -1064,6 +1127,8 @@ class QEffDeepseekV3Model(nn.Module):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
 
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1080,6 +1145,8 @@ class QEffDeepseekV3Model(nn.Module):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 mla_absorption=mla_absorption,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 

@@ -19,6 +19,7 @@ os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 import warnings  # noqa: I001
 import transformers
 import transformers.utils as transformers_utils
+from transformers.utils import import_utils as hf_import_utils
 
 try:
     from transformers import HybridCache as _TransformersHybridCache  # noqa: F401
@@ -117,3 +118,23 @@ def check_qaic_sdk():
 
 if not check_qaic_sdk():
     logger.warning("QAIC SDK is not installed, eager mode features won't be available!")
+
+
+def ensure_torch_fx_import_compatibility():
+    if hasattr(hf_import_utils, "is_torch_fx_available"):
+        return
+
+    def _is_torch_fx_available() -> bool:
+        if not hf_import_utils.is_torch_available():
+            return False
+        try:
+            import torch.fx  # noqa: F401
+
+            return True
+        except Exception:
+            return False
+
+    hf_import_utils.is_torch_fx_available = _is_torch_fx_available
+
+
+ensure_torch_fx_import_compatibility()

@@ -98,6 +98,8 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "vt_num_hidden_layers"):
+            config.vision_config.vt_num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
         if hasattr(config.vision_config, "deepstack_visual_indexes"):
@@ -220,14 +222,11 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path, low_cpu_mem_usage=False, config=config
+            config._name_or_path, low_cpu_mem_usage=False, config=config, dtype=torch.float32
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
+            config._name_or_path, low_cpu_mem_usage=False, trust_remote_code=True, config=config, dtype=torch.float32
         )
     model_hf.eval()
     return model_hf
@@ -290,6 +289,14 @@ def load_qeff_model_with_sampler(
         )
 
     return qeff_model
+
+
+def get_text_config(config):
+    if hasattr(config, "text_config"):
+        return config.text_config
+    elif hasattr(config, "llm_config"):
+        return config.llm_config
+    return config
 
 
 # Processor class for InternVL models
@@ -453,11 +460,12 @@ class ModelConfig:
     STANDARD_VLM_MODELS = {
         "llava-hf/llava-1.5-7b-hf",
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "google/gemma-3-4b-it",
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "tiny-random/gemma-3",
+        "tiny-random/mistral-3",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "Qwen/Qwen3.5-0.8B",
-        # "Qwen/Qwen3.6-35B-A3B",
+        "tiny-random/qwen3-vl-moe",
+        "tiny-random/qwen3.5",
+        "tiny-random/qwen3.5-moe",
     }
 
     INTERNVL_MODELS = {
@@ -470,7 +478,6 @@ class ModelConfig:
     }
     # FIXME: Debug issue wrt Qwen 3.5, 3.6
     SKIPPED_MODELS = {
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
         "wtang06/mpt-125m-c4",
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
@@ -478,21 +485,43 @@ class ModelConfig:
         "OpenGVLab/InternVL3_5-1B",
         "jinaai/jina-embeddings-v2-base-code",
         "hpcai-tech/grok-1",
-        "Qwen/Qwen2.5-VL-3B-Instruct",
     }
 
     DUAL_QPC_MODELS = {
+        "moonshotai/Kimi-K2.5",
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "tiny-random/qwen3-vl-moe",
         "Qwen/Qwen3-VL-2B-Instruct",
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
-        "Qwen/Qwen3.5-0.8B",
-        "Qwen/Qwen3.5-35B-A3B",
+        "tiny-random/qwen3.5",
+        "tiny-random/qwen3.5-moe",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
+    }
+
+    REPEAT_KV_TEST_MODELS = {
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "ibm-granite/granite-3.1-1b-a400m-base",
+        "Qwen/Qwen2-0.5B",
+        "bigcode/starcoder2-3b",
+        "meta-llama/Llama-3.2-1B",
+        "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+        "TheBloke/Llama-2-7B-GPTQ",
+        "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+        "ibm-granite/granite-3.1-2b-instruct",
+        "llava-hf/llava-1.5-7b-hf",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "tiny-random/mistral-3",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
+        "tiny-random/qwen3-vl-moe",
+        "allenai/Molmo-7B-D-0924",
+        "OpenGVLab/InternVL2_5-1B",
+        "tiny-random/qwen3.5",
     }
 
     EXTERNAL_MODELS = {

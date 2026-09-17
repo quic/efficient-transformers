@@ -8,48 +8,81 @@
 import math
 import re
 import subprocess
+from collections import defaultdict
+from typing import Optional
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
-def is_networks_loaded(stdout):
-    # Check is the networks are loaded on the device.
-    network_loaded = re.search(r"Networks Active:(\d+)", stdout)
-    if network_loaded and int(network_loaded.group(1)) > 0:
-        return True
-    return False
+def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) -> list[list[int]]:
+    """Return ready, topology-compatible QAIC device groups suitable for parallel test workers."""
+    if devices_per_group < 1:
+        raise ValueError(f"devices_per_group must be positive, got {devices_per_group}")
+
+    command = ["/opt/qti-aic/tools/qaic-util", "-q"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError:
+        logger.warning("Not a Cloud AI 100 device, command not found: %s", command)
+        return []
+
+    if result.returncode != 0:
+        logger.warning("Failed to query QAIC devices: %s", result.stderr.strip())
+        return []
+
+    groups = defaultdict(list)
+    records = re.split(r"(?=^QID \d+\s*$)", result.stdout, flags=re.MULTILINE)
+    for record in records:
+        qid_match = re.search(r"^QID (\d+)\s*$", record, flags=re.MULTILINE)
+        nsp_match = re.search(r"^\s*Nsp Total:(\d+)\s*$", record, flags=re.MULTILINE)
+        board_match = re.search(r"^\s*Board serial:(.+?)\s*$", record, flags=re.MULTILINE)
+        if not qid_match or not nsp_match or not board_match:
+            continue
+        if "Status:Ready" not in record or "HybridBoot+" not in record or "MDP+" not in record:
+            continue
+        if int(nsp_match.group(1)) < min_nsp:
+            continue
+        groups[board_match.group(1).strip()].append(int(qid_match.group(1)))
+
+    device_groups = []
+    for device_ids in groups.values():
+        device_ids.sort()
+        for start in range(0, len(device_ids) - devices_per_group + 1, devices_per_group):
+            device_groups.append(device_ids[start : start + devices_per_group])
+    return sorted(device_groups, key=lambda device_ids: device_ids[0])
 
 
-def get_available_device_id():
-    """
-    API to check available device id.
-
-    Return:
-        :int: Available device id.
-    """
-
-    device_id = 0
-    result = None
-
-    # FIXME: goes into infinite loop when user doesn't have permission and the command gives permission denied.
-    # To reproduce change the ownership of available devices.
-    while 1:
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_id}"]
+def parse_qaic_device_groups(value: str) -> list[list[int]]:
+    """Parse explicit semicolon-delimited QAIC groups and reject overlapping devices."""
+    device_groups = []
+    assigned_devices = set()
+    for raw_group in value.split(";"):
+        raw_group = raw_group.strip()
+        if not raw_group:
+            continue
         try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError:
-            logger.warning("Not a Cloud AI 100 device, Command not found", command)
-            return None
-        if result:
-            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
-                device_id += 1
-            elif "Status:Ready" in result.stdout:
-                logger.info("device is available.")
-                return [device_id]
-            elif "Failed to find requested device ID" in result.stdout:
-                logger.warning("Failed to find requested device ID")
-                return None
+            device_ids = [int(device_id.strip()) for device_id in raw_group.split(",")]
+        except ValueError as exc:
+            raise ValueError(f"Invalid QAIC device group {raw_group!r}; expected comma-separated integers") from exc
+        if any(device_id < 0 for device_id in device_ids):
+            raise ValueError(f"QAIC device ids must be non-negative: {raw_group!r}")
+        duplicate_devices = assigned_devices.intersection(device_ids)
+        if len(set(device_ids)) != len(device_ids) or duplicate_devices:
+            raise ValueError(f"QAIC devices cannot be assigned to multiple workers: {raw_group!r}")
+        assigned_devices.update(device_ids)
+        device_groups.append(device_ids)
+    if not device_groups:
+        raise ValueError("At least one QAIC device group must be provided")
+    return device_groups
+
+
+def get_available_device_id(min_nsp: int = 16) -> Optional[list[int]]:
+    """Return a single ready QAIC device id list, or None when no ready device is available."""
+    device_groups = get_qaic_mdp_device_groups(min_nsp=min_nsp, devices_per_group=1)
+    if not device_groups:
+        return None
+    return [device_groups[0][0]]
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:

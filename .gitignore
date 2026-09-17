@@ -63,6 +63,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+qeff_env/
 
 # Spyder project settings
 .spyderproject
@@ -96,3 +97,13 @@ qeff_models
 
 # Generated reproducer config verdict report
 tests/reproducer_configs/reproducer_config_results.md
+# Runtime Files
+.locks/
+docs/hub/
+docs/xet
+**/time-passes.log
+**/custom_io_fp16.yaml
+dbg.log
+
+# Golden-store write-lock dir (runtime artifact; see tests/.../golden_utils.py)
+tests/golden_outputs/.locks/

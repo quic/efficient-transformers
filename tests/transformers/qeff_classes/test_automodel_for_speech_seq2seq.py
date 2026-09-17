@@ -134,10 +134,14 @@ def test_seq2seq_hash_creation(config, tmp_path):
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
+    hash_params["use_onnx_subfunctions"] = False
+    hash_params["onnx_transform_version"] = 1
+    hash_params["dynamo"] = False
 
     export_params = {}
     export_params["output_names"] = qeff_model.model.get_output_names()
     export_params["dynamic_axes"] = qeff_model.model.get_onnx_dynamic_axes()
+    export_params["dynamic_shapes"] = None
     hash_params["export_params"] = export_params
     manual_hash = hash_dict_params(hash_params)
 

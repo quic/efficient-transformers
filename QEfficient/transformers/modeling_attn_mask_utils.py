@@ -23,10 +23,11 @@ def _create_causal_mask(
     """
     if sliding_window is not None:
         query_indices = position_ids.unsqueeze(-1)
-        kv_indices = torch.arange(target_length).view(1, -1)
+        kv_indices = torch.arange(target_length, device=position_ids.device).view(1, -1)
         # --- Rolling buffer ---
         pos_max = position_ids.max(1, keepdim=True).values
-        kv_start = (pos_max // target_length) * target_length
+        # kv_start = (pos_max // target_length) * target_length
+        kv_start = torch.div(pos_max, target_length, rounding_mode="floor") * target_length
         kv_indices_high = kv_indices + kv_start
         kv_indices_low = torch.where(kv_indices_high < target_length, kv_indices, kv_indices_high - target_length)
         kv_indices = torch.where(kv_indices_high > pos_max, kv_indices_low, kv_indices_high)
@@ -41,7 +42,7 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
     else:
         query_indices = position_ids.unsqueeze(-1)
-        kv_indices = torch.arange(start=start_index, end=target_length).view(1, 1, -1)
+        kv_indices = torch.arange(start=start_index, end=target_length, device=position_ids.device).view(1, 1, -1)
         attention_mask = kv_indices > query_indices
         attention_mask = attention_mask.unsqueeze(1)
 

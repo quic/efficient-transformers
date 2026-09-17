@@ -90,6 +90,7 @@
 | **Qwen3_5MoeForConditionalGeneration** | Qwen3.5 | [Qwen/Qwen3.5-122B-A10B](https://huggingface.co/Qwen/Qwen3.5-122B-A10B)<br>[Qwen/Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) |        ✕          |        ✔️                |       ✕         |       ✔️       |
 | **Qwen3_5ForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
 | **Qwen3_5MoeForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
+| **KimiK25ForConditionalGeneration** | Kimi-K2.5 | [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) | ✕ | ✔️ | ✕ | ✔️ |
 | **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)| ✕ | ✔️ | ✕  | ✕  |
 
 ### Vision-Language Reranker Models (Text + Image Scoring)
@@ -181,13 +182,13 @@ Reference examples:
 
 ---
 
-# Note
+
+```{NOTE}
 Models marked with `**` are currently not functional on the `main` and `release/1.22.0` branches due to failures with Transformers 5.x.  
    To run these models, please use:
    - `release/v1.21.6`
    - `release/v1.22.0_tf_4.57.3`
 
-```{NOTE}
 ① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
 
 ② Set `trust_remote_code=True` for end-to-end inference with vLLM.

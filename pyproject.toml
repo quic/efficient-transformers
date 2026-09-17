@@ -33,7 +33,7 @@ dependencies = [
     "protobuf==6.31.0",
     "onnxscript==0.2.5",
     # for layerwise infra
-    "onnx-ir==0.2.1",  
+    "onnx-ir==0.2.1",
     "pillow===10.4.0",
     "sympy",
     "tensorboard",
@@ -101,5 +101,7 @@ markers = [
     "cli: marks CLI tests",
     "finetune: marks finetune tests",
     "vllm: marks vLLM tests",
-    "reproducer: marks pre-merge reported reproducer config tests"
+    "reproducer: marks pre-merge reported reproducer config tests",
+    "dummy_layers: marks tests running on reduced-layer dummy configs (per-PR lane)",
+    "full_layers: marks tests running on full-layer configs (nightly lane)"
 ]

@@ -9,13 +9,15 @@ import onnxscript
 import torch
 from torch import nn
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
-def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
+@qeff_custom_op("com.qti.aisw.onnx", 1)
+def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float) -> onnxscript.FLOAT:
     weight = ops.Cast(weight, to=1)
     variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
     epsilon = ops.Expand(epsilon, ops.Shape(variance))
@@ -51,16 +53,20 @@ class CustomRMSNormAIC(nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        return rms_interface(
             hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
 
 class GemmaCustomRMSNormAIC(CustomRMSNormAIC):
     """
-    Modify the init function to add +1 to the weights
+    HF's GemmaRMSNorm stores weight as zeros and adds 1.0 at forward time.
+    Apply the +1.0 offset here at runtime so both normal and weight-free export
+    see the correct value without modifying the stored parameter.
     """
 
-    def __qeff_init__(self):
-        with torch.no_grad():
-            self.weight.copy_(self.weight + 1.0)
+    def forward(self, hidden_states):
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        eps = self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        return rms_interface(hidden_states, self.weight + 1.0, eps)

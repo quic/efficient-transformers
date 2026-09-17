@@ -49,7 +49,7 @@ class QEffCodeGenAttention(CodeGenAttention):
 
         # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
         # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype).to(attn_weights.device)
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
         if attention_mask is not None:
             # Apply the attention mask
@@ -99,8 +99,6 @@ class QEffCodeGenAttention(CodeGenAttention):
         embed_positions = self.embed_positions
         if embed_positions.device != position_ids.device:
             embed_positions = embed_positions.to(position_ids.device)
-            self.embed_positions = embed_positions
-
         sincos = embed_positions[position_ids]
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 

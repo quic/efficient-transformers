@@ -16,13 +16,14 @@ from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForCTC
 
+from ..model_age_utils import filter_models_for_nightly
 from ..nightly_utils import get_onnx_and_qpc_size, pre_generate_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
     config = json.load(f)
 
-test_models = config["audio_embedding_models"]
+test_models = filter_models_for_nightly(config["audio_embedding_models"], "audio_embedding_models")
 
 
 @pytest.mark.parametrize("model_name", test_models)

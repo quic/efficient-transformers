@@ -19,6 +19,12 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate
 ```
 
+### MDP Compile Options
+
+For `QEFFAutoModelForCausalLM.compile()`, pass `num_devices` for the total device count and `mdp_num_partitions` for the number of pipeline-parallel partitions. Tensor-slice devices per MDP partition (`mdp_ts_num_devices`) are calculated internally as `num_devices // mdp_num_partitions`.
+
+Do not pass `mdp_ts_num_devices` to this public `compile()` API. It is ignored with a warning when passed through `**compiler_options`.
+
 ---
 (QEFFAutoModel)=
 ## `QEFFAutoModel`
@@ -115,6 +121,12 @@
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained
 ```
+
+### MDP Compile Options
+
+`QEFFAutoModelForImageTextToText.from_pretrained(...)` returns a concrete wrapper whose `compile()` API follows the same MDP convention as `QEFFAutoModelForCausalLM`: pass `num_devices` as the total device count and `mdp_num_partitions` as the pipeline-parallel partition count. Tensor-slice devices per MDP partition (`mdp_ts_num_devices`) are calculated internally as `num_devices // mdp_num_partitions`.
+
+Do not pass `mdp_ts_num_devices` to the public auto-model `compile()` API. It is ignored with a warning when passed through `**compiler_options`.
 
 ---
 (QEFFAutoModelForSpeechSeq2Seq)=

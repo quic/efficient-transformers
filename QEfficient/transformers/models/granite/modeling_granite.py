@@ -93,7 +93,9 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -305,8 +307,8 @@ class QEffGraniteModel(GraniteModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:

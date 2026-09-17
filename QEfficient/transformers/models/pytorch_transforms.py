@@ -5,9 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+import gc
 import warnings
+from collections.abc import Callable
 from types import MethodType
-from typing import Callable, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -55,7 +56,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
-    Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
     Gemma4VisionAttention,
@@ -215,6 +215,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
     Qwen3_5DecoderLayer,
+    Qwen3_5ForCausalLM,
     Qwen3_5ForConditionalGeneration,
     Qwen3_5GatedDeltaNet,
     Qwen3_5Model,
@@ -303,7 +304,12 @@ from transformers.models.whisper.modeling_whisper import (
 )
 from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
 
-from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import (
+    ExternalModuleMapperTransform,
+    ModuleMappingTransform,
+    ModuleMutatorTransform,
+    PytorchTransform,
+)
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.bert.modeling_bert import (
@@ -327,7 +333,12 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3ForCausalLM,
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
-    QEffPrefillOnlyDeepseekV3MoE,
+)
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffDFlashAttention,
+    QEffDFlashDecoderLayer,
+    QEffDFlashForCausalLM,
+    QEffDFlashModel,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -363,11 +374,9 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4ForConditionalGeneration,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
-    QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
     QEffGemma4VisionAttention,
-    QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeAttention,
@@ -377,7 +386,6 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeMoE,
     QEffGlm4MoeRotaryEmbedding,
     QEffGlm4MoeTopkRouter,
-    QEffPrefillChunkedGlm4MoeMoE,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -399,9 +407,7 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssMLP,
     QEffGptOssModel,
     QEffPrefillOnlyChunkedGptOssAttention,
-    QEffPrefillOnlyChunkedGptOssMLP,
     QEffPrefillOnlyGptOssAttention,
-    QEffPrefillOnlyGptOssMLP,
     QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
@@ -438,6 +444,11 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
+)
+from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import (
+    QEffKimiK25ForConditionalGeneration,
+    QEffLearnable2DInterpPosEmbDivided_fixed,
+    QEffMoonViT3dEncoder,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -555,6 +566,7 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Attention,
     QEffQwen3_5DecoderLayer,
+    QEffQwen3_5ForCausalLM,
     QEffQwen3_5ForConditionalGeneration,
     QEffQwen3_5GatedDeltaNet,
     QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
@@ -564,7 +576,6 @@ from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5VisionModel,
 )
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-    QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     QEffQwen3_5MoeAttention,
     QEffQwen3_5MoeDecoderLayer,
     QEffQwen3_5MoeExperts,
@@ -580,7 +591,6 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionModel,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
     QEffQwen3MoeExperts,
@@ -601,7 +611,6 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLVisionModel,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeForConditionalGeneration,
     QEffQwen3VLMoeModel,
     QEffQwen3VLMoeTextAttention,
@@ -620,11 +629,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
-from QEfficient.transformers.models.t5.modeling_t5 import (
-    QEffT5Attention,
-    QEffT5LayerNorm,
-    QEffT5Stack,
-)
+from QEfficient.transformers.models.t5.modeling_t5 import QEffT5Attention, QEffT5LayerNorm, QEffT5Stack
 from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
     QEffWav2Vec2Encoder,
     QEffWav2Vec2EncoderStableLayerNorm,
@@ -638,10 +643,39 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    QEffMoEBlockMixin,
+    pack_moe_weights_for_expert_parallel,
+    unpack_moe_weights_from_expert_parallel,
+)
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.checkpoint_utils import load_checkpoint_weights
+from QEfficient.utils.config_utils import (
+    resolve_attention_heads,
+    resolve_hidden_size,
+    resolve_kv_heads,
+    set_kv_head_aliases,
+)
+from QEfficient.utils.constants import (
+    _DFLASH_TARGET_ABSMAX,
+    ATTENTION_HEAD_CONFIG_KEYS,
+    DEFAULT_AIC_NUM_CORES,
+    HIDDEN_SIZE_CONFIG_KEYS,
+    KV_HEAD_CONFIG_KEYS,
+    MOE_PREFILL_PACKED_CHUNK_SIZE,
+    ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+)
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.repeat_kv_utils import (
+    duplicate_kv_projection_weights,
+    get_attention_module,
+    get_projection_layer,
+    get_text_model,
+    is_mla_model,
+)
 
 SPD_TARGET = "target"
 
@@ -693,8 +727,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeAttention: QEffGlm4MoeAttention,
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
-        Glm4MoeMoE: QEffGlm4MoeMoE,
-        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -726,12 +758,9 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4ForCausalLM: QEffLlama4ForCausalLM,
         Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
         Llama4TextModel: QEffLlama4TextModel,
-        Llama4TextMoe: QEffLlama4TextMoe,
         Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
         Llama4VisionAttention: QEffLlama4VisionAttention,
         Llama4VisionModel: QEffLlama4VisionModel,
-        Llama4TextExperts: QEffLlama4TextExperts,
-        Llama4Router: QEffLlama4Router,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
@@ -747,9 +776,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
         Qwen3MoeAttention: QEffQwen3MoeAttention,
         Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
-        Qwen3MoeExperts: QEffQwen3MoeExperts,
-        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
-        Qwen3MoeTopKRouter: QEffQwen3MoeTopKRouter,
         # Qwen3VLMoe
         Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
         Qwen3VLMoeModel: QEffQwen3VLMoeModel,
@@ -758,10 +784,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
         Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
-        Qwen3VLMoeTextExperts: QEffQwen3VLMoeTextExperts,
-        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
-        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
         # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,
@@ -787,8 +810,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4TextModel: QEffGemma4TextModel,
         Gemma4ForCausalLM: QEffGemma4ForCausalLM,
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
-        Gemma4TextExperts: QEffGemma4TextExperts,
-        Gemma4TextRouter: QEffGemma4TextRouter,
         Gemma4VisionAttention: QEffGemma4VisionAttention,
         Gemma4ClippableLinear: QEffGemma4ClippableLinear,
         # GPT_OSS
@@ -796,8 +817,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
         GptOssModel: QEffGptOssModel,
         GptOssForCausalLM: QEffGptOssForCausalLM,
-        GptOssMLP: QEffGptOssMLP,
-        GptOssExperts: QEffGptOssExperts,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
@@ -808,9 +827,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
         GraniteMoeAttention: QEffGraniteMoeAttention,
         GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
-        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
-        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
-        GraniteMoeMoE: QEffGraniteMoeMoE,
         GraniteMoeDecoderLayer: QEffGraniteMoeDecoderLayer,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
@@ -833,7 +849,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
-        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
@@ -869,6 +884,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
         Qwen3_5TextModel: QEffQwen3_5TextModel,
         Qwen3_5Model: QEffQwen3_5Model,
+        Qwen3_5ForCausalLM: QEffQwen3_5ForCausalLM,
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
         Qwen3_5VisionAttention: QEffQwen3_5VisionAttention,
@@ -881,11 +897,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeForConditionalGeneration: QEffQwen3_5MoeForConditionalGeneration,
         Qwen3_5MoeForCausalLM: QEffQwen3_5MoeForCausalLM,
         Qwen3_5MoeAttention: QEffQwen3_5MoeAttention,
-        Qwen3_5MoeExperts: QEffQwen3_5MoeExperts,
-        Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
         Qwen3_5MoeVisionAttention: QEffQwen3_5MoeVisionAttention,
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
-        Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,
@@ -921,7 +934,7 @@ class KVCacheTransform(ModuleMappingTransform):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
 
@@ -930,11 +943,6 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
-        QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
-        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     }
 
 
@@ -943,17 +951,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
-        # Qwen3Moe
-        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        # Qwen3 VL Moe
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        # GLM4 Moe
-        QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
-        # Qwen3_5Moe
-        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
-        # Gemma4_Moe
-        QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
 
 
@@ -963,18 +960,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
-        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
-        # Qwen3Moe
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
-        # GLM4 Moe
-        QEffPrefillChunkedGlm4MoeMoE: QEffGlm4MoeMoE,
-        # Qwen3 VL Moe
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        # Qwen3_5Moe
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
-        # Gemma4_Moe
-        QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
 
 
@@ -985,74 +970,144 @@ class RevertPrefillOnlyTransform(ModuleMappingTransform):
     }
 
 
-class ReplicateKVHeadTransform:
+class ReplicateKVHeadTransform(ModuleMutatorTransform):
     """
     Replicates KV heads in attention modules to match the number of KV heads in the target model.
     This transform is used when the source model has fewer KV heads than required in target model.
     """
 
-    def _duplicate_weights_for_linear_layer(
-        layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int
-    ):
-        new_kv_heads = repeat  # for mla
-
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
-        ).view(new_kv_heads * dim, hidden_size)
-
-        if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
-                new_kv_heads * dim
-            )
-
-    def _get_text_model(model):
+    @classmethod
+    def mutate(
+        cls,
+        original_module: nn.Module,
+        parent_module: nn.Module,
+        n_repeat: int,
+        orig_kv_heads: int,
+        new_kv_heads: int,
+        num_attention_heads: int,
+        hidden_size: int,
+    ) -> nn.Module:
         """
-        Determine and return the appropriate text_model from a given model object.
+        Mutates one attention module in-place by replicating its KV projection weights.
         """
-        # Check for VLMs
-        if hasattr(model, "language_model"):
-            if hasattr(model.language_model, "model"):
-                return model.language_model.model
-            else:
-                return model.language_model
-        # Check for CausalLMs
-        if hasattr(model, "model"):
-            return model.model
+        head_dim = getattr(original_module, "head_dim", hidden_size // num_attention_heads)
+        k_proj = get_projection_layer(original_module, ("k_proj", "key_proj"))
+        v_proj = get_projection_layer(original_module, ("v_proj", "value_proj"))
+        duplicate_kv_projection_weights(
+            k_proj,
+            orig_kv_heads,
+            n_repeat,
+            head_dim,
+            hidden_size,
+            layer_name=f"{original_module.__class__.__name__}.k_proj",
+        )
+        duplicate_kv_projection_weights(
+            v_proj,
+            orig_kv_heads,
+            n_repeat,
+            head_dim,
+            hidden_size,
+            layer_name=f"{original_module.__class__.__name__}.v_proj",
+        )
 
-        raise AttributeError("No suitable text model found in the provided model.")
+        if hasattr(original_module, "num_key_value_heads"):
+            original_module.num_key_value_heads = new_kv_heads
+        if hasattr(original_module, "n_kv_heads"):
+            original_module.n_kv_heads = new_kv_heads
+        n_kv_groups = num_attention_heads // new_kv_heads
+        if hasattr(original_module, "num_key_value_groups"):
+            original_module.num_key_value_groups = n_kv_groups
+        if hasattr(original_module, "n_kv_groups"):
+            original_module.n_kv_groups = n_kv_groups
+        return original_module
 
     @classmethod
-    def apply(cls, model: nn.Module, num_kv_heads_repeat: int = 1) -> nn.Module:
+    def apply(cls, model: nn.Module, num_replicate_kv_heads: int | None = None, **kwargs) -> tuple[nn.Module, bool]:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
         Args:
             model: The model to apply the transform to.
-            num_kv_heads_repeat: The number of times to repeat the KV heads.
+            kwargs: Additional arguments for the transformation.
+            num_replicate_kv_heads: The number of times to repeat the KV heads.
         """
-        transformed = False
-        if num_kv_heads_repeat is not None and num_kv_heads_repeat > 1:
-            text_model = cls._get_text_model(model)
+        if num_replicate_kv_heads is None:
+            n_repeat = kwargs.pop("num_replicate_kv_heads", 1)
+        else:
+            kwargs.pop("num_replicate_kv_heads", None)
+            n_repeat = num_replicate_kv_heads
+        if n_repeat is None or n_repeat <= 1:
+            return model, False
 
-            orig_kv_heads = 1  # for mla #text_model.config.num_key_value_heads
-            new_kv_heads = num_kv_heads_repeat * orig_kv_heads
-            text_model.config.orig_kv_heads = orig_kv_heads
-            text_model.config.num_key_value_heads = new_kv_heads
+        text_model = get_text_model(model)
+        cfg = text_model.config
+        if is_mla_model(text_model):
+            logger.warning("Skipping RepeatKVTransform: MLA models don't apply replicate KV changes.")
+            return model, False
 
-            hidden_size = text_model.config.hidden_size
+        current_kv_heads = resolve_kv_heads(cfg)
+        configured_orig_kv_heads = getattr(cfg, "orig_kv_heads", None)
+        if configured_orig_kv_heads is not None:
+            if configured_orig_kv_heads < 1:
+                raise ValueError(f"Invalid stored orig_kv_heads in config for RepeatKV: {configured_orig_kv_heads}")
+            expected_kv_heads = configured_orig_kv_heads * n_repeat
+            if current_kv_heads == expected_kv_heads:
+                logger.warning("Skipping RepeatKVTransform: model already has requested repeated KV heads.")
+                return model, False
+            orig_kv_heads = configured_orig_kv_heads
+        else:
+            orig_kv_heads = current_kv_heads
+        num_attention_heads = resolve_attention_heads(cfg)
+        hidden_size = resolve_hidden_size(cfg)
 
-            logger.warning(f"Original KV heads: {orig_kv_heads}")
-            logger.warning(f"Modified KV heads: {new_kv_heads}")
-            transformed = True
-            for block in text_model.layers:
-                attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
-                attn.num_key_value_heads = new_kv_heads
-                head_dim = attn.kv_lora_rank + attn.qk_rope_head_dim
+        if orig_kv_heads is None or num_attention_heads is None or hidden_size is None:
+            raise ValueError(
+                "Unable to resolve attention/KV heads or hidden size from config for RepeatKV transform. "
+                f"Supported attention keys={ATTENTION_HEAD_CONFIG_KEYS}, kv keys={KV_HEAD_CONFIG_KEYS}, "
+                f"hidden size keys={HIDDEN_SIZE_CONFIG_KEYS}."
+            )
+        if orig_kv_heads < 1 or num_attention_heads < 1:
+            raise ValueError(
+                f"Invalid head values for RepeatKV transform: "
+                f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
+            )
+        if orig_kv_heads == num_attention_heads:
+            raise ValueError(
+                "RepeatKV is supported only for GQA/MQA models where num_key_value_heads is smaller than "
+                f"num_attention_heads; got num_attention_heads={num_attention_heads}, "
+                f"num_key_value_heads={orig_kv_heads}."
+            )
+        new_kv_heads = n_repeat * orig_kv_heads
+        if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
+            raise ValueError(
+                f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
+                f"orig_kv_heads={orig_kv_heads}, num_replicate_kv_heads={n_repeat}, new_kv_heads={new_kv_heads}. "
+                "Expected new_kv_heads <= num_attention_heads and divisibility."
+            )
 
-                cls._duplicate_weights_for_linear_layer(
-                    attn.kv_a_proj_with_mqa, orig_kv_heads, num_kv_heads_repeat, head_dim, hidden_size
+        logger.warning(f"Original KV heads: {orig_kv_heads}")
+        logger.warning(f"Modified KV heads: {new_kv_heads}")
+        for block in text_model.layers:
+            try:
+                attn = get_attention_module(block)
+            except AttributeError:
+                logger.warning(
+                    f"Skipping RepeatKV for block type {block.__class__.__name__}: "
+                    "no replicable attention module found."
                 )
-        return model, transformed
+                continue
+            cls.mutate(
+                attn,
+                block,
+                n_repeat,
+                orig_kv_heads,
+                new_kv_heads,
+                num_attention_heads,
+                hidden_size,
+            )
+        cfg.orig_kv_heads = orig_kv_heads
+        set_kv_head_aliases(cfg, new_kv_heads)
+        return model, True
 
 
 class SpDTransform:
@@ -1079,7 +1134,7 @@ class SpDTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         transformed = False
         pretrained_model_name_or_path_temp = kwargs.pop("pretrained_model_name_or_path", None)
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
@@ -1146,7 +1201,7 @@ class SamplerTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
         transformed = False
         if qaic_config is None or not qaic_config.get("include_sampler", False):
             return model, transformed
@@ -1157,6 +1212,120 @@ class SamplerTransform:
         else:
             raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
         return model, transformed
+
+
+class DFlashTransform(ModuleMappingTransform):
+    """Replace QEff Qwen3 modules with DFlash variants when dflash_dlm is set."""
+
+    _module_mapping = {
+        QEffQwen3Attention: QEffDFlashAttention,
+        QEffQwen3DecoderLayer: QEffDFlashDecoderLayer,
+        QEffQwen3Model: QEffDFlashModel,
+        QEffQwen3ForCausalLM: QEffDFlashForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+        if type(model) is not QEffQwen3ForCausalLM:
+            raise NotImplementedError(
+                f"DFlash DLM does not support model class {type(model).__name__}. "
+                "Supported model class: QEffQwen3ForCausalLM."
+            )
+        return super().apply(model)
+
+
+class DFlashDLMTransform:
+    """Inject lm_head/embed_tokens from the TLM checkpoint (dflash_tlm_repo) and drop fc/hidden_norm."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+
+        inner = model.model
+        for attr in ("fc", "hidden_norm"):
+            if hasattr(inner, attr):
+                delattr(inner, attr)
+
+        tlm_repo = qaic_config.get("dflash_tlm_repo")
+        if not tlm_repo:
+            return model, True
+
+        w = load_checkpoint_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
+        embed_w = w.get("model.embed_tokens.weight")
+        lm_head_w = w.get("lm_head.weight", embed_w)  # tie_word_embeddings: lm_head is a view of embed_tokens
+        if lm_head_w is None or embed_w is None:
+            return model, True
+
+        with torch.no_grad():
+            model.lm_head.weight.data.copy_(lm_head_w.float())
+            inner.embed_tokens.weight.data.copy_(embed_w.float())
+            if w.get("lm_head.bias") is not None:
+                model.lm_head.bias = nn.Parameter(w["lm_head.bias"].float())
+        return model, True
+
+
+class DFlashTLMTransform:
+    """Attach fc/hidden_norm (weights from dflash_dlm_repo, fc scaled for fp16 range) and set target_layer_ids."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        target_layer_ids = qaic_config.get("target_layer_ids") if qaic_config else None
+        if not target_layer_ids:
+            return model, False
+
+        # Conditional-generation (VLM) models (e.g. gemma4) nest the language config
+        # under text_config and the decoder under model.model.language_model; plain
+        # CausalLM models (qwen3/llama) expose them directly.
+        config = model.config
+        text_config = getattr(config, "text_config", config)
+        hidden_size = text_config.hidden_size
+        inner = model.model
+        if hasattr(inner, "language_model"):
+            inner = inner.language_model
+        n = len(target_layer_ids)
+        # Keep injected modules aligned with the decoder hidden-state precision.
+        reference_weight = inner.embed_tokens.weight
+        module_device = reference_weight.device
+        module_dtype = reference_weight.dtype
+
+        # Skip if a caller pre-injected fc/hidden_norm before constructing the model.
+        if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
+            model_type = getattr(config, "model_type", "")
+            eps = getattr(text_config, "rms_norm_eps", getattr(config, "rms_norm_eps", 1e-6))
+            if "gemma" in model_type:
+                RMSNorm = Gemma4RMSNorm
+            elif "qwen3_vl" in model_type:
+                RMSNorm = Qwen3VLTextRMSNorm
+            elif "qwen3" in model_type:
+                RMSNorm = Qwen3RMSNorm
+            elif "llama" in model_type:
+                RMSNorm = LlamaRMSNorm
+            else:
+                RMSNorm = nn.RMSNorm
+            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False).to(device=module_device, dtype=module_dtype)
+            inner.hidden_norm = RMSNorm(hidden_size, eps=eps).to(device=module_device, dtype=module_dtype)
+
+            dlm_repo = qaic_config.get("dflash_dlm_repo")
+            w = load_checkpoint_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
+            if "fc.weight" in w and "hidden_norm.weight" in w:
+                inner.fc.weight.data.copy_(w["fc.weight"].to(device=module_device, dtype=module_dtype))
+                inner.hidden_norm.weight.data.copy_(
+                    w["hidden_norm.weight"].to(device=module_device, dtype=module_dtype)
+                )
+                # RMSNorm(x/s) == RMSNorm(x): scale fc down to keep activations in fp16 range.
+                with torch.no_grad():
+                    bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.float().norm(dim=1).max().item()
+                    inner.fc.weight.data.div_(max(bound / _DFLASH_TARGET_ABSMAX, 1.0))
+            else:
+                warnings.warn(f"DFlashTLMTransform: fc/hidden_norm not found in {dlm_repo!r}; left random.")
+
+        inner.fc.to(device=module_device, dtype=module_dtype)
+        inner.hidden_norm.to(device=module_device, dtype=module_dtype)
+        inner.target_layer_ids = target_layer_ids
+        return model, True
 
 
 class VlmKVOffloadTransform(ModuleMappingTransform):
@@ -1225,12 +1394,26 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        },
+        "KimiK25ForConditionalGeneration": {
+            "_qeff_merge_input_ids_with_image_features": QEffKimiK25ForConditionalGeneration._qeff_merge_input_ids_with_image_features,
+            "get_qeff_vision_encoder": QEffKimiK25ForConditionalGeneration.get_qeff_vision_encoder,
+            "get_qeff_language_decoder": QEffKimiK25ForConditionalGeneration.get_qeff_language_decoder,
+            "get_specializations": QEffKimiK25ForConditionalGeneration.get_specializations,
+            "get_onnx_dynamic_axes": QEffKimiK25ForConditionalGeneration.get_onnx_dynamic_axes,
+            "get_output_names": QEffKimiK25ForConditionalGeneration.get_output_names,
+            "get_dummy_inputs": QEffKimiK25ForConditionalGeneration.get_dummy_inputs,
+        },
+        "MoonViT3dEncoder": {
+            "__qeff_init__": QEffMoonViT3dEncoder.__qeff_init__,
+        },
+        "Learnable2DInterpPosEmbDivided_fixed": {
+            "__qeff_init__": QEffLearnable2DInterpPosEmbDivided_fixed.__qeff_init__,
         },
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
@@ -1240,11 +1423,6 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3Model": {"forward": QEffDeepseekV3Model.forward, "__qeff_init__": QEffDeepseekV3Model.__qeff_init__},
         "DeepseekV3DecoderLayer": {
             "forward": QEffDeepseekV3DecoderLayer.forward,
-        },
-        "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
-            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
@@ -1264,24 +1442,12 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
 
 class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
-    _match_string_replace_method = {
-        "DeepseekV3MoE": {
-            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
-            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
-        },
-    }
+    _match_string_replace_method = {}
 
 
 class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
-    _match_string_replace_method = {
-        "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
-            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
-        },
-    }
+    _match_string_replace_method = {}
 
 
 class T5ModelTransform(ModuleMappingTransform):
@@ -1308,7 +1474,7 @@ class PoolingTransform:
     """
 
     @classmethod
-    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, pooling: str | Callable) -> tuple[nn.Module, bool]:
         transformed = False
         pooling_method = (
             POOLING_MAP[pooling]
@@ -1331,7 +1497,7 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     # Get all QEff classes that are decoder layers from the existing mapping
     decoder_layer_classes = set()
 
-    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
+    for qeff_class in KVCacheTransform._module_mapping.values():
         # Check if the QEff class name contains decoder layer patterns
         qeff_class_name = qeff_class.__name__
         if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
@@ -1350,7 +1516,7 @@ class BlockingAttentionTransform:
     _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, attn_blocking_config) -> tuple[nn.Module, bool]:
         transformed = False
         model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
         model_architectures = getattr(model_config, "architectures", None) or []
@@ -1369,3 +1535,400 @@ class BlockingAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed
+
+
+def _iter_optimized_moe_modules(model: nn.Module):
+    from QEfficient.transformers.moe import QEffMoEBlockMixin
+
+    for module in model.modules():
+        has_structural_contract = callable(getattr(module, "route", None)) and callable(
+            getattr(module, "transform_weights", None)
+        )
+        if isinstance(module, QEffMoEBlockMixin) or has_structural_contract:
+            yield module
+
+
+def _get_moe_num_experts(module: nn.Module) -> int | None:
+    weights = getattr(module, "moe_weights", None)
+    if weights is not None:
+        return int(weights.num_experts)
+    quantized_gate_weights = getattr(module, "all_gate_qweight", None)
+    if quantized_gate_weights is not None:
+        return int(quantized_gate_weights.shape[0])
+    num_experts = getattr(module, "num_experts", None)
+    if num_experts is not None:
+        return int(num_experts)
+    experts = getattr(module, "experts", None)
+    num_experts = getattr(experts, "num_experts", None)
+    if num_experts is not None:
+        return int(num_experts)
+    gate = getattr(module, "gate", None)
+    num_experts = getattr(gate, "num_experts", None)
+    return int(num_experts) if num_experts is not None else None
+
+
+def _resolve_expert_parallel_layout(
+    *,
+    num_experts: int,
+    num_devices: int,
+    num_cores: int,
+    cores_per_expert: int,
+) -> tuple[int, int, int, int | None]:
+    if num_devices <= 0:
+        raise ValueError("num_devices must be greater than zero for MoE expert parallelism")
+    if num_cores <= 0:
+        raise ValueError("num_cores must be greater than zero for MoE expert parallelism")
+    if cores_per_expert <= 0:
+        raise ValueError("cores_per_expert must be greater than zero for MoE expert parallelism")
+
+    required_expert_cores = num_experts * cores_per_expert
+    total_avl_cores = num_devices * num_cores
+    if required_expert_cores < total_avl_cores and total_avl_cores % required_expert_cores == 0:
+        num_pipeline_stages = 1
+    elif required_expert_cores % total_avl_cores == 0:
+        num_pipeline_stages = required_expert_cores // total_avl_cores
+    else:
+        raise ValueError(
+            "num_experts * cores_per_expert "
+            "(num_experts * cores_per_expert) must be divisible by total_avl_cores (num_devices * num_cores)"
+        )
+    if num_pipeline_stages <= 0:
+        raise ValueError(f"num_pipeline_stages ({num_pipeline_stages}) must be greater than zero")
+    if num_experts % num_pipeline_stages != 0:
+        raise ValueError(
+            f"num_experts ({num_experts}) must be divisible by num_pipeline_stages ({num_pipeline_stages})"
+        )
+    num_parallelized_experts = num_experts // num_pipeline_stages
+    if num_parallelized_experts % num_devices != 0:
+        raise ValueError(
+            f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices ({num_devices})"
+        )
+    if num_devices > 1 and num_cores % cores_per_expert != 0:
+        raise ValueError(f"num_cores ({num_cores}) must be divisible by cores_per_expert ({cores_per_expert})")
+    experts_per_soc = num_cores // cores_per_expert if num_devices > 1 else None
+    return total_avl_cores, num_pipeline_stages, num_parallelized_experts, experts_per_soc
+
+
+class OptimizedMoEMapperTransform(ModuleMappingTransform):
+    """Replace in-tree MoE components with QEff implementations."""
+
+    _module_mapping = {
+        # GLM4-MoE
+        Glm4MoeMoE: QEffGlm4MoeMoE,
+        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # Llama4
+        Llama4TextMoe: QEffLlama4TextMoe,
+        Llama4TextExperts: QEffLlama4TextExperts,
+        Llama4Router: QEffLlama4Router,
+        # Qwen3-MoE
+        Qwen3MoeExperts: QEffQwen3MoeExperts,
+        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+        Qwen3MoeTopKRouter: QEffQwen3MoeTopKRouter,
+        # Qwen3-VL-MoE
+        Qwen3VLMoeTextExperts: QEffQwen3VLMoeTextExperts,
+        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
+        # Qwen3.5-MoE
+        Qwen3_5MoeExperts: QEffQwen3_5MoeExperts,
+        Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
+        Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
+        # Gemma4
+        Gemma4TextRouter: QEffGemma4TextRouter,
+        # GPT-OSS
+        GptOssMLP: QEffGptOssMLP,
+        GptOssExperts: QEffGptOssExperts,
+        # GraniteMoE
+        GraniteMoeMoE: QEffGraniteMoeMoE,
+        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        # Mixtral
+        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+        model, mapped = super().apply(model)
+        return model, mapped or any(True for _ in _iter_optimized_moe_modules(model))
+
+
+class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
+    """Bind optimized MoE methods for external model code."""
+
+    _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "MoeBlock": {
+            "forward": QEffGrok1MoeBlock.forward,
+            "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
+            "routing_input": QEffMoEBlockMixin.routing_input,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
+            "transform_weights": QEffGrok1MoeBlock.transform_weights,
+            "route": QEffGrok1MoeBlock.route,
+            "moe_profile": QEffGrok1MoeBlock.moe_profile,
+            "apply_shared_experts": QEffMoEBlockMixin.apply_shared_experts,
+            "_moe_return_router_logits": True,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supported_moe_flavours": QEffGrok1MoeBlock.supported_moe_flavours,
+            "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
+            "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__,
+        },
+        "DeepseekV3MoE": {
+            "forward": QEffDeepseekV3MoE.forward,
+            "get_supported_moe_flavours": QEffDeepseekV3MoE.get_supported_moe_flavours,
+            "routing_input": QEffDeepseekV3MoE.routing_input,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
+            "transform_weights": QEffDeepseekV3MoE.transform_weights,
+            "_stack_quantized_projection_params": QEffDeepseekV3MoE._stack_quantized_projection_params,
+            "_transform_quantized_expert_weights": QEffDeepseekV3MoE._transform_quantized_expert_weights,
+            "route": QEffDeepseekV3MoE.route,
+            "moe_profile": QEffDeepseekV3MoE.moe_profile,
+            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
+            "_moe_return_router_logits": False,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supported_moe_flavours": QEffDeepseekV3MoE.supported_moe_flavours,
+            "supports_moe_decode_bmm": QEffDeepseekV3MoE.supports_moe_decode_bmm,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+        },
+    }
+
+
+class OptimizedMoEWeightsTransform(PytorchTransform):
+    """Canonicalize MoE expert weights for modules using shared MoE flavours."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+        transformed = False
+        for module in list(_iter_optimized_moe_modules(model)):
+            if getattr(module, "weights_transformed", False):
+                continue
+            module.transform_weights()
+            gc.collect()
+            transformed = True
+        return model, transformed
+
+
+class OptimizedMoEExportConfigTransform(PytorchTransform):
+    """Assign MoE export flavour, blocking attributes, and hash parameters."""
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
+        hash_params: dict | None = None,
+    ) -> tuple[nn.Module, bool]:
+        from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
+
+        moe_config = (qaic_config or {}).get("moe_config", {}) or {}
+        requested_flavour = moe_config.get("flavour")
+
+        if "num_nsp" in moe_config:
+            logger.warning("qaic_config['moe_config']['num_nsp'] is deprecated and ignored for MoE expert parallelism.")
+        cores_per_expert = int(moe_config.get("cores_per_expert", 1))
+        tree_reduce = moe_config.get("tree_reduce", False)
+        if not isinstance(tree_reduce, bool):
+            raise TypeError("qaic_config['moe_config']['tree_reduce'] must be a boolean")
+        chunk_size_key = (
+            "expert_parallel_chunk_size" if "expert_parallel_chunk_size" in moe_config else "packed_chunk_size"
+        )
+        expert_parallel_chunk_size_requested = (
+            chunk_size_key in moe_config and moe_config.get(chunk_size_key) is not None
+        )
+        expert_parallel_chunk_size = moe_config.get(chunk_size_key, MOE_PREFILL_PACKED_CHUNK_SIZE)
+        if expert_parallel_chunk_size is None:
+            expert_parallel_chunk_size = MOE_PREFILL_PACKED_CHUNK_SIZE
+        expert_parallel_chunk_size = int(expert_parallel_chunk_size)
+        if expert_parallel_chunk_size <= 0:
+            raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
+        compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        compile_batch_size = int(batch_size or 1)
+        if compile_batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero for MoE expert parallelism")
+        compile_num_tokens = compile_batch_size * compile_seq_len
+        num_packed_chunks = max(1, -(-compile_num_tokens // expert_parallel_chunk_size))
+
+        transformed = False
+        flavour = None
+        uses_expert_parallel = False
+        layout = None
+        for module in list(_iter_optimized_moe_modules(model)):
+            get_supported_moe_flavours = getattr(module, "get_supported_moe_flavours", None)
+            if callable(get_supported_moe_flavours):
+                supported_flavours = get_supported_moe_flavours()
+            else:
+                supported_flavours = QEffMoEBlockMixin.get_supported_moe_flavours(module)
+            flavour = select_moe_flavour(
+                supported_flavours=supported_flavours,
+                is_prefill=prefill_only,
+                requested_flavour=requested_flavour,
+            )
+            module._moe_flavour = flavour
+            if flavour is MoEFlavour.EXPERT_PARALLEL:
+                uses_expert_parallel = True
+                num_experts = _get_moe_num_experts(module)
+                if num_experts is None:
+                    raise AttributeError(f"{type(module).__name__} does not expose num_experts for expert parallelism")
+                layout = _resolve_expert_parallel_layout(
+                    num_experts=num_experts,
+                    num_devices=int(num_devices),
+                    num_cores=int(num_cores),
+                    cores_per_expert=cores_per_expert,
+                )
+                total_avl_cores, num_pipeline_stages, num_parallelized_experts, experts_per_soc = layout
+                module.num_experts = num_experts
+                module.num_devices = int(num_devices)
+                module.cores_per_expert = cores_per_expert
+                module.total_avl_cores = total_avl_cores
+                module.num_pipeline_stages = num_pipeline_stages
+                module.num_parallelized_experts = num_parallelized_experts
+                module.experts_per_soc = experts_per_soc
+                module.tree_reduce = tree_reduce
+                module.expert_parallel_num_packed_chunks = num_packed_chunks
+                module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
+            transformed = True
+
+        if uses_expert_parallel and compile_num_tokens % expert_parallel_chunk_size != 0:
+            logger.warning(
+                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
+                f"the compile token count {compile_num_tokens}; the number of packed chunks will be {num_packed_chunks}."
+            )
+
+        if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
+            logger.warning(
+                "qaic_config['moe_config']['expert_parallel_chunk_size'] is only used for "
+                "moe flavour 'expert_parallel'; the provided value will be ignored."
+            )
+        if (
+            transformed
+            and ("cores_per_expert" in moe_config or "tree_reduce" in moe_config)
+            and not uses_expert_parallel
+        ):
+            logger.warning(
+                "qaic_config['moe_config']['cores_per_expert'] and "
+                "qaic_config['moe_config']['tree_reduce'] are only used for moe flavour 'expert_parallel'."
+            )
+
+        if transformed and hash_params is not None:
+            hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
+            if flavour is MoEFlavour.EXPERT_PARALLEL and layout is not None:
+                total_avl_cores, num_pipeline_stages, num_parallelized_experts, _ = layout
+                hash_params["moe_prefill_total_avl_cores"] = total_avl_cores
+                hash_params["moe_prefill_cores_per_expert"] = cores_per_expert
+                hash_params["moe_prefill_tree_reduce"] = tree_reduce
+                hash_params["moe_prefill_num_pipeline_stages"] = num_pipeline_stages
+                hash_params["moe_prefill_num_parallelized_experts"] = num_parallelized_experts
+                hash_params["moe_prefill_expert_parallel_chunk_size"] = expert_parallel_chunk_size
+                hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+            else:
+                hash_params.pop("moe_prefill_num_nsp", None)
+                hash_params.pop("moe_prefill_packed_chunk_size", None)
+                hash_params.pop("moe_prefill_total_avl_cores", None)
+                hash_params.pop("moe_prefill_cores_per_expert", None)
+                hash_params.pop("moe_prefill_tree_reduce", None)
+                hash_params.pop("moe_prefill_num_pipeline_stages", None)
+                hash_params.pop("moe_prefill_num_parallelized_experts", None)
+                hash_params.pop("moe_prefill_expert_parallel_chunk_size", None)
+                hash_params.pop("moe_prefill_num_packed_chunks", None)
+
+        return model, transformed
+
+
+def _replace_moe_weight_aliases(model: nn.Module, old_weights: nn.Module, new_weights: nn.Module) -> None:
+    for module in list(model.modules()):
+        for name, child in list(module._modules.items()):
+            if child is old_weights:
+                setattr(module, name, new_weights)
+
+
+class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
+    """Pack or restore MoE weights according to the selected MoE export flavour."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+        transformed = False
+        for module in list(_iter_optimized_moe_modules(model)):
+            if not getattr(module, "weights_transformed", False):
+                continue
+            weights = getattr(module, "moe_weights", None)
+            if weights is None:
+                continue
+
+            flavour = getattr(module, "_moe_flavour", MoEFlavour.DECODE_BMM)
+            if not isinstance(flavour, MoEFlavour):
+                flavour = MoEFlavour(flavour)
+
+            if flavour is MoEFlavour.EXPERT_PARALLEL:
+                num_pipeline_stages = getattr(module, "num_pipeline_stages", None)
+                num_parallelized_experts = getattr(module, "num_parallelized_experts", None)
+                if num_pipeline_stages is None or num_parallelized_experts is None:
+                    num_pipeline_stages = weights.gate.shape[1] if weights.gate.ndim == 4 else weights.num_experts
+                    num_parallelized_experts = weights.gate.shape[0] if weights.gate.ndim == 4 else 1
+                new_weights = pack_moe_weights_for_expert_parallel(
+                    weights,
+                    num_pipeline_stages=int(num_pipeline_stages),
+                    num_parallelized_experts=int(num_parallelized_experts),
+                )
+            else:
+                new_weights = unpack_moe_weights_from_expert_parallel(weights)
+
+            if new_weights is weights:
+                continue
+            _replace_moe_weight_aliases(model, weights, new_weights)
+            del weights
+            gc.collect()
+            transformed = True
+        return model, transformed
+
+
+class OptimizedMoETransform(PytorchTransform):
+    """Compatibility facade for MoE mapping discovery, weights, and export config."""
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
+        hash_params: dict | None = None,
+    ) -> tuple[nn.Module, bool]:
+        model, mapped = OptimizedMoEMapperTransform.apply(model)
+        model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
+        if not (mapped or external_mapped):
+            return model, False
+
+        model, weights_ready = OptimizedMoEWeightsTransform.apply(model)
+        model, export_configured = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=prefill_only,
+            batch_size=batch_size,
+            num_devices=num_devices,
+            num_cores=num_cores,
+            qaic_config=qaic_config,
+            prefill_seq_len=prefill_seq_len,
+            hash_params=hash_params,
+        )
+        _, expert_parallel_weights_ready = OptimizedMoEExpertParallelWeightsTransform.apply(model)
+        return model, mapped or external_mapped or weights_ready or export_configured or expert_parallel_weights_ready
+
+
+class SimpleDecodeMoeTransform(OptimizedMoETransform):
+    """Constructor-time MoE transform that uses legacy decode defaults."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+        return OptimizedMoETransform.apply(
+            model,
+            prefill_only=False,
+        )

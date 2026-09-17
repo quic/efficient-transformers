@@ -11,8 +11,8 @@ Covers:
   - QEFFTransformersBase: __repr__, quantization config guard
   - QEFFAutoModelForCausalLM: logic methods (build_prefill_specialization,
     build_decode_specialization, check_and_get_num_speculative_tokens,
-    prefill, get_seq_len_and_handle_specialized_prefill_model),
-    compile validation errors, generate TypeError
+    prefill), export prefill seq len handling, compile validation errors,
+    generate TypeError
   - QEFFAutoModelForSequenceClassification: init, get_model_config, export
   - QEFFAutoModel: init (with/without pooling), get_model_config, export,
     pytorch_feature_generate, generate TypeError
@@ -24,6 +24,7 @@ All tests run on CPU only and are safe for parallel execution.
 Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 """
 
+import logging
 import os
 from unittest.mock import MagicMock
 
@@ -59,6 +60,8 @@ from QEfficient.transformers.models.modeling_auto import (
 VOCAB_SIZE = 500
 CTX_LEN = 32
 SEQ_LEN = 8
+UNSUPPORTED_WEIGHT_FREE_WARNING = "weight_free=True is only supported for QEFFAutoModelForCausalLM"
+UNSUPPORTED_WEIGHT_FREE_DISAGG_COMPILE = "weight_free=True is not supported with disaggregated compile"
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +225,61 @@ class TestQEFFTransformersBase:
         assert not hasattr(model.config, "quantization_config")
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff is not None
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_from_pretrained_disables_unsupported_weight_free(self, wrapper_cls, model_factory, monkeypatch, caplog):
+        """Non-CausalLM from_pretrained paths warn and do not forward weight_free."""
+        captured_kwargs = {}
+
+        def fake_from_pretrained(_model_id, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model_factory()[0]
+
+        monkeypatch.setattr(wrapper_cls._hf_auto_class, "from_pretrained", fake_from_pretrained)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls.from_pretrained("dummy-model", weight_free=True)
+
+        assert "weight_free" not in captured_kwargs
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_direct_init_disables_unsupported_weight_free(self, wrapper_cls, model_factory, caplog):
+        """Non-CausalLM direct construction must not enable the weight-free export path."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls(model_factory()[0], weight_free=True)
+
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    def test_causal_lm_direct_init_preserves_weight_free(self, caplog):
+        """CausalLM remains the only wrapper that accepts weight_free=True."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = QEFFAutoModelForCausalLM(make_tiny_llama()[0], weight_free=True)
+
+        assert qeff_model._weight_free is True
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING not in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +516,56 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         with pytest.raises(TypeError, match="prefill_only"):
             qeff.compile(prefill_seq_len=32, ctx_len=128, prefill_only="yes")
 
+    @pytest.mark.parametrize(
+        "compile_kwargs",
+        [
+            pytest.param({"prefill_only": True, "prefill_seq_len": 32}, id="prefill-only"),
+            pytest.param({"prefill_seq_len": 1}, id="implicit-decode"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 1}, id="explicit-decode"),
+        ],
+    )
+    def test_weight_free_compile_rejects_disaggregated_modes(self, compile_kwargs):
+        """weight_free=True rejects disaggregated prefill/decode compile modes."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
+
+        with pytest.raises(NotImplementedError, match=UNSUPPORTED_WEIGHT_FREE_DISAGG_COMPILE):
+            qeff.compile(ctx_len=128, **compile_kwargs)
+
+    @pytest.mark.parametrize(
+        ("compile_kwargs", "expected_graph_names"),
+        [
+            pytest.param({"prefill_seq_len": 32}, ["Prefill", "Decode"], id="combined"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 32}, ["Decode"], id="explicit-decode-nonunit"),
+        ],
+    )
+    def test_weight_free_compile_allows_supported_modes(
+        self, tmp_path, monkeypatch, compile_kwargs, expected_graph_names
+    ):
+        """weight_free=True allows compile modes outside the unsupported disaggregated boundary."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+
+        qpc_path = qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            ctx_len=128,
+            **compile_kwargs,
+        )
+
+        assert qpc_path == tmp_path / "qpc"
+        assert captured_kwargs["prefill_only"] == compile_kwargs.get("prefill_only")
+        assert [spec["_graph_name"] for spec in captured_kwargs["specializations"]] == expected_graph_names
+
     def test_compile_prefill_only_true_continuous_batching_requires_kv_cache_batch_size(self):
         """compile raises ValueError when prefill_only=True + continuous_batching=True + no kv_cache_batch_size."""
         model, cfg = make_tiny_gpt2()
@@ -481,48 +589,183 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         with pytest.raises(NotImplementedError):
             qeff.generate(tokenizer=tokenizer, prompts=["Hello"], runtime_ai100=False)
 
+    def test_compile_gptoss_prefill_only_forces_chunking(self, tmp_path, monkeypatch, caplog):
+        """gpt_oss prefill-only compile always passes enable_chunking=True downstream."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.config.model_type = "gpt_oss"
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=32,
+            ctx_len=128,
+            prefill_only=True,
+            enable_chunking=False,
+        )
+
+        assert captured_kwargs["enable_chunking"] is True
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Prefill"
+        assert "chunking is always enabled for prefill-only mode" in caplog.text
+
+    def test_compile_ignores_public_mdp_ts_num_devices(self, tmp_path, monkeypatch, caplog):
+        """compile ignores public mdp_ts_num_devices and derives it from num_devices."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=8,
+            ctx_len=32,
+            num_devices=4,
+            mdp_num_partitions=2,
+            mdp_ts_num_devices=99,
+        )
+
+        assert captured_kwargs["mdp_ts_num_devices"] == 4
+        assert captured_kwargs["mdp_num_partitions"] == 2
+        assert "`mdp_ts_num_devices` passed to compile() is ignored" in caplog.text
+
 
 # ---------------------------------------------------------------------------
-# Stage 4: QEFFAutoModelForCausalLM — get_seq_len_and_handle_specialized_prefill_model
+# Stage 4: QEFFAutoModelForCausalLM — export prefill seq len handling
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cpu_only
 @pytest.mark.causal_lm
-class TestQEFFAutoModelForCausalLMGetSeqLen:
-    """Tests for get_seq_len_and_handle_specialized_prefill_model."""
+class TestQEFFAutoModelForCausalLMExportPrefillSeqLen:
+    """Tests for specialized prefill seq len handling inside export()."""
 
-    def test_enable_chunking_returns_constant(self):
-        """With enable_chunking=True, returns ONNX_EXPORT_EXAMPLE_SEQ_LEN."""
+    @staticmethod
+    def _make_specialized_qeff(model_type="gpt_oss"):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.config.model_type = model_type
+        setattr(qeff, "_QEFFAutoModelForCausalLM__update_prefill_transform", lambda *args, **kwargs: None)
+        return qeff
+
+    @staticmethod
+    def _capture_export(qeff, **export_kwargs):
+        captured = {}
+
+        def fake_export(example_inputs, output_names=None, dynamic_axes=None, export_dir=None, **kwargs):
+            captured["example_inputs"] = example_inputs
+            captured["output_names"] = output_names
+            captured["dynamic_axes"] = dynamic_axes
+            captured["export_dir"] = export_dir
+            captured["kwargs"] = kwargs
+            return "/tmp/fake.onnx"
+
+        qeff._export = fake_export
+        assert qeff.export(**export_kwargs) == "/tmp/fake.onnx"
+        return captured
+
+    def test_chunked_specialized_prefill_uses_default_export_seq_len_without_prefill_seq_len(self):
+        """With enable_chunking=True and no prefill_seq_len, export uses ONNX_EXPORT_EXAMPLE_SEQ_LEN."""
         from QEfficient.utils.constants import ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
-        model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-        result = qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=None, enable_chunking=True)
-        assert result == ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        qeff = self._make_specialized_qeff()
+
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=None, enable_chunking=True)
+
+        assert captured["example_inputs"]["input_ids"].shape[1] == ONNX_EXPORT_EXAMPLE_SEQ_LEN
         assert qeff.hash_params.get("prefill_only") is True
         assert qeff.hash_params.get("chunking") is True
 
-    def test_no_prefill_seq_len_no_env_var_raises_value_error(self):
-        """Without prefill_seq_len and NUM_Q_BLOCKS env var, raises ValueError."""
-        model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-        # Ensure env var is not set
-        os.environ.pop("NUM_Q_BLOCKS", None)
-        with pytest.raises(ValueError, match="prefill_seq_len"):
-            qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=None, enable_chunking=False)
+    def test_chunked_specialized_prefill_uses_prefill_seq_len_when_larger_than_default(self):
+        """Chunked specialized prefill export uses the requested prefill length when it is larger."""
+        qeff = self._make_specialized_qeff()
 
-    def test_prefill_seq_len_not_divisible_raises_value_error(self):
-        """prefill_seq_len not divisible by block_size raises ValueError."""
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=512, enable_chunking=True)
+
+        assert captured["example_inputs"]["input_ids"].shape[1] == 512
+
+    def test_expert_parallel_keeps_default_export_seq_len_when_divisible_by_num_packed_chunks(self):
+        """Expert-parallel export leaves seq_len unchanged when it is already divisible by packed chunks."""
+        from QEfficient.transformers.moe.flavours import MoEFlavour
+        from QEfficient.utils.constants import ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        qeff = self._make_specialized_qeff(model_type="qwen3_moe")
+        qeff.hash_params["moe_prefill_flavour"] = MoEFlavour.EXPERT_PARALLEL
+        qeff.hash_params["moe_prefill_num_packed_chunks"] = 2
+
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=None, enable_chunking=True)
+
+        assert captured["example_inputs"]["input_ids"].shape[1] == ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+    def test_expert_parallel_rounds_export_seq_len_to_multiple_of_num_packed_chunks(self):
+        """Expert-parallel export chooses an input seq len divisible by num_packed_chunks."""
+        from QEfficient.transformers.moe.flavours import MoEFlavour
+        from QEfficient.utils.constants import ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        num_packed_chunks = 3
+        qeff = self._make_specialized_qeff(model_type="qwen3_moe")
+        qeff.hash_params["moe_prefill_flavour"] = MoEFlavour.EXPERT_PARALLEL
+        qeff.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=None, enable_chunking=True)
+        export_seq_len = captured["example_inputs"]["input_ids"].shape[1]
+
+        assert export_seq_len >= ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        assert export_seq_len % num_packed_chunks == 0
+
+    @pytest.mark.skip(
+        reason="GPT-OSS non-chunked prefill-only export is disabled; requests are forced to chunked prefill."
+    )
+    def test_no_prefill_seq_len_no_env_var_raises_value_error(self, monkeypatch):
+        """GPT-OSS non-chunked prefill export requires a valid prefill_seq_len."""
+        qeff = self._make_specialized_qeff()
+        monkeypatch.delenv("NUM_Q_BLOCKS", raising=False)
+        with pytest.raises(ValueError, match="prefill_seq_len"):
+            qeff.export(prefill_only=True, prefill_seq_len=None, enable_chunking=False)
+
+    @pytest.mark.skip(
+        reason="GPT-OSS non-chunked prefill-only export is disabled; requests are forced to chunked prefill."
+    )
+    def test_prefill_seq_len_not_divisible_raises_value_error(self, monkeypatch):
+        """GPT-OSS non-chunked prefill export validates block-size divisibility."""
         from QEfficient.utils.constants import GPT_OSS_PREFILL_Q_BLOCK_SIZE
 
-        model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-        os.environ.pop("NUM_Q_BLOCKS", None)
-        # Use a value that is NOT divisible by block_size
+        qeff = self._make_specialized_qeff()
+        monkeypatch.delenv("NUM_Q_BLOCKS", raising=False)
         bad_seq_len = GPT_OSS_PREFILL_Q_BLOCK_SIZE + 1
         with pytest.raises(ValueError):
-            qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=bad_seq_len, enable_chunking=False)
+            qeff.export(prefill_only=True, prefill_seq_len=bad_seq_len, enable_chunking=False)
+
+    def test_chunked_gpt_oss_prefill_export_bypasses_non_chunked_validation(self):
+        """GPT-OSS chunked prefill export does not use the non-chunked q-block validation path."""
+        qeff = self._make_specialized_qeff()
+
+        def raise_if_called(prefill_seq_len=None):
+            raise AssertionError("chunked export should not use non-chunked GPT-OSS validation")
+
+        qeff.handle_gpt_oss_env_variable_legacy_burden = raise_if_called
+
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=None, enable_chunking=True)
+
+        assert captured["example_inputs"]["input_ids"].shape[1] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +807,6 @@ class TestQEFFAutoModelForSequenceClassification:
     @pytest.mark.slow
     def test_export_produces_onnx_file(self, tmp_export_dir):
         """export produces a valid ONNX file."""
-        import os
 
         model, cfg = make_tiny_bert_seq_cls()
         qeff = QEFFAutoModelForSequenceClassification(model)
@@ -722,7 +964,6 @@ class TestQEFFAutoModel:
     @pytest.mark.slow
     def test_export_produces_onnx_file(self, tmp_export_dir):
         """export produces a valid ONNX file."""
-        import os
 
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
@@ -965,7 +1206,6 @@ class TestQEFFAutoModelForCTC:
     @pytest.mark.slow
     def test_export_produces_onnx_file(self, tmp_export_dir):
         """export produces a valid ONNX file."""
-        import os
 
         model, cfg = make_tiny_wav2vec2()
         qeff = QEFFAutoModelForCTC(model)

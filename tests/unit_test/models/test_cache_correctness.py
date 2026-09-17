@@ -144,6 +144,88 @@ class TestQEffDynamicLayerCorrectness:
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
+    def test_batch_fold_continuous_batching_uses_preordered_physical_slots(self):
+        batch_size, heads, ctx_len, head_dim = 3, 2, 8, 4
+        layer = QEffDynamicLayer.from_tensors(
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
+        )
+
+        batch_index = torch.tensor([[2], [0], [1]], dtype=torch.int64)
+        logical_positions = torch.tensor([[3], [5], [1]], dtype=torch.int32)
+        logical_keys = torch.stack(
+            [
+                torch.full((heads, 1, head_dim), 2.0),
+                torch.full((heads, 1, head_dim), 7.0),
+                torch.full((heads, 1, head_dim), 11.0),
+            ]
+        )
+        logical_values = logical_keys + 10.0
+
+        slots = batch_index.flatten()
+        physical_positions = torch.empty_like(logical_positions).index_copy(0, slots, logical_positions)
+        physical_keys = torch.empty_like(logical_keys).index_copy(0, slots, logical_keys)
+        physical_values = torch.empty_like(logical_values).index_copy(0, slots, logical_values)
+        layer.write_only_batch(
+            physical_keys,
+            physical_values,
+            cache_kwargs={"position_ids": physical_positions},
+        )
+
+        assert layer.keys.shape == (batch_size, heads, ctx_len, head_dim)
+        assert layer.values.shape == (batch_size, heads, ctx_len, head_dim)
+        for logical_row, physical_slot in enumerate(slots):
+            position = logical_positions[logical_row, 0]
+            assert torch.equal(layer.keys[physical_slot, :, position], logical_keys[logical_row, :, 0])
+            assert torch.equal(layer.values[physical_slot, :, position], logical_values[logical_row, :, 0])
+
+        read_kwargs = {"position_ids": torch.full((batch_size, 1), ctx_len - 1)}
+        key_out = layer.read_only_blocked_K_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        value_out = layer.read_only_blocked_V_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        assert torch.equal(key_out, layer.keys[:, :, :6])
+        assert torch.equal(value_out, layer.values[:, :, :6])
+
+    def test_batch_fold_write_preserves_standard_cache_layout(self):
+        batch, heads, ctx_len, head_dim = 3, 2, 8, 4
+        layer = QEffDynamicLayer.from_tensors(
+            torch.zeros(batch, heads, ctx_len, head_dim),
+            torch.zeros(batch, heads, ctx_len, head_dim),
+        )
+        positions = torch.tensor([[1], [3], [5]])
+        keys = torch.arange(batch * heads * head_dim, dtype=torch.float32).reshape(batch, heads, 1, head_dim)
+        values = keys + 100
+
+        layer.write_only_batch(keys, values, cache_kwargs={"position_ids": positions})
+
+        assert layer.keys.shape == (batch, heads, ctx_len, head_dim)
+        assert layer.values.shape == (batch, heads, ctx_len, head_dim)
+        for batch_idx, position in enumerate(positions.flatten()):
+            assert torch.equal(layer.keys[batch_idx, :, position], keys[batch_idx, :, 0])
+            assert torch.equal(layer.values[batch_idx, :, position], values[batch_idx, :, 0])
+
+    def test_batch_fold_read_uses_folded_compute_view(self):
+        batch, heads, ctx_len, head_dim = 3, 2, 8, 4
+        keys = torch.arange(batch * heads * ctx_len * head_dim, dtype=torch.float32).reshape(
+            batch, heads, ctx_len, head_dim
+        )
+        values = keys + 100
+        layer = QEffDynamicLayer.from_tensors(keys, values)
+        positions = torch.full((batch, 1), ctx_len - 1)
+        cache_kwargs = {"position_ids": positions, "num_kv_heads": heads}
+
+        folded_keys, folded_values = layer.get_batch_folded_kv()
+        key_block = layer.read_only_blocked_K_batch(2, 6, cache_kwargs, folded_cache=folded_keys)
+        value_block = layer.read_only_blocked_V_batch(2, 6, cache_kwargs, folded_cache=folded_values)
+
+        expected_keys = keys[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
+        expected_values = values[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
+        assert folded_keys.shape == (1, batch * heads, ctx_len, head_dim)
+        assert folded_values.shape == (1, batch * heads, ctx_len, head_dim)
+        assert key_block.shape == (1, batch * heads, 4, head_dim)
+        assert value_block.shape == (1, batch * heads, 4, head_dim)
+        assert torch.equal(key_block, expected_keys)
+        assert torch.equal(value_block, expected_values)
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEffDynamicCache

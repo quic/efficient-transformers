@@ -9,7 +9,7 @@
 - `ModuleMappingTransform`: exact-type class mapping via `_module_mapping = {HFClass: QEffClass}`; replaces `module.__class__`, preserves module object/parameters/buffers, and calls `__qeff_init__` when the replacement defines it. Examples: `CustomOpsTransform`, `KVCacheTransform`, `PrefillOnlyTransform`, `T5ModelTransform`, `TextClassificationTransform`, VLM offload transforms.
 - `ExternalModuleMapperTransform`: method mapping for external/unvendored modules via `_match_class_replace_method` or `_match_string_replace_method`; binds methods with `MethodType` and calls `__qeff_init__` if present. Examples: `KVCacheExternalModuleMapperTransform`, `PrefillOnlyExternalModuleMapperTransform`, `RevertPrefillOnlyExternalModuleMapperTransform`.
 - `ModuleMutatorTransform`: recursive child replacement for modules matching `_match_class`; `mutate` returns a new module and may change weights/buffers. Examples: AWQ/GPTQ to `QuantLinearORT`, FP8 dequantization to `nn.Linear`, MXFP4 expert dequantization.
-- Bespoke transform classes: custom `apply` signatures or whole-model edits. Examples: `ReplicateKVHeadTransform`, `SpDTransform`, `SamplerTransform`, `PoolingTransform`, `BlockingAttentionTransform`, `SplitGateUpWeightsTransform`.
+- Bespoke transform classes: custom `apply` signatures or whole-model edits. Examples: `ReplicateKVHeadTransform`, `SpDTransform`, `SamplerTransform`, `PoolingTransform`, `BlockingAttentionTransform`.
 
 ## Current Registration Sites
 - Generic constructor-time transforms live in `_pytorch_transforms` lists in `QEfficient/transformers/models/modeling_auto.py`.
@@ -36,9 +36,12 @@
 
 ## Mutator Guidelines
 - Use mutators for true weight/layout transformations: unpacking quantized weights, dequantizing FP8/MXFP4, replacing fused expert modules, packing custom operators, or changing module object identity.
+- Preserve the base-class division of responsibility: `ModuleMutatorTransform.apply()` owns recursive traversal and matching, while `mutate()` mutates or replaces exactly the matched module it receives.
 - Copy bias, device, dtype, config fields, and train/eval-relevant flags intentionally.
 - Recurse behavior is supplied by `ModuleMutatorTransform.apply`; implement only `_match_class` and `mutate` unless traversal policy itself must change.
 - If a mutator uses parent context, handle `parent_module is None` for root matches.
+- If overriding `apply()` for compile-time arguments, nonstandard target selection, or whole-model validation, keep the same separation: `apply()` decides when and which modules to mutate; `mutate()` performs only the local mutation and returns the mutated/replacement module.
+- Keep whole-model config updates and mode-policy checks in `apply()` or a bespoke transform path, not inside a per-module `mutate()`.
 
 ## Test Hotspots
 - `tests/base/test_pytorch_transforms.py`: minimal mapper/mutator contract tests.
