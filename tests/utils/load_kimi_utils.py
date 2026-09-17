@@ -161,7 +161,9 @@ def prepare_config(model_path: Path):
     return config
 
 
-def get_kimi_k25_test_config(model_name: str, model_config_dict):
+def get_kimi_k25_test_config(model_name: str, model_config_dict, seed: int | None = None):
+    if seed is not None:
+        set_deterministic(seed)
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     config._attn_implementation = "eager"
     config.torch_dtype = torch.float32
@@ -220,7 +222,9 @@ def _simulate_kimi_k25_quantized_experts(model):
             _attach_fake_gptq_weight(expert.down_proj)
 
 
-def load_kimi_k25_model_from_config(config):
+def load_kimi_k25_model_from_config(config, seed: int | None = None):
+    if seed is not None:
+        set_deterministic(seed)
     kimi_cls = load_kimi_k25_class(config._name_or_path)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
