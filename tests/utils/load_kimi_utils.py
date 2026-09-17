@@ -161,7 +161,9 @@ def prepare_config(model_path: Path):
     return config
 
 
-def get_kimi_k25_test_config(model_name: str, model_config_dict):
+def get_kimi_k25_test_config(model_name: str, model_config_dict, seed: int | None = None):
+    if seed is not None:
+        set_deterministic(seed)
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     config._attn_implementation = "eager"
     config.torch_dtype = torch.float32
@@ -220,7 +222,9 @@ def _simulate_kimi_k25_quantized_experts(model):
             _attach_fake_gptq_weight(expert.down_proj)
 
 
-def load_kimi_k25_model_from_config(config):
+def load_kimi_k25_model_from_config(config, seed: int | None = None):
+    if seed is not None:
+        set_deterministic(seed)
     kimi_cls = load_kimi_k25_class(config._name_or_path)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
@@ -539,7 +543,9 @@ def run_kimi_k25_hf_model_on_pytorch_CB(model, processor, images, queries, max_g
                 return_dict=True,
             )
             logits = outputs[0] if isinstance(outputs, tuple) else outputs.logits
-            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            # QAIC decode runs in fp16; cast HF logits to fp16 before argmax so parity
+            # checks compare against the same effective precision.
+            next_token = logits[:, -1, :].to(torch.float16).argmax(dim=-1, keepdim=True)
             new_tokens.append(next_token)
 
             generated_ids = torch.cat([generated_ids, next_token], dim=1)
