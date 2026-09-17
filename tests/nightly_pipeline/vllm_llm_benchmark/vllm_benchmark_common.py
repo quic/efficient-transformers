@@ -106,6 +106,11 @@ OUTPUT_FIELDS = [
     "max_concurrency",
     "failed_requests",
     "benchmark_duration_s",
+    "export_compile_time_s",
+    "prefill_mdp_export_compile_time_s",
+    "prefill_export_compile_time_s",
+    "decode_export_compile_time_s",
+    "encode_export_compile_time_s",
     "request_throughput_req_s",
     "output_token_throughput_tok_s",
     "total_token_throughput_tok_s",
@@ -1006,6 +1011,207 @@ def run_client(command: list[str], log_path: Path, cwd: str) -> int:
     return process.returncode
 
 
+def extract_server_start_time(log_path: Path) -> datetime | None:
+    """Extract server start timestamp from log header."""
+    if not log_path.exists():
+        return None
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+        for line in content.split("\n"):
+            if line.startswith("timestamp_utc:"):
+                timestamp_str = line.split(":", 1)[1].strip()
+                return datetime.fromisoformat(timestamp_str)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def extract_compilation_times(log_path: Path, server_type: str) -> dict[str, float]:
+    """Extract export+compile times for each stage from server log."""
+    times = {}
+    if not log_path.exists():
+        return times
+
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+        lines = content.split("\n")
+
+        # Find server start time
+        start_time = extract_server_start_time(log_path)
+        if not start_time:
+            return times
+
+        # Infer timezone offset from first log entry
+        tz_offset_seconds = 0
+        for line in lines:
+            time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", line)
+            if time_match:
+                month, day, hour, minute, second = map(int, time_match.groups())
+                try:
+                    # Parse the log time as if it were UTC
+                    log_time_utc = start_time.replace(month=month, day=day, hour=hour, minute=minute, second=second)
+                    # Calculate the offset
+                    tz_offset_seconds = int((log_time_utc - start_time).total_seconds())
+                    # Only accept reasonable offsets (-12 to +14 hours)
+                    if -43200 <= tz_offset_seconds <= 50400:
+                        break
+                except ValueError:
+                    pass
+
+        # For disagg modes, find stage-specific timestamps
+        if server_type in {"qaic_disagg", "disagg"}:
+            # Find timestamps for each stage start
+            stage_times = {}
+
+            for i, line in enumerate(lines):
+                # Find encode start
+                if "Started compilation for encode qpc" in line and "encode_start" not in stage_times:
+                    # Look for first timestamp after this line
+                    for j in range(i, min(i + 50, len(lines))):
+                        time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                        if time_match:
+                            month, day, hour, minute, second = map(int, time_match.groups())
+                            try:
+                                log_time_utc = start_time.replace(
+                                    month=month, day=day, hour=hour, minute=minute, second=second
+                                )
+                                stage_times["encode_start"] = log_time_utc - __import__("datetime").timedelta(
+                                    seconds=tz_offset_seconds
+                                )
+                                break
+                            except ValueError:
+                                pass
+
+                # Find prefill start
+                if (
+                    "Started compilation for PP" in line
+                    and "TS1 prefill qpc" in line
+                    and "prefill_start" not in stage_times
+                ):
+                    for j in range(i, min(i + 50, len(lines))):
+                        time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                        if time_match:
+                            month, day, hour, minute, second = map(int, time_match.groups())
+                            try:
+                                log_time_utc = start_time.replace(
+                                    month=month, day=day, hour=hour, minute=minute, second=second
+                                )
+                                stage_times["prefill_start"] = log_time_utc - __import__("datetime").timedelta(
+                                    seconds=tz_offset_seconds
+                                )
+                                break
+                            except ValueError:
+                                pass
+
+                # Find decode start
+                if "Started compilation for decode qpc" in line and "decode_start" not in stage_times:
+                    for j in range(i, min(i + 50, len(lines))):
+                        time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                        if time_match:
+                            month, day, hour, minute, second = map(int, time_match.groups())
+                            try:
+                                log_time_utc = start_time.replace(
+                                    month=month, day=day, hour=hour, minute=minute, second=second
+                                )
+                                stage_times["decode_start"] = log_time_utc - __import__("datetime").timedelta(
+                                    seconds=tz_offset_seconds
+                                )
+                                break
+                            except ValueError:
+                                pass
+
+                # Find ready time
+                if "Press Ctl-C once to shutdown all services" in line and "ready" not in stage_times:
+                    # Search backwards for last timestamp
+                    for j in range(i, max(0, i - 100), -1):
+                        time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                        if time_match:
+                            month, day, hour, minute, second = map(int, time_match.groups())
+                            try:
+                                log_time_utc = start_time.replace(
+                                    month=month, day=day, hour=hour, minute=minute, second=second
+                                )
+                                stage_times["ready"] = log_time_utc - __import__("datetime").timedelta(
+                                    seconds=tz_offset_seconds
+                                )
+                                break
+                            except ValueError:
+                                pass
+
+            # Calculate durations for each stage
+            if "ready" in stage_times:
+                if "encode_start" in stage_times and "prefill_start" in stage_times:
+                    encode_duration = (stage_times["prefill_start"] - stage_times["encode_start"]).total_seconds()
+                    if 0 < encode_duration < 7200:
+                        times["encode_export_compile_time_s"] = encode_duration
+
+                if "prefill_start" in stage_times and "decode_start" in stage_times:
+                    prefill_duration = (stage_times["decode_start"] - stage_times["prefill_start"]).total_seconds()
+                    if 0 < prefill_duration < 7200:
+                        times["prefill_export_compile_time_s"] = prefill_duration
+
+                if "decode_start" in stage_times:
+                    decode_duration = (stage_times["ready"] - stage_times["decode_start"]).total_seconds()
+                    if 0 < decode_duration < 7200:
+                        times["decode_export_compile_time_s"] = decode_duration
+
+                # For LLM disagg_pd, also calculate prefill_mdp time
+                if "Started compilation for prefill qpc" in content and "prefill_mdp" not in times:
+                    # Find prefill MDP start time
+                    for i, line in enumerate(lines):
+                        if "Started compilation for prefill qpc" in line and "PP" not in line:
+                            for j in range(i, min(i + 50, len(lines))):
+                                time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                                if time_match:
+                                    month, day, hour, minute, second = map(int, time_match.groups())
+                                    try:
+                                        log_time_utc = start_time.replace(
+                                            month=month, day=day, hour=hour, minute=minute, second=second
+                                        )
+                                        prefill_mdp_start = log_time_utc - __import__("datetime").timedelta(
+                                            seconds=tz_offset_seconds
+                                        )
+                                        if "prefill_start" in stage_times:
+                                            mdp_duration = (
+                                                stage_times["prefill_start"] - prefill_mdp_start
+                                            ).total_seconds()
+                                            if 0 < mdp_duration < 7200:
+                                                times["prefill_mdp_export_compile_time_s"] = mdp_duration
+                                        break
+                                    except ValueError:
+                                        pass
+                            break
+
+                return times
+
+        # For non-disagg modes, find single export+compile time
+        for i in range(len(lines) - 1, -1, -1):
+            is_api_ready = "Application startup complete" in lines[i]
+
+            if is_api_ready:
+                # Search backwards from here for a timestamp
+                for j in range(i, max(0, i - 100), -1):
+                    time_match = re.search(r"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})", lines[j])
+                    if time_match:
+                        month, day, hour, minute, second = map(int, time_match.groups())
+                        try:
+                            log_time_utc = start_time.replace(
+                                month=month, day=day, hour=hour, minute=minute, second=second
+                            )
+                            ready_dt = log_time_utc - __import__("datetime").timedelta(seconds=tz_offset_seconds)
+                            total_time = (ready_dt - start_time).total_seconds()
+
+                            if 0 < total_time < 7200:
+                                times["export_compile_time_s"] = total_time
+                                return times
+                        except ValueError:
+                            pass
+    except OSError:
+        pass
+
+    return times
+
+
 def parse_benchmark_output(log_path: Path) -> list[dict]:
     if not log_path.exists():
         return []
@@ -1126,13 +1332,17 @@ def make_output_row(
     if mean_tpot_ms and decode_bs:
         decode_tps = round((1000.0 / mean_tpot_ms) * decode_bs, 2)
 
+    # Extract compilation times from server log
+    server_type = value(row, "server_type", default="api_server").lower()
+    timing_data = extract_compilation_times(server_log, server_type)
+
     return {
         "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "config_name": config_name,
         "status": status,
         "error": error,
         "model": model,
-        "server_type": value(row, "server_type", default="api_server"),
+        "server_type": server_type,
         "config_summary": build_config_summary(row),
         "mode_type": build_mode_type(row),
         "device_group": value(row, "device_group"),
@@ -1150,6 +1360,11 @@ def make_output_row(
         "max_concurrency": max_concurrency,
         "failed_requests": run.get("failed_requests", ""),
         "benchmark_duration_s": rounded(run.get("benchmark_duration_s", "")),
+        "export_compile_time_s": rounded(timing_data.get("export_compile_time_s", "")),
+        "prefill_mdp_export_compile_time_s": rounded(timing_data.get("prefill_mdp_export_compile_time_s", "")),
+        "prefill_export_compile_time_s": rounded(timing_data.get("prefill_export_compile_time_s", "")),
+        "decode_export_compile_time_s": rounded(timing_data.get("decode_export_compile_time_s", "")),
+        "encode_export_compile_time_s": rounded(timing_data.get("encode_export_compile_time_s", "")),
         "request_throughput_req_s": rounded(run.get("request_throughput_req_s", "")),
         "output_token_throughput_tok_s": rounded(run.get("output_token_throughput_tok_s", "")),
         "total_token_throughput_tok_s": rounded(run.get("total_token_throughput_tok_s", "")),

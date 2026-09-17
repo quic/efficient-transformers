@@ -698,7 +698,7 @@ SCRIPT
                         subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER}",
                         body: htmlContent,
                         to: params.EMAIL_RECIPIENTS,
-                        attachmentsPattern: "**/consolidated_published_results.csv",
+                        attachmentsPattern: "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv",
                         mimeType: 'text/html'
                     )
                     echo "Report email sent to: ${params.EMAIL_RECIPIENTS}"
