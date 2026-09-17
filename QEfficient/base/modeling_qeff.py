@@ -570,7 +570,7 @@ class QEFFBaseModel(ABC):
         try:
             if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
-
+                export_start_time = time.perf_counter()
                 export_result = export_via_weightfree(
                     self,
                     onnx_path,
@@ -581,6 +581,8 @@ class QEFFBaseModel(ABC):
                     export_kwargs,
                     onnx_transform_kwargs,
                 )
+                export_end_time = time.perf_counter()
+                print(f"Weight-free ONNX export overall time {export_end_time - export_start_time:.2f} seconds.")
             elif dynamo:
                 from QEfficient.exporter.onnx_exporter import export_via_dynamo
 
@@ -1317,6 +1319,7 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
+        compile_start_time = time.perf_counter()
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
@@ -1327,10 +1330,12 @@ class QEFFBaseModel(ABC):
                         f"Compiler command: {e.cmd}",
                         f"Compiler exitcode: {e.returncode}",
                         "Compiler stderr:",
-                        e.stderr.decode(),
+                        (e.stderr or b"").decode(),
                     ]
                 )
             )
+        compile_time = time.perf_counter() - compile_start_time
+        print(f"qaic-compile completed in {compile_time:.2f} seconds")
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)
