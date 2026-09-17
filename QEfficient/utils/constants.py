@@ -39,6 +39,9 @@ NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
     ),
+    "tiny-random/gemma-3": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
     "google/gemma-3-27b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "gemma_updated_npi.yaml"
     ),
@@ -233,6 +236,9 @@ CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
 CCL_UNIQNE_STEP = 32
+
+# constant for scaling down FC layer for dflash
+_DFLASH_TARGET_ABSMAX = 128.0
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256

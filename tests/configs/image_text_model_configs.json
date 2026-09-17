@@ -3,6 +3,7 @@
     {
       "model_name": "llava-hf/llava-1.5-7b-hf",
       "model_type": "llava",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 784,
       "ctx_len": 1024,
@@ -49,6 +50,7 @@
     {
       "model_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
       "model_type": "llama4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 32,
       "ctx_len": 3072,
@@ -65,11 +67,47 @@
         "What are the objects in the image?"
       ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "text_config": {
+          "model_type": "llama4_text",
+          "num_hidden_layers": 4,
+          "hidden_size": 768,
+          "intermediate_size": 1536,
+          "intermediate_size_mlp": 1536,
+          "num_attention_heads": 12,
+          "num_key_value_heads": 2,
+          "head_dim": 64,
+          "num_local_experts": 4,
+          "num_experts_per_tok": 1,
+          "interleave_moe_layer_step": 2,
+          "attention_chunk_size": 1024,
+          "rope_scaling": {
+            "rope_type": "llama3",
+            "factor": 16.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+            "rope_theta": 500000.0
+          }
+        },
+        "vision_config": {
+          "model_type": "llama4_vision_model",
+          "num_hidden_layers": 2,
+          "hidden_size": 1408,
+          "intermediate_size": 5632,
+          "num_attention_heads": 16,
+          "image_size": 336,
+          "patch_size": 14,
+          "projector_input_dim": 1408,
+          "projector_output_dim": 1408,
+          "vision_output_dim": 1408
+        }
+      }
     },
     {
-      "model_name": "google/gemma-3-4b-it",
+      "model_name": "tiny-random/gemma-3",
       "model_type": "gemma3",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 3072,
@@ -115,8 +153,9 @@
       }
     },
     {
-      "model_name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+      "model_name": "tiny-random/mistral-3",
       "model_type": "mistral3",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -159,7 +198,9 @@
     },
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "known_dummy_runtime_parity_issue": "Greedy token parity is fp16-marginal on device: the random-init one-layer model has near-degenerate decode logits, so fp16 rounding on QAIC can flip the argmax relative to the HF fp32 reference.",
       "model_type": "qwen2_5_vl",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -224,10 +265,13 @@
     },
     {
       "model_name": "Qwen/Qwen3-VL-2B-Instruct",
+      "known_bf16_compile_issue": "Qwen3-VL vision export retains an unsupported data type during the BF16-to-FP16 fallback on AI100, causing qaic-compile to fail with 'Data type not supported'.",
       "model_type": "qwen3_vl",
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -280,29 +324,34 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "model_name": "tiny-random/qwen3-vl-moe",
       "model_type": "qwen3_vl_moe",
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
+      "generation_len": 2,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
+      "supports_disagg": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
       "img_url_list": [
         "https://picsum.photos/id/237/536/354",
-        "https://picsum.photos/id/238/536/354"
+        "https://picsum.photos/id/237/536/354"
       ],
       "text_prompt_list": [
         "Can you describe the image in detail.",
-        "Can you describe the image in detail."
+        "Can you describe the image in detail?"
       ],
       "full_batch_size": 2,
       "additional_params": {
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
+          "head_dim": 32,
           "hidden_size": 256,
+          "initializer_range": 0.05,
           "intermediate_size": 512,
           "mlp_only_layers": [],
           "model_type": "qwen3_vl_moe_text",
@@ -315,9 +364,9 @@
           "rope_scaling": {
             "mrope_interleaved": true,
             "mrope_section": [
-              24,
-              20,
-              20
+              8,
+              4,
+              4
             ],
             "rope_type": "default"
           },
@@ -341,7 +390,7 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-0.8B",
+      "model_name": "tiny-random/qwen3.5",
       "model_type": "qwen3_5",
       "batch_size": 1,
       "prompt_len": 64,
@@ -350,6 +399,8 @@
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 4,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
       "img_url_list": [
         "https://picsum.photos/id/237/536/354",
         "https://picsum.photos/id/237/536/354"
@@ -363,7 +414,7 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
+          "head_dim": 32,
           "hidden_size": 256,
           "intermediate_size": 512,
           "layer_types": [
@@ -380,9 +431,9 @@
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              1,
+              1,
+              2
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -409,11 +460,14 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.6-35B-A3B",
+      "model_name": "tiny-random/qwen3.5-moe",
       "model_type": "qwen3_5_moe",
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 4096,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "ccl_layer_types": ["linear_attention", "full_attention"],
+      "supports_blocking": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -431,10 +485,11 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
+          "head_dim": 32,
           "hidden_size": 256,
           "layer_types": [
-            "linear_attention"
+            "linear_attention",
+            "full_attention"
           ],
           "mlp_only_layers": [],
           "model_type": "qwen3_5_moe_text",
@@ -443,14 +498,14 @@
           "num_attention_heads": 4,
           "num_experts": 8,
           "num_experts_per_tok": 4,
-          "num_hidden_layers": 1,
+          "num_hidden_layers": 2,
           "num_key_value_heads": 2,
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              1,
+              1,
+              2
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -479,6 +534,7 @@
     {
       "model_name": "allenai/Molmo-7B-D-0924",
       "model_type": "molmo",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -500,6 +556,7 @@
     {
       "model_name": "OpenGVLab/InternVL2_5-1B",
       "model_type": "internvl_chat",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
@@ -556,6 +613,7 @@
     {
       "model_name": "OpenGVLab/InternVL3_5-1B",
       "model_type": "internvl_chat",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
@@ -662,7 +720,9 @@
     },
     {
       "model_name": "tiny-random/gemma-4-dense",
+      "known_bf16_compile_issue": "Gemma4 RMSNorm promotes hidden states to float32 during BF16-to-FP16 export, causing a dtype mismatch with FP16 linear weights.",
       "model_type": "gemma4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 512,
@@ -702,7 +762,9 @@
     },
     {
       "model_name": "tiny-random/gemma-4-moe",
+      "known_bf16_compile_issue": "Gemma4 RMSNorm promotes hidden states to float32 during BF16-to-FP16 export, causing a dtype mismatch with FP16 linear weights.",
       "model_type": "gemma4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 512,
@@ -744,7 +806,7 @@
       }
     }
   ],
-  "_comment": "Qwen3-VL blocking is tested in tests/transformers/models/image_text_to_text/test_qwen3_vl_moe_disagg_blocked.py.",
+  "_comment": "Qwen3-VL blocking is tested in tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_blocked_tiny_model.py.",
   "image_text_subfunction_models": [
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -820,7 +882,7 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-0.8B",
+      "model_name": "tiny-random/qwen3.5",
       "model_type": "qwen3_5",
       "batch_size": 1,
       "prompt_len": 64,
@@ -833,7 +895,7 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
+          "head_dim": 32,
           "hidden_size": 256,
           "intermediate_size": 512,
           "layer_types": [
@@ -850,9 +912,9 @@
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              1,
+              1,
+              2
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -879,7 +941,7 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-35B-A3B",
+      "model_name": "tiny-random/qwen3.5-moe",
       "model_type": "qwen3_5_moe",
       "batch_size": 1,
       "prompt_len": 64,
@@ -892,10 +954,11 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
+          "head_dim": 32,
           "hidden_size": 256,
           "layer_types": [
-            "linear_attention"
+            "linear_attention",
+            "full_attention"
           ],
           "mlp_only_layers": [],
           "model_type": "qwen3_5_moe_text",
@@ -904,14 +967,14 @@
           "num_attention_heads": 4,
           "num_experts": 8,
           "num_experts_per_tok": 4,
-          "num_hidden_layers": 1,
+          "num_hidden_layers": 2,
           "num_key_value_heads": 2,
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              1,
+              1,
+              2
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -952,7 +1015,7 @@
       "additional_params": {}
     },
     {
-      "model_name": "google/gemma-3-4b-it",
+      "model_name": "tiny-random/gemma-3",
       "model_type": "gemma3",
       "batch_size": 1,
       "prompt_len": 128,

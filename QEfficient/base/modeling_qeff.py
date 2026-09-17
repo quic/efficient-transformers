@@ -266,6 +266,18 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
+        if self.config.torch_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
+            logger.warning(
+                "BFloat16 dtype is not supported on %s; converting model to float16 precision for export.",
+                constants.DEFAULT_AIC_HW_VERSION,
+            )
+            self.model = self.model.to(torch.float16)
+            self.config.torch_dtype = torch.float16
+            if hasattr(self.config, "text_config"):
+                self.config.text_config.torch_dtype = torch.float16
+            if hasattr(self.config, "llm_config"):
+                self.config.llm_config.torch_dtype = torch.float16
+
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
@@ -966,6 +978,7 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
+        moe_batch_size = compiler_options.pop("moe_batch_size", bs)
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -1014,6 +1027,7 @@ class QEFFBaseModel(ABC):
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
+            batch_size=moe_batch_size,
             num_devices=moe_num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
