@@ -898,11 +898,19 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                 block_ranges.append((start, end))
                 block_starts.append(start)
 
-        q_pos_shift_all = q_pos_rows_all[:, None, :, None, None] - torch.tensor(
-            block_starts,
-            device=hidden_states.device,
-            dtype=q_pos_rows_all.dtype,
-        ).view(1, len(block_starts), 1, 1, 1) * cp
+        # q_pos_shift_all = q_pos_rows_all[:, None, :, None, None] - torch.tensor(
+        # block_starts,
+        # device=hidden_states.device,
+        # dtype=q_pos_rows_all.dtype,
+        # ).reshape(1, len(block_starts), 1, 1, 1) * cp
+        block_offsets = torch.stack(
+        [
+            torch.full_like(q_pos_rows_all, block_start * cp)
+            for block_start in block_starts
+        ],
+        dim=1,).unsqueeze(-1).unsqueeze(-1)
+
+        q_pos_shift_all = (q_pos_rows_all[:, None, :, None, None] - block_offsets)
         causal_masks: list[torch.Tensor] = []
         for block_idx in range(len(block_ranges)):
             q_pos_shift = q_pos_shift_all[:, block_idx]

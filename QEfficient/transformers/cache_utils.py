@@ -16,7 +16,6 @@ from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
     CtxGatherFuncBlockedKVBatch,
     CtxGatherFuncBlockedKVDP,
-    CtxPagedScatterFuncDP as CtxPagedScatterFunc,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -29,6 +28,7 @@ from QEfficient.customop import (
     ctx_scatter_cb_3d,
     m3_ctx_scatter,
 )
+from QEfficient.customop.utils import ctx_paged_scatter_dp
 
 
 # HybridCache and HybridChunkedCache were removed from transformers in 5.3+.
@@ -1202,9 +1202,9 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
 
             block_id = block_id.to(dtype=torch.int32, device=layer.keys.device)
             addr = addr.to(dtype=torch.int32, device=layer.keys.device)
-            layer.keys = CtxPagedScatterFunc.apply(layer.keys, block_id, addr, key_states)
+            layer.keys = ctx_paged_scatter_dp(layer.keys, block_id, addr, key_states)
             layer.keys = layer.keys.reshape(batch, hkv, -1, head_dim)
-            layer.values = CtxPagedScatterFunc.apply(layer.values, block_id, addr, value_states)
+            layer.values = ctx_paged_scatter_dp(layer.values, block_id, addr, value_states)
             layer.values = layer.values.reshape(batch, hkv, -1, head_dim)
             layer._mark_initialized(layer.keys)
 

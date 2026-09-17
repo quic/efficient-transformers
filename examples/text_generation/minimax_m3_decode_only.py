@@ -11,7 +11,7 @@ import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -171,7 +171,7 @@ def main():
         dynamo=True,
         qaic_config={
             "blocking_mode": "kv_headpar",
-            "num_kv_blocks": 2,
+            "num_kv_blocks": 64,
             "moe_config": {
                 "flavour": "decode_bmm",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,

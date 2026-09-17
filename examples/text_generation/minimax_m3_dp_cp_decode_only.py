@@ -12,7 +12,7 @@ import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -96,7 +96,7 @@ def _run_pytorch_parity_test(
         if msa_attn_dp > 1:
             qaic_config["msa_attn_dp"] = msa_attn_dp
 
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, torch_dtype=torch.float32)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir,weight_free=True,torch_dtype=torch.float32)
     qeff_model.compile(
         batch_size=execution_batch_size,
         prefill_seq_len=1,
@@ -106,6 +106,7 @@ def _run_pytorch_parity_test(
         use_onnx_subfunctions=False,
         skip_vision=True,
         node_precision_info=True,
+        dynamo=True,
         offload_pt_weights=False,
         weight_free=False,
         qaic_config=qaic_config,
@@ -225,7 +226,7 @@ def main():
     factory_kwargs["config"] = config
 
     t0 = time.perf_counter()
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id, **factory_kwargs)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id,weight_free=True, **factory_kwargs)
     print(f"[timing] model load:          {time.perf_counter() - t0:.2f}s")
 
     t0 = time.perf_counter()
@@ -241,6 +242,7 @@ def main():
         skip_vision=True,
         node_precision_info=True,
         offload_pt_weights=False,
+        dynamo=True,
         log_times=True,
         qaic_config={
             "blocking_mode": "kv_headpar",
@@ -251,7 +253,7 @@ def main():
             "indexer_n_head": args.indexer_n_head,
             "num_cores_per_device": args.num_cores_per_device,
             "moe_config": {
-                "flavour": "expert_parallel",
+                "flavour": "decode_bmm",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
                 "cores_per_expert": args.cores_per_expert,
                 "tree_reduce": args.tree_reduce,

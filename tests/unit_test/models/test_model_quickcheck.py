@@ -51,6 +51,11 @@ from transformers import (
     LlamaConfig,
     Qwen2Config,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLSparseMoeBlock,
+)
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
@@ -66,13 +71,8 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
     Qwen3VLMoeVisionConfig,
 )
 
-from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
-    MiniMaxM3VLAttention,
-    MiniMaxM3VLIndexer,
-    MiniMaxM3VLSparseMoeBlock,
-)
-
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.cache_utils import QEffMiniMaxSparseCache
 from QEfficient.transformers.models.minimax_m3_vl import (
     MiniMaxM3SparseForConditionalGeneration,
     MiniMaxM3VLConfig,
@@ -87,7 +87,6 @@ from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import 
     QEffMiniMaxM3VLSparseMoeBlock,
     _generate_minimax_npi_file,
 )
-from QEfficient.transformers.cache_utils import QEffMiniMaxSparseCache
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,

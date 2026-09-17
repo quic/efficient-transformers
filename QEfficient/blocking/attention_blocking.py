@@ -269,7 +269,16 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
-            use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
+            use_kv_blocked_mode = (
+                blocking_config.mode == BlockingMode.KV
+                or blocking_config.mode == BlockingMode.KV_HEADPAR
+                or blocking_config.mode == BlockingMode.KV_BATCH_FOLD
+                or blocking_config.mode == BlockingMode.QKV
+                or blocking_config.mode == BlockingMode.HKV
+                or blocking_config.mode == BlockingMode.HQKV
+                or blocking_config.mode == BlockingMode.BHQKV
+            )
+            use_kv_blocked = use_kv_blocked_mode and supports_blocked_kv(past_key_value)
             if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:

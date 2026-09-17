@@ -191,7 +191,7 @@ def blocked_kv_attention_forward(
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -296,7 +296,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         skip_future = None
         if skip_kv:
             skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -355,7 +355,14 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     )
 
     return attn_output.transpose(1, 2).contiguous(), None
-
+def _is_dynamo_compiling() -> bool:
+    dynamo = getattr(torch, "_dynamo", None)
+    if dynamo is None:
+        return False
+    try:
+        return bool(dynamo.is_compiling())
+    except Exception:
+        return False
 
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,
@@ -416,7 +423,7 @@ def blocked_kv_attention_forward_headpar_offline(
             # it is for weight-free export.
             skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not _is_dynamo_compiling():
                 if skip_future.item():
                     break
 
@@ -464,7 +471,7 @@ def blocked_kv_attention_forward_headpar_offline(
 
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             max_block = torch.where(skip_future, torch.full_like(max_block, HEADPAR_MASKED_ATTENTION_VALUE), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
@@ -474,7 +481,7 @@ def blocked_kv_attention_forward_headpar_offline(
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
         sum_block = torch.einsum("bsgkn->bsgk", exp_block)
         out_block = torch.matmul(exp_block, value_5d)
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
             out_block = torch.where(skip_future, torch.zeros_like(out_block), out_block)
 

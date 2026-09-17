@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -25,7 +26,6 @@ from transformers.models.gemma3.modeling_gemma3 import (
     rotate_half,
 )
 
-import logging
 logger = logging.getLogger(__name__)
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
