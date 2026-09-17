@@ -15,12 +15,16 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 
 def build_blocking_config(args):
-    return {
-        "blocking_mode": args.blocking_mode.lower(),
+    blocking_mode = args.blocking_mode.lower()
+    qaic_config = {
+        "blocking_mode": blocking_mode,
         "num_q_blocks": args.num_q_blocks,
         "num_kv_blocks": args.num_kv_blocks,
         "head_block_size": args.head_block_size,
     }
+    if blocking_mode == "bhqkv":
+        qaic_config["num_batch_blocks"] = args.num_batch_blocks
+    return qaic_config
 
 
 def assert_generated_tokens_match(reference_exec_info, blocked_exec_info, label):
@@ -60,11 +64,12 @@ def main():
         "--blocking-mode",
         type=str,
         default="q",
-        help="Blocking mode, valid options: kv, kv_headpar, q, h, qkv, hkv, hqkv",
+        help="Blocking mode, valid options: kv, kv_headpar, q, h, qkv, hkv, hqkv, bhqkv",
     )
     parser.add_argument("--num-q-blocks", type=int, default=2, help="Number of query blocks for q/qkv/hqkv modes")
     parser.add_argument("--num-kv-blocks", type=int, default=2, help="Number of KV blocks for kv/qkv/hkv/hqkv modes")
     parser.add_argument("--head-block-size", type=int, default=16, help="Number of attention heads per head block")
+    parser.add_argument("--num-batch-blocks", type=int, default=1, help="Number of batch blocks for bhqkv mode")
     parser.add_argument("--num-devices", type=int, default=4, help="Number of devices to compile for")
     parser.add_argument(
         "--compare-non-blocking",
@@ -88,6 +93,7 @@ def main():
         f"num_q_blocks={qaic_config['num_q_blocks']}, "
         f"num_kv_blocks={qaic_config['num_kv_blocks']}, "
         f"head_block_size={qaic_config['head_block_size']}, "
+        f"num_batch_blocks={qaic_config.get('num_batch_blocks')}, "
         f"attention_heads={config.num_attention_heads}, "
         f"kv_heads={config.num_key_value_heads}"
     )
