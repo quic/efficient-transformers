@@ -68,8 +68,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     num_hidden_layers: int = -1,
     kv_offload: bool = False,
     num_devices: int = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     kv_cache_batch_size: Optional[int] = None,
     compile_only: bool = False,

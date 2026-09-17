@@ -427,7 +427,7 @@ pipeline {
                                     export TOKENIZERS_PARALLELISM=false &&
                                     export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                                     export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                                    python -m pytest tests -m '(not reproducer) and (llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' -k 'not test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                                    python -m pytest tests -m '(not reproducer) and (llm_model) and (not dynamo) and (not weight_free) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' -k 'not test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
                                     junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                                     deactivate"
                                     '''
@@ -448,7 +448,7 @@ pipeline {
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_qaic_feature &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
-                            python -m pytest tests -m '(not reproducer) and (on_qaic) and (feature) and (not multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                            python -m pytest tests -m '(not reproducer) and (on_qaic) and (feature) and (not multimodal) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                             junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml && deactivate"
                             '''
                         }
@@ -466,7 +466,7 @@ pipeline {
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_embedding_audio ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_qaic_embedding_audio &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_qaic_embedding_audio &&
-                            python -m pytest tests -m '(not reproducer) and (embedding_audio_model) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log_embedding_audio.xml --durations=10 &&
+                            python -m pytest tests -m '(not reproducer) and (embedding_audio_model) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log_embedding_audio.xml --durations=10 &&
                             junitparser merge tests/tests_log_embedding_audio.xml tests/tests_log.xml && deactivate"
                             '''
                         }
@@ -487,7 +487,7 @@ pipeline {
                                 export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                                 rm -f tests/tests_log6.xml &&
                                 if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
-                                python -m pytest tests -m '(not reproducer) and (multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                                python -m pytest tests -m '(not reproducer) and (multimodal) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
                                 test_status=\\$?;
                                 junitparser merge tests/tests_log6.xml tests/tests_log.xml;
                                 merge_status=\\$?;
@@ -504,7 +504,7 @@ pipeline {
                                 rm -rf /efficient-transformers/Non_cli_qaic_multimodal && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
                                 export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                                 export QEFF_PER_PR_COMPILE_WARM_ONLY=1 &&
-                                python -m pytest tests -m '(not reproducer) and (multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_COMPILE_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --durations=10 &&
+                                python -m pytest tests -m '(not reproducer) and (multimodal) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_COMPILE_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --durations=10 &&
                                 deactivate"
                                 '''
                             }
@@ -516,7 +516,7 @@ pipeline {
                                 export QEFF_PER_PR_SHARED_HOME=1 &&
                                 rm -f tests/tests_log6.xml &&
                                 if [ -r /opt/qti-aic/versions/apps.xml ]; then echo 'QAIC Apps SDK version:'; cat /opt/qti-aic/versions/apps.xml; fi;
-                                python -m pytest tests -m '(not reproducer) and (multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
+                                python -m pytest tests -m '(not reproducer) and (multimodal) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10;
                                 test_status=\\$?;
                                 junitparser merge tests/tests_log6.xml tests/tests_log.xml;
                                 merge_status=\\$?;
@@ -618,7 +618,7 @@ pipeline {
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
                             cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/cli &&
                             export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/cli &&
-                            python -m pytest tests/cloud/test_export_compile_execute.py -m '(cli and not qnn) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
+                            python -m pytest tests/cloud/test_export_compile_execute.py -m '(cli) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
                             junitparser merge tests/tests_log3.xml tests/tests_log.xml && deactivate"
                             '''
                         }

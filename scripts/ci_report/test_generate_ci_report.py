@@ -115,8 +115,7 @@ def test_vlm_scenario_key_strips_profile_prefix(gcr):
     for prefix in ("test_full_", "test_few_", "test_dummy_"):
         key = gcr._vlm_scenario_key(prefix + "image_text_to_text_ccl_dual_qpc")
         assert key == "image_text_to_text_ccl_dual_qpc"
-    # Non-profile VLM tests (reference / qnn / custom) don't collide with a scenario column.
-    assert gcr._vlm_scenario_key("test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn") == ""
+    # Non-profile VLM tests (reference / custom) don't collide with a scenario column.
     assert gcr._vlm_scenario_key("test_custom_replicate_kv_pytorch_vs_ai100") == ""
 
 
