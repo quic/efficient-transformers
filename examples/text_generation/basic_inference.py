@@ -12,6 +12,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 
 def main():
