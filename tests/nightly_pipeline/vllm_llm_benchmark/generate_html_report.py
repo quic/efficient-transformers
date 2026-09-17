@@ -217,7 +217,7 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
     <div class="container">
         <div class="header">
             <h1>vLLM QAIC Benchmark Report</h1>
-            <p>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+            <p>Generated on {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}</p>
         </div>
 
         <div class="content">
@@ -228,32 +228,32 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
                     <tr>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">vLLM QAIC Branch</div>
-                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info['vllm_qaic_branch']}</div>
+                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info["vllm_qaic_branch"]}</div>
                         </td>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">QAIC Disagg Branch</div>
-                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info['qaic_disagg_branch']}</div>
+                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info["qaic_disagg_branch"]}</div>
                         </td>
                     </tr>
                     <tr>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">QServe Branch</div>
-                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info['qserve_branch']}</div>
+                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info["qserve_branch"]}</div>
                         </td>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">QEff Branch</div>
-                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info['qeff_branch']}</div>
+                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info["qeff_branch"]}</div>
                         </td>
                     </tr>
                     <tr>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">QAIC SDK Version</div>
-                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info['qaic_sdk_version']}</div>
+                            <div style="font-size: 13px; font-weight: 500; color: #333; font-family: 'Courier New', monospace; word-break: break-all;">{env_info["qaic_sdk_version"]}</div>
                         </td>
                         <td style="width: 50%; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #667eea; border-bottom: 1px solid #eee;">
                             <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; font-weight: 600;">Build URL</div>
                             <div style="font-size: 13px; font-weight: 500; color: #0066cc; font-family: 'Courier New', monospace; word-break: break-all;">
-                                <a href="{env_info['build_url']}" style="color: #0066cc; text-decoration: none;">{env_info['build_url']}</a>
+                                <a href="{env_info["build_url"]}" style="color: #0066cc; text-decoration: none;">{env_info["build_url"]}</a>
                             </div>
                         </td>
                     </tr>
@@ -270,11 +270,11 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
                             <div class="summary-card-label">Total Tests</div>
                         </td>
                         <td class="summary-cell">
-                            <div class="summary-card-value">{sum(1 for r in rows if r.get('status', '').lower() == 'success')}</div>
+                            <div class="summary-card-value">{sum(1 for r in rows if r.get("status", "").lower() == "success")}</div>
                             <div class="summary-card-label">Passed</div>
                         </td>
                         <td class="summary-cell">
-                            <div class="summary-card-value">{sum(1 for r in rows if r.get('status', '').lower() != 'success')}</div>
+                            <div class="summary-card-value">{sum(1 for r in rows if r.get("status", "").lower() != "success")}</div>
                             <div class="summary-card-label">Failed</div>
                         </td>
                     </tr>
@@ -292,6 +292,11 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
                             <th style="text-align: left;">Config</th>
                             <th style="text-align: left;">Summary</th>
                             <th style="text-align: left;">Status</th>
+                            <th style="text-align: right;">Export/Compile (s)</th>
+                            <th style="text-align: right;">Prefill MDP Export/Compile (s)</th>
+                            <th style="text-align: right;">Prefill Export/Compile (s)</th>
+                            <th style="text-align: right;">Decode Export/Compile (s)</th>
+                            <th style="text-align: right;">Encode Export/Compile (s)</th>
                             <th style="text-align: right;">TTFT (s)</th>
                             <th style="text-align: right;">TPOT (s)</th>
                             <th style="text-align: right;">ITL (s)</th>
@@ -308,16 +313,21 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
         status_text = "✓ PASS" if status == "success" else "✗ FAIL"
 
         html_content += f"""                        <tr>
-                            <td class="model-name" style="text-align: left;">{row.get('model', 'N/A')}</td>
-                            <td style="text-align: left;">{row.get('model_category', 'N/A')}</td>
-                            <td style="text-align: left;">{row.get('config_name', 'N/A')}</td>
-                            <td style="text-align: left;">{row.get('config_summary', 'N/A')}</td>
+                            <td class="model-name" style="text-align: left;">{row.get("model", "N/A")}</td>
+                            <td style="text-align: left;">{row.get("model_category", "N/A")}</td>
+                            <td style="text-align: left;">{row.get("config_name", "N/A")}</td>
+                            <td style="text-align: left;">{row.get("config_summary", "N/A")}</td>
                             <td class="{status_class}" style="text-align: left;">{status_text}</td>
-                            <td class="metric">{row.get('mean_ttft_s', 'N/A')}</td>
-                            <td class="metric">{row.get('mean_tpot_s', 'N/A')}</td>
-                            <td class="metric">{row.get('mean_itl_s', 'N/A')}</td>
-                            <td class="metric">{row.get('decode_TPS', 'N/A')}</td>
-                            <td class="metric">{row.get('request_throughput_req_s', 'N/A')}</td>
+                            <td class="metric">{row.get("export_compile_time_s", "N/A")}</td>
+                            <td class="metric">{row.get("prefill_mdp_export_compile_time_s", "N/A")}</td>
+                            <td class="metric">{row.get("prefill_export_compile_time_s", "N/A")}</td>
+                            <td class="metric">{row.get("decode_export_compile_time_s", "N/A")}</td>
+                            <td class="metric">{row.get("encode_export_compile_time_s", "N/A")}</td>
+                            <td class="metric">{row.get("mean_ttft_s", "N/A")}</td>
+                            <td class="metric">{row.get("mean_tpot_s", "N/A")}</td>
+                            <td class="metric">{row.get("mean_itl_s", "N/A")}</td>
+                            <td class="metric">{row.get("decode_TPS", "N/A")}</td>
+                            <td class="metric">{row.get("request_throughput_req_s", "N/A")}</td>
                         </tr>
 """
 
@@ -344,9 +354,7 @@ def generate_html_report(csv_path: Path, output_path: Path, build_url: str = "N/
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate an HTML report from the consolidated published CSV."
-    )
+    parser = argparse.ArgumentParser(description="Generate an HTML report from the consolidated published CSV.")
     parser.add_argument(
         "--csv",
         required=True,

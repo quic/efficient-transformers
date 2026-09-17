@@ -679,53 +679,51 @@ SCRIPT
                 allowEmptyArchive: true
             )
             script {
-                if (params.CLEAN_WORKSPACE_AFTER_RUN) {
-                    echo 'CLEAN_WORKSPACE_AFTER_RUN=true; deleting workspace.'
-                    deleteDir()
-                }
-            }
-        }
-        success {
-            script {
                 if (params.EMAIL_RECIPIENTS?.trim()) {
+                    def buildStatus = currentBuild.result ?: 'SUCCESS'
                     def reportPath = "${env.VLLM_LLM_RESULTS_DIR}/benchmark_report.html"
                     def csvPath = "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv"
 
-                    // Read the HTML report content
-                    def htmlContent = readFile(file: reportPath).replaceAll('\\$', '\\\\$')
-
-                    emailext(
-                        subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER}",
-                        body: htmlContent,
-                        to: params.EMAIL_RECIPIENTS,
-                        attachmentsPattern: "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv",
-                        mimeType: 'text/html'
-                    )
-                    echo "Report email sent to: ${params.EMAIL_RECIPIENTS}"
+                    if (fileExists(reportPath)) {
+                        // The HTML report was generated regardless of overall build
+                        // status, so always email the rendered report rather than
+                        // gating on pass/fail.
+                        def htmlContent = readFile(file: reportPath).replaceAll('\\$', '\\\\$')
+                        emailext(
+                            subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER} [${buildStatus}]",
+                            body: htmlContent,
+                            to: params.EMAIL_RECIPIENTS,
+                            attachmentsPattern: fileExists(csvPath) ? "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv" : '',
+                            mimeType: 'text/html'
+                        )
+                        echo "Report email (status=${buildStatus}) sent to: ${params.EMAIL_RECIPIENTS}"
+                    } else {
+                        emailext(
+                            subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER} [${buildStatus}] - NO REPORT",
+                            body: """
+                                <html>
+                                    <body>
+                                        <p>vLLM QAIC Benchmark Report for Build #${env.BUILD_NUMBER}</p>
+                                        <p>Status: <b>${buildStatus}</b></p>
+                                        <p>The HTML report could not be generated for this build.</p>
+                                        <p>
+                                            <a href="${env.BUILD_URL}">View Build Details</a>
+                                        </p>
+                                        <p>Please check the build logs for more information.</p>
+                                    </body>
+                                </html>
+                            """,
+                            to: params.EMAIL_RECIPIENTS,
+                            mimeType: 'text/html'
+                        )
+                        echo "No HTML report found; fallback notification email sent to: ${params.EMAIL_RECIPIENTS}"
+                    }
                 }
             }
-        }
-        failure {
             script {
-                if (params.EMAIL_RECIPIENTS?.trim()) {
-                    emailext(
-                        subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER} FAILED",
-                        body: '''
-                            <html>
-                                <body>
-                                    <p>vLLM QAIC Benchmark Report for Build #${BUILD_NUMBER}</p>
-                                    <p>Status: <b>FAILED</b></p>
-                                    <p>
-                                        <a href="${BUILD_URL}">View Build Details</a>
-                                    </p>
-                                    <p>Please check the build logs for more information.</p>
-                                </body>
-                            </html>
-                        ''',
-                        to: params.EMAIL_RECIPIENTS,
-                        mimeType: 'text/html'
-                    )
-                    echo "Failure notification email sent to: ${params.EMAIL_RECIPIENTS}"
+                if (params.CLEAN_WORKSPACE_AFTER_RUN) {
+                    echo 'CLEAN_WORKSPACE_AFTER_RUN=true; deleting workspace.'
+                    deleteDir()
                 }
             }
         }

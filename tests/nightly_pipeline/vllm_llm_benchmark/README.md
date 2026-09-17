@@ -84,10 +84,18 @@ python3 tests/nightly_pipeline/vllm_llm_benchmark/merge_published_results.py \
 ```
 
 This merges all `*_results.csv` files (from LLM, embedding, audio, VLM categories)
-into one file with 17 key columns: model, model_category, config_name, config_summary,
-status, mean_ttft_s, mean_tpot_s, mean_itl_s, decode_TPS, request_throughput_req_s,
-vllm_qaic_branch, qaic_disagg_branch, qserve_branch, qeff_branch, qaic_sdk_version,
-server_command, client_command. Model categories are auto-detected based on config_name.
+into one file with 22 key columns: model, model_category, config_name, config_summary,
+status, export_compile_time_s, prefill_mdp_export_compile_time_s,
+prefill_export_compile_time_s, decode_export_compile_time_s,
+encode_export_compile_time_s, mean_ttft_s, mean_tpot_s, mean_itl_s, decode_TPS,
+request_throughput_req_s, vllm_qaic_branch, qaic_disagg_branch, qserve_branch,
+qeff_branch, qaic_sdk_version, server_command, client_command. Model categories
+are auto-detected based on config_name. The five `*_export_compile_time_s` columns
+are populated only for the fields relevant to that row's server type — e.g. a
+non-disagg (`api_server`) row only fills `export_compile_time_s`, while a disagg
+row fills the per-stage `prefill_mdp_export_compile_time_s`/
+`prefill_export_compile_time_s`/`decode_export_compile_time_s`/
+`encode_export_compile_time_s` fields instead.
 
 ## HTML Report Generation
 
@@ -102,7 +110,9 @@ python3 tests/nightly_pipeline/vllm_llm_benchmark/generate_html_report.py \
 The HTML report includes:
 - **Environment Information**: Branch details (vLLM QAIC, QAIC Disagg, QServe, QEff) and QAIC SDK version
 - **Test Results Summary**: Total tests, passed, and failed counts
-- **Detailed Test Results**: Table with model name, category, config, status, and performance metrics
+- **Detailed Test Results**: Table with model name, category, config, status, per-stage
+  export/compile times (export/compile, prefill MDP, prefill, decode, encode), and
+  performance metrics (TTFT/TPOT/ITL/decode TPS/throughput)
 
 ## Jenkins Flow
 
@@ -114,7 +124,14 @@ The Jenkins pipeline:
 4. Clones and installs `qaic-disagg`.
 5. Runs the selected LLM/embedding/audio/VLM config CSVs.
 6. Runs `merge_published_results.py` to generate consolidated published CSV.
-7. Archives `vllm_llm_results/**/*.csv` and `vllm_llm_results/**/*.log`.
+7. Runs `generate_html_report.py` to render `benchmark_report.html`.
+8. Archives `vllm_llm_results/**/*.csv` and `vllm_llm_results/**/*.log`.
+9. Emails `benchmark_report.html` (rendered inline) plus the consolidated CSV
+   attachment to `EMAIL_RECIPIENTS`, if set — this fires from the pipeline's
+   `post { always { ... } }` block regardless of whether the overall build
+   passed or failed, as long as the HTML report file exists (the subject line
+   includes the build status). If the report could not be generated at all,
+   a plain-text fallback failure notification is sent instead.
 
 Use `DRY_RUN=true` and `ROWS_DEFAULT=1` to verify the gpt2 command and output
 CSV/log generation on a Jenkins agent without consuming QAIC runtime. The
