@@ -22,7 +22,10 @@ To enable proxy models, use the `enable_proxy=True` parameter when loading a mod
 ```python
 from QEfficient import QEFFAutoModelForCausalLM
 
-model = QEFFAutoModelForCausalLM.from_pretrained(model_name, enable_proxy=True)
+model = QEFFAutoModelForCausalLM.from_pretrained(
+    model_name, 
+    enable_proxy=True
+)
 ```
 
 ### Saving Input/Output Files

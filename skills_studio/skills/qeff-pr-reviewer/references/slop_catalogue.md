@@ -258,8 +258,7 @@ Generic infrastructure (`QEFFBaseModel`, `QEffDynamicCache`, generic Auto-class 
 
 ```python
 # in QEfficient/transformers/cache_utils.py (generic):
-if cache.layer_types[Qwen3_5MoeTextModel._start] == "full_attention":
-    ...
+if cache.layer_types[Qwen3_5MoeTextModel._start] == "full_attention": ...
 ```
 
 A grep for `<SpecificModel>\.[_A-Z]` in generic modules surfaces these. Fix: pass needed indices as args, or move the logic into the model-specific module.

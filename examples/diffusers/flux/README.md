@@ -107,8 +107,8 @@ original_blocks = pipeline.transformer.model.transformer_blocks
 org_single_blocks = pipeline.transformer.model.single_transformer_blocks
 pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
 pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0]])
-pipeline.transformer.model.config["num_layers"] = 1
-pipeline.transformer.model.config["num_single_layers"] = 1
+pipeline.transformer.model.config['num_layers'] = 1
+pipeline.transformer.model.config['num_single_layers'] = 1
 ```
 
 ### 4. Compile with Custom Configuration
@@ -117,7 +117,10 @@ Compile the model separately before generation:
 
 ```python
 pipeline.compile(
-    compile_config="examples/diffusers/flux/flux_config.json", height=512, width=512, use_onnx_subfunctions=False
+    compile_config="examples/diffusers/flux/flux_config.json",
+    height=512,
+    width=512,
+    use_onnx_subfunctions=False
 )
 ```
 

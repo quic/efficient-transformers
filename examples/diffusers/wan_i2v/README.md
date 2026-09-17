@@ -111,11 +111,9 @@ low_noise_lora_path = hf_hub_download(
     filename="Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors",
 )
 
-
 # Load and apply LoRAs
 def load_wan_lora(path: str):
     return _convert_non_diffusers_wan_lora_to_diffusers(safetensors.torch.load_file(path))
-
 
 pipeline.transformer.model.transformer_high.load_lora_adapter(
     load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
@@ -229,15 +227,19 @@ Reduce transformer layers for faster inference:
 
 ```python
 # Configure for single-layer model (fastest)
-pipeline.transformer.model.transformer_high.config["num_layers"] = 1
-pipeline.transformer.model.transformer_low.config["num_layers"] = 1
+pipeline.transformer.model.transformer_high.config['num_layers'] = 1
+pipeline.transformer.model.transformer_low.config['num_layers'] = 1
 
 # Reduce transformer blocks
 original_blocks = pipeline.transformer.model.transformer_high.blocks
-pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList([original_blocks[i] for i in range(0, 1)])
+pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
+    [original_blocks[i] for i in range(0, 1)]
+)
 
 org_blocks = pipeline.transformer.model.transformer_low.blocks
-pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList([org_blocks[i] for i in range(0, 1)])
+pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
+    [org_blocks[i] for i in range(0, 1)]
+)
 ```
 
 ### 2. For Multiple Images
@@ -264,7 +266,7 @@ To compile the model for desired resolution:
 ```python
 # Compile with custom configuration
 pipeline.compile(
-    compile_config="wan_i2v_config.json",  # update compilation flags for desired config
+    compile_config="wan_i2v_config.json", # update compilation flags for desired config
     parallel=True,
     height=480,
     width=832,
