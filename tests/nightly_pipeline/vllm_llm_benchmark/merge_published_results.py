@@ -42,6 +42,26 @@ PUBLISHED_FIELDS = [
 ]
 
 
+def _model_category_from_filename(filename: str) -> str | None:
+    """Infer model category from a *_results.csv filename, e.g. 'vlm_results.csv' -> 'VLM'."""
+    name = filename.lower()
+    if "embedding" in name:
+        return "Embedding"
+    if "audio" in name:
+        return "Audio"
+    if "vlm" in name:
+        return "VLM"
+    return None
+
+
+def _assign_model_category(row: dict, source_filename: str) -> None:
+    pooling_method = row.get("pooling_method", "").lower()
+    if pooling_method in ("mean", "avg", "cls", "max"):
+        row["model_category"] = "Embedding"
+        return
+    row["model_category"] = _model_category_from_filename(source_filename) or "LLM"
+
+
 def generate_published_csv(input_csv: Path, output_csv: Path) -> None:
     """Generate a simplified published CSV with only key fields for team distribution."""
     if not input_csv.exists():
@@ -67,19 +87,10 @@ def generate_published_csv(input_csv: Path, output_csv: Path) -> None:
         if mode_type:
             row["config_summary"] = f"{config_summary} | {mode_type}" if config_summary else mode_type
 
-        # Determine model category based on config_name and pooling_method
-        config_name = row.get("config_name", "").lower()
-        pooling_method = row.get("pooling_method", "").lower()
-        if pooling_method in ("mean", "avg", "cls", "max"):
-            row["model_category"] = "Embedding"
-        elif "embedding" in config_name:
-            row["model_category"] = "Embedding"
-        elif "audio" in config_name:
-            row["model_category"] = "Audio"
-        elif "vlm" in config_name:
-            row["model_category"] = "VLM"
-        else:
-            row["model_category"] = "LLM"
+        # Determine model category from the source filename (config_name alone doesn't
+        # identify VLM/audio rows, since their effective config_name never contains those
+        # words) and pooling_method
+        _assign_model_category(row, input_csv.name)
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     with output_csv.open("w", newline="", encoding="utf-8") as f:
@@ -111,6 +122,8 @@ def merge_results_to_published_csv(results_dir: Path, output_csv: Path) -> int:
         with result_csv.open(newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
+            for row in rows:
+                row["_source_filename"] = result_csv.name
             all_rows.extend(rows)
             print(f"    -> {len(rows)} rows")
 
@@ -133,19 +146,10 @@ def merge_results_to_published_csv(results_dir: Path, output_csv: Path) -> int:
         if mode_type:
             row["config_summary"] = f"{config_summary} | {mode_type}" if config_summary else mode_type
 
-        # Determine model category based on config_name and pooling_method
-        config_name = row.get("config_name", "").lower()
-        pooling_method = row.get("pooling_method", "").lower()
-        if pooling_method in ("mean", "avg", "cls", "max"):
-            row["model_category"] = "Embedding"
-        elif "embedding" in config_name:
-            row["model_category"] = "Embedding"
-        elif "audio" in config_name:
-            row["model_category"] = "Audio"
-        elif "vlm" in config_name:
-            row["model_category"] = "VLM"
-        else:
-            row["model_category"] = "LLM"
+        # Determine model category from the source filename (config_name alone doesn't
+        # identify VLM/audio rows, since their effective config_name never contains those
+        # words) and pooling_method
+        _assign_model_category(row, row.pop("_source_filename"))
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     with output_csv.open("w", newline="", encoding="utf-8") as f:
