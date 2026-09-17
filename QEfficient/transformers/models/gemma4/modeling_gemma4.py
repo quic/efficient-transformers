@@ -8,12 +8,11 @@
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Tuple, Type, Union
 
 import onnx
 import torch
-import torch.nn as nn
 import yaml
+from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gemma4.modeling_gemma4 import (
@@ -49,6 +48,7 @@ from QEfficient.transformers.moe import (
     delete_module_attrs,
     silu_glu_mlp,
 )
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -101,7 +101,7 @@ def _build_additive_attention_mask(
     position_ids: torch.Tensor,
     target_length,
     dtype: torch.dtype,
-    sliding_window: Optional[int] = None,
+    sliding_window: int | None = None,
 ) -> torch.Tensor:
     causal_mask = _create_causal_mask(
         position_ids=position_ids,
@@ -113,10 +113,10 @@ def _build_additive_attention_mask(
 
 def _build_bidirectional_vision_attention_mask(
     position_ids: torch.Tensor,
-    mm_token_type_ids: Optional[torch.Tensor],
+    mm_token_type_ids: torch.Tensor | None,
     target_length: int,
     dtype: torch.dtype,
-    sliding_window: Optional[int] = None,
+    sliding_window: int | None = None,
 ) -> torch.Tensor:
     """
     Export-safe eager attention mask that mirrors Gemma4's HF image-token semantics:
@@ -212,12 +212,12 @@ def eager_attention_forward_text(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     dropout: float = 0.0,
-    scaling: Optional[float] = None,
-    softcap: Optional[float] = None,
+    scaling: float | None = None,
+    softcap: float | None = None,
     **kwargs,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -468,12 +468,12 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[Cache] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        mm_token_type_ids: Optional[torch.Tensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        comp_ctx_lengths: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None,
+        past_key_values: Cache | None = None,
+        position_ids: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.Tensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        comp_ctx_lengths: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
@@ -650,7 +650,7 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
-        comp_ctx_lengths: Optional[torch.Tensor] = None,
+        comp_ctx_lengths: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         hidden_states = _clamp_to_fp16_range(hidden_states)
@@ -706,15 +706,15 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        per_layer_inputs: Optional[torch.Tensor] = None,
-        comp_ctx_lengths: Optional[torch.Tensor] = None,
-        use_cache: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        per_layer_inputs: torch.Tensor | None = None,
+        comp_ctx_lengths: torch.Tensor | None = None,
+        use_cache: bool | None = None,
+        return_dict: bool | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPast:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
@@ -757,7 +757,13 @@ class QEffGemma4TextModel(Gemma4TextModel):
             cos = cos_cached[position_ids].unsqueeze(2)
             position_embeddings[layer_type] = (cos, sin)
 
+        # DFlash TLM: collect hidden states entering the selected target layers.
+        self.target_layer_ids = getattr(self, "target_layer_ids", None)
+        target_hidden_list = []
+
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            if self.target_layer_ids and i in self.target_layer_ids:
+                target_hidden_list.append(hidden_states)
             per_layer_input = per_layer_inputs[:, :, i, :] if per_layer_inputs is not None else None
             layer_type = self.config.layer_types[i]
             layer_attention_mask = attention_mask
@@ -801,7 +807,17 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
         hidden_states = self.norm(hidden_states)
         next_cache = past_key_values.to_legacy_cache() if use_cache else None
-        output = BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)
+
+        # DFlash TLM: concat collected target-layer hidden states -> fc -> hidden_norm.
+        target_hidden = None
+        if self.target_layer_ids:
+            target_hidden = compute_dflash_target_hidden_states(target_hidden_list, self.fc, self.hidden_norm)
+
+        output = BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=next_cache,
+            hidden_states=target_hidden,
+        )
         return output if return_dict else output.to_tuple()
 
 
@@ -835,14 +851,14 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         return output_name == semantic_name or output_name.startswith(f"{semantic_name}.")
 
     @classmethod
-    def _find_output_name(cls, output_names: list[str], semantic_name: str) -> Optional[str]:
+    def _find_output_name(cls, output_names: list[str], semantic_name: str) -> str | None:
         for output_name in output_names:
             if cls._matches_semantic_name(output_name, semantic_name):
                 return output_name
         return None
 
     @staticmethod
-    def _find_consumer(consumers: dict[str, list], input_name: Optional[str], op_type: str):
+    def _find_consumer(consumers: dict[str, list], input_name: str | None, op_type: str):
         if input_name is None:
             return None
         for node in consumers.get(input_name, []):
@@ -855,7 +871,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         consumers = defaultdict(list)
         output_names = []
 
-        def add_output(name: Optional[str]):
+        def add_output(name: str | None):
             if name is not None:
                 output_names.append(name)
 
@@ -934,7 +950,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
         return output_names
 
-    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+    def generate_npi_file(self, onnx_path: str | Path, model_name: str | None = None) -> str:
         del model_name
         onnx_path = onnx_path or self.onnx_path
         if onnx_path is None:
@@ -974,11 +990,11 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        comp_ctx_lengths_prefill: Optional[List[int]] = None,
-        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        comp_ctx_lengths_prefill: list[int] | None = None,
+        comp_ctx_lengths_decode: list[int] | None = None,
         continuous_batching: bool = False,
-        kv_cache_batch_size: Optional[int] = None,
-        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: int | None = None,
+        full_batch_size: int | None = None,
         **kwargs,
     ):
         del kwargs
@@ -987,7 +1003,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
-        def build_prefill_spec(comp_ctx_lengths: Optional[int] = None):
+        def build_prefill_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
@@ -1004,7 +1020,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
                 spec["full_batch_exec_size"] = full_batch_size
             return spec
 
-        def build_decode_spec(comp_ctx_lengths: Optional[int] = None):
+        def build_decode_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": "1",
@@ -1028,8 +1044,8 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def get_pkv_dynamic_axes(
         self,
-        retain_full_kv: Optional[bool] = False,
-        continuous_batching: Optional[bool] = False,
+        retain_full_kv: bool | None = False,
+        continuous_batching: bool | None = False,
     ):
         del retain_full_kv
         return [
@@ -1043,7 +1059,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def get_onnx_dynamic_axes(
         self,
-        comp_ctx_lengths: Optional[List[int]] = None,
+        comp_ctx_lengths: list[int] | None = None,
         continuous_batching: bool = False,
     ):
         dynamic_axes = {
@@ -1061,7 +1077,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
         return dynamic_axes
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
@@ -1091,14 +1107,14 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
         del attention_mask, labels, logits_to_keep
@@ -1113,11 +1129,13 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        if position_ids is not None:
-            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        else:
-            hidden_states = hidden_states[:, -1:, :]
+        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
+        if not getattr(self.model, "target_layer_ids", None):
+            if position_ids is not None:
+                logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+                hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+            else:
+                hidden_states = hidden_states[:, -1:, :]
 
         logits = self.lm_head(hidden_states)
         if self.config.final_logit_softcapping is not None:
@@ -1139,7 +1157,7 @@ class QEffGemma4DecoderWrapper(nn.Module):
         self.config = self.model.config
         self.lm_head = self.model.lm_head
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
 
     def forward(
@@ -1150,8 +1168,8 @@ class QEffGemma4DecoderWrapper(nn.Module):
         image_idx,
         past_key_values,
         mm_token_type_ids=None,
-        batch_index: Optional[torch.LongTensor] = None,
-        comp_ctx_lengths: Optional[List[int]] = None,
+        batch_index: torch.LongTensor | None = None,
+        comp_ctx_lengths: list[int] | None = None,
         **kwargs,
     ):
         del kwargs
@@ -1216,8 +1234,12 @@ class QEffGemma4DecoderWrapper(nn.Module):
             )
         finally:
             _DISABLE_EXPORT_FP16_CLAMP = restore_disable_clamp
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
+        if getattr(self.language_model, "target_layer_ids", None):
+            hidden_states = outputs[0]
+        else:
+            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         if self.config.text_config.final_logit_softcapping is not None:
             logits = logits / self.config.text_config.final_logit_softcapping
@@ -1226,6 +1248,11 @@ class QEffGemma4DecoderWrapper(nn.Module):
         logits = logits.float()
         if next_image_idx is None:
             next_image_idx = torch.zeros((1, 1), dtype=torch.int64, device=logits.device)
+
+        # DFlash TLM: emit the collected target-layer features as an extra output.
+        if getattr(self.language_model, "target_layer_ids", None):
+            return logits, vision_embeds, next_image_idx, outputs.past_key_values, outputs.hidden_states
+
         return logits, vision_embeds, next_image_idx, outputs.past_key_values
 
 
@@ -1240,7 +1267,7 @@ class QEffGemma4EncoderWrapper(nn.Module):
             getattr(self.model.config.vision_config, "default_output_length", 280),
         )
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.model.vision_tower.encoder.layers[0].__class__}
 
     def forward(self, pixel_values, image_position_ids):
@@ -1318,10 +1345,10 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffGemma4DecoderWrapper(self)
 
-    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+    def generate_npi_file(self, onnx_path: str | Path, model_name: str | None = None) -> str:
         return QEffGemma4ForCausalLM.generate_npi_file(self, onnx_path, model_name)
 
-    def generate_vision_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+    def generate_vision_npi_file(self, onnx_path: str | Path, model_name: str | None = None) -> str:
         del model_name
         onnx_path = Path(onnx_path)
         npi_path = onnx_path.with_name(f"{onnx_path.stem}_gemma4_vision_npi.yaml")
@@ -1343,12 +1370,12 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: Optional[List[int]] = None,
-        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        comp_ctx_lengths_prefill: list[int] | None = None,
+        comp_ctx_lengths_decode: list[int] | None = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
-        kv_cache_batch_size: Optional[int] = None,
-        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: int | None = None,
+        full_batch_size: int | None = None,
         **compiler_options,
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
@@ -1364,7 +1391,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
 
         vision = [{"batch_size": batch_size, "max_patches": max_patches}]
 
-        def build_lang_prefill_spec(comp_ctx_lengths: Optional[int] = None):
+        def build_lang_prefill_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
@@ -1383,10 +1410,10 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 spec["full_batch_exec_size"] = full_batch_size
             return spec
 
-        def build_lang_decode_spec(comp_ctx_lengths: Optional[int] = None):
+        def build_lang_decode_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "seq_len": "1",
+                "seq_len": compiler_options.pop("dflash_block_size", None) or "1",
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
@@ -1410,7 +1437,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
         vision_dynamic_axes = {
             "pixel_values": {0: "batch_size", 1: "max_patches"},
@@ -1446,6 +1473,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ("key", "value"):
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        # DFlash TLM: extra collected target-layer features output.
+        if getattr(self.model.language_model, "target_layer_ids", None):
+            lang_output_names.append("target_hidden_states")
         if kv_offload:
             return {"vision": vision_output_names, "lang": lang_output_names}
         return lang_output_names
@@ -1477,7 +1507,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
 
     def get_dummy_inputs(
         self,
-        comp_ctx_lengths: Optional[List[int]] = None,
+        comp_ctx_lengths: list[int] | None = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         **kwargs,
