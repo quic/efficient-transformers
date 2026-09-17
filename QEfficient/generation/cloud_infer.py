@@ -291,6 +291,7 @@ class QAICInferenceSession:
             yield
         finally:
             self.stop_profiling()
+
     def _release_program_after_run_failure(self) -> None:
         """Release device resources while preserving the original execution error."""
         try:

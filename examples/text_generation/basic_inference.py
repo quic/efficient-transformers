@@ -35,6 +35,13 @@ def main():
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
     parser.add_argument(
+        "--stats-level",
+        dest="stats_level",
+        type=int,
+        default=0,
+        help="Level of statistics to collect. Default: 0",
+    )
+    parser.add_argument(
         "--profiling-type",
         dest="profiling_type",
         type=str,
@@ -59,12 +66,17 @@ def main():
         config.num_hidden_layers = args.num_hidden_layers
     model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
 
+    if args.profiling_type is not None:
+        if args.stats_level is None:
+            logger.warning("Need to set --stats-level to enable profiling. Setting stats_level=100.")
+            args.stats_level = 100
+
     # Compile the model
     qpc_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        stats_level=100,
+        stats_level=args.stats_level,
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
