@@ -995,7 +995,7 @@ def test_gptoss_prefill_chunked_export(tmp_path):
 
 def test_gptoss_blocked_chunked_prefill_writes_current_chunk_once(monkeypatch):
     from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
-    from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+    from QEfficient.transformers.cache_utils import QEffGPTOSSHybridCache
     from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffPrefillOnlyChunkedGptOssAttention
 
     config = AutoConfig.for_model("gpt_oss", **{**GPTOSS_CFG, "num_hidden_layers": 2, "sliding_window": 4})
@@ -1008,9 +1008,13 @@ def test_gptoss_blocked_chunked_prefill_writes_current_chunk_once(monkeypatch):
         ctx_len=8,
     )
 
-    cache = QEffHybridCacheForGPTOSS(config, batch_size=1, max_cache_len=8, sliding_window_len=4)
-    cache.key_cache = [torch.zeros(1, 2, 4, attention.head_dim), torch.zeros(1, 2, 8, attention.head_dim)]
-    cache.value_cache = [torch.zeros(1, 2, 4, attention.head_dim), torch.zeros(1, 2, 8, attention.head_dim)]
+    cache = QEffGPTOSSHybridCache(config=config)
+    cache.update(
+        torch.zeros(1, config.num_key_value_heads, 8, attention.head_dim),
+        torch.zeros(1, config.num_key_value_heads, 8, attention.head_dim),
+        layer_idx=1,
+        cache_kwargs={"position_ids": torch.arange(8).reshape(1, -1)},
+    )
 
     calls = {"write": 0}
     original_write_only = cache.write_only
@@ -1050,7 +1054,7 @@ def test_gptoss_blocked_chunked_prefill_writes_current_chunk_once(monkeypatch):
 
 def test_gptoss_prefill_online_blocked_matches_eager_with_sinks():
     from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
-    from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+    from QEfficient.transformers.cache_utils import QEffGPTOSSHybridCache
     from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
     from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffPrefillOnlyChunkedGptOssAttention
 
@@ -1081,17 +1085,15 @@ def test_gptoss_prefill_online_blocked_matches_eager_with_sinks():
     cos = torch.ones(1, 1, 8, blocked_attention.head_dim)
     sin = torch.zeros(1, 1, 8, blocked_attention.head_dim)
 
-    eager_cache = QEffHybridCacheForGPTOSS(config, batch_size=1, max_cache_len=8, sliding_window_len=4)
-    blocked_cache = QEffHybridCacheForGPTOSS(config, batch_size=1, max_cache_len=8, sliding_window_len=4)
+    eager_cache = QEffGPTOSSHybridCache(config=config)
+    blocked_cache = QEffGPTOSSHybridCache(config=config)
     for cache in (eager_cache, blocked_cache):
-        cache.key_cache = [
-            torch.zeros(1, config.num_key_value_heads, 4, blocked_attention.head_dim),
+        cache.update(
             torch.zeros(1, config.num_key_value_heads, 8, blocked_attention.head_dim),
-        ]
-        cache.value_cache = [
-            torch.zeros(1, config.num_key_value_heads, 4, blocked_attention.head_dim),
             torch.zeros(1, config.num_key_value_heads, 8, blocked_attention.head_dim),
-        ]
+            layer_idx=1,
+            cache_kwargs={"position_ids": torch.arange(8).reshape(1, -1)},
+        )
 
     with torch.no_grad():
         eager_output, _, _ = eager_attention(

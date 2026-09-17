@@ -47,11 +47,9 @@ low_noise_lora_path = hf_hub_download(
     filename="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors",
 )
 
-
 # Load and apply LoRAs
 def load_wan_lora(path: str):
     return _convert_non_diffusers_wan_lora_to_diffusers(safetensors.torch.load_file(path))
-
 
 pipeline.transformer.model.transformer_high.load_lora_adapter(
     load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
@@ -96,17 +94,17 @@ python wan_lightning.py
 
 ```python
 # Reduce to 2 layers for faster inference
-pipeline.transformer.model.transformer_high.config["num_layers"] = 2
-pipeline.transformer.model.transformer_low.config["num_layers"] = 2
+pipeline.transformer.model.transformer_high.config['num_layers'] = 2
+pipeline.transformer.model.transformer_low.config['num_layers']= 2
 
 original_blocks = pipeline.transformer.model.transformer_high.blocks
 org_blocks = pipeline.transformer.model.transformer_low.blocks
 
 pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-    [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config["num_layers"])]
+    [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 )
 pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config["num_layers"])]
+    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
 )
 ```
 

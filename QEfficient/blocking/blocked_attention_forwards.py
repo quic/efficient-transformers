@@ -1578,9 +1578,7 @@ def blocked_h_attention_forward(
         # attention sinks needed for gpt-oss
         if sinks is not None:
             sinks_g = (
-                module.sinks[h_start:h_end]
-                .reshape(1, -1, 1, 1)
-                .expand(attn_weights.shape[0], -1, attn_weights.shape[2], -1)
+                sinks[h_start:h_end].reshape(1, -1, 1, 1).expand(attn_weights.shape[0], -1, attn_weights.shape[2], -1)
             )
             combined_logits = torch.cat([attn_weights, sinks_g], dim=-1)
             attn_weights = combined_logits - combined_logits.max(dim=-1, keepdim=True).values

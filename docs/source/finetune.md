@@ -217,18 +217,18 @@ tensorboard --logdir runs/<file> --bind_all
             def apply_prompt_template(example):
                 # Apply prompt formatting to each datapoint (e.g., example)
                 # ...
-                return example  # Return the processed example
+                return example # Return the processed example
 
             def tokenize(example):
                 # Tokenize the formatted datapoint (e.g., example)
                 # ...
-                return tokenizer(example["text"], truncation=True, max_length=context_length)  # Example tokenization
+                return tokenizer(example["text"], truncation=True, max_length=context_length) # Example tokenization
 
             # Apply prompt template to preprocess it in accordance to the dataset and task.
             dataset = dataset.map(apply_prompt_template, ...)
 
             # Finally, tokenize the dataset
-            dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])  # Example batched tokenization
+            dataset = dataset.map(tokenize, batched=True, remove_columns=['text']) # Example batched tokenization
 
             # Each sample in the dataset should have keys acceptable by the HF
             # model and the loss function.

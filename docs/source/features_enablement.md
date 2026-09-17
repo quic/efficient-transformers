@@ -99,7 +99,7 @@ generated_qpc_path = qeff_model.compile(
     num_cores=14,
     mxfp6=True,
     enable_qnn=True,
-    qnn_config=qnn_config_file_path,  # QNN compilation configuration is passed.
+    qnn_config = qnn_config_file_path # QNN compilation configuration is passed.
 )
 ```
 ---
@@ -115,7 +115,7 @@ from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 
 tlm_name = "meta-llama/Llama-2-70b-chat-hf"
 dlm_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-k = 3  # DLM will make `k` speculations
+k = 3 # DLM will make `k` speculations
 qaic_config = dict(speculative_model_type="target")
 tlm = AutoModelForCausalLM.from_pretrained(tlm_name, qaic_config=qaic_config)
 dlm = AutoModelForCausalLM.from_pretrained(dlm_name)

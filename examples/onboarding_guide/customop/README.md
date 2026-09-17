@@ -145,11 +145,11 @@ from transformers.activations import NewGELUActivation
 from transformers.models.llama.modeling_llama import LlamaRMSNorm
 from QEfficient.customop import CustomGELUAIC, CustomRMSNormAIC
 
-
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         # Activation functions
         NewGELUActivation: CustomGELUAIC,
+        
         # Normalization layers
         LlamaRMSNorm: CustomRMSNormAIC,
     }
@@ -259,7 +259,10 @@ model_name = "gpt2"
 model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
 
 # Compile with custom op - pass the YAML config path
-model.compile(num_cores=16, registered_custom_op="CustomOp_Package/custom_op_config.yaml")
+model.compile(
+    num_cores=16,
+    registered_custom_op="CustomOp_Package/custom_op_config.yaml"
+)
 
 print("Model compiled successfully with custom op!")
 ```

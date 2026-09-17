@@ -49,7 +49,7 @@ def main():
     )
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
-    parser.add_argument("--num-layers", type=int, default=4, help="Number of layers")
+    parser.add_argument("--num-layers", type=int, default=12, help="Number of layers")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],

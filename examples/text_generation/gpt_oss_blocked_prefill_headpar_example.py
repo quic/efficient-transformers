@@ -60,8 +60,22 @@ def parse_args():
     parser.add_argument("--ctx-len", type=int, default=8192, help="Context length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of decode tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores per device")
-    parser.add_argument("--num-layers", type=int, default=5, help="Override number of layers (for quick testing)")
+    parser.add_argument("--num-layers", type=int, default=None, help="Override number of layers (for quick testing)")
     parser.add_argument("--num-kv-blocks", type=int, default=2, help="Number of KV blocks for blocked attention")
+    parser.add_argument("--num-q-blocks", type=int, default=2, help="Number of Q blocks for prefill blocked attention")
+    parser.add_argument(
+        "--prefill-blocking-mode",
+        type=str,
+        choices=("prefill_q", "prefill_kv", "prefill_qkv", "prefill_online"),
+        default="prefill_online",
+        help="Prefill blocking mode to compile",
+    )
+    parser.add_argument(
+        "--n-rep-chunk",
+        type=int,
+        default=1,
+        help="Q head-group chunk size for prefill_online",
+    )
     parser.add_argument(
         "--full-batch-size",
         type=int,
@@ -112,7 +126,9 @@ def prepare_chunked_inputs(tokenizer, prompt, prefill_seq_len, prompt_len=None):
     num_chunks = -(effective_len // -prefill_seq_len)  # ceil divide
     padded_len = num_chunks * prefill_seq_len
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    inputs["position_ids"] = np.where(
+        inputs.pop("attention_mask"), np.arange(padded_len, dtype=np.int32), np.int32(-1)
+    ).astype(np.int32)
     inputs.pop("token_type_ids", None)
     return inputs, effective_len, num_chunks
 
@@ -123,7 +139,7 @@ def run_chunked_prefill(prefill_session, inputs, num_chunks, prefill_seq_len, nu
     for i in range(num_chunks):
         chunk = {
             "input_ids": inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len],
-            "position_ids": inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len],
+            "position_ids": inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len].astype(np.int32),
         }
         t0 = time.time()
         qpc_out = prefill_session.run(chunk)
@@ -143,7 +159,7 @@ def run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_la
         next_tokens = select_next_token_ids(out["logits"])  # [B, 1]
         all_tokens.append(next_tokens)
         decode_inputs["input_ids"] = next_tokens
-        decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
+        decode_inputs["position_ids"] = (decode_inputs["position_ids"] + 1).astype(np.int32)
         for layer in range(num_hidden_layers):
             decode_inputs[f"past_key.{layer}"] = out[f"past_key.{layer}_RetainedState"]
             decode_inputs[f"past_value.{layer}"] = out[f"past_value.{layer}_RetainedState"]
@@ -179,21 +195,11 @@ def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
     # argmax returns index of highest position value = last valid token in chunk
     # All batch items share the same effective_len (replicated prompt), so [0] suffices
     last_valid_idx = int(np.argmax(last_chunk_pos[0]))
-    logits = qpc_out["logits"]
-    if logits.ndim == 3 and logits.shape[1] == 1:
-        next_token_logits = logits[:, 0, :]
-    elif logits.ndim == 3:
-        next_token_logits = logits[:, last_valid_idx, :]
-    elif logits.ndim == 2:
-        next_token_logits = logits
-    else:
-        raise ValueError(f"Unsupported prefill logits shape: {logits.shape}")
-
     decode_inputs = {
         # [B, 1]: argmax over vocab at the last valid position of the last chunk
-        "input_ids": np.argmax(next_token_logits, axis=-1, keepdims=True),
+        "input_ids": select_next_token_ids(qpc_out["logits"], token_idx=last_valid_idx),
         # [B, 1]: per-batch next decode position
-        "position_ids": np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1,
+        "position_ids": (np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1).astype(np.int32),
     }
     for layer in range(num_hidden_layers):
         decode_inputs[f"past_key.{layer}"] = qpc_out[f"past_key.{layer}_RetainedState"]
@@ -224,16 +230,21 @@ def main():
     }
     if args.headpar_split is not None:
         decode_qaic_config["headpar_split"] = args.headpar_split
-    # Prefill: blocked head-parallel prefill attention
-    # prefill_headpar=True routes the prefill attention through
-    # prefill_blocked_attention_interface ->
-    # blocked_kv_attention_forward_prefill_headpar_offline
+    # Prefill: blocked prefill attention.
     prefill_qaic_config = {
-        "blocking_mode": "prefill_online",
-        "num_kv_blocks": 2,
-        "num_q_blocks": 2,
+        "blocking_mode": args.prefill_blocking_mode,
         "ctx_len": args.ctx_len,
-        "moe_config": {"expert_parallel_chunk_size": args.moe_prefill_packed_chunk_size},
+    }
+    if args.prefill_blocking_mode in {"prefill_q", "prefill_qkv", "prefill_online"}:
+        prefill_qaic_config["num_q_blocks"] = args.num_q_blocks
+    if args.prefill_blocking_mode in {"prefill_kv", "prefill_qkv", "prefill_online"}:
+        prefill_qaic_config["num_kv_blocks"] = args.num_kv_blocks
+    if args.prefill_blocking_mode in {"prefill_kv", "prefill_qkv"} and args.headpar_split is not None:
+        prefill_qaic_config["headpar_split"] = args.headpar_split
+    if args.prefill_blocking_mode == "prefill_online":
+        prefill_qaic_config["n_rep_chunk"] = args.n_rep_chunk
+    prefill_qaic_config["moe_config"] = {
+        "expert_parallel_chunk_size": args.moe_prefill_packed_chunk_size,
     }
 
     compile_kwargs = dict(
@@ -254,6 +265,7 @@ def main():
         ctx_len=args.ctx_len,
         qaic_config=decode_qaic_config,
         user_tiled=True,
+        dynamo=False,
         **compile_kwargs,
     )
     print(f"  -> {decode_qpc_path}")
@@ -261,7 +273,6 @@ def main():
     # ── Compile prefill model ─────────────────────────────────────────────────
     print("\n[2/2] Compiling prefill model (blocked head-par prefill)...")
     prefill_model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, **from_pretrained_kwargs)
-
     prefill_qpc_path = prefill_model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
@@ -269,6 +280,7 @@ def main():
         prefill_only=True,
         enable_chunking=True,
         user_tiled=True,
+        dynamo=False,
         **compile_kwargs,
     )
     print(f"  -> {prefill_qpc_path}")

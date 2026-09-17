@@ -48,7 +48,6 @@ import argparse
 from transformers import AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
-
 def main():
     parser = argparse.ArgumentParser(description="Description of what this example does")
     parser.add_argument("--model-name", type=str, required=True, help="HuggingFace model ID")
@@ -58,24 +57,23 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--num-devices", type=int, default=1)
     args = parser.parse_args()
-
+    
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
-
+    
     qpc_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
     )
-
+    
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=[args.prompt],
     )
-
+    
     print(f"Generated: {exec_info.generated_texts[0]}")
-
 
 if __name__ == "__main__":
     main()
