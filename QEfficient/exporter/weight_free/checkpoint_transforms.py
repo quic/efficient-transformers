@@ -175,6 +175,103 @@ def _split_gate_up_bias(gate_up_bias: torch.Tensor, *, interleaved: bool = False
 # ---------------------------------------------------------------------------
 
 
+_KV_PROJ_RE = re.compile(r"\.self_attn\.(?:k_proj|v_proj)\.(?:weight|bias)$")
+
+
+def _repeat_kv_projection_for_checkpoint(
+    key: str,
+    tensor: torch.Tensor,
+    *,
+    orig_kv_heads: int,
+    num_replicate_kv_heads: int,
+) -> torch.Tensor:
+    """Repeat K/V projection rows per head to mirror the in-memory KV transform."""
+    if tensor.shape[0] % orig_kv_heads != 0:
+        raise ValueError(
+            f"Cannot repeat KV checkpoint tensor {key!r}: shape={tuple(tensor.shape)}, orig_kv_heads={orig_kv_heads}"
+        )
+    per_head = tensor.shape[0] // orig_kv_heads
+    expanded = tensor.reshape(orig_kv_heads, per_head, *tensor.shape[1:])
+    expanded = torch.repeat_interleave(expanded, num_replicate_kv_heads, dim=0)
+    return expanded.reshape(orig_kv_heads * num_replicate_kv_heads * per_head, *tensor.shape[1:])
+
+
+class ReplicateKVHeadCheckpointTransform(BaseCheckpointTransform):
+    """Plan head-wise K/V projection replication for weight-free checkpoints."""
+
+    TRANSFORM_ID = "replicate_kv_heads_v1"
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        hash_params = kwargs.get("hash_params", {})
+        repeat = int(hash_params.get("num_replicate_kv_heads", 1) or 1)
+        orig_kv_heads = hash_params.get("orig_kv_heads")
+        return repeat > 1 and isinstance(orig_kv_heads, int) and orig_kv_heads > 0 and any(
+            _KV_PROJ_RE.search(key) for key in weight_map
+        )
+
+    @classmethod
+    def plan_tasks(cls, context: CheckpointPlanningContext) -> None:
+        repeat = int(context.hash_params["num_replicate_kv_heads"])
+        orig_kv_heads = int(context.hash_params["orig_kv_heads"])
+        by_shard: Dict[str, List[str]] = {}
+        for key, shard_name in context.remaining_weight_map().items():
+            if _KV_PROJ_RE.search(key):
+                by_shard.setdefault(shard_name, []).append(key)
+
+        for index, (shard_name, keys) in enumerate(sorted(by_shard.items())):
+            keys = tuple(sorted(keys))
+            input_refs = _task_refs(keys)
+            replicated_refs = tuple(TensorRef(key, "kv_replicated") for key in keys)
+
+            def runner(get_tensor, target_dtype, input_refs=input_refs, output_refs=replicated_refs):
+                return {
+                    output_ref: _repeat_kv_projection_for_checkpoint(
+                        input_ref.key,
+                        get_tensor(input_ref),
+                        orig_kv_heads=orig_kv_heads,
+                        num_replicate_kv_heads=repeat,
+                    )
+                    for input_ref, output_ref in zip(input_refs, output_refs)
+                }
+
+            task_plan = CheckpointTaskPlan(
+                task_id=f"{cls.TRANSFORM_ID}:{shard_name}",
+                input_refs=input_refs,
+                source_files=(shard_name,),
+                output_file=f"kv-replicated-{index:04d}.safetensors",
+                estimated_peak_bytes=_estimate_task_bytes(
+                    context.source_dir,
+                    context.weight_map,
+                    keys,
+                    context.target_dtype,
+                    output_copies=repeat,
+                ),
+                params=TaskParams(
+                    cls.TRANSFORM_ID,
+                    _task_values(
+                        keys=keys,
+                        orig_kv_heads=orig_kv_heads,
+                        repeat=repeat,
+                    ),
+                ),
+            )
+            task_plan.append_stage(
+                CheckpointStage(
+                    stage_id="replicate_kv_heads",
+                    input_refs=input_refs,
+                    output_refs=replicated_refs,
+                    params=TaskParams(
+                        cls.TRANSFORM_ID,
+                        _task_values(orig_kv_heads=orig_kv_heads, repeat=repeat),
+                    ),
+                    runner=runner,
+                    labels=("replicate_kv_heads",),
+                )
+            )
+            context.add_task_plan(task_plan)
+
+
 class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
     """Plan dense shard reuse or dtype conversion into final checkpoint shards."""
 

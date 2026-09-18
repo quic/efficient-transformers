@@ -180,7 +180,11 @@ def _prepare_checkpoint_for_weight_free_export(
     from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
 
     source_dir = resolve_checkpoint_dir(model_ref)
-    hash_params = qeff_model.hash_params
+    hash_params = dict(qeff_model.hash_params)
+    text_config = getattr(qeff_model.model.config, "text_config", None) or qeff_model.model.config
+    orig_kv_heads = getattr(text_config, "orig_kv_heads", None)
+    if orig_kv_heads is not None:
+        hash_params["orig_kv_heads"] = int(orig_kv_heads)
     config = getattr(qeff_model.model, "config", None)
     if getattr(config, "model_type", None) == "deepseek_v4":
         from QEfficient.exporter.weight_free.checkpoint_transforms import DeepseekV4CheckpointTransform
