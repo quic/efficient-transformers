@@ -1197,6 +1197,59 @@ def test_minimax_m3_npi_generation_tracks_exported_graph(tmp_path):
     ]
 
 
+
+@pytest.mark.llm_model
+def test_minimax_m3_npi_generation_expands_decoder_functions(tmp_path):
+    decoder_function = onnx.helper.make_function(
+        "test.minimax",
+        "Decoder",
+        ["hidden_states"],
+        ["hidden_states.2"],
+        [
+            onnx.helper.make_node("CustomRMSNorm", ["hidden_states", "w0"], ["norm0"], name="CustomRMSNorm_0"),
+            onnx.helper.make_node("CustomRMSNorm", ["norm0", "w1"], ["norm1"], name="CustomRMSNorm_1"),
+            onnx.helper.make_node("CustomRMSNorm", ["norm1", "w2"], ["norm2"], name="CustomRMSNorm_2"),
+            onnx.helper.make_node("Add", ["hidden_states", "attn"], ["hidden_states.1"], name="Add_0"),
+            onnx.helper.make_node("CustomRMSNorm", ["hidden_states.1", "w3"], ["norm3"], name="CustomRMSNorm_3"),
+            onnx.helper.make_node("Add", ["hidden_states.1", "mlp"], ["hidden_states.2"], name="Add_1"),
+        ],
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+    graph = onnx.helper.make_graph(
+        [
+            onnx.helper.make_node(
+                "Decoder",
+                ["x"],
+                ["/language_model/layers.0/Decoder_output"],
+                name="/language_model/layers.0/Decoder",
+                domain="test.minimax",
+            )
+        ],
+        "minimax",
+        [onnx.helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1])],
+        [onnx.helper.make_tensor_value_info("/language_model/layers.0/Decoder_output", onnx.TensorProto.FLOAT, [1])],
+    )
+    onnx_path = tmp_path / "minimax.onnx"
+    onnx.save(
+        onnx.helper.make_model(
+            graph,
+            opset_imports=[onnx.helper.make_opsetid("", 17)],
+            functions=[decoder_function],
+        ),
+        onnx_path,
+    )
+
+    npi_path = Path(_generate_minimax_npi_file(onnx_path))
+    npi = yaml.safe_load(npi_path.read_text())
+    assert npi["FP32NodeInstanceNames"] == [
+        "/language_model/layers.0/CustomRMSNorm_0_output_0",
+        "/language_model/layers.0/CustomRMSNorm_1_output_0",
+        "/language_model/layers.0/CustomRMSNorm_2_output_0",
+        "/language_model/layers.0/Add_0_output_0",
+        "/language_model/layers.0/CustomRMSNorm_3_output_0",
+        "/language_model/layers.0/Add_1_output_0",
+    ]
+
 @pytest.mark.llm_model
 def test_minimax_m3_text_config_derived_pt_and_onnx_runtime_parity(tmp_path):
     torch.manual_seed(7)

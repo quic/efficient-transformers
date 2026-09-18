@@ -45,9 +45,10 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
 )
 from QEfficient.customop.utils import ctx_gather_3d, ctx_gather_blocked_kv_dp, ctx_paged_scatter_dp, ctx_scatter_3d
-from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP
+from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP, M3CtxScatterFunc
 
 MASKED_ATTENTION_LOGIT = -3.0e4
+_FP16_MAX_VALUE = 65504.0
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -125,6 +126,9 @@ def qeff_apply_rotary_pos_emb(
     rotated_k = rotated_k * cos + rotate_half(rotated_k) * sin
     return torch.cat((rotated_q, passthrough_q), dim=-1), torch.cat((rotated_k, passthrough_k), dim=-1)
 
+def _scalar_like(reference: torch.Tensor, value: int | float) -> torch.Tensor:
+    """Create a scalar constant without materializing ``reference.shape``."""
+    return torch.tensor(value, dtype=reference.dtype, device=reference.device)
 
 class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
     @torch.no_grad()
@@ -142,6 +146,59 @@ class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
+def update_running_softmax(
+    current_max: torch.Tensor,
+    attn_weights_block: torch.Tensor,
+    current_denominator: torch.Tensor,
+    output: torch.Tensor,
+    value_block: torch.Tensor,
+    skip_kv: bool = False,
+    skip_future: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Merge one KV block into an online-softmax accumulator."""
+    previous_max = current_max
+    updated_max = torch.max(
+        previous_max, attn_weights_block.max(dim=-1).values
+    )
+    delta_max = previous_max - updated_max
+    current_exp = torch.exp(attn_weights_block - updated_max.unsqueeze(-1))
+    updated_denominator = (
+        current_denominator * torch.exp(delta_max) + current_exp.sum(dim=-1)
+    )
+    if value_block.ndim == current_exp.ndim + 1:
+        queries_per_group = value_block.shape[-3]
+        heads_per_query = current_exp.shape[-2] // queries_per_group
+        current_exp_grouped = current_exp.reshape(
+            *current_exp.shape[:-2],
+            queries_per_group,
+            heads_per_query,
+            current_exp.shape[-1],
+        )
+        value_update = torch.matmul(
+            current_exp_grouped, value_block
+        ).reshape(
+            *current_exp.shape[:-2],
+            current_exp.shape[-2],
+            value_block.shape[-1],
+        )
+    else:
+        value_update = torch.matmul(current_exp, value_block)
+    updated_output = (
+        output * torch.exp(delta_max.unsqueeze(-1)) + value_update
+    )
+    if skip_kv and (
+        torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+    ):
+        if skip_future is None:
+            raise ValueError("skip_future is required when skip_kv is enabled.")
+        updated_max = torch.where(skip_future, previous_max, updated_max)
+        updated_denominator = torch.where(
+            skip_future, current_denominator, updated_denominator
+        )
+        updated_output = torch.where(
+            skip_future.unsqueeze(-1), output, updated_output
+        )
+    return updated_max, updated_denominator, updated_output
 
 def qeff_eager_attention_forward(
     module: nn.Module,
@@ -185,6 +242,26 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         sin = sin.unsqueeze(head_axis)
         rotated = rotated * cos + rotate_half(rotated) * sin
         return torch.cat((rotated, passthrough), dim=-1)
+
+    def _project_index_q_prefill(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Project prefill index queries in bounded sequence chunks."""
+        query_len = hidden_states.shape[1]
+        hidden_states = hidden_states.to(dtype=self.q_proj.weight.dtype)
+        q_proj_seq_chunk = 512
+        if query_len <= q_proj_seq_chunk:
+            return self.q_proj(hidden_states)
+
+        num_q_chunks = (query_len + q_proj_seq_chunk - 1) // q_proj_seq_chunk
+        base_q_chunk = query_len // num_q_chunks
+        extra_q_tokens = query_len % num_q_chunks
+        q_proj_chunks: list[torch.Tensor] = []
+        q_start = 0
+        for q_chunk_idx in range(num_q_chunks):
+            q_chunk_len = base_q_chunk + (q_chunk_idx < extra_q_tokens)
+            q_end = q_start + q_chunk_len
+            q_proj_chunks.append(self.q_proj(hidden_states[:, q_start:q_end, :]))
+            q_start = q_end
+        return torch.cat(q_proj_chunks, dim=1)
 
     @staticmethod
     def _read_blocked_k_dp(
@@ -311,9 +388,9 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
         hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
         num_kv_blocks = blocking_config.num_kv_blocks if (blocking_config and blocking_config.num_kv_blocks) else 1
-        num_cores = (
-            blocking_config.num_cores_per_device if (blocking_config and blocking_config.num_cores_per_device) else 1
-        )
+        num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
+        if num_cores < 1:
+            raise ValueError(f"num_cores_per_device must be positive, got {num_cores}.")
 
         if dp > 1:
             return self._select_blocks_dp(
@@ -1082,68 +1159,679 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         layer_idx: int,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        blocking_config: AttentionBlockingConfig,
+        blocking_config: Optional[AttentionBlockingConfig],
+        paged_block_table: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Select sparse MSA blocks for every token in a prefill sequence."""
         cfg = self.config
         batch, query_len = hidden_states.shape[:2]
+        index_key_cache = past_key_values.index_keys[layer_idx]
+        dim = cfg.index_head_dim
+        num_index_heads = cfg.index_n_heads
+        indexer_n_head = (getattr(blocking_config, "indexer_n_head", None) or getattr(cfg, "indexer_n_head", 1) or 1)
+        num_kv_blocks = (getattr(blocking_config, "num_kv_blocks", None) or getattr(cfg, "msa_kv_blocks", 1) or 1)
+        num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
+        ctx_len = (getattr(blocking_config, "ctx_len", None) or getattr(cfg, "ctx_len", None) or past_key_values.layers[layer_idx].keys.shape[2])
+        q_block_size = getattr(blocking_config, "indexer_q_size", None) or cfg.index_block_size
+        q_block_chunk = (getattr(blocking_config, "indexer_q_chunk", None) or getattr(cfg, "msa_q_chunk", None) or q_block_size)
+        index_block_size = cfg.index_block_size
         if query_len <= 1:
             raise ValueError("MSA prefill selection requires QL > 1.")
         if getattr(blocking_config, "msa_indexer_dp", 1) not in (None, 1) or getattr(
             blocking_config, "msa_indexer_cp", 1
         ) not in (None, 1):
             raise ValueError("MSA prefill selection currently requires DP=1 and CP=1.")
-        ctx_len = (getattr(blocking_config, "ctx_len", None) or past_key_values.layers[layer_idx].keys.shape[2])
-        block_size = cfg.index_block_size
-        if ctx_len % block_size:
+        if num_index_heads % indexer_n_head:
+            raise ValueError("MSA prefill index_n_heads must be divisible by indexer_n_head.")
+        if indexer_n_head != 1:
+            raise NotImplementedError("MSA prefill currently supports one indexer KV head.")
+        if ctx_len % index_block_size:
             raise ValueError("MSA prefill selection requires ctx_len divisible by index_block_size.")
-        num_blocks = ctx_len // block_size
-        topk = min(cfg.index_topk_blocks, num_blocks)
-        index_q = self._project_index_q_prefill(hidden_states)[
-            ..., : cfg.index_n_heads * cfg.index_head_dim
-        ].view(batch, query_len, cfg.index_n_heads, cfg.index_head_dim).transpose(1, 2)
-        index_k = self.k_proj(hidden_states)[
-            ..., : cfg.indexer_n_head * cfg.index_head_dim
-        ].view(batch, query_len, cfg.indexer_n_head, cfg.index_head_dim).transpose(1, 2)
-        index_q = self.q_norm(index_q)
-        index_k = self.k_norm(index_k)
-        rotary_dim = int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0))
-        index_q, index_k = qeff_apply_rotary_pos_emb(
-            index_q, index_k, cos[..., : cfg.index_head_dim], sin[..., : cfg.index_head_dim], rotary_dim
-        )
-        index_key_cache = past_key_values.update_index_key_cache(index_k, layer_idx, position_ids)
-        selected_indices, selected_valid = [], []
-        key_positions = torch.arange(ctx_len, device=hidden_states.device).view(1, 1, 1, ctx_len)
-        block_ids = torch.arange(num_blocks, device=hidden_states.device).view(1, 1, 1, num_blocks)
-        for q_start in range(0, query_len, 512):
-            q_end = min(q_start + 512, query_len)
-            q_positions = position_ids[:, q_start:q_end]
-            scores = torch.matmul(
-                index_q[:, :, q_start:q_end].float(), index_key_cache.float().transpose(-1, -2)
-            )
-            scores = scores.masked_fill(key_positions > q_positions[:, None, :, None], -1.0e30)
-            scores = scores.view(batch, cfg.index_n_heads, q_end - q_start, num_blocks, block_size).amax(dim=-1)
-            for local_offset in range(cfg.index_local_blocks):
-                local_block = (q_positions // block_size - local_offset).clamp(min=0)
-                scores = torch.where(
-                    block_ids == local_block[:, None, :, None], torch.full_like(scores, 1.0e30), scores
+        if ctx_len % num_kv_blocks:
+            raise ValueError("MSA prefill selection requires ctx_len divisible by num_kv_blocks.")
+        if q_block_size <= 0 or q_block_chunk < q_block_size:
+            raise ValueError("MSA prefill Q block sizes must be positive and ordered.")
+        if q_block_chunk % q_block_size or q_block_size % num_cores:
+            raise ValueError("MSA prefill Q block size must divide q_block_chunk and num_cores.")
+
+        if paged_block_table is None:
+            expected_cache_shape = (batch, indexer_n_head, ctx_len, dim)
+            if tuple(index_key_cache.shape) != expected_cache_shape:
+                raise ValueError(
+                    f"MSA prefill index_key_cache shape {tuple(index_key_cache.shape)} != "
+                    f"{expected_cache_shape}."
                 )
-            top_scores, top_order = torch.topk(scores, k=topk, dim=-1)
-            offsets = torch.arange(block_size, device=hidden_states.device).view(1, 1, 1, 1, block_size)
-            indices = torch.gather(block_ids.expand_as(scores).to(torch.int32), -1, top_order)
-            indices = indices.unsqueeze(-1) * block_size + offsets
-            valid = (top_scores.unsqueeze(-1) > -1.0e29) & (indices < ctx_len)
-            valid = valid & (indices <= q_positions[:, None, :, None, None])
-            selected_indices.append(torch.where(valid, indices, torch.zeros_like(indices)))
-            selected_valid.append(valid)
-        token_indices = torch.cat(selected_indices, dim=2).to(torch.int32)
-        token_valid = torch.cat(selected_valid, dim=2)
+        else:
+            if (getattr(blocking_config, "msa_indexer_dp", 1) or 1) != 1 or (getattr(blocking_config, "msa_indexer_cp", 1) or 1) != 1:
+                raise ValueError(
+                    "Paged MSA prefill selection currently requires DP=1 and CP=1."
+                )
+
+        idx_q = self._project_index_q_prefill(hidden_states)[
+            ..., : num_index_heads * dim
+        ]
+        idx_q = idx_q.view(batch, query_len, num_index_heads, dim).transpose(1, 2)
+        idx_k = self.k_proj(hidden_states)[..., : indexer_n_head * dim]
+        idx_k = idx_k.view(batch, query_len, indexer_n_head, dim).transpose(1, 2)
+        idx_q = self.q_norm(idx_q)
+        idx_k = self.k_norm(idx_k)
+        idx_q = self._apply_rope(idx_q, cos[..., :dim], sin[..., :dim])
+        idx_k = self._apply_rope(idx_k, cos[..., :dim], sin[..., :dim])
+        if paged_block_table is None:
+            index_key_cache = M3CtxScatterFunc.apply(
+                index_key_cache, position_ids.to(torch.int32), idx_k
+            )
+        else:
+            index_key_cache = self._write_msa_paged_prefill_cache(
+                index_key_cache,
+                idx_k,
+                position_ids,
+                paged_block_table.unsqueeze(0),
+            )
+
+        kv_block_size = ctx_len // num_kv_blocks
+        index_block_size = cfg.index_block_size
+        num_blocks = ctx_len // index_block_size
+        mask_value = MASKED_ATTENTION_LOGIT
+        topk = min(cfg.index_topk_blocks, num_blocks)
+        topk_indices_chunks: list[torch.Tensor] = []
+        topk_valid_chunks: list[torch.Tensor] = []
+
+        for q_chunk_start in range(0, query_len, q_block_chunk):
+            q_chunk_end = min(q_chunk_start + q_block_chunk, query_len)
+            query_chunk = q_chunk_end - q_chunk_start
+            if query_chunk % q_block_size:
+                raise ValueError(
+                    "MSA prefill query length must be divisible by q_block_size "
+                    "within every q_block_chunk."
+                )
+            score_blocks: list[list[torch.Tensor]] = [
+                [] for _ in range(query_chunk // q_block_size)
+            ]
+            q_chunk = idx_q[:, :, q_chunk_start:q_chunk_end]
+            query_positions = position_ids[:, q_chunk_start:q_chunk_end]
+            q_chunk_position = query_positions.max(dim=-1).values
+            is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+
+            for block_idx in range(num_kv_blocks):
+                start = block_idx * kv_block_size
+                end = start + kv_block_size
+                block_skip_future_chunk = (
+                    torch.tensor(start, device=hidden_states.device)
+                    > q_chunk_position
+                )
+                if blocking_config.skip_kv and not is_export and bool(
+                    block_skip_future_chunk.all().item()
+                ):
+                    # The remaining context blocks are entirely in the
+                    # future for every query in this Q chunk.  Selection
+                    # still needs one score tensor per block so that the
+                    # later top-k and reshape keep the same static layout,
+                    # but no cache gather or matmul is needed.
+                    masked_block = torch.full(
+                        (
+                            batch,
+                            num_index_heads,
+                            q_block_size,
+                            kv_block_size,
+                        ),
+                        mask_value,
+                        dtype=torch.float32,
+                        device=hidden_states.device,
+                    )
+                    for q_block_idx in range(len(score_blocks)):
+                        score_blocks[q_block_idx].extend(
+                            masked_block.clone()
+                            for _ in range(block_idx, num_kv_blocks)
+                        )
+                    break
+                if paged_block_table is None:
+                    key_block = self._read_blocked_k_dp(
+                        index_key_cache,
+                        position_ids.unsqueeze(1),
+                        start,
+                        end, index_block_size, 1, indexer_n_head,
+                    ).squeeze(1).float()
+                else:
+                    key_block = self._read_msa_prefill_paged_block(
+                        index_key_cache,
+                        paged_block_table,
+                        start,
+                        end,
+                        position_ids.max(dim=-1).values,
+                    ).squeeze(1).float()
+                key_offsets = torch.arange(
+                    end - start, device=hidden_states.device
+                ).view(1, 1, 1, -1)
+                for q_block_idx, q_start in enumerate(
+                    range(0, query_chunk, q_block_size)
+                ):
+                    q_block = q_chunk[:, :, q_start : q_start + q_block_size]
+                    q_core = q_block.view(
+                        batch,
+                        num_index_heads,
+                        num_cores,
+                        q_block_size // num_cores,
+                        dim,
+                    ).permute(0, 2, 1, 3, 4)
+                    key_core = key_block.unsqueeze(1).expand(
+                        batch, num_cores, kv_block_size, dim
+                    )
+                    scores = torch.matmul(
+                        q_core.float(),
+                        key_core.transpose(-1, -2).unsqueeze(2),
+                    ).permute(0, 2, 1, 3, 4).reshape(
+                        batch, num_index_heads, q_block_size, kv_block_size
+                    )
+                    q_positions = query_positions[
+                        :, q_start : q_start + q_block_size
+                    ]
+                    causal_mask = key_offsets > (
+                        q_positions[:, None, :, None] - start
+                    )
+                    scores = torch.where(
+                        causal_mask,
+                        _scalar_like(scores, mask_value),
+                        scores,
+                    )
+                    if blocking_config.skip_kv:
+                        scores = torch.where(
+                            (start > q_positions).view(
+                                batch, 1, q_block_size, 1
+                            ),
+                            _scalar_like(scores, mask_value),
+                            scores,
+                        )
+                    score_blocks[q_block_idx].append(scores)
+
+            for q_block_idx in range(len(score_blocks)):
+                scores = torch.cat(score_blocks[q_block_idx], dim=-1)
+                scores = scores.view(
+                    batch,
+                    num_index_heads,
+                    q_block_size,
+                    num_blocks,
+                    index_block_size,
+                ).amax(dim=-1)
+                q_positions = query_positions[
+                    :, q_block_idx * q_block_size : (q_block_idx + 1) * q_block_size
+                ]
+                block_ids = torch.arange(
+                    num_blocks, device=hidden_states.device
+                ).view(1, 1, 1, num_blocks)
+                if blocking_config.skip_kv:
+                    scores = torch.where(
+                        (
+                            block_ids * index_block_size
+                            > q_positions[:, None, :, None]
+                        ),
+                        _scalar_like(scores, mask_value),
+                        scores,
+                    )
+                for local_offset in range(cfg.index_local_blocks):
+                    local_block = q_positions // index_block_size - local_offset
+                    local_block = torch.where(
+                        local_block >= 0,
+                        local_block,
+                        torch.zeros_like(local_block),
+                    )
+                    scores = torch.where(
+                        block_ids == local_block[:, None, :, None],
+                        _scalar_like(scores, -mask_value),
+                        scores,
+                    )
+                top_scores, top_order = torch.topk(scores, k=topk, dim=-1)
+                topk_indices_chunks.append(
+                    torch.gather(
+                        block_ids.expand_as(scores).to(torch.int32),
+                        -1,
+                        top_order,
+                    )
+                )
+                topk_valid_chunks.append(top_scores > (mask_value / 2))
+
+        block_indices = torch.cat(topk_indices_chunks, dim=2)
+        block_valid = torch.cat(topk_valid_chunks, dim=2)
+        safe_indices = torch.where(
+            block_valid, block_indices, torch.zeros_like(block_indices)
+        ).to(torch.int32)
         if not torch.onnx.is_in_onnx_export():
-            self.last_block_indices = token_indices.detach()
-        return token_indices, token_valid
+            self.last_block_indices = safe_indices.detach()
+        past_key_values.index_keys[layer_idx] = index_key_cache
+        return safe_indices, block_valid
 
 
 class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
+    def _msa_attention_prefill(self, query_states, hidden_states, cos, sin, key_cache, value_cache, token_indices, token_valid, position_ids, blocking_config, paged_block_table=None):
+        cfg = self.config
+        batch, _, query_len, head_dim = query_states.shape
+        num_kv_heads = cfg.num_key_value_heads
+        n_rep = self.num_key_value_groups
+        num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
+        if num_cores % num_kv_heads:
+            raise ValueError("Sparse MSA prefill core count must be divisible by num_kv_heads.")
+        # Fold KV heads into the hardware-core axis.  Each KV head owns a
+        # disjoint group of cores, so the query split and the per-head gather
+        # expansion use only this smaller group rather than all device cores.
+        cores_per_kv_head = num_cores // num_kv_heads
+        ql_chunk = blocking_config.msa_q_chunk or getattr(cfg, "msa_q_chunk", None) or query_len
+        kv_num_blocks = max(1, getattr(blocking_config, "num_kv_blocks", None) or getattr(cfg, "msa_kv_blocks", 1) or 1)
+        selected_blocks = int(token_indices.shape[-1])
+        block_size = cfg.index_block_size
+        mask_value = float(MIN_MASKED_ATTENTION_VALUE)
+
+        if query_len % cores_per_kv_head:
+            raise ValueError(
+                "Sparse MSA prefill Q length must be divisible by the "
+                "cores assigned to each KV head."
+            )
+        if kv_num_blocks > selected_blocks:
+            raise ValueError(
+                "Sparse MSA prefill KV block count must not exceed the "
+                "selected block count."
+            )
+
+        q = self.q_norm(
+            self.q_proj(hidden_states).view(
+                batch, query_len, cfg.num_attention_heads, cfg.head_dim
+            )
+        ).transpose(1, 2)
+        k = self.k_norm(
+            self.k_proj(hidden_states).view(
+                batch, query_len, num_kv_heads, cfg.head_dim
+            )
+        ).transpose(1, 2)
+        v = self.v_proj(hidden_states).view(
+            batch, query_len, num_kv_heads, cfg.head_dim
+        ).transpose(1, 2)
+        q, k = qeff_apply_rotary_pos_emb(
+            q,
+            k,
+            cos,
+            sin,
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
+        )
+        if paged_block_table is None:
+            key_cache = M3CtxScatterFunc.apply(
+                key_cache, position_ids.to(torch.int32), k
+            )
+            value_cache = M3CtxScatterFunc.apply(
+                value_cache, position_ids.to(torch.int32), v
+            )
+        else:
+            if (getattr(blocking_config, "msa_attn_dp", 1) or 1) != 1 or (getattr(blocking_config, "msa_attn_cp", 1) or 1) != 1:
+                raise ValueError(
+                    "Paged MSA prefill attention currently requires DP=1 and CP=1."
+                )
+            if paged_block_table.ndim != 2 or paged_block_table.shape[0] != batch:
+                raise ValueError(
+                    "Paged MSA prefill attention block_table must have shape [B, pages]."
+                )
+            expected_paged_shape = (
+                cfg.num_msa_attn_physical_blocks,
+                num_kv_heads,
+                cfg.page_block_size,
+                cfg.head_dim,
+            )
+            if tuple(key_cache.shape) != expected_paged_shape:
+                raise ValueError(
+                    f"Paged MSA prefill key_cache shape {tuple(key_cache.shape)} != "
+                    f"{expected_paged_shape}."
+                )
+            if tuple(value_cache.shape) != expected_paged_shape:
+                raise ValueError(
+                    f"Paged MSA prefill value_cache shape {tuple(value_cache.shape)} != "
+                    f"{expected_paged_shape}."
+                )
+
+        q = q.reshape(
+            batch, num_kv_heads, n_rep, query_len, cfg.head_dim
+        )
+        offsets = torch.arange(
+            block_size, device=hidden_states.device
+        ).view(1, 1, 1, 1, 1, block_size)
+
+        output_chunks: list[torch.Tensor] = []
+        for q_chunk_start in range(0, query_len, ql_chunk):
+            q_chunk_end = min(q_chunk_start + ql_chunk, query_len)
+            query_chunk = q_chunk_end - q_chunk_start
+            if query_chunk % cores_per_kv_head:
+                raise ValueError(
+                    "Every sparse MSA prefill Q chunk must be divisible by "
+                    "the cores assigned to each KV head."
+                )
+            q_per_core = query_chunk // cores_per_kv_head
+
+            # Q, not K, is split across the cores assigned to each KV head.
+            # The [Hkv, C_per_Hkv] axes are folded into the device-core axis
+            # for attention work, while the cache gather keeps Hkv explicit.
+            #   q_core:     [B, Hkv*C_per_Hkv, Q/C_per_Hkv, Hrep, D]
+            #   block_core: [B, Hkv, C_per_Hkv, Q/C_per_Hkv, selected_blocks]
+            q_core = q[:, :, :, q_chunk_start:q_chunk_end].reshape(
+                batch,
+                num_kv_heads,
+                n_rep,
+                cores_per_kv_head,
+                q_per_core,
+                cfg.head_dim,
+            ).permute(0, 1, 3, 4, 2, 5).reshape(
+                batch,
+                num_kv_heads * cores_per_kv_head,
+                q_per_core,
+                n_rep,
+                cfg.head_dim,
+            ).float()
+            block_core = token_indices[
+                :, :, q_chunk_start:q_chunk_end
+            ].reshape(
+                batch,
+                num_kv_heads,
+                cores_per_kv_head,
+                q_per_core,
+                selected_blocks,
+            )
+            block_valid_core = token_valid[
+                :, :, q_chunk_start:q_chunk_end
+            ].reshape(
+                batch,
+                num_kv_heads,
+                cores_per_kv_head,
+                q_per_core,
+                selected_blocks,
+            )
+            query_positions = position_ids[
+                :, q_chunk_start:q_chunk_end
+            ].reshape(batch, 1, cores_per_kv_head, q_per_core, 1)
+            q_head_width = q_per_core * n_rep
+            q_score_work = q_core.reshape(
+                batch * num_kv_heads * cores_per_kv_head * q_per_core,
+                n_rep,
+                cfg.head_dim,
+            )
+
+            m_acc = torch.full(
+                (
+                    batch,
+                    num_kv_heads * cores_per_kv_head,
+                    q_head_width,
+                ),
+                -_FP16_MAX_VALUE,
+                dtype=q_core.dtype,
+                device=q_core.device,
+            )
+            s_acc = torch.zeros_like(m_acc)
+            o_acc = torch.zeros(
+                batch,
+                num_kv_heads * cores_per_kv_head,
+                q_head_width,
+                cfg.head_dim,
+                dtype=q_core.dtype,
+                device=q_core.device,
+            )
+
+            for kv_block_idx in range(kv_num_blocks):
+                # Split only at MSA block boundaries.  Expanding block IDs to
+                # token addresses here keeps the gather working set bounded.
+                selected_start = (
+                    selected_blocks * kv_block_idx
+                ) // kv_num_blocks
+                selected_end = (
+                    selected_blocks * (kv_block_idx + 1)
+                ) // kv_num_blocks
+                selected_block_count = selected_end - selected_start
+                token_count = selected_block_count * block_size
+                selected_block_ids = block_core[..., selected_start:selected_end]
+                selected_positions = (
+                    selected_block_ids.unsqueeze(-1) * block_size + offsets
+                ).reshape(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head,
+                    q_per_core,
+                    token_count,
+                )
+                selected_offsets = offsets.expand(
+                    1,
+                    1,
+                    1,
+                    1,
+                    selected_block_count,
+                    block_size,
+                ).reshape(1, 1, 1, 1, token_count)
+                local_query = (
+                    query_positions.unsqueeze(-2)
+                    - selected_block_ids.unsqueeze(-1) * block_size
+                ).expand(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head,
+                    q_per_core,
+                    selected_block_count,
+                    block_size,
+                ).reshape(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head,
+                    q_per_core,
+                    token_count,
+                )
+                valid_block = block_valid_core[
+                    ..., selected_start:selected_end
+                ].unsqueeze(-1).expand(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head,
+                    q_per_core,
+                    selected_block_count,
+                    block_size,
+                ).reshape(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head,
+                    q_per_core,
+                    token_count,
+                )
+                valid_block = valid_block & (
+                    selected_positions < blocking_config.ctx_len
+                )
+                # Keep the absolute selected positions for the gather, but
+                # express causality as a comparison against the contiguous
+                # offset range inside each selected block.
+                valid_block = valid_block & (
+                    selected_offsets <= local_query
+                )
+                # Prefill selectors return safe in-range block IDs (invalid
+                # entries are zero); validity controls both the gather
+                # sentinel and the attention contribution.
+                # Keep the custom gather's established rank-3 index contract.
+                # QAIC's importer derives its output size from that layout and
+                # can reject a following reshape when given rank-5 indices.
+                # Match the GQA blocked gather contract: export-time invalid
+                # (future or selector-invalid) tokens use the INT32_MAX
+                # sentinel so the compiler can drop their KV reads.  The
+                # validity mask is still applied to the scores below to keep
+                # eager/export numerics identical.
+                invalid_idx_value = (
+                    torch.iinfo(torch.int32).max
+                    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+                    else 0
+                )
+                safe_selected_positions = torch.where(
+                    valid_block,
+                    selected_positions,
+                    _scalar_like(selected_positions, invalid_idx_value),
+                )
+                gather_positions = safe_selected_positions.reshape(
+                    batch,
+                    num_kv_heads,
+                    cores_per_kv_head * q_per_core * token_count,
+                ).to(torch.int32)
+
+                if paged_block_table is None:
+                    key_block = CtxGatherFuncBlockedKV.apply(
+                        key_cache, gather_positions
+                    ).reshape(
+                        batch,
+                        num_kv_heads,
+                        cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).float()
+                    value_block = CtxGatherFuncBlockedKV.apply(
+                        value_cache, gather_positions
+                    ).reshape(
+                        batch,
+                        num_kv_heads,
+                        cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).float()
+                else:
+                    page_ids = token_indices[
+                        :, :, q_chunk_start:q_chunk_end,
+                        selected_start:selected_end,
+                    ].to(torch.int64).reshape(
+                        batch, num_kv_heads, selected_block_count * query_chunk
+                    )
+                    table = paged_block_table.to(torch.int64).unsqueeze(1).expand(
+                        batch, num_kv_heads, paged_block_table.shape[1]
+                    )
+                    physical_ids = torch.gather(table, 2, page_ids)
+                    # Keep the KV-head row explicit in the page gather.  The
+                    # previous batch gather accepted only [B, pages] and then
+                    # returned every head implicitly, which hides the row/head
+                    # split from the compiler.
+                    key_pages = _gather_paged_kv_selected_heads(
+                        key_cache, physical_ids
+                    ).view(
+                        batch,
+                        num_kv_heads,
+                        query_chunk,
+                        token_count,
+                        cfg.head_dim,
+                    )
+                    value_pages = _gather_paged_kv_selected_heads(
+                        value_cache, physical_ids
+                    ).view(
+                        batch,
+                        num_kv_heads,
+                        query_chunk,
+                        token_count,
+                        cfg.head_dim,
+                    )
+                    key_block = key_pages.reshape(
+                        batch,
+                        num_kv_heads,
+                        cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).float()
+                    value_block = value_pages.reshape(
+                        batch,
+                        num_kv_heads,
+                        cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                        cfg.head_dim,
+                    ).float()
+                value_block = torch.where(
+                    valid_block.reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                    ).unsqueeze(-1),
+                    value_block,
+                    _scalar_like(value_block, 0.0),
+                )
+                key_score_work = key_block.reshape(
+                    batch * num_kv_heads * cores_per_kv_head * q_per_core,
+                    token_count,
+                    cfg.head_dim,
+                ).transpose(1, 2)
+                scores_block = torch.bmm(
+                    q_score_work, key_score_work
+                ).reshape(
+                    batch,
+                    num_kv_heads * cores_per_kv_head,
+                    q_per_core,
+                    n_rep,
+                    token_count,
+                ) * (cfg.head_dim**-0.5)
+                attn_block = torch.where(
+                    ~valid_block.reshape(
+                        batch,
+                        num_kv_heads * cores_per_kv_head,
+                        q_per_core,
+                        token_count,
+                    ).unsqueeze(3),
+                    _scalar_like(scores_block, mask_value),
+                    scores_block,
+                ).reshape(
+                    batch,
+                    num_kv_heads * cores_per_kv_head,
+                    q_head_width,
+                    token_count,
+                )
+                m_acc, s_acc, o_acc = update_running_softmax(
+                    m_acc,
+                    attn_block,
+                    s_acc,
+                    o_acc,
+                    value_block,
+                )
+
+            out_chunk = (
+                o_acc / s_acc.clamp_min(1.0).unsqueeze(-1)
+            ).reshape(
+                batch,
+                num_kv_heads,
+                cores_per_kv_head,
+                q_per_core,
+                n_rep,
+                cfg.head_dim,
+            ).permute(0, 1, 4, 2, 3, 5).reshape(
+                batch,
+                cfg.num_attention_heads,
+                query_chunk,
+                cfg.head_dim,
+            )
+            output_chunks.append(out_chunk)
+
+        return (
+            torch.cat(output_chunks, dim=2),
+            key_cache,
+            value_cache,
+        )
+
+
     def _baseline_attention(
         self,
         query_states: torch.Tensor,
@@ -1574,6 +2262,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
+        hidden_states = hidden_states.to(dtype=self.q_proj.weight.dtype)
         query_shape = (*input_shape, self.config.num_attention_heads, self.head_dim)
         key_value_shape = (*input_shape, self.config.num_key_value_heads, self.head_dim)
 
@@ -1582,19 +2271,12 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         value_states = self.v_proj(hidden_states).view(key_value_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
-        # to do - don't use constant, should get from config
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states,
-            key_states,
-            cos,
-            sin,
+            query_states, key_states, cos, sin,
             int(self.head_dim * self.config.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
 
-        cache_kwargs = {
-            "position_ids": position_ids,
-            "batch_index": kwargs.get("batch_index"),
-        }
+        cache_kwargs = {"position_ids": position_ids, "batch_index": kwargs.get("batch_index")}
         if attention_mask is not None:
             cache_kwargs["CCL"] = attention_mask.shape[-1]
 
@@ -1677,22 +2359,15 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 return self.o_proj(attn_output.contiguous()), None
             past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
             if input_shape[1] > 1:
-                selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
-                    self.layer_idx, token_indices, token_valid
+                key_cache = past_key_values.layers[self.layer_idx].keys
+                value_cache = past_key_values.layers[self.layer_idx].values
+                attn_output, key_cache, value_cache = self._msa_attention_prefill(
+                    query_states, hidden_states, cos, sin, key_cache, value_cache, token_indices, token_valid, position_ids, blocking_config
                 )
-                selected_len = token_indices.shape[-2] * token_indices.shape[-1]
-                selected_k = selected_k.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len, self.head_dim)
-                selected_v = selected_v.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len, self.head_dim)
-                selected_k = selected_k.repeat_interleave(self.num_key_value_groups, dim=1)
-                selected_v = selected_v.repeat_interleave(self.num_key_value_groups, dim=1)
-                valid = flat_valid.view(input_shape[0], self.config.num_key_value_heads, input_shape[1], selected_len)
-                valid = valid.repeat_interleave(self.num_key_value_groups, dim=1)
-                q = query_states.unsqueeze(3)
-                scores = torch.matmul(q.float(), selected_k.transpose(-1, -2).float()) * (self.head_dim ** -0.5)
-                scores = scores.masked_fill(~valid.unsqueeze(3), -1.0e30)
-                probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(selected_v.dtype)
-                attn_output = torch.matmul(probs, selected_v).squeeze(3).transpose(1, 2).reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
-                return self.o_proj(attn_output.contiguous()), None
+                attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
+                past_key_values.layers[self.layer_idx].keys = key_cache
+                past_key_values.layers[self.layer_idx].values = value_cache
+                return self.o_proj(attn_output.to(dtype=self.o_proj.weight.dtype).contiguous()), None
             if attn_dp > 1 or attn_cp > 1:
                 dp = cache_kwargs["dp"]
                 batch = input_shape[0]
@@ -2524,7 +3199,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
-        past_seq_len = int(kwargs.get("past_seq_len", prefill_seq_len))
+        past_seq_len = int(kwargs.get("past_seq_len", ctx_len))
         qaic_config = self._qaic_config()
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
         attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)

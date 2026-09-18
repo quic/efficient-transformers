@@ -372,6 +372,9 @@ def build_transformer_blocking_config_for_transform(
         "msa_attn_cp",
         "msa_attn_dp_local_batch_size",
         "indexer_n_head",
+        "indexer_q_size",
+        "indexer_q_chunk",
+        "msa_q_chunk",
         "num_cores_per_device",
     ):
         if qaic_config.get(param) is not None:

@@ -41,6 +41,8 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
     CtxScatterFunc3DInt,
+    M3CtxScatter,
+    M3CtxScatterFunc,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherBlockedKVCB,
@@ -109,6 +111,7 @@ class CustomOpTransform(BaseOnnxTransform):
     _custom_ops: Dict[str, Tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "M3CtxScatterFunc": (M3CtxScatterFunc, M3CtxScatter),
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxScatterFunc3DInt": (CtxScatterFunc3DInt, CtxScatter3DInt),
         "CtxScatterFunc3DGeneralized": (CtxScatterFunc3DGeneralized, CtxScatter3D),
@@ -305,6 +308,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     _SCATTER_OP_TYPES = frozenset(
         {
             "CtxScatter",
+            "M3CtxScatter",
             "CtxScatterCB",
             "CtxScatter3D",
             "CtxScatter3DInt",
