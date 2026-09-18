@@ -100,6 +100,36 @@ def _estimate_layer_stack_gb(
 # ---------------------------------------------------------------------------
 _SENTINEL = CHECKPOINT_PREPARED_SENTINEL
 _LAYER_KEY_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
+_KV_PROJ_RE = re.compile(r"\.self_attn\.(?:k_proj|v_proj)\.(?:weight|bias)$")
+
+
+def _repeat_kv_projection_for_checkpoint(
+    key: str,
+    tensor: torch.Tensor,
+    *,
+    orig_kv_heads: int | None,
+    num_replicate_kv_heads: int,
+) -> torch.Tensor:
+    """Mirror ``ReplicateKVHeadTransform`` for external checkpoint tensors.
+
+    The regular transform expands the in-memory ``k_proj`` and ``v_proj``
+    modules.  Weight-free export does not load those modules, so the same
+    head-wise expansion has to happen while preparing the safetensors files.
+    """
+    if num_replicate_kv_heads <= 1 or orig_kv_heads is None or not _KV_PROJ_RE.search(key):
+        return tensor
+    if tensor.shape[0] % orig_kv_heads != 0:
+        raise ValueError(
+            f"Cannot repeat KV checkpoint tensor {key!r}: shape={tuple(tensor.shape)}, orig_kv_heads={orig_kv_heads}"
+        )
+    # Projection rows are laid out as contiguous head-sized chunks.  Split
+    # the output dimension into original heads, repeat each head in order,
+    # and flatten back to the projection's expected row layout.  This works
+    # for both weights ([out_features, in_features]) and biases ([out_features]).
+    per_head = tensor.shape[0] // orig_kv_heads
+    expanded = tensor.reshape(orig_kv_heads, per_head, *tensor.shape[1:])
+    expanded = torch.repeat_interleave(expanded, num_replicate_kv_heads, dim=0)
+    return expanded.reshape(orig_kv_heads * num_replicate_kv_heads * per_head, *tensor.shape[1:])
 
 
 def _is_within_selected_layers(key: str, selected_layer_count: int | None = None) -> bool:
@@ -926,6 +956,12 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
                         out_tensors[f"{moe_prefix}.down_bias"] = tensor.clone()
                         new_weight_map[f"{moe_prefix}.down_bias"] = shard_name
                     else:
+                        tensor = _repeat_kv_projection_for_checkpoint(
+                            key,
+                            tensor,
+                            orig_kv_heads=kwargs.get("orig_kv_heads"),
+                            num_replicate_kv_heads=int(kwargs.get("num_replicate_kv_heads", 1) or 1),
+                        )
                         out_tensors[key] = tensor
                         new_weight_map[key] = shard_name
 

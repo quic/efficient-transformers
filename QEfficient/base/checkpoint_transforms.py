@@ -162,8 +162,17 @@ class CheckpointTransformPipeline:
         """Apply the first matching transform and return the usable checkpoint directory."""
         src, out = Path(src), Path(out)
         manifest_options = {
+            # These options affect tensor shapes and therefore must be part of
+            # the prepared-checkpoint cache key.  In particular, two exports
+            # with different KV replication settings must not reuse the same
+            # externally prepared weight-free checkpoint.
             key: kwargs[key]
-            for key in ("checkpoint_layout_version", "selected_layer_count")
+            for key in (
+                "checkpoint_layout_version",
+                "selected_layer_count",
+                "num_replicate_kv_heads",
+                "orig_kv_heads",
+            )
             if kwargs.get(key) is not None
         }
 
