@@ -476,10 +476,15 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
     skip_hf_reference = dma_config.get("skip_hf_reference", False)
-    mdp_blocking = dma_config.get("mdp_blocking", False)
+    blocking_mode = dma_config.get("blocking_mode")
     prefill_qaic_config = None
-    if mdp_blocking:
-        prefill_qaic_config = {"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 4, "skip_kv": True}
+    if blocking_mode == "kv":
+        prefill_qaic_config = {
+            "enable_blocking": True,
+            "blocking_mode": blocking_mode,
+            "num_kv_blocks": 4,
+            "skip_kv": True,
+        }
         use_onnx_subfunctions = True
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)

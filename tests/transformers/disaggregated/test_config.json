@@ -124,7 +124,7 @@
         "decode_num_devices": 1,
         "stages": 2,
         "use_onnx_subfunctions": false,
-        "mdp_blocking": true
+        "blocking_mode": "kv"
       }
     ]
   },
@@ -138,7 +138,7 @@
         "decode_num_devices": 1,
         "stages": 2,
         "use_onnx_subfunctions": true,
-        "mdp_blocking": true
+        "blocking_mode": "kv"
       }
     ]
   }
