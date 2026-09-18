@@ -15,6 +15,8 @@ Patches kept here:
     for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
     context managers for dynamo export path subgraph boundary management.
+  - preserve_mixed_export_subfunctions: scoped PyTorch 2.13 non-strict export
+    patch that preserves nested regions and reuses only equivalent FX bodies.
   - preserve_subfunction_source_lines: preserve FX source metadata while Dynamo
     retraces GraphModule subfunctions.
 
@@ -36,6 +38,7 @@ from contextlib import contextmanager
 
 import torch
 import torch.onnx.utils as onnx_utils
+import torch.utils._pytree as pytree
 from torch import _C
 
 try:
@@ -350,31 +353,35 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
-    try:
-        for module in model.modules():
-            if target_classes and not isinstance(module, target_classes):
-                continue
+    # nested_compile_region invokes PyTorch's non-strict HOP compiler. Scope
+    # the mixed-layer fix over the same lifetime as the decoder wrappers so
+    # ordinary eager execution and unrelated exports remain untouched.
+    with preserve_mixed_export_subfunctions():
+        try:
+            for module in model.modules():
+                if target_classes and not isinstance(module, target_classes):
+                    continue
 
-            bound_forward = getattr(module, "forward", None)
-            if bound_forward is None:
-                continue
+                bound_forward = getattr(module, "forward", None)
+                if bound_forward is None:
+                    continue
 
-            wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
-            if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
-                continue
+                wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
+                if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
+                    continue
 
-            previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
-            nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
-            setattr(module, "forward", nested_forward.__get__(module, type(module)))
-            patched_modules.append((module, previous_forward))
+                previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
+                nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
+                setattr(module, "forward", nested_forward.__get__(module, type(module)))
+                patched_modules.append((module, previous_forward))
 
-        yield
-    finally:
-        for module, previous_forward in reversed(patched_modules):
-            if previous_forward is _MISSING_INSTANCE_ATTR:
-                delattr(module, "forward")
-            else:
-                setattr(module, "forward", previous_forward)
+            yield
+        finally:
+            for module, previous_forward in reversed(patched_modules):
+                if previous_forward is _MISSING_INSTANCE_ATTR:
+                    delattr(module, "forward")
+                else:
+                    setattr(module, "forward", previous_forward)
 
 
 @contextmanager
@@ -426,6 +433,121 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
 
 _DYNAMO_ENV_LOCK = threading.RLock()
 _SUBFUNCTION_SOURCE_PATCH_LOCK = threading.RLock()
+_MIXED_EXPORT_PATCH_LOCK = threading.RLock()
+
+
+def _same_export_region(a, b, fake_mode):
+    """Conservatively identify equivalent flat, lifted-input export regions.
+
+    The node-shape checks intentionally reject captured attributes and nested
+    HOPs before delegating semantic comparison to PyTorch. This keeps the
+    QEff-local patch narrower than a general graph canonicalizer.
+    """
+    from torch._dynamo.variables.higher_order_ops import are_same_graph_modules
+
+    if not isinstance(a, torch.fx.GraphModule) or not isinstance(b, torch.fx.GraphModule):
+        return False
+    if a.meta.get("nested_region_config") != b.meta.get("nested_region_config"):
+        return False
+    if len(a.graph.nodes) != len(b.graph.nodes):
+        return False
+
+    for left, right in zip(a.graph.nodes, b.graph.nodes):
+        # Keep captured attributes and nested HOP bodies separate in this first
+        # QEff-local version of the PyTorch candidate.
+        if left.op != right.op or left.op not in {"placeholder", "call_function", "call_method", "output"}:
+            return False
+        if left.op == "placeholder" and not all(
+            isinstance(node.meta.get("example_value"), (torch.Tensor, torch.SymInt)) for node in (left, right)
+        ):
+            return False
+        if pytree.tree_flatten((left.args, left.kwargs))[1] != pytree.tree_flatten((right.args, right.kwargs))[1]:
+            return False
+
+    try:
+        return are_same_graph_modules("non_strict_export", a, b, fake_mode)
+    except (KeyError, NotImplementedError):
+        return False
+
+
+def _invoke_subgraph_for_export(subgraph, *operands):
+    """Invoke an export region in the current proxy trace."""
+    from torch._guards import detect_fake_mode
+    from torch._higher_order_ops.invoke_subgraph import invoke_subgraph_infer
+    from torch.fx.experimental.proxy_tensor import get_proxy_mode
+
+    mode = get_proxy_mode()
+    fake_mode = detect_fake_mode(operands)
+    cache = getattr(mode, "_invoke_subgraph_cache", None) if mode is not None else None
+    if mode is not None and fake_mode is not None and cache is not None:
+        for previous in cache:
+            if _same_export_region(previous, subgraph, fake_mode):
+                subgraph = previous
+                break
+
+    # The inference entrypoint allocates identifiers against the enclosing
+    # proxy trace, avoiding collisions between independently compiled regions.
+    return invoke_subgraph_infer(subgraph, *operands)
+
+
+def _export_region_backend(backend):
+    """Preserve nested regions and deduplicate only equivalent region bodies."""
+
+    def wrapped(gm, example_inputs):
+        for node in gm.graph.nodes:
+            if node.op == "call_function" and node.target is torch.ops.higher_order.invoke_subgraph:
+                node.target = _invoke_subgraph_for_export
+                node.args = (node.args[0], *node.args[2:])
+        gm.recompile()
+        return backend(gm, example_inputs)
+
+    return wrapped
+
+
+def _mixed_export_hop_compile_and_call(fn, args, kwargs):
+    """Compile one nested region without losing its enclosing export identity."""
+    from torch._dynamo.eval_frame import set_fullgraph_compiled_frame_count
+    from torch._higher_order_ops.utils import setup_compilation_env
+
+    # PyTorch's default inner compile may inline a single-use region. Keeping
+    # this disabled preserves the boundary long enough for the outer export
+    # trace to see all decoder layers and reuse equivalent bodies safely.
+    region_context = torch._dynamo.config.patch(inline_single_use_invoke_subgraph=False)
+    with region_context, setup_compilation_env() as backend:
+        old_count = set_fullgraph_compiled_frame_count(0)
+        try:
+            return torch.compile(fn, backend=_export_region_backend(backend), fullgraph=True)(*args, **(kwargs or {}))
+        finally:
+            set_fullgraph_compiled_frame_count(old_count)
+
+
+@contextmanager
+def preserve_mixed_export_subfunctions():
+    """Apply the mixed-layer non-strict export candidate when PyTorch supports it.
+
+    This is intentionally a scoped monkey patch. It targets the private
+    ``_hop_compile_and_call`` hook used by PyTorch 2.13's non-strict exporter;
+    newer PyTorch versions with a different invoke-subgraph implementation are
+    left untouched.
+    """
+    with _MIXED_EXPORT_PATCH_LOCK:
+        try:
+            utils = importlib.import_module("torch._higher_order_ops.utils")
+            original = utils._hop_compile_and_call
+        except (AttributeError, ModuleNotFoundError):
+            # PyTorch versions without this hook have a different
+            # invoke_subgraph implementation and need no QEff patch.
+            yield
+            return
+
+        def patched(fn, args, kwargs=None):
+            return _mixed_export_hop_compile_and_call(fn, args, kwargs)
+
+        utils._hop_compile_and_call = patched
+        try:
+            yield
+        finally:
+            utils._hop_compile_and_call = original
 
 
 @contextmanager
