@@ -2355,7 +2355,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                     attention_block_table,
                     blocking_config,
                 )
-                attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
+                attn_output = attn_output.transpose(1, 2).reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
                 return self.o_proj(attn_output.contiguous()), None
             if input_shape[1] > 1:
                 key_cache = past_key_values.layers[self.layer_idx].keys
@@ -2363,7 +2363,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 attn_output, key_cache, value_cache = self._msa_attention_prefill(
                     query_states, hidden_states, cos, sin, key_cache, value_cache, token_indices, token_valid, position_ids, blocking_config
                 )
-                attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
+                attn_output = attn_output.transpose(1, 2).reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
                 past_key_values.layers[self.layer_idx].keys = key_cache
                 past_key_values.layers[self.layer_idx].values = value_cache
                 return self.o_proj(attn_output.to(dtype=self.o_proj.weight.dtype).contiguous()), None
