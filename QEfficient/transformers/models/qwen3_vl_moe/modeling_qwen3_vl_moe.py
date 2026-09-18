@@ -1153,10 +1153,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         layers = getattr(self.model.language_model, "layers", ())
         blocking_config = getattr(layers[0].self_attn, "attn_blocking_config", None) if layers else None
         if (
@@ -1209,7 +1212,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = grid_height // 4
             vision_size = vision_size * time
-            grid_height = grid_height * time * batch_size
+            grid_height = grid_height * time * vision_batch_size
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
                 assert max_vision_size < ctx_len, (
@@ -1230,7 +1233,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
             vision.append(
                 {
-                    "batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "vision_size": vision_size,
                     "grid_height": grid_height,
                     "grid_width": grid_width,
@@ -1251,7 +1254,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
                 }
 
@@ -1271,7 +1274,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
                 }
 
@@ -1287,7 +1290,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
 
@@ -1303,7 +1306,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
 
@@ -1337,8 +1340,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         batch_axis = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
-            "deepstack_features": {0: "num_feature_layers", 1: "batch_size", 2: "vision_size"},
+            "image_grid_thw": {0: "vision_batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
+            "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
 
         lang_dynamic_axes = {
