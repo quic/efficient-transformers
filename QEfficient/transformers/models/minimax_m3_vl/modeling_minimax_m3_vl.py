@@ -2357,7 +2357,6 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 )
                 attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim)
                 return self.o_proj(attn_output.contiguous()), None
-            past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
             if input_shape[1] > 1:
                 key_cache = past_key_values.layers[self.layer_idx].keys
                 value_cache = past_key_values.layers[self.layer_idx].values
@@ -2369,6 +2368,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 past_key_values.layers[self.layer_idx].values = value_cache
                 return self.o_proj(attn_output.to(dtype=self.o_proj.weight.dtype).contiguous()), None
             if attn_dp > 1 or attn_cp > 1:
+                past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
                 dp = cache_kwargs["dp"]
                 batch = input_shape[0]
                 batch_local = batch // dp
