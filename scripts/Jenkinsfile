@@ -127,11 +127,6 @@ pipeline {
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
-        booleanParam(
-            name: 'FORCE_FULL_CI',
-            defaultValue: false,
-            description: 'Run the complete regression pipeline regardless of the impact plan'
-        )
         string(
             name: 'CI_IMPACT_VALIDATION_PR',
             defaultValue: '',
@@ -220,8 +215,9 @@ pipeline {
                     if (params.CI_IMPACT_LATEST_COMMIT_ONLY && !validationPr) {
                         error('CI_IMPACT_LATEST_COMMIT_ONLY requires CI_IMPACT_VALIDATION_PR')
                     }
-                    def forceFull = params.FORCE_FULL_CI || !prNumber
-                    def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : 'non-PR build'
+                    // Keep the complete regression pipeline enabled while LLM impact selection is disabled.
+                    def forceFull = true
+                    def forceReason = 'full CI globally forced; LLM impact selection disabled'
                     try {
                         if (params.CI_IMPACT_LATEST_COMMIT_ONLY) {
                             if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') != 0) {

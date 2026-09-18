@@ -916,10 +916,13 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
 
         if height is None or width is None:
             height = constants.QWEN2_5_VL_HEIGHT
@@ -962,7 +965,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = grid_height // 4
-            grid_height = grid_height * batch_size
+            grid_height = grid_height * vision_batch_size
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
                 assert max_vision_size < ctx_len, (
@@ -983,7 +986,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
             vision.append(
                 {
-                    "batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "vision_size": vision_size,
                     "grid_height": grid_height,
                     "grid_width": grid_width,
@@ -1001,7 +1004,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "ctx_len": ctx_len,
                     "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
 
                 if continuous_batching:
@@ -1020,7 +1023,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "ctx_len": ctx_len,
                     "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
 
                 if continuous_batching:
@@ -1035,7 +1038,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "vision_size": max_vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
 
             if continuous_batching:
@@ -1050,7 +1053,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": max_vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
 
             if continuous_batching:
@@ -1079,7 +1082,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 2: "grid_h", 3: "grid_w"},
+            "image_grid_thw": {0: "vision_batch_size", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
