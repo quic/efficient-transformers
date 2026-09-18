@@ -708,6 +708,17 @@ def blocked_qkv_attention_forward_prefill_online(
     num_cores = num_cores_per_device if num_cores_per_device is not None else Hkv
     if num_cores > NQH:
         num_cores = Hkv
+    if num_cores <= 0:
+        raise ValueError(f"Invalid number of cores {num_cores}; num_cores must be greater than zero")
+    if num_cores < Hkv:
+        raise ValueError(
+            f"Invalid number of cores {num_cores} for {Hkv} KV heads; num_cores must be at least the number of KV heads"
+        )
+    if num_cores % Hkv != 0:
+        raise ValueError(
+            f"Invalid number of cores {num_cores} for {Hkv} KV heads; "
+            "num_cores must be a multiple of the number of KV heads"
+        )
     if NQH % num_cores != 0:
         raise ValueError(
             f"Invalid number of cores {num_cores} for number of query heads {NQH}, "

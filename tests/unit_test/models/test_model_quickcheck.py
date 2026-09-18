@@ -2236,10 +2236,99 @@ class TestDiffusersNamedSpecializations:
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
 
+# ---------------------------------------------------------------------------
+# Prefill Blocking Configurations
+# ---------------------------------------------------------------------------
+
+
+class _BlockedPrefillCache:
+    def __init__(self, batch_size, num_kv_heads, ctx_len, head_dim):
+        self.key = torch.zeros(batch_size, num_kv_heads, ctx_len, head_dim)
+        self.value = torch.zeros_like(self.key)
+
+    def read_only_blocked_K(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.key[:, :, start_index:end_index, :]
+
+    def read_only_blocked_V(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.value[:, :, start_index:end_index, :]
+
+
+@pytest.mark.parametrize(
+    "num_query_heads, num_kv_groups, num_cores",
+    [
+        (8, 4, 2),
+        (8, 4, 4),
+        (8, 4, 8),
+        (12, 3, 4),
+        (12, 3, 12),
+    ],
+)
+def test_blocked_prefill_online_accepts_valid_num_heads_and_num_cores(num_query_heads, num_kv_groups, num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 1, 4, 1
+    num_kv_heads = num_query_heads // num_kv_groups
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_kv_heads, ctx_len, head_dim)
+
+    output, attention_weights = blocked_qkv_attention_forward_prefill_online(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=1,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        num_cores_per_device=num_cores,
+    )
+
+    assert output.shape == (batch_size, sequence_length, num_query_heads, head_dim)
+
+
+@pytest.mark.parametrize(
+    "num_cores",
+    [
+        0,
+        1,
+        3,
+        6,
+    ],
+)
+def test_blocked_prefill_online_rejects_invalid_num_cores(num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    num_query_heads, num_kv_groups = 8, 4
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(1, num_query_heads, 1, 4)
+
+    with pytest.raises(ValueError):
+        blocked_qkv_attention_forward_prefill_online(
+            module=module,
+            query=query,
+            key=None,
+            value=None,
+            attention_mask=None,
+            scaling=1.0,
+            num_q_blocks=1,
+            num_kv_blocks=1,
+            cache_kwargs={},
+            layer_idx=0,
+            past_key_value=None,
+            ctx_len=1,
+            num_cores_per_device=num_cores,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Layer-wise export (provisional, scheduled for deprecation)
 # ---------------------------------------------------------------------------
+
 
 LAYERWISE_TINY_MODEL_ID = "tiny-random/qwen3-vl-moe"
 LAYERWISE_TINY_MODEL_IDS = {
