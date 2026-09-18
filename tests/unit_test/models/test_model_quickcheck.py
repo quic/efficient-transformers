@@ -217,7 +217,7 @@ MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
 
 
-def _tiny_minimax_m3_text_config(dtype=torch.float32) -> MiniMaxM3VLTextConfig:
+def _tiny_minimax_m3_text_config(dtype=torch.float32, microbench=False) -> MiniMaxM3VLTextConfig:
     config = MiniMaxM3VLTextConfig(
         vocab_size=64,
         hidden_size=32,
@@ -240,12 +240,26 @@ def _tiny_minimax_m3_text_config(dtype=torch.float32) -> MiniMaxM3VLTextConfig:
         index_topk_blocks=2,
         index_local_blocks=1,
     )
+    if microbench:
+        config.num_hidden_layers = 1
+        config.layer_types = ["minimax_m3_sparse"]
+        config.mlp_layer_types = ["dense"]
+        config.head_dim = 32
+        config.max_position_embeddings = 8
+        config.index_head_dim = 16
+        config.index_block_size = 8
+        config.index_topk_blocks = 1
+        config.rope_parameters = {
+            "rope_type": "default",
+            "rope_theta": 5_000_000.0,
+            "partial_rotary_factor": 0.5,
+        }
     config.torch_dtype = dtype
     return config
 
 
-def _tiny_minimax_m3_vlm_config() -> MiniMaxM3VLConfig:
-    text_config = _tiny_minimax_m3_text_config()
+def _tiny_minimax_m3_vlm_config(microbench=False) -> MiniMaxM3VLConfig:
+    text_config = _tiny_minimax_m3_text_config(microbench=microbench)
     vision_config = MiniMaxM3VLVisionConfig(
         hidden_size=16,
         intermediate_size=32,
@@ -4754,3 +4768,241 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
             num_patches=2508,
             kv_offload=True,
         )
+
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+def test_minimax_m3_prefill_decode_hf_pytorch_vs_aic(tmp_path):
+    """Check AIC parity against the original HF MiniMax prefill-to-decode handoff."""
+    torch.manual_seed(7)
+    config = _tiny_minimax_m3_vlm_config()
+    text_config = config.text_config
+    model_hf = MiniMaxM3SparseForConditionalGeneration(config).eval()
+    model_hf_orig = deepcopy(model_hf)
+    qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=True)
+    prefill_len, cache_len = 4, 8
+    input_ids = torch.tensor([[3, 5, 7, 9]], dtype=torch.int64)
+    prefill_positions = torch.arange(prefill_len, dtype=torch.int64).view(1, -1)
+    decode_positions = torch.tensor([[prefill_len]], dtype=torch.int64)
+    vision = torch.zeros((1, 1, text_config.hidden_size))
+    image_idx = torch.zeros((1, 1), dtype=torch.int64)
+    with torch.no_grad():
+        hf_prefill = model_hf_orig.model.language_model(
+            input_ids=input_ids,
+            position_ids=prefill_positions,
+            use_cache=True,
+        )
+        pt_prefill_logits = model_hf_orig.lm_head(hf_prefill.last_hidden_state[:, -1:, :]).float()
+        next_ids = pt_prefill_logits.argmax(dim=-1)
+        hf_decode = model_hf_orig.model.language_model(
+            input_ids=next_ids,
+            position_ids=decode_positions,
+            past_key_values=hf_prefill.past_key_values,
+            use_cache=True,
+        )
+        pt_decode_logits = model_hf_orig.lm_head(hf_decode.last_hidden_state[:, -1:, :]).float()
+
+    def run_stage(qpc_path, stage_input_ids, stage_positions, retained=None):
+        session = QAICInferenceSession(qpc_path)
+        try:
+            def adapt(name, source=None):
+                binding = session.bindings[session.binding_index_map[name]]
+                shape = tuple(binding.dims)
+                dtype = session.aic_to_np_dtype_mapping[binding.type]
+                if source is None:
+                    return np.zeros(shape, dtype=dtype)
+                source = np.asarray(source, dtype=dtype)
+                assert source.size == np.prod(shape), (
+                    f"AIC binding shape mismatch for {name}: {source.shape}, expected {shape}"
+                )
+                return source.reshape(shape)
+
+            inputs = {}
+            for name in session.input_names:
+                if name == "input_ids":
+                    inputs[name] = adapt(name, stage_input_ids.numpy())
+                elif name == "position_ids":
+                    inputs[name] = adapt(name, stage_positions.numpy())
+                elif name == "vision_embeds":
+                    inputs[name] = adapt(name, vision.expand(1, stage_positions.shape[1], -1).numpy())
+                elif name == "image_idx":
+                    inputs[name] = adapt(name, image_idx.numpy())
+                elif name.startswith(("past_key.", "past_value.", "index_key.")):
+                    inputs[name] = adapt(name, retained.get(name) if retained else None)
+                else:
+                    raise AssertionError(f"Unhandled MiniMax AIC input: {name}")
+            return session.run(inputs)
+        finally:
+            session.deactivate()
+
+    def run_ort_stage(onnx_path, stage_input_ids, stage_positions, retained=None):
+        session = _ort_session(Path(onnx_path))
+        input_shapes = {meta.name: tuple(meta.shape) for meta in session.get_inputs()}
+        input_types = {
+            meta.name: np.int64 if meta.type == "tensor(int64)" else np.float32
+            for meta in session.get_inputs()
+        }
+
+        def adapt(name, source=None):
+            shape = input_shapes[name]
+            dtype = input_types[name]
+            if source is None:
+                assert all(isinstance(dim, int) for dim in shape), (
+                    f"ORT input {name} has unresolved shape {shape} without a source tensor"
+                )
+                return np.zeros(shape, dtype=dtype)
+            source = np.asarray(source, dtype=dtype)
+            for expected, actual in zip(shape, source.shape):
+                if isinstance(expected, int):
+                    assert expected == actual, (
+                        f"ORT binding shape mismatch for {name}: {source.shape}, expected {shape}"
+                    )
+            return source
+
+        inputs = {}
+        for name in input_shapes:
+            if name == "input_ids":
+                inputs[name] = adapt(name, stage_input_ids.numpy())
+            elif name == "position_ids":
+                inputs[name] = adapt(name, stage_positions.numpy())
+            elif name == "vision_embeds":
+                inputs[name] = adapt(name, vision.expand(1, stage_positions.shape[1], -1).numpy())
+            elif name == "image_idx":
+                inputs[name] = adapt(name, image_idx.numpy())
+            elif name.startswith(("past_key.", "past_value.")):
+                source = retained.get(name) if retained else np.zeros(
+                    (1, text_config.num_key_value_heads, cache_len, text_config.head_dim)
+                )
+                inputs[name] = adapt(name, source)
+            elif name.startswith("index_key."):
+                source = retained.get(name) if retained else np.zeros(
+                    (1, 1, cache_len, text_config.index_head_dim)
+                )
+                inputs[name] = adapt(name, source)
+            else:
+                raise AssertionError(f"Unhandled MiniMax ORT input: {name}")
+        return dict(zip((output.name for output in session.get_outputs()), session.run(None, inputs)))
+
+    compile_args = dict(
+        ctx_len=cache_len, batch_size=1, num_cores=4, num_devices=1, skip_vision=True,
+        node_precision_info=True,
+        qaic_config={
+            "blocking_mode": "kv_headpar",
+            "num_kv_blocks": 2,
+            "msa_indexer_dp": 1,
+            "msa_indexer_cp": 1,
+            "msa_attn_dp": 1,
+            "indexer_n_head": 1,
+            "num_cores_per_device": 2,
+            "msa_q_chunk": 4,
+        },
+        offload_pt_weights=False,
+    )
+
+    prefill_qpc = qeff_model.compile(
+
+        compile_dir=tmp_path / "minimax-prefill-aic", prefill_seq_len=prefill_len,
+        prefill_only=True, enable_chunking=True, **compile_args
+    )["lang_prefill_qpc_path"]
+    prefill_onnx = Path(qeff_model.lang_model.onnx_path)
+    decode_qpc = qeff_model.compile(
+
+        compile_dir=tmp_path / "minimax-decode-aic", prefill_seq_len=1,
+        prefill_only=False, **compile_args
+    )["lang_decode_qpc_path"]
+    decode_onnx = Path(qeff_model.lang_model.onnx_path)
+
+    ort_prefill = run_ort_stage(prefill_onnx, input_ids, prefill_positions)
+    np.testing.assert_allclose(ort_prefill["logits"], pt_prefill_logits.numpy(), atol=1e-4, rtol=1e-4)
+    ort_retained = {
+        name.removesuffix("_RetainedState"): output
+        for name, output in ort_prefill.items()
+        if name.endswith("_RetainedState")
+    }
+    ort_decode = run_ort_stage(decode_onnx, ort_prefill["logits"].argmax(axis=-1), decode_positions, ort_retained)
+    np.testing.assert_allclose(ort_decode["logits"], pt_decode_logits.numpy(), atol=1e-4, rtol=1e-4)
+
+
+    aic_prefill = run_stage(prefill_qpc, input_ids, prefill_positions)
+    np.testing.assert_allclose(aic_prefill["logits"], pt_prefill_logits.numpy(), atol=1e-2, rtol=1e-2)
+    retained = {
+        name.removesuffix("_RetainedState"): output
+        for name, output in aic_prefill.items()
+        if name.endswith("_RetainedState")
+    }
+    aic_decode = run_stage(decode_qpc, aic_prefill["logits"].argmax(axis=-1), decode_positions, retained)
+    np.testing.assert_allclose(aic_decode["logits"], pt_decode_logits.numpy(), atol=1e-2, rtol=1e-2)
+
+@pytest.mark.llm_model
+def test_minimax_m3_prefill_hf_qeff_pytorch_parity_with_explicit_cache():
+    """Compare HF and QEff PyTorch prefill with identical explicit cache tensors."""
+    torch.manual_seed(7)
+    vlm_config = _tiny_minimax_m3_vlm_config(microbench=True)
+    text_config = vlm_config.text_config
+    model_hf = MiniMaxM3SparseForConditionalGeneration(vlm_config).eval()
+    model_hf_orig = deepcopy(model_hf)
+    qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=True)
+
+    prefill_len, cache_len = 8, 8
+    input_ids = torch.tensor([[3, 5, 7, 9, 11, 13, 15, 17]], dtype=torch.int64)
+    position_ids = torch.arange(prefill_len, dtype=torch.int64).view(1, -1)
+    vision_embeds = torch.zeros((1, prefill_len, text_config.hidden_size))
+    image_idx = torch.zeros((1, 1), dtype=torch.int64)
+    explicit_cache = tuple(
+        (
+            torch.zeros((1, text_config.num_key_value_heads, cache_len, text_config.head_dim)),
+            torch.zeros((1, text_config.num_key_value_heads, cache_len, text_config.head_dim)),
+        )
+        for _ in range(text_config.num_hidden_layers)
+    )
+    explicit_index_keys = [
+        torch.zeros((1, 1, cache_len, text_config.index_head_dim))
+        for layer_type in text_config.layer_types
+        if layer_type == "minimax_m3_sparse"
+    ]
+
+    qeff_model.transform(
+        ctx_len=cache_len,
+        seq_len=prefill_len,
+        bs=1,
+        num_devices=1,
+        num_cores=8,
+        prefill_only=True,
+        prefill_seq_len=prefill_len,
+        qaic_config={
+            "blocking_mode": "kv_headpar",
+            "num_kv_blocks": 1,
+            "msa_indexer_dp": 1,
+            "msa_indexer_cp": 1,
+            "msa_attn_dp": 1,
+            "indexer_n_head": 1,
+            "num_cores_per_device": 8,
+            "msa_q_chunk": 8,
+        },
+    )
+    hf_cache = DynamicCache(config=text_config)
+    # HF has no fixed-capacity cache input; an empty DynamicCache represents the
+    # same logical state as QEff's zero-filled capacity cache before prefill.
+
+    with torch.no_grad():
+        hf_outputs = model_hf_orig.model.language_model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            past_key_values=hf_cache,
+            use_cache=True,
+        )
+        hf_logits = model_hf_orig.lm_head(hf_outputs.last_hidden_state[:, -1:, :]).float()
+        qeff_outputs = qeff_model.lang_model.model(
+            input_ids=input_ids,
+            vision_embeds=vision_embeds,
+            position_ids=position_ids,
+            image_idx=image_idx,
+            past_key_values=explicit_cache,
+            index_keys=explicit_index_keys,
+        )
+
+    np.testing.assert_allclose(
+        qeff_outputs[0].detach().cpu().numpy(),
+        hf_logits.detach().cpu().numpy(),
+        atol=1e-5,
+        rtol=1e-5,
+    )
