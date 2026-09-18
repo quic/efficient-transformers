@@ -542,20 +542,17 @@ class DeduplicateRepeatedSubgraphTransform(BaseOnnxTransform):
             return False
 
         input_dim_signatures = cls._function_input_dim_signatures(model, candidates)
-        active_input_indices = {fn.name: cls._active_input_indices(fn) for _, fn in candidates}
         fingerprint_to_canonical = {}
         duplicate_to_canonical = {}
         functions_to_remove = set()
 
         for _, fn in candidates:
-            fingerprint = cls._function_fingerprint(
-                fn, input_dim_signatures.get(fn.name), active_input_indices.get(fn.name)
-            )
+            fingerprint = cls._function_fingerprint(fn, input_dim_signatures.get(fn.name))
             canonical = fingerprint_to_canonical.get(fingerprint)
             if canonical is None:
                 fingerprint_to_canonical[fingerprint] = fn
                 continue
-            duplicate_to_canonical[fn.name] = (canonical.name, active_input_indices[fn.name])
+            duplicate_to_canonical[fn.name] = canonical.name
             functions_to_remove.add(fn.name)
 
         if not duplicate_to_canonical:
@@ -613,23 +610,13 @@ class DeduplicateRepeatedSubgraphTransform(BaseOnnxTransform):
                     called.add(node.op_type)
         return called
 
-    @classmethod
-    def _active_input_indices(cls, fn: onnx.FunctionProto) -> List[int]:
-        used_names = set(fn.output)
-        for node in cls._iter_all_nodes(fn.node):
-            used_names.update(name for name in node.input if name)
-        return [idx for idx, name in enumerate(fn.input) if name in used_names]
-
     @staticmethod
     def _rewrite_function_calls(nodes, old_to_new) -> None:
         for node in DeduplicateRepeatedSubgraphTransform._iter_all_nodes(nodes):
-            rewrite = old_to_new.get(node.op_type)
-            if rewrite is None:
+            new_op_type = old_to_new.get(node.op_type)
+            if new_op_type is None:
                 continue
-            new_op_type, kept_input_indices = rewrite
-            original_inputs = list(node.input)
             node.op_type = new_op_type
-            node.input[:] = [original_inputs[idx] for idx in kept_input_indices if idx < len(original_inputs)]
 
     @staticmethod
     def _iter_all_nodes(nodes):
@@ -637,32 +624,22 @@ class DeduplicateRepeatedSubgraphTransform(BaseOnnxTransform):
 
     @classmethod
     def _function_fingerprint(
-        cls,
-        fn: onnx.FunctionProto,
-        input_dim_signatures: Optional[Dict[int, tuple]] = None,
-        active_input_indices: Optional[List[int]] = None,
+        cls, fn: onnx.FunctionProto, input_dim_signatures: Optional[Dict[int, tuple]] = None
     ) -> str:
-        active_input_indices = active_input_indices or list(range(len(fn.input)))
-        active_inputs = [fn.input[idx] for idx in active_input_indices]
-        state = cls._new_value_state(active_inputs, active_input_indices)
+        state = cls._new_value_state(fn.input)
         payload = {
             "domain": fn.domain,
-            "inputs": [state["value"](name) for name in active_inputs],
+            "inputs": [state["value"](name) for name in fn.input],
             "outputs": [state["value"](name) for name in fn.output],
             "opsets": sorted((opset.domain, opset.version) for opset in fn.opset_import),
-            "nodes": [
-                node_key
-                for node in fn.node
-                if (node_key := cls._node_key(node, state, input_dim_signatures)) is not None
-            ],
+            "nodes": [cls._node_key(node, state, input_dim_signatures) for node in fn.node],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
-    def _new_value_state(inputs, original_indices=None):
-        original_indices = original_indices or list(range(len(inputs)))
-        input_index = {name: original_idx for name, original_idx in zip(inputs, original_indices)}
+    def _new_value_state(inputs):
+        input_index = {name: idx for idx, name in enumerate(inputs)}
         value_map = {name: f"arg{idx}" for idx, name in enumerate(inputs)}
         counter = {"value": 0}
 
@@ -681,19 +658,17 @@ class DeduplicateRepeatedSubgraphTransform(BaseOnnxTransform):
         return {"value": value, "assign": assign, "input_index": input_index}
 
     @classmethod
-    def _node_key(
-        cls, node: onnx.NodeProto, state, input_dim_signatures: Optional[Dict[int, tuple]] = None
-    ) -> Optional[tuple]:
+    def _node_key(cls, node: onnx.NodeProto, state, input_dim_signatures: Optional[Dict[int, tuple]] = None) -> tuple:
         shape_dim_key = cls._shape_dim_key(node, state, input_dim_signatures)
         if shape_dim_key is not None:
             canonical_output = cls._shape_dim_value_name(shape_dim_key)
             state["assign"](node.output[0], canonical_output)
-            return None
+            return node.domain, "ShapeDim", shape_dim_key
 
         squeezed_shape_dim = cls._squeezed_shape_dim_value(node, state)
         if squeezed_shape_dim is not None:
             state["assign"](node.output[0], squeezed_shape_dim)
-            return None
+            return node.domain, "SqueezeShapeDim", squeezed_shape_dim
 
         return (
             node.domain,

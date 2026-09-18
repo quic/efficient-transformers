@@ -151,37 +151,44 @@ def _make_linear_function(name, input_name="hidden", weight_name="weight", outpu
     )
 
 
-def _make_shape_dim_function(name, *, shape_input, start, end):
-    shape_node = helper.make_node("Shape", inputs=[shape_input], outputs=["dim"], start=start, end=end)
-    reshape_node = helper.make_node("Reshape", inputs=["data", "dim"], outputs=["out"])
+def _make_shape_sequence_function(name, shape_reads):
+    nodes = []
+    squeezed_outputs = []
+    for idx, (shape_input, start, end) in enumerate(shape_reads):
+        dim_output = f"dim_{idx}"
+        squeezed_output = f"size_{idx}"
+        nodes.append(helper.make_node("Shape", inputs=[shape_input], outputs=[dim_output], start=start, end=end))
+        nodes.append(helper.make_node("Squeeze", inputs=[dim_output], outputs=[squeezed_output]))
+        squeezed_outputs.append(squeezed_output)
+    nodes.append(helper.make_node("Add", inputs=squeezed_outputs[:2], outputs=["out"]))
     return helper.make_function(
         domain="",
         fname=name,
         inputs=["data", "cache", "mask"],
         outputs=["out"],
-        nodes=[shape_node, reshape_node],
+        nodes=nodes,
         opset_imports=[helper.make_opsetid("", 17)],
     )
 
 
-def _make_shape_dim_model(fn0, fn1, *, second_cache_dim="ctx_len"):
-    call0 = helper.make_node(fn0.name, inputs=["data0", "cache0", "mask0"], outputs=["out0"])
-    call1 = helper.make_node(fn1.name, inputs=["data1", "cache1", "mask1"], outputs=["out1"])
-    graph_inputs = [
-        helper.make_tensor_value_info("data0", TensorProto.FLOAT, ["ctx_len"]),
-        helper.make_tensor_value_info("cache0", TensorProto.FLOAT, ["batch_size", 2, "ctx_len", 256]),
-        helper.make_tensor_value_info("mask0", TensorProto.BOOL, ["batch_size", 1, 32, "ctx_len"]),
-        helper.make_tensor_value_info("data1", TensorProto.FLOAT, [second_cache_dim]),
-        helper.make_tensor_value_info("cache1", TensorProto.FLOAT, ["batch_size", 2, second_cache_dim, 256]),
-        helper.make_tensor_value_info("mask1", TensorProto.BOOL, ["batch_size", 1, 32, "ctx_len"]),
+def _make_shape_sequence_model(functions):
+    call_nodes = [
+        helper.make_node(fn.name, inputs=[f"data{i}", f"cache{i}", "mask"], outputs=[f"out{i}"])
+        for i, fn in enumerate(functions)
     ]
-    graph_outputs = [
-        helper.make_tensor_value_info("out0", TensorProto.FLOAT, ["ctx_len"]),
-        helper.make_tensor_value_info("out1", TensorProto.FLOAT, [second_cache_dim]),
-    ]
-    graph = helper.make_graph([call0, call1], "g", graph_inputs, graph_outputs)
+    graph_inputs = [helper.make_tensor_value_info("mask", TensorProto.BOOL, ["batch_size", 1, "seq_len", "ctx_len"])]
+    graph_outputs = []
+    for i, node in enumerate(call_nodes):
+        graph_inputs.extend(
+            [
+                helper.make_tensor_value_info(f"data{i}", TensorProto.FLOAT, ["batch_size", "seq_len", 64]),
+                helper.make_tensor_value_info(f"cache{i}", TensorProto.FLOAT, ["batch_size", 2, "ctx_len", 16]),
+            ]
+        )
+        graph_outputs.append(helper.make_tensor_value_info(node.output[0], TensorProto.INT64, None))
+    graph = helper.make_graph(call_nodes, "g", graph_inputs, graph_outputs)
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-    model.functions.extend([fn0, fn1])
+    model.functions.extend(functions)
     return model
 
 
@@ -333,10 +340,10 @@ class TestDeduplicateRepeatedSubgraphTransform:
         assert {fn.name for fn in model.functions} == {"CustomRMSNormFunc", "CustomRMSNormFunc_1"}
         assert [node.op_type for node in model.graph.node] == ["CustomRMSNormFunc", "CustomRMSNormFunc_1"]
 
-    def test_deduplicates_equivalent_symbolic_shape_dim_sources(self):
-        fn0 = _make_shape_dim_function("repeated_subgraph0", shape_input="mask", start=3, end=4)
-        fn1 = _make_shape_dim_function("repeated_subgraph1", shape_input="cache", start=2, end=3)
-        model = _make_shape_dim_model(fn0, fn1)
+    def test_deduplicates_same_order_symbolic_shape_dim_sources(self):
+        fn0 = _make_shape_sequence_function("repeated_subgraph0", [("mask", 3, 4), ("data", 0, 1)])
+        fn1 = _make_shape_sequence_function("repeated_subgraph1", [("cache", 2, 3), ("data", 0, 1)])
+        model = _make_shape_sequence_model([fn0, fn1])
 
         changed = DeduplicateRepeatedSubgraphTransform.apply(model)
 
@@ -344,59 +351,15 @@ class TestDeduplicateRepeatedSubgraphTransform:
         assert [fn.name for fn in model.functions] == ["repeated_subgraph0"]
         assert [node.op_type for node in model.graph.node] == ["repeated_subgraph0", "repeated_subgraph0"]
 
-    def test_keeps_shape_reads_from_different_symbolic_dims(self):
-        fn0 = _make_shape_dim_function("repeated_subgraph0", shape_input="mask", start=3, end=4)
-        fn1 = _make_shape_dim_function("repeated_subgraph1", shape_input="cache", start=2, end=3)
-        model = _make_shape_dim_model(fn0, fn1, second_cache_dim="other_ctx_len")
+    def test_keeps_symbolic_shape_dim_order_distinct(self):
+        fn0 = _make_shape_sequence_function("repeated_subgraph0", [("data", 0, 1), ("mask", 3, 4)])
+        fn1 = _make_shape_sequence_function("repeated_subgraph1", [("cache", 2, 3), ("data", 0, 1)])
+        model = _make_shape_sequence_model([fn0, fn1])
 
         changed = DeduplicateRepeatedSubgraphTransform.apply(model)
 
         assert not changed
         assert {fn.name for fn in model.functions} == {"repeated_subgraph0", "repeated_subgraph1"}
-
-    def test_deduplicates_function_with_unused_formal_input_and_trims_callsite(self):
-        fn0 = helper.make_function(
-            domain="",
-            fname="repeated_subgraph0",
-            inputs=["data", "weight"],
-            outputs=["out"],
-            nodes=[helper.make_node("MatMul", inputs=["data", "weight"], outputs=["out"])],
-            opset_imports=[helper.make_opsetid("", 17)],
-        )
-        fn1 = helper.make_function(
-            domain="",
-            fname="repeated_subgraph1",
-            inputs=["data", "unused_retained_state", "weight"],
-            outputs=["out"],
-            nodes=[helper.make_node("MatMul", inputs=["data", "weight"], outputs=["out"])],
-            opset_imports=[helper.make_opsetid("", 17)],
-        )
-        call0 = helper.make_node("repeated_subgraph0", inputs=["data0", "weight0"], outputs=["out0"])
-        call1 = helper.make_node("repeated_subgraph1", inputs=["data1", "dead_state", "weight1"], outputs=["out1"])
-        graph = helper.make_graph(
-            [call0, call1],
-            "g",
-            [
-                helper.make_tensor_value_info("data0", TensorProto.FLOAT, None),
-                helper.make_tensor_value_info("weight0", TensorProto.FLOAT, None),
-                helper.make_tensor_value_info("data1", TensorProto.FLOAT, None),
-                helper.make_tensor_value_info("dead_state", TensorProto.FLOAT, None),
-                helper.make_tensor_value_info("weight1", TensorProto.FLOAT, None),
-            ],
-            [
-                helper.make_tensor_value_info("out0", TensorProto.FLOAT, None),
-                helper.make_tensor_value_info("out1", TensorProto.FLOAT, None),
-            ],
-        )
-        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-        model.functions.extend([fn0, fn1])
-
-        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
-
-        assert changed
-        assert [fn.name for fn in model.functions] == ["repeated_subgraph0"]
-        assert [node.op_type for node in model.graph.node] == ["repeated_subgraph0", "repeated_subgraph0"]
-        assert list(model.graph.node[1].input) == ["data1", "weight1"]
 
     def test_pipeline_order_dedupes_before_rename(self):
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2)
