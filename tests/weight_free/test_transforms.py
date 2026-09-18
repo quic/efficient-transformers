@@ -32,6 +32,8 @@ from transformers import LlamaConfig, LlamaForCausalLM
 
 from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_MANIFEST, CheckpointTransformPipeline
 from QEfficient.base.onnx_transforms import (
+    DeduplicateRepeatedSubgraphTransform,
+    OnnxTransformPipeline,
     PreserveNestedCacheRetainedStateTransform,
     PruneFakeInitializersTransform,
     RenameRepeatedSubgraphTransform,
@@ -132,6 +134,73 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
     for fn in functions:
         model.functions.append(fn)
+    return model
+
+
+def _make_function_model(functions):
+    call_nodes = [
+        helper.make_node(fn.name, inputs=[f"x{i}", f"w{i}"], outputs=[f"y{i}"]) for i, fn in enumerate(functions)
+    ]
+    graph_inputs = [
+        helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for node in call_nodes for name in node.input
+    ]
+    graph_outputs = [helper.make_tensor_value_info(node.output[0], TensorProto.FLOAT, None) for node in call_nodes]
+    graph = helper.make_graph(call_nodes, "g", graph_inputs, graph_outputs)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.functions.extend(functions)
+    return model
+
+
+def _make_linear_function(name, input_name="hidden", weight_name="weight", output_name="out", node_name="matmul"):
+    node = helper.make_node("MatMul", inputs=[input_name, weight_name], outputs=[output_name], name=node_name)
+    return helper.make_function(
+        domain="",
+        fname=name,
+        inputs=[input_name, weight_name],
+        outputs=[output_name],
+        nodes=[node],
+        opset_imports=[helper.make_opsetid("", 17)],
+    )
+
+
+def _make_shape_sequence_function(name, shape_reads):
+    nodes = []
+    squeezed_outputs = []
+    for idx, (shape_input, start, end) in enumerate(shape_reads):
+        dim_output = f"dim_{idx}"
+        squeezed_output = f"size_{idx}"
+        nodes.append(helper.make_node("Shape", inputs=[shape_input], outputs=[dim_output], start=start, end=end))
+        nodes.append(helper.make_node("Squeeze", inputs=[dim_output], outputs=[squeezed_output]))
+        squeezed_outputs.append(squeezed_output)
+    nodes.append(helper.make_node("Add", inputs=squeezed_outputs[:2], outputs=["out"]))
+    return helper.make_function(
+        domain="",
+        fname=name,
+        inputs=["data", "cache", "mask"],
+        outputs=["out"],
+        nodes=nodes,
+        opset_imports=[helper.make_opsetid("", 17)],
+    )
+
+
+def _make_shape_sequence_model(functions):
+    call_nodes = [
+        helper.make_node(fn.name, inputs=[f"data{i}", f"cache{i}", "mask"], outputs=[f"out{i}"])
+        for i, fn in enumerate(functions)
+    ]
+    graph_inputs = [helper.make_tensor_value_info("mask", TensorProto.BOOL, ["batch_size", 1, "seq_len", "ctx_len"])]
+    graph_outputs = []
+    for i, node in enumerate(call_nodes):
+        graph_inputs.extend(
+            [
+                helper.make_tensor_value_info(f"data{i}", TensorProto.FLOAT, ["batch_size", "seq_len", 64]),
+                helper.make_tensor_value_info(f"cache{i}", TensorProto.FLOAT, ["batch_size", 2, "ctx_len", 16]),
+            ]
+        )
+        graph_outputs.append(helper.make_tensor_value_info(node.output[0], TensorProto.INT64, None))
+    graph = helper.make_graph(call_nodes, "g", graph_inputs, graph_outputs)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.functions.extend(functions)
     return model
 
 
@@ -693,6 +762,101 @@ class TestPreserveNestedCacheRetainedStateTransform:
         PreserveNestedCacheRetainedStateTransform.apply(model)
         fn = model.functions[0]
         assert len(fn.output) == 1, f"Function with 1 scatter should not have outputs added, got {list(fn.output)}"
+
+
+# ---------------------------------------------------------------------------
+# TestDeduplicateRepeatedSubgraphTransform
+# ---------------------------------------------------------------------------
+
+
+class TestDeduplicateRepeatedSubgraphTransform:
+    def test_deduplicates_identical_repeated_subgraphs(self):
+        fn0 = _make_linear_function("repeated_subgraph0")
+        fn1 = _make_linear_function("repeated_subgraph1", input_name="layer1_hidden", weight_name="layer1_weight")
+        model = _make_function_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert changed
+        assert [fn.name for fn in model.functions] == ["repeated_subgraph0"]
+        assert [node.op_type for node in model.graph.node] == ["repeated_subgraph0", "repeated_subgraph0"]
+
+    def test_keeps_distinct_repeated_subgraph_structures(self):
+        fn0 = _make_linear_function("repeated_subgraph0")
+        fn1 = helper.make_function(
+            domain="",
+            fname="repeated_subgraph1",
+            inputs=["hidden", "weight"],
+            outputs=["out"],
+            nodes=[helper.make_node("Add", inputs=["hidden", "weight"], outputs=["out"])],
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        model = _make_function_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert not changed
+        assert {fn.name for fn in model.functions} == {"repeated_subgraph0", "repeated_subgraph1"}
+
+    def test_ignores_node_names_and_formal_value_names(self):
+        fn0 = _make_linear_function("subgraph_0", input_name="a", weight_name="b", output_name="c", node_name="layer0")
+        fn1 = _make_linear_function("subgraph_1", input_name="x", weight_name="y", output_name="z", node_name="layer1")
+        model = _make_function_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert changed
+        assert [fn.name for fn in model.functions] == ["subgraph_0"]
+        assert [node.op_type for node in model.graph.node] == ["subgraph_0", "subgraph_0"]
+
+    def test_does_not_touch_custom_op_functions(self):
+        fn0 = _make_linear_function("CustomRMSNormFunc")
+        fn1 = _make_linear_function("CustomRMSNormFunc_1", input_name="x", weight_name="scale", output_name="y")
+        model = _make_function_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert not changed
+        assert {fn.name for fn in model.functions} == {"CustomRMSNormFunc", "CustomRMSNormFunc_1"}
+        assert [node.op_type for node in model.graph.node] == ["CustomRMSNormFunc", "CustomRMSNormFunc_1"]
+
+    def test_deduplicates_same_order_symbolic_shape_dim_sources(self):
+        fn0 = _make_shape_sequence_function("repeated_subgraph0", [("mask", 3, 4), ("data", 0, 1)])
+        fn1 = _make_shape_sequence_function("repeated_subgraph1", [("cache", 2, 3), ("data", 0, 1)])
+        model = _make_shape_sequence_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert changed
+        assert [fn.name for fn in model.functions] == ["repeated_subgraph0"]
+        assert [node.op_type for node in model.graph.node] == ["repeated_subgraph0", "repeated_subgraph0"]
+
+    def test_keeps_symbolic_shape_dim_order_distinct(self):
+        fn0 = _make_shape_sequence_function("repeated_subgraph0", [("data", 0, 1), ("mask", 3, 4)])
+        fn1 = _make_shape_sequence_function("repeated_subgraph1", [("cache", 2, 3), ("data", 0, 1)])
+        model = _make_shape_sequence_model([fn0, fn1])
+
+        changed = DeduplicateRepeatedSubgraphTransform.apply(model)
+
+        assert not changed
+        assert {fn.name for fn in model.functions} == {"repeated_subgraph0", "repeated_subgraph1"}
+
+    def test_pipeline_order_dedupes_before_rename(self):
+        model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2)
+        pipeline = OnnxTransformPipeline(
+            transforms=[
+                PreserveNestedCacheRetainedStateTransform,
+                DeduplicateRepeatedSubgraphTransform,
+                RenameRepeatedSubgraphTransform,
+            ]
+        )
+
+        model, changed = pipeline.apply(model, target_classnames=["QEffLlamaDecoderLayer"])
+
+        assert changed
+        fn_names = [fn.name for fn in model.functions]
+        assert fn_names == ["QEffLlamaDecoderLayer"]
+        assert [node.op_type for node in model.graph.node] == ["QEffLlamaDecoderLayer", "QEffLlamaDecoderLayer"]
 
 
 # ---------------------------------------------------------------------------
