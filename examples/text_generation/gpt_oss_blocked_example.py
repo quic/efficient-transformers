@@ -13,17 +13,26 @@ from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
+BLOCKING_MODE_REQUIRED_ARGS = {
+    "kv": ("num_kv_blocks",),
+    "kv_headpar": ("num_kv_blocks",),
+    "q": ("num_q_blocks",),
+    "h": ("head_block_size",),
+    "qkv": ("num_kv_blocks", "num_q_blocks"),
+    "hkv": ("head_block_size", "num_kv_blocks"),
+    "hqkv": ("head_block_size", "num_kv_blocks", "num_q_blocks"),
+    "bhqkv": ("head_block_size", "num_kv_blocks", "num_q_blocks", "num_batch_blocks"),
+}
+
 
 def build_blocking_config(args):
     blocking_mode = args.blocking_mode.lower()
-    qaic_config = {
-        "blocking_mode": blocking_mode,
-        "num_q_blocks": args.num_q_blocks,
-        "num_kv_blocks": args.num_kv_blocks,
-        "head_block_size": args.head_block_size,
-    }
-    if blocking_mode == "bhqkv":
-        qaic_config["num_batch_blocks"] = args.num_batch_blocks
+    if blocking_mode not in BLOCKING_MODE_REQUIRED_ARGS:
+        raise ValueError(f"Unsupported blocking mode: {args.blocking_mode}")
+
+    qaic_config = {"blocking_mode": blocking_mode}
+    for arg_name in BLOCKING_MODE_REQUIRED_ARGS[blocking_mode]:
+        qaic_config[arg_name] = getattr(args, arg_name)
     return qaic_config
 
 
@@ -66,8 +75,10 @@ def main():
         default="q",
         help="Blocking mode, valid options: kv, kv_headpar, q, h, qkv, hkv, hqkv, bhqkv",
     )
-    parser.add_argument("--num-q-blocks", type=int, default=2, help="Number of query blocks for q/qkv/hqkv modes")
-    parser.add_argument("--num-kv-blocks", type=int, default=2, help="Number of KV blocks for kv/qkv/hkv/hqkv modes")
+    parser.add_argument("--num-q-blocks", type=int, default=2, help="Number of query blocks for q/qkv/hqkv/bhqkv modes")
+    parser.add_argument(
+        "--num-kv-blocks", type=int, default=2, help="Number of KV blocks for kv/kv_headpar/qkv/hkv/hqkv/bhqkv modes"
+    )
     parser.add_argument("--head-block-size", type=int, default=16, help="Number of attention heads per head block")
     parser.add_argument("--num-batch-blocks", type=int, default=1, help="Number of batch blocks for bhqkv mode")
     parser.add_argument("--num-devices", type=int, default=4, help="Number of devices to compile for")
@@ -89,11 +100,7 @@ def main():
     qaic_config = build_blocking_config(args)
     print(
         "Blocking config: "
-        f"mode={qaic_config['blocking_mode']}, "
-        f"num_q_blocks={qaic_config['num_q_blocks']}, "
-        f"num_kv_blocks={qaic_config['num_kv_blocks']}, "
-        f"head_block_size={qaic_config['head_block_size']}, "
-        f"num_batch_blocks={qaic_config.get('num_batch_blocks')}, "
+        f"qaic_config={qaic_config}, "
         f"attention_heads={config.num_attention_heads}, "
         f"kv_heads={config.num_key_value_heads}"
     )

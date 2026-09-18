@@ -12,6 +12,28 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
+BLOCKING_MODE_REQUIRED_ARGS = {
+    "kv": ("num_kv_blocks",),
+    "q": ("num_q_blocks",),
+    "h": ("head_block_size",),
+    "qkv": ("num_kv_blocks", "num_q_blocks"),
+    "hq": ("head_block_size", "num_q_blocks"),
+    "hkv": ("head_block_size", "num_kv_blocks"),
+    "hqkv": ("head_block_size", "num_kv_blocks", "num_q_blocks"),
+    "bhqkv": ("head_block_size", "num_kv_blocks", "num_q_blocks", "num_batch_blocks"),
+}
+
+
+def build_blocking_config(args):
+    blocking_mode = args.blocking_mode.lower()
+    if blocking_mode not in BLOCKING_MODE_REQUIRED_ARGS:
+        raise ValueError(f"Unsupported blocking mode: {args.blocking_mode}")
+
+    qaic_config = {"blocking_mode": blocking_mode}
+    for arg_name in BLOCKING_MODE_REQUIRED_ARGS[blocking_mode]:
+        qaic_config[arg_name] = getattr(args, arg_name)
+    return qaic_config
+
 
 def assert_generated_tokens_match(reference_exec_info, blocked_exec_info, label):
     reference_ids = np.asarray(reference_exec_info.generated_ids)
@@ -57,7 +79,7 @@ def main():
         "--blocking-mode",
         type=str,
         default="hqkv",
-        help="Blocking mode, valid options: kv, q, h, qkv, hqkv, bhqkv",
+        help="Blocking mode, valid options: kv, q, h, qkv, hq, hkv, hqkv, bhqkv",
     )
     parser.add_argument(
         "--compare-non-blocking",
@@ -90,14 +112,9 @@ def main():
         print(f"\nPrompt: {args.prompt}")
         print(f"Generated: {exec_info.generated_texts[0]}")
 
-    # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {
-        "blocking_mode": args.blocking_mode,
-        "num_batch_blocks": args.num_batch_blocks,
-        "num_kv_blocks": args.num_kv_blocks,
-        "num_q_blocks": args.num_q_blocks,
-        "head_block_size": args.head_block_size,
-    }
+    # setup qaic config to enable blocking, with mode-specific block parameters
+    qaic_config = build_blocking_config(args)
+    print(f"Blocking config: qaic_config={qaic_config}")
     model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers)
 
     # Compile the model
