@@ -440,7 +440,7 @@ def _compile_disagg_sessions(
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
-        mxfp6_matmul=False,
+        mxfp6_matmul=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mdp_num_partitions=stages,

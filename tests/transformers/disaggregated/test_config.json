@@ -123,7 +123,7 @@
         "prefill_num_devices": 2,
         "decode_num_devices": 1,
         "stages": 2,
-        "use_onnx_subfunctions": false,
+        "use_onnx_subfunctions": true,
         "blocking_mode": "kv"
       }
     ]
