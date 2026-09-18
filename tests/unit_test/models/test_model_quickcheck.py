@@ -2236,6 +2236,7 @@ class TestDiffusersNamedSpecializations:
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
 
+
 # ---------------------------------------------------------------------------
 # Prefill Blocking Configurations
 # ---------------------------------------------------------------------------
