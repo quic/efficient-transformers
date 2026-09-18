@@ -83,9 +83,6 @@ def _remainder_with_symbolic_divisor(value: torch.Tensor, divisor) -> torch.Tens
     return torch.remainder(value, divisor_tensor)
 
 
-def _clone_if_dynamo_compiling(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.clone() if torch._dynamo.is_compiling() else tensor
-
 
 def read_kv_cache_with_indices(
     key_cache: torch.Tensor,
@@ -1149,8 +1146,8 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         self.append_new_layers(layer_idx)
         layer = self.layers[layer_idx]
         if layer.keys is None:
-            layer.keys = _clone_if_dynamo_compiling(key_states)
-            layer.values = _clone_if_dynamo_compiling(value_states)
+            layer.keys = key_states
+            layer.values = value_states
             layer._mark_initialized(layer.keys)
         else:
             layer._mark_initialized(layer.keys)
@@ -1211,15 +1208,11 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                         batch_local, rows, query_len, head_dim
                     ),
                 ).reshape(batch_local * rows, query_len, head_dim)
-                layer.keys = _clone_if_dynamo_compiling(
-                    ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(
-                        batch_local, rows, local_ctx_len, head_dim
-                    )
+                layer.keys = ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(
+                    batch_local, rows, local_ctx_len, head_dim
                 )
-                layer.values = _clone_if_dynamo_compiling(
-                    ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(
-                        batch_local, rows, local_ctx_len, head_dim
-                    )
+                layer.values = ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(
+                    batch_local, rows, local_ctx_len, head_dim
                 )
                 layer._mark_initialized(layer.keys)
                 return
@@ -1249,8 +1242,8 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
             addr = addr.to(dtype=torch.int32, device=key_cache.device)
             key_cache = ctx_paged_scatter_dp(key_cache, block_id, addr, key_states)
             value_cache = ctx_paged_scatter_dp(value_cache, block_id, addr, value_states)
-            layer.keys = _clone_if_dynamo_compiling(key_cache.reshape(batch, hkv, -1, head_dim))
-            layer.values = _clone_if_dynamo_compiling(value_cache.reshape(batch, hkv, -1, head_dim))
+            layer.keys = key_cache.reshape(batch, hkv, -1, head_dim)
+            layer.values = value_cache.reshape(batch, hkv, -1, head_dim)
             layer._mark_initialized(layer.keys)
 
     def update_index_key_cache(
@@ -1261,7 +1254,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
     ) -> torch.Tensor:
         """Scatter idx_k into the index key cache and return all ctx_len gathered index keys."""
         gathered, updated = update_and_read_index_key_cache(self.index_keys.get(layer_idx), position_ids, idx_k)
-        self.index_keys[layer_idx] = _clone_if_dynamo_compiling(updated)
+        self.index_keys[layer_idx] = updated
         return gathered
 
     def read_kv_with_block_indices(
