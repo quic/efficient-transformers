@@ -471,8 +471,6 @@ def blocked_kv_attention_forward_headpar_offline(
             HEADPAR_MASKED_ATTENTION_VALUE,
         )
 
-        attn_weights_block = attn_weights_block.masked_fill(causal_mask, HEADPAR_MASKED_ATTENTION_VALUE)
-
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -710,6 +708,11 @@ def blocked_qkv_attention_forward_prefill_online(
     num_cores = num_cores_per_device if num_cores_per_device is not None else Hkv
     if num_cores > NQH:
         num_cores = Hkv
+    if NQH % num_cores != 0:
+        raise ValueError(
+            f"Invalid number of cores {num_cores} for number of query heads {NQH}, "
+            "should be able to evenly distribute number of query heads across number of cores"
+        )
     kv_repeat = num_cores // Hkv
     n_rep_per_core = NQH // num_cores
     skip_kv = kwargs.get("skip_kv", False)
