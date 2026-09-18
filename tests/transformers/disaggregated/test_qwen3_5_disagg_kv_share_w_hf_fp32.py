@@ -485,7 +485,6 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
             "num_kv_blocks": 4,
             "skip_kv": True,
         }
-        use_onnx_subfunctions = True
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
