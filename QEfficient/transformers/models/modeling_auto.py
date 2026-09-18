@@ -4074,7 +4074,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = block_size * max_blocks
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
             supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
-            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if supports_paged_attention else seq_len
+
+            seq_len = kv_block_size = (
+                -(-blocking_kwargs.ctx_len // num_kv_blocks) if supports_paged_attention else seq_len
+            )
 
         # TODO: Remove this hack ##################
         if dynamo:
