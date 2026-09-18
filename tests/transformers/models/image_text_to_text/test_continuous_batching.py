@@ -253,7 +253,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_width = images[0].width
         compile_kwargs.update(
             {
-                "prefill_seq_len": 1,
                 "image_height": image_height,
                 "image_width": image_width,
             }
