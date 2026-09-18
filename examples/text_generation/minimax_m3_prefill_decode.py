@@ -350,13 +350,11 @@ def main():
             prefill_state[f"past_key.{layer_idx}"] = prefill_output[f"past_key.{layer_idx}_RetainedState"]
             prefill_state[f"past_value.{layer_idx}"] = prefill_output[f"past_value.{layer_idx}_RetainedState"]
     prefill_session.deactivate()
-    exit(0)
     decode_session = QAICInferenceSession(decode_qpc_path)
     decode_session.activate()
     last_position = np.max(np_inputs["position_ids"], axis=-1, keepdims=True)
-    last_indices = (last_position[:, 0] % args.prefill_seq_len).astype(np.int64)
-    batch_indices = np.arange(execution_batch_size)
-    next_tokens = np.argmax(prefill_output["logits"][batch_indices, last_indices], axis=-1, keepdims=True).astype(np_inputs["input_ids"].dtype)
+    # MiniMax exports prefill logits for the last valid position as [batch, 1, vocab].
+    next_tokens = np.argmax(prefill_output["logits"], axis=-1).astype(np_inputs["input_ids"].dtype)
     decode_inputs = {"input_ids": next_tokens, "position_ids": last_position + 1}
     for layer_idx in range(config.text_config.num_hidden_layers):
         decode_inputs[f"past_key.{layer_idx}"] = prefill_output[f"past_key.{layer_idx}_RetainedState"]
