@@ -7,14 +7,16 @@
 
 import argparse
 import math
+import numpy as np
 import os
 import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoTokenizer, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 MODEL_ID = "MiniMaxAI/MiniMax-M3"
 
@@ -28,6 +30,9 @@ def _expand_batch(inputs, batch_size: int):
         else:
             expanded[name] = value
     return expanded
+
+
+
 
 
 def _execution_batch_size(batch_size: int, msa_indexer_dp: int, msa_attn_dp: int) -> int:
@@ -49,6 +54,7 @@ def _run_pytorch_parity_test(
     msa_attn_dp: int = 1,
     indexer_n_head: int = 1,
     num_cores_per_device: int = 16,
+    msa_q_chunk: int = 64,
     batch_size: int = 1,
 ) -> None:
     """Compare HF PyTorch vs AIC on the last decode token of the prompt (prefill_seq_len=1)."""
@@ -122,12 +128,14 @@ def _run_pytorch_parity_test(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MiniMax-M3 text-only prefill followed by decode.")
+    parser = argparse.ArgumentParser(
+        description="Export and compile separate MiniMax-M3 prefill and decode QPCs for disaggregated serving."
+    )
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--ctx-len", type=int, default=4096)
+    parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
-    parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument(
         "--prefill-seq-len",
         type=int,
@@ -142,7 +150,6 @@ def main():
     )
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--num-layers", type=int, default=None)
-    parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--expert-parallel-chunk-size",
         type=int,
@@ -187,6 +194,12 @@ def main():
         help="Number of KV heads used by the MSA indexer in the DP path.",
     )
     parser.add_argument(
+        "--msa-q-chunk",
+        type=int,
+        default=64,
+        help="MSA prefill attention query chunk size.",
+    )
+    parser.add_argument(
         "--num-cores-per-device",
         type=int,
         default=8,
@@ -223,6 +236,7 @@ def main():
                 msa_attn_dp=args.msa_attn_dp,
                 indexer_n_head=args.indexer_n_head,
                 num_cores_per_device=args.num_cores_per_device,
+                msa_q_chunk=args.msa_q_chunk,
                 batch_size=args.batch_size,
             )
         return
@@ -237,10 +251,8 @@ def main():
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id, **factory_kwargs)
     print(f"[timing] model load:          {time.perf_counter() - t0:.2f}s")
 
-    t0 = time.perf_counter()
-    qpc_paths = qeff_model.compile(
+    common_compile_kwargs = dict(
         batch_size=execution_batch_size,
-        prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
@@ -249,7 +261,10 @@ def main():
         use_onnx_subfunctions=True,
         skip_vision=True,
         offload_pt_weights=False,
+        node_precision_info=True,
         log_times=True,
+        retain_full_kv=True,
+        split_model_io=True,
         qaic_config={
             "blocking_mode": "kv_headpar",
             "num_kv_blocks": 2,
@@ -258,6 +273,7 @@ def main():
             "msa_attn_dp": args.msa_attn_dp,
             "indexer_n_head": args.indexer_n_head,
             "num_cores_per_device": args.num_cores_per_device,
+            "msa_q_chunk": args.msa_q_chunk,
             "moe_config": {
                 "flavour": "expert_parallel",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
@@ -266,41 +282,98 @@ def main():
             },
         },
     )
-    print(f"[timing] compile total:       {time.perf_counter() - t0:.2f}s")
-    print(f"QPC paths: {qpc_paths}")
 
-    if args.skip_generate:
-        return
+    t0 = time.perf_counter()
+    prefill_qpc_paths = qeff_model.compile(
+        prefill_seq_len=args.prefill_seq_len,
+        prefill_only=True,
+        enable_chunking=True,
+        **common_compile_kwargs,
+    )
+    prefill_qpc_path = prefill_qpc_paths["lang_prefill_qpc_path"]
+    print(f"[timing] prefill export + compile: {time.perf_counter() - t0:.2f}s")
+    print(f"Prefill QPC path: {prefill_qpc_path}")
+
+    t0 = time.perf_counter()
+    decode_qpc_paths = qeff_model.compile(
+        prefill_seq_len=1,
+        prefill_only=False,
+        **common_compile_kwargs,
+    )
+    decode_qpc_path = decode_qpc_paths["lang_decode_qpc_path"]
+    print(f"[timing] decode export + compile:  {time.perf_counter() - t0:.2f}s")
+    print(f"Decode QPC path: {decode_qpc_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
-
-    messages = [
-        [
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": args.prompt}],
-            }
-        ]
-    ]
-    inputs = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
+    messages = [[{"role": "user", "content": [{"type": "text", "text": args.prompt}]}]]
+    model_inputs = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt"
     )
-    inputs = _expand_batch(inputs, execution_batch_size)
-    t0 = time.perf_counter()
-    output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len)
-    generate_time = time.perf_counter() - t0
+    model_inputs = _expand_batch(model_inputs, execution_batch_size)
+    model_inputs = qeff_model.model.prepare_inputs_for_generation(
+        input_ids=model_inputs["input_ids"],
+        attention_mask=model_inputs.get("attention_mask"),
+        position_ids=model_inputs.get("position_ids"),
+        prefill_seq_len=args.prefill_seq_len,
+        batch_size=execution_batch_size,
+    )
+    input_len = model_inputs["input_ids"].shape[1]
+    num_chunks = (input_len + args.prefill_seq_len - 1) // args.prefill_seq_len
+    padded_len = num_chunks * args.prefill_seq_len
+    pad_len = padded_len - input_len
+    model_inputs["input_ids"] = torch.nn.functional.pad(model_inputs["input_ids"], (0, pad_len), value=0)
+    if "attention_mask" in model_inputs:
+        model_inputs["attention_mask"] = torch.nn.functional.pad(
+            model_inputs["attention_mask"], (0, pad_len), value=0
+        )
+    if "attention_mask" in model_inputs:
+        model_inputs["position_ids"] = torch.where(
+            model_inputs["attention_mask"].bool(),
+            torch.arange(padded_len).unsqueeze(0),
+            torch.full((execution_batch_size, padded_len), -1),
+        )
+    elif "position_ids" not in model_inputs:
+        model_inputs["position_ids"] = torch.arange(padded_len).unsqueeze(0).expand(execution_batch_size, -1)
+    elif model_inputs["position_ids"].shape[-1] != padded_len:
+        model_inputs["position_ids"] = torch.nn.functional.pad(model_inputs["position_ids"], (0, pad_len), value=-1)
+    np_inputs = {key: value.detach().cpu().numpy() for key, value in model_inputs.items() if torch.is_tensor(value)}
+    np_inputs.pop("attention_mask", None)
+    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_state = np_inputs.copy()
+    for chunk_idx in range(num_chunks):
+        chunk_start = chunk_idx * args.prefill_seq_len
+        chunk_end = chunk_start + args.prefill_seq_len
+        prefill_state["input_ids"] = np_inputs["input_ids"][:, chunk_start:chunk_end]
+        prefill_state["position_ids"] = np_inputs["position_ids"][:, chunk_start:chunk_end]
+        prefill_output = prefill_session.run(prefill_state)
+        for layer_idx in range(config.text_config.num_hidden_layers):
+            prefill_state[f"past_key.{layer_idx}"] = prefill_output[f"past_key.{layer_idx}_RetainedState"]
+            prefill_state[f"past_value.{layer_idx}"] = prefill_output[f"past_value.{layer_idx}_RetainedState"]
+    prefill_session.deactivate()
+    exit(0)
+    decode_session = QAICInferenceSession(decode_qpc_path)
+    decode_session.activate()
+    last_position = np.max(np_inputs["position_ids"], axis=-1, keepdims=True)
+    last_indices = (last_position[:, 0] % args.prefill_seq_len).astype(np.int64)
+    batch_indices = np.arange(execution_batch_size)
+    next_tokens = np.argmax(prefill_output["logits"][batch_indices, last_indices], axis=-1, keepdims=True).astype(np_inputs["input_ids"].dtype)
+    decode_inputs = {"input_ids": next_tokens, "position_ids": last_position + 1}
+    for layer_idx in range(config.text_config.num_hidden_layers):
+        decode_inputs[f"past_key.{layer_idx}"] = prefill_output[f"past_key.{layer_idx}_RetainedState"]
+        decode_inputs[f"past_value.{layer_idx}"] = prefill_output[f"past_value.{layer_idx}_RetainedState"]
+    generated = [next_tokens]
+    for _ in range(max(0, args.generation_len - 1)):
+        decode_output = decode_session.run(decode_inputs)
+        next_tokens = np.argmax(decode_output["logits"], axis=-1).astype(np_inputs["input_ids"].dtype)
+        generated.append(next_tokens)
+        decode_inputs["input_ids"] = next_tokens
+        decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
+        for layer_idx in range(config.text_config.num_hidden_layers):
+            decode_inputs[f"past_key.{layer_idx}"] = decode_output[f"past_key.{layer_idx}_RetainedState"]
+            decode_inputs[f"past_value.{layer_idx}"] = decode_output[f"past_value.{layer_idx}_RetainedState"]
+    generated_ids = np.concatenate(generated, axis=1)
+    print(tokenizer.batch_decode(generated_ids, skip_special_tokens=True))
 
-    num_generated = output.generated_ids.shape[-1]
-    toks_per_sec = num_generated / float(generate_time)
-    print(f"[timing] prefill + decode:      {generate_time:.2f}s  ({num_generated} tokens, {toks_per_sec:.02f} tok/s)")
-    print(f"[run] prefill specialization: {args.prefill_seq_len} tokens; decode steps: {args.generation_len}")
-
-    print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
 
 
 if __name__ == "__main__":

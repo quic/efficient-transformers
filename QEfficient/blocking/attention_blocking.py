@@ -148,6 +148,9 @@ class AttentionBlockingConfig:
     msa_indexer_dp: Optional[int] = None
     msa_indexer_cp: Optional[int] = None
     indexer_n_head: Optional[int] = None
+    indexer_q_size: Optional[int] = None
+    indexer_q_chunk: Optional[int] = None
+    msa_q_chunk: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
