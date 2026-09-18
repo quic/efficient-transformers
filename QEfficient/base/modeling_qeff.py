@@ -266,18 +266,6 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
-            logger.warning(
-                "BFloat16 dtype is not supported on %s; converting model to float16 precision for export.",
-                constants.DEFAULT_AIC_HW_VERSION,
-            )
-            self.model = self.model.to(torch.float16)
-            self.config.torch_dtype = torch.float16
-            if hasattr(self.config, "text_config"):
-                self.config.text_config.torch_dtype = torch.float16
-            if hasattr(self.config, "llm_config"):
-                self.config.llm_config.torch_dtype = torch.float16
-
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
@@ -1208,8 +1196,10 @@ class QEFFBaseModel(ABC):
             command.append("-sub-functions")
 
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_")
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
+            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
+            for key, value in custom_io.items()
         )
         custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
 
