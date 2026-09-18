@@ -68,7 +68,7 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
             ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+        reordered_shapes = {k: dynamic_shapes.get(k, {}) for k in reordered_inputs}
         return reordered_inputs, reordered_shapes
     return reordered_inputs, None
 
@@ -122,24 +122,6 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(
-        model_config,
-        "max_position_embeddings",
-        getattr(getattr(model_config, "text_config", None), "max_position_embeddings", 1024),
-    )
-    model_type = getattr(model_config, "model_type", None)
-    batch_min = 1 if model_type == "gpt_oss" else 2
-
-    # MiniMax's sparse-attention indexer reshapes ctx_len into (num_blocks, index_block_size)
-    # blocks and requires num_blocks >= 2 to export: torch.export inserts a broadcast-safety
-    # guard at the num_blocks==1 boundary that a single dynamic_shapes Dim can't satisfy across
-    # a range straddling it. ctx_len values <= index_block_size always give num_blocks == 1, so
-    # raise ctx_len's min past that boundary for this model only.
-    ctx_len_min = 2
-    if model_type == "minimax_m3_vl":
-        index_block_size = getattr(getattr(model_config, "text_config", None), "index_block_size", None)
-        if index_block_size is not None:
-            ctx_len_min = index_block_size + 1
 
     dim_registry: Dict[str, Any] = {}
 
@@ -181,11 +163,9 @@ def convert_dynamic_axes_to_dynamic_shapes(
         dynamic_shapes["compressed_kvs"] = [
             (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
         ]
-        
+
     if index_key_layers:
-        dynamic_shapes["index_keys"] = [
-            index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)
-        ]
+        dynamic_shapes["index_keys"] = [index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)]
 
     if index_key_layers:
         # index_key.N only exists for sparse-attention layers (a subset of all decoder

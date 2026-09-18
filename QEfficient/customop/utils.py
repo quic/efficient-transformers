@@ -96,6 +96,20 @@ def ctx_gather_blocked_kv_dp(data: torch.Tensor, ctx_indices: torch.Tensor) -> t
     )
 
 
+def ctx_gather_paged_kv_dp(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    from QEfficient.customop.ctx_scatter_gather import CtxGatherFuncPagedKVDP
+
+    return select_interface(CtxGatherFuncPagedKVDP.apply, torch.ops.qefficient.ctx_gather_paged_kv_dp)(data, block_ids)
+
+
+def ctx_gather_block_range_kv_dp(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    from QEfficient.customop.ctx_scatter_gather import CtxGatherFuncBlockRangeKVDP
+
+    return select_interface(CtxGatherFuncBlockRangeKVDP.apply, torch.ops.qefficient.ctx_gather_block_range_kv_dp)(
+        data, block_ids
+    )
+
+
 def m3_ctx_scatter(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
     from QEfficient.customop.ctx_scatter_gather import M3CtxScatterFunc
 

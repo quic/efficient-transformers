@@ -96,7 +96,7 @@ def _run_pytorch_parity_test(
         if msa_attn_dp > 1:
             qaic_config["msa_attn_dp"] = msa_attn_dp
 
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir,weight_free=True,torch_dtype=torch.float32)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, weight_free=True, torch_dtype=torch.float32)
     qeff_model.compile(
         batch_size=execution_batch_size,
         prefill_seq_len=1,
@@ -226,7 +226,7 @@ def main():
     factory_kwargs["config"] = config
 
     t0 = time.perf_counter()
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id,weight_free=True, **factory_kwargs)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(args.model_id, weight_free=True, **factory_kwargs)
     print(f"[timing] model load:          {time.perf_counter() - t0:.2f}s")
 
     t0 = time.perf_counter()

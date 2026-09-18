@@ -454,9 +454,7 @@ def _symbolic_sizes(value: "torch.Value"):
     return tuple(sizes) if sizes is not None else None
 
 
-def _set_gather_output_type(
-    output: "torch.Value", data: "torch.Value", indices: "torch.Value"
-) -> "torch.Value":
+def _set_gather_output_type(output: "torch.Value", data: "torch.Value", indices: "torch.Value") -> "torch.Value":
     data_sizes = _symbolic_sizes(data)
     index_sizes = _symbolic_sizes(indices)
     if data_sizes is None or len(data_sizes) != 4:
@@ -495,9 +493,7 @@ def _set_block_gather_output_type(
         return output
     try:
         output.setType(
-            data.type().with_sizes(
-                (data_sizes[0], data_sizes[1], id_sizes[2], data_sizes[3], data_sizes[4])
-            )
+            data.type().with_sizes((data_sizes[0], data_sizes[1], id_sizes[2], data_sizes[3], data_sizes[4]))
         )
     except Exception:
         pass
@@ -538,9 +534,7 @@ class CtxPagedScatterFuncDP(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(
-        data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
         batch, rows, seq_len, _ = updates.shape
         row_idx = torch.arange(rows, device=data.device).view(1, rows, 1).expand(batch, rows, seq_len)
         out = data.clone()
@@ -589,7 +583,7 @@ class CtxGatherFuncBlockedKVDP(torch.autograd.Function):
         return _set_gather_output_type(output, data, ctx_indices)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherPagedKVDP(data: onnxscript.FLOAT, block_ids: onnxscript.INT32) -> onnxscript.FLOAT:
     # data: [physical_blocks, rows, page_size, D]
     # block_ids: [num_pages, rows]
@@ -628,9 +622,7 @@ class CtxGatherFuncPagedKVDP(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
-        block_ids = torch.where(
-            block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids
-        )
+        block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
         num_pages, rows = block_ids.shape
         _, data_rows, page_size, head_dim = data.shape
         if rows != data_rows:
@@ -649,7 +641,7 @@ class CtxGatherFuncPagedKVDP(torch.autograd.Function):
         return _set_paged_gather_output_type(output, data, block_ids)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherBlockRangeKVDP(data: onnxscript.FLOAT, block_ids: onnxscript.INT32) -> onnxscript.FLOAT:
     # data: [B_local, rows, cache_blocks, block_size, D]
     # ids:  [B_local, rows, selected_blocks]

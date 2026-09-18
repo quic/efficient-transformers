@@ -355,6 +355,8 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     )
 
     return attn_output.transpose(1, 2).contiguous(), None
+
+
 def _is_dynamo_compiling() -> bool:
     dynamo = getattr(torch, "_dynamo", None)
     if dynamo is None:
@@ -363,6 +365,7 @@ def _is_dynamo_compiling() -> bool:
         return bool(dynamo.is_compiling())
     except Exception:
         return False
+
 
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,

@@ -69,7 +69,9 @@ def main() -> None:
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--enable-proxy", action="store_true", help="Enable QEff proxy transforms during model loading.")
+    parser.add_argument(
+        "--enable-proxy", action="store_true", help="Enable QEff proxy transforms during model loading."
+    )
     args = parser.parse_args()
 
     if args.ctx_len % args.page_block_size:
@@ -88,6 +90,7 @@ def main() -> None:
         config=config,
         kv_offload=True,
         dtype=torch.float16,
+        weight_free=True,
         **({"enable_proxy": True} if args.enable_proxy else {}),
     )
     qaic_config = {
@@ -134,12 +137,8 @@ def main() -> None:
     inputs = expand_batch(inputs, execution_batch_size)
 
     # Tables are DP-major even though input_ids are flattened as [DP * B_local, ...].
-    indexer_table = build_block_table(
-        args.msa_indexer_dp, execution_batch_size, args.ctx_len, args.page_block_size
-    )
-    attention_table = build_block_table(
-        args.msa_attn_dp, execution_batch_size, args.ctx_len, args.page_block_size
-    )
+    indexer_table = build_block_table(args.msa_indexer_dp, execution_batch_size, args.ctx_len, args.page_block_size)
+    attention_table = build_block_table(args.msa_attn_dp, execution_batch_size, args.ctx_len, args.page_block_size)
     inputs["msa_indexer_block_table"] = indexer_table
     inputs["msa_attn_block_table"] = attention_table
 
