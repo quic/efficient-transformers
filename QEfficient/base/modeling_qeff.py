@@ -1162,6 +1162,7 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
+        compiler_options.pop("vision_batch_size", None)
         command = (
             constants.COMPILER
             + [
