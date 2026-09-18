@@ -42,6 +42,7 @@ _COMPUTED_INITIALIZER_NAMES = {
     "compress_original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "sinks",
 }
 
 
