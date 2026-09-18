@@ -150,6 +150,7 @@ def detect_group_transform(
             from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
                 MoEExpertParallelStackingCheckpointTransform,
             )
+
             return MoEExpertParallelStackingCheckpointTransform.configured(int(p), int(e_p))
         return _find_transform_by_id("moe_expert_stacking_v1", transforms)
 
@@ -167,6 +168,7 @@ def detect_group_transform(
             from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
                 GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform,
             )
+
             return GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform.configured(int(p), int(e_p))
         return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
 
@@ -193,17 +195,27 @@ def _find_transform_by_id(
     from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
         DtypeConversionCheckpointTransform,
         FusedExpertSplitCheckpointTransform,
+        GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        MoEExpertParallelStackingCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
     )
 
+    # Expert-parallel variants resolve to their unconfigured base classes.
+    # _find_transform_by_id is used by promote_initializers_and_build_spec()
+    # to recover the active_transform from the manifest TRANSFORM_ID so that
+    # resolve_onnx_key() can map ONNX names (e.g. .mlp.) to checkpoint keys
+    # (.block_sparse_moe.).  That mapping doesn't need P or E/P, so the
+    # unconfigured base class is sufficient for key-lookup purposes.
     _ID_MAP = {
-        "moe_expert_stacking_v1":          MoEExpertStackingCheckpointTransform,
-        "gptoss_mxfp4_dequant_v1":         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-        "fused_expert_split_v1":           FusedExpertSplitCheckpointTransform,
-        "moe_fused_expert_split_v1":       FusedExpertSplitCheckpointTransform,
-        "granite_moe_fused_split_v1":      FusedExpertSplitCheckpointTransform,
-        "dtype_conversion_v1":             DtypeConversionCheckpointTransform,
+        "moe_expert_stacking_v1": MoEExpertStackingCheckpointTransform,
+        "moe_expert_parallel_stacking_v1": MoEExpertParallelStackingCheckpointTransform,
+        "gptoss_mxfp4_dequant_v1": GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        "gptoss_mxfp4_dequant_expert_parallel_v1": GptOssMxfp4ExpertDequantExpertParallelCheckpointTransform,
+        "fused_expert_split_v1": FusedExpertSplitCheckpointTransform,
+        "moe_fused_expert_split_v1": FusedExpertSplitCheckpointTransform,
+        "granite_moe_fused_split_v1": FusedExpertSplitCheckpointTransform,
+        "dtype_conversion_v1": DtypeConversionCheckpointTransform,
     }
     return _ID_MAP.get(transform_id)
 
@@ -308,6 +320,7 @@ class CheckpointTransformPipeline:
         from QEfficient.exporter.weight_free.checkpoint_transforms import (  # noqa: PLC0415
             DtypeConversionCheckpointTransform,
         )
+
         transforms_to_run = []
         if active_transform is not None:
             transforms_to_run.append(active_transform)
@@ -317,9 +330,7 @@ class CheckpointTransformPipeline:
         consumed: set = set()
         for transform in transforms_to_run:
             remaining = {k: v for k, v in weight_map.items() if k not in consumed}
-            result = transform.apply(
-                source_dir, out, target_dtype=target_dtype, weight_map=remaining, **kwargs
-            )
+            result = transform.apply(source_dir, out, target_dtype=target_dtype, weight_map=remaining, **kwargs)
             if isinstance(result, dict):
                 new_weight_map.update(result)
             consumed.update(transform.get_consumed_keys(weight_map))
