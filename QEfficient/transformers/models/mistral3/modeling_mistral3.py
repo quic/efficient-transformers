@@ -432,6 +432,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
