@@ -12,6 +12,8 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxGather3D,
     CtxGatherBlockedKV,
     CtxGatherBlockedKVDP,
+    CtxGatherBlockRangeKVDP,
+    CtxGatherPagedKVDP,
     CtxPagedScatterDP,
     CtxScatter,
     CtxScatter3D,
@@ -428,6 +430,46 @@ def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
     )
 
 
+@torch.library.custom_op("qefficient::ctx_gather_paged_kv_dp", mutates_args=())
+def ctx_gather_paged_kv_dp_op(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    """Gather a contiguous KV range from a DP/CP-layout paged cache."""
+    block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
+    num_pages, rows = block_ids.shape
+    _, data_rows, page_size, head_dim = data.shape
+    if rows != data_rows:
+        raise ValueError("Paged GQA gather block-id rows must match pool rows.")
+    row_idx = torch.arange(rows, device=data.device).view(1, rows)
+    pages = data[block_ids.long(), row_idx]
+    return pages.permute(1, 0, 2, 3).reshape(1, rows, num_pages * page_size, head_dim)
+
+
+@ctx_gather_paged_kv_dp_op.register_fake
+def _(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    return torch.empty(
+        (1, data.shape[1], block_ids.shape[0] * data.shape[2], data.shape[3]),
+        dtype=data.dtype,
+        device=data.device,
+    )
+
+
+@torch.library.custom_op("qefficient::ctx_gather_block_range_kv_dp", mutates_args=())
+def ctx_gather_block_range_kv_dp_op(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    """Gather block ranges from a 5-D DP/CP-layout KV cache."""
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    row_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, 0, block_ids)
+    return data[batch_indices, row_indices, block_ids.long()]
+
+
+@ctx_gather_block_range_kv_dp_op.register_fake
+def _(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    return torch.empty(
+        (*data.shape[:2], block_ids.shape[-1], *data.shape[3:]),
+        dtype=data.dtype,
+        device=data.device,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
@@ -449,6 +491,8 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
     torch.ops.qefficient.ctx_paged_scatter_dp.default: get_dynamo_onnxscript_func(CtxPagedScatterDP),
     torch.ops.qefficient.ctx_gather_blocked_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVDP),
+    torch.ops.qefficient.ctx_gather_block_range_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherBlockRangeKVDP),
+    torch.ops.qefficient.ctx_gather_paged_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherPagedKVDP),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
 }

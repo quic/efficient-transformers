@@ -38,7 +38,6 @@ import pytest
 import torch
 import yaml
 from torch import nn
-from transformers.cache_utils import DynamicCache
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -51,6 +50,7 @@ from transformers import (
     LlamaConfig,
     Qwen2Config,
 )
+from transformers.cache_utils import DynamicCache
 from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLAttention,
     MiniMaxM3VLIndexer,
@@ -1306,6 +1306,7 @@ def test_minimax_m3_text_config_derived_pt_and_onnx_runtime_parity(tmp_path):
     output_names = {output.name for output in onnx_model.graph.output}
     assert any(name.startswith("past_key.") and name.endswith("_RetainedState") for name in output_names)
 
+
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 def test_minimax_m3_decode_qeff_pytorch_vs_aic(tmp_path):
@@ -1358,6 +1359,7 @@ def test_minimax_m3_decode_qeff_pytorch_vs_aic(tmp_path):
     )
     session = QAICInferenceSession(qpc_paths["lang_decode_qpc_path"])
     try:
+
         def binding_shape_dtype(input_name):
             binding = session.bindings[session.binding_index_map[input_name]]
             shape = tuple(binding.dims)
@@ -1431,6 +1433,7 @@ def test_minimax_m3_text_hf_qeff_pytorch_parity():
         f"HF vs QEff logit mismatch on no-cache prefill: "
         f"max_diff={(hf_logits_no_cache - qeff_logits_no_cache).abs().max().item():.6f}"
     )
+
 
 @pytest.mark.llm_model
 def test_minimax_m3_indexer_select_blocks_parity():
@@ -1594,16 +1597,10 @@ def check_attention_module_parity(
     idx_d = text_cfg.index_head_dim
 
     # Pre-filled KV: random for positions 0..prefill_len-1, zero for the decode slot.
-    pre_k = torch.cat(
-        [torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2
-    )
-    pre_v = torch.cat(
-        [torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2
-    )
+    pre_k = torch.cat([torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2)
+    pre_v = torch.cat([torch.randn(batch, nkv, prefill_len, hd), torch.zeros(batch, nkv, 1, hd)], dim=2)
     # Pre-filled index keys for the sparse indexer (same zeroed-slot convention).
-    pre_idx_k = torch.cat(
-        [torch.randn(batch, 1, prefill_len, idx_d), torch.zeros(batch, 1, 1, idx_d)], dim=2
-    )
+    pre_idx_k = torch.cat([torch.randn(batch, 1, prefill_len, idx_d), torch.zeros(batch, 1, 1, idx_d)], dim=2)
 
     # ── QEff cache ─────────────────────────────────────────────────────────────
     # Build a per-layer tuple list so from_legacy_cache initialises layers[0..layer_idx].

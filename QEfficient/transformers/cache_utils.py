@@ -83,6 +83,7 @@ def _remainder_with_symbolic_divisor(value: torch.Tensor, divisor) -> torch.Tens
     return torch.remainder(value, divisor_tensor)
 
 
+
 def read_kv_cache_with_indices(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
@@ -110,7 +111,7 @@ def update_and_read_index_key_cache(
     batch, _, ctx_len, _ = index_key_cache.shape
     ctx_indices = torch.arange(ctx_len, device=index_key_cache.device)[None, None, :]
     gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-    invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+    invalid_idx = InvalidIndexProvider._get_invalid_idx_value()
     ctx_indices = torch.where(ctx_indices > gather_limit, invalid_idx, ctx_indices).to(torch.int32)
     ctx_indices = ctx_indices.expand(batch, 1, ctx_len)
     return ctx_gather_blocked_kv(index_key_cache, ctx_indices), index_key_cache
@@ -1161,11 +1162,21 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                 rows = dp * hkv * cp
                 local_ctx_len = layer.keys.shape[2]
                 if tuple(layer.keys.shape[:2]) != (batch_local, rows):
-                    raise ValueError(f"CP sparse cache shape {tuple(layer.keys.shape)} does not match {(batch_local, rows)}.")
+                    raise ValueError(
+                        f"CP sparse cache shape {tuple(layer.keys.shape)} does not match {(batch_local, rows)}."
+                    )
                 key_dp = key_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
                 value_dp = value_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
-                key_updates = key_dp.unsqueeze(3).expand(batch_local, dp, hkv, cp, query_len, head_dim).reshape(batch_local, rows, query_len, head_dim)
-                value_updates = value_dp.unsqueeze(3).expand(batch_local, dp, hkv, cp, query_len, head_dim).reshape(batch_local, rows, query_len, head_dim)
+                key_updates = (
+                    key_dp.unsqueeze(3)
+                    .expand(batch_local, dp, hkv, cp, query_len, head_dim)
+                    .reshape(batch_local, rows, query_len, head_dim)
+                )
+                value_updates = (
+                    value_dp.unsqueeze(3)
+                    .expand(batch_local, dp, hkv, cp, query_len, head_dim)
+                    .reshape(batch_local, rows, query_len, head_dim)
+                )
                 position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
                 owner_cp = position_ids_dp // local_ctx_len
                 owner_valid = (owner_cp >= 0) & (owner_cp < cp)
@@ -1174,38 +1185,65 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                 row_live = row_cp.view(1, 1, hkv, cp, 1) == owner_cp.view(batch_local, dp, 1, 1, query_len)
                 row_live = row_live & owner_valid.view(batch_local, dp, 1, 1, query_len)
                 row_live = row_live.expand(batch_local, dp, hkv, cp, query_len).reshape(batch_local, rows, query_len)
-                addr = local_pos.view(batch_local, dp, 1, 1, query_len).expand(batch_local, dp, hkv, cp, query_len).reshape(batch_local, rows, query_len).to(torch.int32)
+                addr = (
+                    local_pos.view(batch_local, dp, 1, 1, query_len)
+                    .expand(batch_local, dp, hkv, cp, query_len)
+                    .reshape(batch_local, rows, query_len)
+                    .to(torch.int32)
+                )
                 flat_keys = layer.keys.reshape(batch_local * rows, local_ctx_len, head_dim)
                 flat_values = layer.values.reshape(batch_local * rows, local_ctx_len, head_dim)
                 flat_addr = torch.where(row_live, addr, torch.zeros_like(addr)).reshape(batch_local * rows, query_len)
-                flat_key_updates = torch.where(row_live.unsqueeze(-1), key_updates, ctx_gather_3d(flat_keys, torch.zeros_like(flat_addr)).reshape(batch_local, rows, query_len, head_dim)).reshape(batch_local * rows, query_len, head_dim)
-                flat_value_updates = torch.where(row_live.unsqueeze(-1), value_updates, ctx_gather_3d(flat_values, torch.zeros_like(flat_addr)).reshape(batch_local, rows, query_len, head_dim)).reshape(batch_local * rows, query_len, head_dim)
-                layer.keys = ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(batch_local, rows, local_ctx_len, head_dim)
-                layer.values = ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(batch_local, rows, local_ctx_len, head_dim)
+                flat_key_updates = torch.where(
+                    row_live.unsqueeze(-1),
+                    key_updates,
+                    ctx_gather_3d(flat_keys, torch.zeros_like(flat_addr)).reshape(
+                        batch_local, rows, query_len, head_dim
+                    ),
+                ).reshape(batch_local * rows, query_len, head_dim)
+                flat_value_updates = torch.where(
+                    row_live.unsqueeze(-1),
+                    value_updates,
+                    ctx_gather_3d(flat_values, torch.zeros_like(flat_addr)).reshape(
+                        batch_local, rows, query_len, head_dim
+                    ),
+                ).reshape(batch_local * rows, query_len, head_dim)
+                layer.keys = ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(
+                    batch_local, rows, local_ctx_len, head_dim
+                )
+                layer.values = ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(
+                    batch_local, rows, local_ctx_len, head_dim
+                )
                 layer._mark_initialized(layer.keys)
                 return
             rows = dp * hkv
 
             key_states = key_states.reshape(batch_local, rows, query_len, head_dim)
             value_states = value_states.reshape(batch_local, rows, query_len, head_dim)
-            layer.keys = layer.keys.reshape(batch_local, rows, -1, head_dim)
-            layer.values = layer.values.reshape(batch_local, rows, -1, head_dim)
+            key_cache = layer.keys.reshape(batch_local, rows, -1, head_dim)
+            value_cache = layer.values.reshape(batch_local, rows, -1, head_dim)
 
             batch_idx = torch.arange(batch_local, device=key_states.device).view(batch_local, 1, 1)
             block_id = batch_idx.expand(batch_local, rows, query_len).to(torch.int32)
-            addr = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2).to(torch.int32)[:, :, None, :].expand(batch_local, dp, hkv, query_len).reshape(batch_local, rows, query_len)
+            addr = (
+                position_ids.view(dp, batch_local, query_len)
+                .permute(1, 0, 2)
+                .to(torch.int32)[:, :, None, :]
+                .expand(batch_local, dp, hkv, query_len)
+                .reshape(batch_local, rows, query_len)
+            )
 
-            if layer.keys.ndim != 4 or layer.values.ndim != 4:
+            if key_cache.ndim != 4 or value_cache.ndim != 4:
                 raise ValueError("Paged sparse caches must have rank-4 key and value tensors.")
             if key_states.ndim != 4 or value_states.ndim != 4:
                 raise ValueError("Paged sparse-cache updates must have rank-4 key and value tensors.")
 
-            block_id = block_id.to(dtype=torch.int32, device=layer.keys.device)
-            addr = addr.to(dtype=torch.int32, device=layer.keys.device)
-            layer.keys = ctx_paged_scatter_dp(layer.keys, block_id, addr, key_states)
-            layer.keys = layer.keys.reshape(batch, hkv, -1, head_dim)
-            layer.values = ctx_paged_scatter_dp(layer.values, block_id, addr, value_states)
-            layer.values = layer.values.reshape(batch, hkv, -1, head_dim)
+            block_id = block_id.to(dtype=torch.int32, device=key_cache.device)
+            addr = addr.to(dtype=torch.int32, device=key_cache.device)
+            key_cache = ctx_paged_scatter_dp(key_cache, block_id, addr, key_states)
+            value_cache = ctx_paged_scatter_dp(value_cache, block_id, addr, value_states)
+            layer.keys = key_cache.reshape(batch, hkv, -1, head_dim)
+            layer.values = value_cache.reshape(batch, hkv, -1, head_dim)
             layer._mark_initialized(layer.keys)
 
     def update_index_key_cache(
@@ -1215,9 +1253,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         position_ids: torch.Tensor,
     ) -> torch.Tensor:
         """Scatter idx_k into the index key cache and return all ctx_len gathered index keys."""
-        gathered, updated = update_and_read_index_key_cache(
-            self.index_keys.get(layer_idx), position_ids, idx_k
-        )
+        gathered, updated = update_and_read_index_key_cache(self.index_keys.get(layer_idx), position_ids, idx_k)
         self.index_keys[layer_idx] = updated
         return gathered
 
@@ -1294,7 +1330,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
 
         ctx_indices = torch.arange(start, end, device=cache.device).view(1, 1, block_len)
         invalid_mask = ctx_indices > gather_limit.unsqueeze(-1)  # [B_local, rows, block_len]
-        invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+        invalid_idx = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx, ctx_indices).to(torch.int32)
         ctx_indices = ctx_indices.expand(batch_local, rows, block_len)
         return ctx_gather_blocked_kv(cache, ctx_indices)
@@ -1348,7 +1384,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
 
         ctx_indices = torch.arange(start, end, device=cache_gp.device).view(1, 1, block_len)
         invalid_mask = ctx_indices > gather_limit.unsqueeze(-1)  # [B_local, rows, block_len]
-        invalid_idx = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+        invalid_idx = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx, ctx_indices).to(torch.int32)
         ctx_indices = ctx_indices.expand(batch_local, rows, block_len)
         return CtxGatherFuncBlockedKVDP.apply(cache_gp, ctx_indices)

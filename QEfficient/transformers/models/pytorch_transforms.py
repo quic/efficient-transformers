@@ -1284,12 +1284,20 @@ class PagedAttentionMinimax(PytorchTransform):
             groups_per_core = num_groups_blk // num_cores
             tokens_per_core = groups_per_core * page_block_size
             rows = indexer_dp * indexer_cp * indexer_hkv
-            t_idx = torch.arange(tokens_per_core, device=next(module.parameters()).device).view(1, 1, 1, 1, tokens_per_core)
+            t_idx = torch.arange(tokens_per_core, device=next(module.parameters()).device).view(
+                1, 1, 1, 1, tokens_per_core
+            )
             core_idx = torch.arange(num_cores, device=t_idx.device).view(1, 1, num_cores, 1, 1)
             cp_idx = torch.arange(indexer_cp, device=t_idx.device).view(1, indexer_cp, 1, 1, 1)
             local_group = (t_idx // page_block_size) * num_cores + core_idx
-            local_pos = (local_group * (indexer_cp * page_block_size) + cp_idx * page_block_size + t_idx % page_block_size).to(torch.int32)
-            local_pos = local_pos.view(1, 1, indexer_cp, 1, num_cores, 1, tokens_per_core).expand(1, indexer_dp, indexer_cp, indexer_hkv, num_cores, 1, tokens_per_core).reshape(1, rows, num_cores, 1, tokens_per_core)
+            local_pos = (
+                local_group * (indexer_cp * page_block_size) + cp_idx * page_block_size + t_idx % page_block_size
+            ).to(torch.int32)
+            local_pos = (
+                local_pos.view(1, 1, indexer_cp, 1, num_cores, 1, tokens_per_core)
+                .expand(1, indexer_dp, indexer_cp, indexer_hkv, num_cores, 1, tokens_per_core)
+                .reshape(1, rows, num_cores, 1, tokens_per_core)
+            )
             module.register_buffer("indexer_paged_local_pos", local_pos)
             transformed = True
         return model, transformed
