@@ -179,7 +179,11 @@ def _prepare_checkpoint_for_weight_free_export(
     from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
 
     source_dir = resolve_checkpoint_dir(model_ref)
-    hash_params = qeff_model.hash_params
+    hash_params = dict(qeff_model.hash_params)
+    text_config = getattr(qeff_model.model.config, "text_config", None) or qeff_model.model.config
+    orig_kv_heads = getattr(text_config, "orig_kv_heads", None)
+    if orig_kv_heads is not None:
+        hash_params["orig_kv_heads"] = int(orig_kv_heads)
 
     prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
     plan, active_group_id = prep_pipeline.build_plan(
