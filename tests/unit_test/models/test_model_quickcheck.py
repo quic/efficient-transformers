@@ -2343,6 +2343,48 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
 
 
+@pytest.mark.llm_model
+def test_qwen3_vl_moe_builds_causal_mask_inside_decoder_attention(monkeypatch):
+    """Keep causal-mask construction inside each repeated decoder function."""
+    from QEfficient.transformers.models.qwen3_vl_moe import modeling_qwen3_vl_moe
+
+    config = _tiny_qwen3_vl_moe_config()
+    hf_model = AutoModelForImageTextToText.from_config(config).eval()
+    qeff_model = QEFFAutoModelForImageTextToText(hf_model, kv_offload=True, continuous_batching=True)
+    inputs = qeff_model.model.get_dummy_inputs(kv_offload=True, continuous_batching=True, prefill_seq_len=1)["lang"]
+    attention_depth = 0
+    mask_calls_inside_attention = []
+
+    def enter_attention(_module, _args):
+        nonlocal attention_depth
+        attention_depth += 1
+
+    def exit_attention(_module, _args, _output):
+        nonlocal attention_depth
+        attention_depth -= 1
+
+    handles = []
+    for decoder_layer in qeff_model.lang_model.model.language_model.layers:
+        handles.append(decoder_layer.self_attn.register_forward_pre_hook(enter_attention))
+        handles.append(decoder_layer.self_attn.register_forward_hook(exit_attention))
+
+    original_create_causal_mask = modeling_qwen3_vl_moe._create_causal_mask
+
+    def tracked_create_causal_mask(*args, **kwargs):
+        mask_calls_inside_attention.append(attention_depth > 0)
+        return original_create_causal_mask(*args, **kwargs)
+
+    monkeypatch.setattr(modeling_qwen3_vl_moe, "_create_causal_mask", tracked_create_causal_mask)
+    try:
+        with torch.no_grad():
+            qeff_model.lang_model.model(**inputs)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    assert mask_calls_inside_attention == [True] * config.text_config.num_hidden_layers
+
+
 def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     from types import SimpleNamespace
 

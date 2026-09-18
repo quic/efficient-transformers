@@ -435,6 +435,11 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         if is_layerwise_active():
             self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        # Keep Range -> mask comparison -> Where within the decoder subfunction so the compiler can use GatherNDRange.
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        attention_mask = _create_causal_mask(
+            position_ids=position_ids[0], target_length=target_length, sliding_window=None
+        )
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
@@ -616,11 +621,6 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         elif position_ids.dim() == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids[0], target_length=target_length, sliding_window=None
-        )
-
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         cos, sin = qeff_prepare_mrope_cos_sin(
@@ -648,7 +648,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
 
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
