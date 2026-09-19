@@ -33,7 +33,16 @@ class ApiRunner:
     """
 
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size=None,
+        dtype=torch.float32,
+        qaic_config=None,
     ):
         """
         Initialization
@@ -55,6 +64,7 @@ class ApiRunner:
             ctx_len=ctx_len,
             full_batch_size=full_batch_size,
             dtype=dtype,
+            qaic_config=qaic_config,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
