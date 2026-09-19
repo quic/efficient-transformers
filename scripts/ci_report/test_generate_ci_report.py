@@ -19,7 +19,6 @@ from __future__ import annotations
 import importlib.util
 import re
 import subprocess
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -98,10 +97,10 @@ def test_merge_junit_results_includes_each_stage_once(tmp_path):
 
     subprocess.run(["bash", str(MERGE_SCRIPT)], cwd=tmp_path, check=True)
 
-    aggregate = ET.parse(tests_dir / "tests_log.xml")
-    names = [case.attrib["name"] for case in aggregate.findall(".//testcase")]
-    assert set(names) == {"export-1", "qaic-1", "qaic-2", "disagg-1"}
-    assert names.count("disagg-1") == 1
+    aggregate = (tests_dir / "tests_log.xml").read_text()
+    for name in ("export-1", "qaic-1", "qaic-2", "disagg-1"):
+        assert aggregate.count(f'name="{name}"') == 1
+    assert "stale-aggregate" not in aggregate
 
 
 def test_category_roster_stable(gcr):

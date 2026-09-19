@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 set -euo pipefail
 
 output='tests/tests_log.xml'
