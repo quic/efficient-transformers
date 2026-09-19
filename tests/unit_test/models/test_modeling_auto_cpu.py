@@ -702,6 +702,14 @@ class TestQEFFAutoModelForCausalLMExportPrefillSeqLen:
 
         assert captured["example_inputs"]["input_ids"].shape[1] == 512
 
+    def test_mixtral_chunked_specialized_prefill_uses_default_prefill_seq_len(self):
+        """Mixtral chunked prefill export should always use the default prefill sequence length."""
+        qeff = self._make_specialized_qeff(model_type="mixtral")
+
+        captured = self._capture_export(qeff, prefill_only=True, prefill_seq_len=64, enable_chunking=True)
+
+        assert captured["example_inputs"]["input_ids"].shape[1] == 32
+
     def test_expert_parallel_keeps_default_export_seq_len_when_divisible_by_num_packed_chunks(self):
         """Expert-parallel export leaves seq_len unchanged when it is already divisible by packed chunks."""
         from QEfficient.transformers.moe.flavours import MoEFlavour
