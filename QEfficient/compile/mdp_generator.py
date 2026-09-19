@@ -161,6 +161,7 @@ def precheck_and_autofix_mdp_partition_order(
     """Best-effort pre-check: scan all violation pairs and auto-fix before compile."""
     removed_total = 0
     dropped_nodes: Set[str] = set()
+    
     for _ in range(max_rounds):
         violations = _find_mdp_partition_order_violations(onnx_path=onnx_path, mdp_json=mdp_json)
         if not violations:
