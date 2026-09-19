@@ -979,6 +979,10 @@ class QEFFBaseModel(ABC):
     ):
         # Apply the transformations that are dependent on compilation parameters
         moe_batch_size = compiler_options.pop("moe_batch_size", bs)
+        # GDN chunking changes the model graph (static masks and reshape dimensions),
+        # so it must be applied before export. It is not a qaic-compile option.
+        # Models without GDN layers do not expose this hook and remain unchanged.
+        gdn_chunk_size = compiler_options.pop("gdn_chunk_size", None)
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -1014,6 +1018,17 @@ class QEFFBaseModel(ABC):
         if num_cores is None:
             num_cores = constants.DEFAULT_AIC_NUM_CORES
         prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
+        set_gdn_chunk_size = getattr(self.model, "set_gdn_chunk_size", None)
+        if callable(set_gdn_chunk_size):
+            gdn_chunk_size = prefill_seq_len if gdn_chunk_size is None else int(gdn_chunk_size)
+            if gdn_chunk_size is not None:
+                if prefill_seq_len is not None and gdn_chunk_size > prefill_seq_len:
+                    raise ValueError(
+                        f"gdn_chunk_size ({gdn_chunk_size}) cannot be greater than prefill_seq_len ({prefill_seq_len})"
+                    )
+                set_gdn_chunk_size(gdn_chunk_size)
+                # Include the graph-shaping value in the export cache identity.
+                self.hash_params["gdn_chunk_size"] = gdn_chunk_size
         mdp_num_partitions = compiler_options.get("mdp_num_partitions", 1)
         if mdp_num_partitions is None:
             mdp_num_partitions = 1
@@ -1136,6 +1151,11 @@ class QEFFBaseModel(ABC):
             onnx_path = Path(onnx_path)
             return onnx_path
         onnx_path = Path(onnx_path)
+
+        # ``gdn_chunk_size`` was consumed by ``transform`` to shape the exported
+        # graph. Remove it before the generic compiler-option loop, which maps
+        # remaining keys directly to qaic-compile flags.
+        compiler_options.pop("gdn_chunk_size", None)
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
