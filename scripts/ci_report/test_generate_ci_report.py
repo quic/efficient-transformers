@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).parent
 GENERATOR = HERE / "generate_ci_report.py"
+MERGE_SCRIPT = HERE / "merge_junit_results.sh"
 SAMPLE_DIR = HERE / "sample"
 
 
@@ -76,6 +79,29 @@ def test_dynamo_stage_recognised(gcr):
     assert dynamo.order == 9
     finetune = gcr.STAGE_MAP["tests_log_finetune.xml"]
     assert finetune.order == 10
+
+
+def test_merge_junit_results_includes_each_stage_once(tmp_path):
+    """The Jenkins aggregate must include per-stage XMLs, not stale/intermediate files."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+
+    def write_report(filename, names):
+        cases = "".join(f'<testcase classname="tests" name="{name}" />' for name in names)
+        (tests_dir / filename).write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
+
+    write_report("tests_log1.xml", ["export-1"])
+    write_report("tests_log2.xml", ["qaic-1", "qaic-2"])
+    write_report("tests_log_disagg.xml", ["disagg-1"])
+    write_report("tests_log_disagg_batch_0.xml", ["disagg-1"])
+    write_report("tests_log.xml", ["stale-aggregate"])
+
+    subprocess.run(["bash", str(MERGE_SCRIPT)], cwd=tmp_path, check=True)
+
+    aggregate = ET.parse(tests_dir / "tests_log.xml")
+    names = [case.attrib["name"] for case in aggregate.findall(".//testcase")]
+    assert set(names) == {"export-1", "qaic-1", "qaic-2", "disagg-1"}
+    assert names.count("disagg-1") == 1
 
 
 def test_category_roster_stable(gcr):
