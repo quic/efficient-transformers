@@ -75,7 +75,7 @@ if skip_vision:  # Only Text
 else:  # Vision + Text
     batch_size = 1
     ctx_len = 4096
-    prefill_seq_len = 128
+    prefill_seq_len = 64
 
     resolutions = [
         {"width": 360, "height": 240, "num_frames": 3},

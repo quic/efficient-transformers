@@ -149,7 +149,9 @@ def validate_artifact_file(
     return rows
 
 
-def load_recorded_test_failure_rows(artifacts_dir: Path, model_class: str) -> list[dict[str, Any]]:
+def load_recorded_test_failure_rows(
+    artifacts_dir: Path, model_class: str, model_mode: str | None = None
+) -> list[dict[str, Any]]:
     failure_file = artifacts_dir / NIGHTLY_TEST_FAILURES_FILE
     if not failure_file.exists():
         return []
@@ -162,6 +164,8 @@ def load_recorded_test_failure_rows(artifacts_dir: Path, model_class: str) -> li
     rows = []
     for row in failures.values():
         if isinstance(row, dict) and row.get("model_class") == report_class:
+            if model_mode is not None and row.get("model_mode", "non_cb") != model_mode:
+                continue
             rows.append(row)
     return sorted(rows, key=lambda row: row.get("model_name", ""))
 
@@ -285,7 +289,7 @@ def _current_only_model_row(
         _add_text_values(row, spec, {}, current_payload, assertion_required=False)
 
     row["status"] = "passed"
-    row["failure_reason"] = "Previous model artifact not found; comparison skipped."
+    row["failure_reason"] = "Previous artifact entry for model not found; comparison skipped."
     return row
 
 
@@ -438,7 +442,7 @@ def _collect_mad_failures(
             failures.append(f"{mad_column}_mad {mad_value:.6f} exceeds {tolerance_value:.6f} tolerance")
         return
 
-    failures.append(f"{mad_column}_mad is unavailable")
+    failures.append(f"{mad_column}_mad is unavailable, model failed either in export/compile or generation step")
 
 
 def _collect_assertion_failures(failures: list[str], row: dict[str, Any], spec: dict[str, Any]) -> None:

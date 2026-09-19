@@ -134,6 +134,12 @@ def causal_model_artifacts_file(artifacts_dir):
 
 
 @pytest.fixture(scope="session")
+def causal_model_cb_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "causal_model_cb_artifacts.json"
+
+
+@pytest.fixture(scope="session")
 def embedding_model_artifacts_file(artifacts_dir):
     """Path to shared artifacts JSON file."""
     return artifacts_dir / "embedding_model_artifacts.json"
@@ -161,6 +167,18 @@ def audio_embedding_model_artifacts_file(artifacts_dir):
 def image_text_to_text_model_artifacts_file(artifacts_dir):
     """Path to shared artifacts JSON file."""
     return artifacts_dir / "image_text_to_text_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def image_text_to_text_model_cb_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "image_text_to_text_model_cb_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def image_text_to_text_model_multi_spec_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "image_text_to_text_model_multi_spec_artifacts.json"
 
 
 def load_artifacts(filepath):
@@ -222,6 +240,7 @@ def _record_nightly_test_failure(item, report):
     row = {
         "model_class": report_class,
         "model_name": model_name,
+        "model_mode": callspec.params.get("execution_mode", "non_cb"),
         "model_age": model_age,
         "status": status,
         "failure_reason": _short_failure_reason(report),
@@ -251,6 +270,14 @@ def causal_model_artifacts(causal_model_artifacts_file):
     artifacts = load_artifacts(causal_model_artifacts_file)
     yield artifacts
     save_artifacts(causal_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def causal_model_cb_artifacts(causal_model_cb_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(causal_model_cb_artifacts_file)
+    yield artifacts
+    save_artifacts(causal_model_cb_artifacts_file, artifacts)
 
 
 @pytest.fixture
@@ -291,6 +318,22 @@ def image_text_to_text_model_artifacts(image_text_to_text_model_artifacts_file):
     artifacts = load_artifacts(image_text_to_text_model_artifacts_file)
     yield artifacts
     save_artifacts(image_text_to_text_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def image_text_to_text_model_cb_artifacts(image_text_to_text_model_cb_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(image_text_to_text_model_cb_artifacts_file)
+    yield artifacts
+    save_artifacts(image_text_to_text_model_cb_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def image_text_to_text_model_multi_spec_artifacts(image_text_to_text_model_multi_spec_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(image_text_to_text_model_multi_spec_artifacts_file)
+    yield artifacts
+    save_artifacts(image_text_to_text_model_multi_spec_artifacts_file, artifacts)
 
 
 @pytest.fixture
