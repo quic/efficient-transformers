@@ -1940,6 +1940,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ctx_len: int | None = None,
         batch_size: int = 1,
         vision_batch_size: int | None = None,
+        gdn_chunk_size: int | None = None,
         full_batch_size: int | None = None,
         kv_cache_batch_size: int | None = None,
         num_devices: int = 1,
@@ -1980,6 +1981,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             Language prefill/decode batch size. Default is 1.
         vision_batch_size : int, optional
             Vision encoder batch size. Defaults to ``batch_size``.
+        gdn_chunk_size : int, optional
+            GDN mini-chunk size used while tracing/exporting the language model.
+            When omitted, GDN models use ``prefill_seq_len``; models without GDN
+            layers are unaffected. This is not a QAIC compiler option.
         full_batch_size : int, optional
             Not supported for this model; must be None.
         kv_cache_batch_size : int, optional
@@ -2079,6 +2084,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 offload_pt_weights=offload_pt_weights,
                 enable_chunking=enable_chunking,
+                gdn_chunk_size=gdn_chunk_size,
                 qaic_config=qaic_config,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
@@ -2132,6 +2138,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             mdp_num_partitions=compiler_options.get("mdp_num_partitions", 1),
             prefill_only=prefill_only,
             prefill_seq_len=prefill_seq_len,
+            gdn_chunk_size=gdn_chunk_size,
         )
 
         specializations, compiler_options = self.model.get_specializations(
