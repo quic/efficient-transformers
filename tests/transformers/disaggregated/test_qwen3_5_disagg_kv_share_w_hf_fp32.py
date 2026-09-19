@@ -37,7 +37,7 @@ def _optional_int_env(name: str, default: int | None) -> int | None:
 # Optional depth truncation: set to an int to run a shallow model
 NUM_HIDDEN_LAYERS = _optional_int_env("QEFF_QWEN35_NUM_HIDDEN_LAYERS", default=4)
 VISION_DEPTH = _optional_int_env("QEFF_QWEN35_VISION_DEPTH", default=2)
-PREFILL_SEQ_LEN = 256
+PREFILL_SEQ_LEN = 64
 CTX_LEN = 1024
 BATCH_SIZE = 1
 GENERATION_LEN = 40
@@ -387,6 +387,7 @@ def _compile_disagg_sessions(
     decode_num_devices: int = 2,
     stages: int = 2,
     use_onnx_subfunctions: bool = True,
+    prefill_qaic_config: dict | None = None,
 ):
     vision_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
@@ -439,7 +440,7 @@ def _compile_disagg_sessions(
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
-        mxfp6_matmul=False,
+        mxfp6_matmul=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mdp_num_partitions=stages,
@@ -448,6 +449,7 @@ def _compile_disagg_sessions(
         skip_vision=True,
         use_onnx_subfunctions=use_onnx_subfunctions,
         layerwise=False,
+        qaic_config=prefill_qaic_config,
     )
     compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
     _assert_distinct_onnx_paths(compiled_onnx_paths)
@@ -474,6 +476,15 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     model_id = dma_config["model_id"]
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
     skip_hf_reference = dma_config.get("skip_hf_reference", False)
+    blocking_mode = dma_config.get("blocking_mode")
+    prefill_qaic_config = None
+    if blocking_mode == "kv":
+        prefill_qaic_config = {
+            "enable_blocking": True,
+            "blocking_mode": blocking_mode,
+            "num_kv_blocks": 4,
+            "skip_kv": True,
+        }
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -500,6 +511,7 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
             decode_num_devices=dma_config["decode_num_devices"],
             stages=dma_config["stages"],
             use_onnx_subfunctions=use_onnx_subfunctions,
+            prefill_qaic_config=prefill_qaic_config,
         )
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
