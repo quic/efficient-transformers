@@ -30,7 +30,11 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_MANIFEST, CheckpointTransformPipeline
+from QEfficient.base.checkpoint_transforms import (
+    CHECKPOINT_PREPARED_MANIFEST,
+    CHECKPOINT_PREPARED_SENTINEL,
+    CheckpointTransformPipeline,
+)
 from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     PruneFakeInitializersTransform,
@@ -177,6 +181,25 @@ class TestWeightFreeCheckpointTransforms:
         assert prepared == out
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(3, dtype=torch.float32))
 
+    def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        (out / "model.safetensors").unlink()
+        assert (out / CHECKPOINT_PREPARED_MANIFEST).is_file()
+        assert (out / CHECKPOINT_PREPARED_SENTINEL).is_file()
+
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
     def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
@@ -312,6 +335,16 @@ class TestWeightFreeCheckpointTransforms:
         assert (
             find_checkpoint_key("model.layers.2.block_sparse_moe.moe_weights.down", checkpoint_index, backbone)
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
+        )
+
+    def test_resolver_accepts_granitemoe_router_layer_alias(self):
+        checkpoint_index = {"model.layers.0.block_sparse_moe.router.layer.weight": "model.safetensors"}
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.layers.0.block_sparse_moe.router.weight", checkpoint_index, backbone)
+            == "model.layers.0.block_sparse_moe.router.layer.weight"
         )
 
     def test_resolver_rejects_ambiguous_moe_weight_aliases(self):
