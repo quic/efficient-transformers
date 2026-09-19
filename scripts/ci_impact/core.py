@@ -50,7 +50,13 @@ IGNORED_FILES = {
     "README.md",
 }
 IGNORED_PREFIXES = (".github/", "docs/", "skills_studio/")
-OUT_OF_SCOPE_TEST_PREFIXES = ("tests/unit_test/", "tests/nightly_pipeline/", "tests/vllm/")
+OUT_OF_SCOPE_TEST_PREFIXES = (
+    "tests/unit_test/",
+    "tests/nightly_pipeline/",
+    "tests/vllm/",
+    # Reproducer configs run in their own final Jenkins stage.
+    "tests/reproducer_configs/",
+)
 SELECTIVE_OMITTED_MARKERS = {"full_layers"}
 
 _MODEL_WRAPPER_RE = re.compile(r"^QEfficient/transformers/models/([^/]+)/")
