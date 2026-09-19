@@ -34,7 +34,11 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.torch_patches import preserve_subfunction_source_lines, temporarily_enable_nested_compile_regions
+from QEfficient.utils.torch_patches import (
+    preserve_mixed_export_subfunctions,
+    preserve_subfunction_source_lines,
+    temporarily_enable_nested_compile_regions,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,6 +73,18 @@ def test_preserve_subfunction_source_lines_interprets_graph_modules(monkeypatch)
 
     assert invoke_subgraph.reenter_make_fx is fake_reenter_make_fx
     assert original_reenter_make_fx is not invoke_subgraph.reenter_make_fx
+
+
+def test_preserve_mixed_export_subfunctions_is_scoped_to_supported_pytorch_hook():
+    utils = importlib.import_module("torch._higher_order_ops.utils")
+    original_hop_compile_and_call = getattr(utils, "_hop_compile_and_call", None)
+
+    with preserve_mixed_export_subfunctions():
+        if original_hop_compile_and_call is not None:
+            assert utils._hop_compile_and_call is not original_hop_compile_and_call
+
+    if original_hop_compile_and_call is not None:
+        assert utils._hop_compile_and_call is original_hop_compile_and_call
 
 
 def make_tiny_llama():
