@@ -147,6 +147,9 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 512
+# The GDN prefill mini-chunk follows the prefill/CPL by default. This is passed
+# explicitly because the shared compile API does not infer model-specific options.
+GDN_CHUNK_SIZE = PREFILL_SEQ_LEN
 CTX_LEN = 14 * 1024
 BATCH_SIZE = 512  # Per-slot prefill batch size
 BS = BATCH_SIZE
@@ -175,7 +178,6 @@ qaic_config = {
 # CL 14K BSZ512
 # Decode-time KV blocking plus EP decode.
 decode_qaic_config = {
-    "qeff_chunk_size": 1,
     "blocking_mode": "kv_batch_fold",
     "num_kv_blocks": 16,
     "gdn_num_head_blocks": int(os.environ.get("QEFF_GDN_NUM_HEAD_BLOCKS", "8")),
@@ -262,6 +264,8 @@ else:
             ddr_stats=True,
             aic_pmu_recipe="KernelUtil",
             aic_perf_metrics=True,
+            # GDN prefill mini-chunk is aligned with the prefill/CPL length.
+            gdn_chunk_size=GDN_CHUNK_SIZE,
             qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
             kv_cache_prefix="vllmKvCache",
             allow_mxint8_mdp_io=True,
@@ -311,6 +315,8 @@ else:
             ddr_stats=True,
             aic_pmu_recipe="KernelUtil",
             aic_perf_metrics=True,
+            # Decode is compiled with seq_len=1, so keep its GDN mini-chunk at 1.
+            gdn_chunk_size=1,
             qaic_config=decode_qaic_config,  # Enable KV blocking - comment out to disable
             kv_cache_prefix="vllmKvCache",
             allow_mxint8_mdp_io=True,

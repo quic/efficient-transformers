@@ -15,7 +15,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import onnx
 import pytest
@@ -371,6 +371,47 @@ class TestQEFFBaseModelTransformBlocking:
                 prefill_seq_len=8,
                 mdp_num_partitions=0,
             )
+
+    def test_transform_consumes_gdn_chunk_size_before_compiler_options(self):
+        """GDN chunk size configures export and is not forwarded as a compiler flag."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        set_gdn_chunk_size = MagicMock()
+        qeff.model.set_gdn_chunk_size = set_gdn_chunk_size
+
+        with patch.object(modeling_qeff.OptimizedMoETransform, "apply", return_value=(qeff.model, False)) as apply:
+            qeff.transform(
+                ctx_len=32,
+                seq_len=8,
+                bs=1,
+                prefill_seq_len=8,
+                gdn_chunk_size=4,
+            )
+
+        set_gdn_chunk_size.assert_called_once_with(4)
+        assert "gdn_chunk_size" not in apply.call_args.kwargs
+
+    def test_transform_rejects_gdn_chunk_larger_than_prefill_length(self):
+        """A GDN mini-chunk cannot exceed the sequence length it chunks."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.set_gdn_chunk_size = MagicMock()
+
+        with pytest.raises(ValueError, match="gdn_chunk_size.*prefill_seq_len"):
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, gdn_chunk_size=16)
+
+    def test_transform_defaults_gdn_chunk_size_to_prefill_length(self):
+        """A GDN model uses the prefill length when no mini-chunk is supplied."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        set_gdn_chunk_size = MagicMock()
+        qeff.model.set_gdn_chunk_size = set_gdn_chunk_size
+
+        qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8)
+
+        set_gdn_chunk_size.assert_called_once_with(8)
 
 
 @pytest.mark.cpu_only
