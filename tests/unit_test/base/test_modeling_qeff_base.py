@@ -24,7 +24,7 @@ from onnx import TensorProto, helper
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
 from QEfficient.base.modeling_qeff import generate_mdp_compiler_dump
-from QEfficient.compile.mdp_generator import _layer_partition_bounds
+from QEfficient.compile.mdp_generator import _layer_partition_bounds, generate_disagg_mdp_partition_config
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
 VOCAB_SIZE = 500
@@ -586,6 +586,32 @@ class TestMdpCompileIntegration:
             )
 
         return compile_dir, onnx_path, qeff
+
+    def test_mdp_disagg_excludes_constant_nodes(self, tmp_path):
+        """ONNX Constant nodes do not appear in compiler MDP node lists."""
+        onnx_path = tmp_path / "constant_model.onnx"
+        constant = helper.make_node(
+            "Constant",
+            inputs=[],
+            outputs=["constant"],
+            name="constant_node",
+            value=helper.make_tensor("value", TensorProto.FLOAT, [1], [1.0]),
+        )
+        embedding = helper.make_node("Identity", inputs=["input_ids"], outputs=["embedding"], name="embed_tokens")
+        layer_zero = helper.make_node("Identity", inputs=["embedding"], outputs=["layer_zero"], name="h.0/attn")
+        layer_one = helper.make_node("Identity", inputs=["layer_zero"], outputs=["layer_one"], name="h.1/attn")
+        lm_head = helper.make_node("Identity", inputs=["layer_one"], outputs=["logits"], name="lm_head")
+        graph = helper.make_graph(
+            [constant, embedding, layer_zero, layer_one, lm_head],
+            "constant_model",
+            [helper.make_tensor_value_info("input_ids", TensorProto.FLOAT, [1, 8])],
+            [helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 8])],
+        )
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), onnx_path)
+
+        config = generate_disagg_mdp_partition_config(str(onnx_path), num_devices=2, num_partitions=2, num_layers=2)
+
+        assert all("constant_node" not in partition["nodeList"] for partition in config["partitions"])
 
     def test_mdp_disagg_json_is_created(self, compile_workspace):
         """mdp_disagg_4d_2p.json is written to compile_dir when mdp_num_partitions=2."""
