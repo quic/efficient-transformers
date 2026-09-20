@@ -24,8 +24,6 @@ from transformers import (
 from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
@@ -117,8 +115,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_hidden_layers: Optional[int] = -1,
     kv_offload: Optional[bool] = False,
     num_devices: Optional[int] = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     qaic_config: Optional[dict] = None,
     test_kv_replicate: Optional[bool] = None,
@@ -236,8 +232,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
         "qaic_config": qaic_config,
         "use_onnx_subfunctions": use_onnx_subfunctions,
         "split-model-io": True,
@@ -767,37 +761,3 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
             )
     else:
         pytest.skip(f"Skipping replicate KV test for {model_name} as it's not in REPEAT_KV_TEST_MODELS")
-
-
-################################ QNN Tests ################################
-
-
-@pytest.mark.on_qaic
-@pytest.mark.qnn
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    if model_name in [
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "tiny-random/gemma-3",
-        "tiny-random/gemma-4-dense",
-        "tiny-random/gemma-4-moe",
-        "moonshotai/Kimi-K2.5",
-    ]:
-        pytest.skip("QNN is not supported for these models yet.")
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        kv_offload=kv_offload,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )

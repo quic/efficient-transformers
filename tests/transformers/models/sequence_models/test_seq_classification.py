@@ -42,8 +42,6 @@ def check_seq_classification_pytorch_vs_ai100(
         manual_cleanup (callable): Function to clean up resources
         seq_len (Union[int, List[int]]): Sequence length(s) for compilation
         n_layer (int): Number of layers for the model
-        enable_qnn (bool): Enable QNN compilation
-        qnn_config (str): Path to QNN config file
     """
     # Prepare test input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
