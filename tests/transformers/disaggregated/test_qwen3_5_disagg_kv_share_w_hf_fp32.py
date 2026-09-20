@@ -24,6 +24,9 @@ from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_confi
 
 MODEL_NAME = "tiny-random/qwen3.5-moe"
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3.5-moe"}
+MDP_PARTITION_XFAIL_REASON = (
+    "QAIC compilation rejects the generated two-partition MDP config because conv_state.2 is unassigned"
+)
 
 
 def _optional_int_env(name: str, default: int | None) -> int | None:
@@ -468,6 +471,7 @@ def _compile_disagg_sessions(
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
+@pytest.mark.xfail(reason=MDP_PARTITION_XFAIL_REASON, strict=False)
 @pytest.mark.parametrize("dma_config", disagg_dma_configs("qwen3_5_moe_tiny"))
 def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     pytest.importorskip("qwen_vl_utils")

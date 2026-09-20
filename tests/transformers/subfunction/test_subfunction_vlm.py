@@ -82,8 +82,6 @@ def check_image_text_to_text_subfunction_core(
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     batch_size = model_config_dict[model_name]["batch_size"]
-    enable_qnn = False
-    qnn_config = None
     max_gen_len = NEW_GENERATION_TOKENS
 
     if config is None and model_name in SYNTHESIZED_CONFIG_MODELS:
@@ -144,8 +142,6 @@ def check_image_text_to_text_subfunction_core(
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
         "use_onnx_subfunctions": True,
     }
 
