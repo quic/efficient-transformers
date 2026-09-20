@@ -69,6 +69,17 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    GlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer,
+    GlmMoeDsaForCausalLM,
+    GlmMoeDsaIndexer,
+    GlmMoeDsaModel,
+    GlmMoeDsaMoE,
+    GlmMoeDsaRMSNorm,
+    GlmMoeDsaRotaryEmbedding,
+    GlmMoeDsaTopkRouter,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -378,6 +389,16 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeMoE,
     QEffGlm4MoeRotaryEmbedding,
     QEffGlm4MoeTopkRouter,
+)
+from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    QEffGlmMoeDsaAttention,
+    QEffGlmMoeDsaDecoderLayer,
+    QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaIndexer,
+    QEffGlmMoeDsaModel,
+    QEffGlmMoeDsaMoE,
+    QEffGlmMoeDsaRotaryEmbedding,
+    QEffGlmMoeDsaTopkRouter,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -694,6 +715,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        GlmMoeDsaRMSNorm: CustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -716,6 +738,13 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeAttention: QEffGlm4MoeAttention,
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
+        # GLM-MoE-DSA
+        GlmMoeDsaModel: QEffGlmMoeDsaModel,
+        GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+        GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+        GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+        GlmMoeDsaRotaryEmbedding: QEffGlmMoeDsaRotaryEmbedding,
+        GlmMoeDsaIndexer: QEffGlmMoeDsaIndexer,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -1490,6 +1519,9 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         # GLM4-MoE
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # GLM-MoE-DSA
+        GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+        GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
         # Llama4
         Llama4TextMoe: QEffLlama4TextMoe,
         Llama4TextExperts: QEffLlama4TextExperts,
