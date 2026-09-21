@@ -260,7 +260,7 @@ def _run_decode_steps(
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.disagg_dma
 def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parity(tmp_export_dir, monkeypatch):
     monkeypatch.setenv("NUM_Q_BLOCKS", "1")
     model_hf, tokenizer = _load_gpt_oss_hf_and_tokenizer()
@@ -308,7 +308,7 @@ def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parit
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.disagg_dma
 def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_export_dir):
     model_hf, tokenizer = _load_gpt_oss_hf_and_tokenizer()
     prompt_len = _prompt_token_len(tokenizer)
