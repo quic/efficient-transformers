@@ -49,7 +49,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.onnxscript_utils import get_onnxscript_func
-from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
+from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func, UnpackMxfp6, UnpackMxfp6Func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils import constants
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, SIZE_THRESHOLD_DEFAULT
@@ -116,6 +116,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
+        "UnpackMxfp6": (UnpackMxfp6Func, UnpackMxfp6),
         "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
         "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch),
     }
@@ -136,8 +137,16 @@ class CustomOpTransform(BaseOnnxTransform):
         # Add function prototypes to model
         existing = {f.name for f in model.functions}
 
-        for func_name, onnxscript_func in cls._custom_ops.values():
-            proto = get_onnxscript_func(onnxscript_func, onnx_export_opset).to_function_proto()
+        for op_name, (_, onnxscript_func) in cls._custom_ops.items():
+            if onnxscript_func is None:
+                if op_name in used_op_types:
+                    cls._ensure_opset_imports(model, "com.qti.aisw.onnx", 1)
+                    op_applied = True
+                continue
+            try:
+                proto = get_onnxscript_func(onnxscript_func, onnx_export_opset).to_function_proto()
+            except AttributeError:
+                proto = onnxscript_func.to_function_proto()
             if proto.name not in used_op_types:
                 continue
             if proto.name not in existing:

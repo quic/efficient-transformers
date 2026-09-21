@@ -15,6 +15,7 @@ import torch
 from accelerate import init_empty_weights
 
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
+from QEfficient.exporter.weight_free.mxfp6 import finalize_mxfp6_export
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
 from QEfficient.utils import load_json
 from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
@@ -47,6 +48,8 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
     quant_config = getattr(qeff_model.model.config, "quantization_config", None)
 
     if quant_config is not None:
+        if getattr(getattr(qeff_model, "_mxfp6_config", None), "enabled", False):
+            raise ValueError("`mxfp6=True` does not currently support source HF quantization configs.")
         # For quantized models the meta model must use the same quantized layer types as the
         # checkpoint so that ONNX initializer names match the checkpoint's storage keys.
         # qeff_model.model was built via from_config (no real quantized checkpoint load), so
@@ -133,6 +136,9 @@ def _prepare_checkpoint_for_weight_free_export(
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
+    mxfp6_config = getattr(qeff_model, "_mxfp6_config", None)
+    if getattr(mxfp6_config, "enabled", False):
+        dtype_suffix += f"-mxfp6-{mxfp6_config.scale_dtype}"
     # TODO(wf): For different flavours of the model that expect different checkpoint weight layouts,
     # we end up overriding old one. We need to add support of hashing/caching here.
     prepared_name = source_dir.name + f"-qeff-prepared-{dtype_suffix}"
@@ -236,7 +242,13 @@ def export_weight_free_onnx(
     )
     _prune_unused_fake_initializers(onnx_program)
     onnx_program.save(str(onnx_path))
-    save_weight_spec(resolve_weight_spec_path(onnx_path), spec)
+    weight_spec_path = save_weight_spec(resolve_weight_spec_path(onnx_path), spec)
+    finalize_mxfp6_export(
+        onnx_path=onnx_path,
+        weight_spec_path=weight_spec_path,
+        prepared_model_ref=prepared_model_ref,
+        config=getattr(qeff_model, "_mxfp6_config", None),
+    )
 
     return meta_qeff_model, onnx_transform_kwargs
 
