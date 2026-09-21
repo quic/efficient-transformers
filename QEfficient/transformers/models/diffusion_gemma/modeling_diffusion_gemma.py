@@ -7,12 +7,13 @@
 
 import os
 from functools import partial
-from typing import List, Optional, Type
+from pathlib import Path
+from typing import List, Optional, Type, Union
 
+import onnx
 import torch
 import torch.nn as nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     DiffusionGemmaEncoderTextAttention,
     DiffusionGemmaEncoderTextLayer,
@@ -26,7 +27,6 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
 
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEFlavour,
     MoEProfile,
@@ -44,6 +44,162 @@ _FP16_CLAMP_MAX = 65504.0
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
 SELF_CONDITIONING_TOP_K = 128
 DEVICE_ENTROPY_BOUND = 0.1
+
+_NPI_FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
+_NPI_MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
+_NPI_SAMPLER_OUTPUTS = {
+    "topk_logits",
+    "topk_indices",
+    "newly_accepted_mask",
+    "mean_entropy",
+    "new_canvas",
+}
+_NPI_DISCRETE_SAMPLER_OUTPUTS = {
+    "topk_indices",
+    "newly_accepted_mask",
+    "new_canvas",
+}
+_NPI_DISCRETE_SAMPLER_OPS = {
+    "ArgMax",
+    "GreaterOrEqual",
+    "LessOrEqual",
+    "ScatterElements",
+    "ScatterND",
+    "Shape",
+}
+_NPI_FLOATING_POINT_TENSOR_TYPES = {
+    onnx.TensorProto.BFLOAT16,
+    onnx.TensorProto.DOUBLE,
+    onnx.TensorProto.FLOAT,
+    onnx.TensorProto.FLOAT16,
+}
+
+
+def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
+    onnx_path = Path(onnx_path)
+    model = onnx.load(onnx_path, load_external_data=False)
+    model = onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False)
+    graph = model.graph
+    producers = {output_name: node for node in graph.node for output_name in node.output}
+    tensor_dtypes = {
+        value_info.name: value_info.type.tensor_type.elem_type
+        for value_info in list(graph.input) + list(graph.output) + list(graph.value_info)
+        if value_info.type.HasField("tensor_type") and value_info.type.tensor_type.HasField("elem_type")
+    }
+    keep_nodes = []
+
+    def is_moe_node(node):
+        node_name = node.name.lower()
+        return any(part in node_name for part in _NPI_MOE_NODE_NAME_PARTS)
+
+    def is_excluded_npi_node(node):
+        return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
+
+    def is_model_body_node(node):
+        return node.name.startswith(("/layers.", "/norm/", "/self_conditioning/", "/decoder/"))
+
+    sampler_outputs = [
+        output.name for output in graph.output if output.name.rsplit("/", maxsplit=1)[-1] in _NPI_SAMPLER_OUTPUTS
+    ]
+    is_sampler_graph = bool(sampler_outputs)
+
+    for node in graph.node:
+        if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        if is_sampler_graph:
+            if node.name.startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
+                keep_nodes.append(node)
+            continue
+        if node.op_type in _NPI_FP32_ACCUM_OPS:
+            keep_nodes.append(node)
+        if "/decoder/self_conditioning/" in node.name or node.name.endswith("/decoder/norm/CustomRMSNorm"):
+            keep_nodes.append(node)
+
+    seen_names = set()
+
+    def backtrace(tensor_name, depth=0):
+        if tensor_name in seen_names or depth > 8:
+            return
+        seen_names.add(tensor_name)
+        node = producers.get(tensor_name)
+        if node is None or is_moe_node(node) or is_excluded_npi_node(node):
+            return
+        if is_sampler_graph and is_model_body_node(node):
+            return
+        keep_nodes.append(node)
+        for input_name in node.input:
+            if input_name in producers:
+                backtrace(input_name, depth + 1)
+
+    if sampler_outputs:
+        output_names = [
+            node.output[0]
+            for node in graph.node
+            if (
+                node.op_type == "TopK"
+                and node.output
+                and node.output[0]
+                and not is_moe_node(node)
+                and not is_excluded_npi_node(node)
+                and not is_model_body_node(node)
+            )
+        ]
+    elif graph.output:
+        output_names = [graph.output[0].name]
+    else:
+        output_names = []
+    for output_name in output_names:
+        backtrace(output_name)
+
+    initializer_names = {initializer.name for initializer in graph.initializer}
+
+    def depends_on_initializer(tensor_name, depth=0):
+        if tensor_name in initializer_names:
+            return True
+        if depth > 4:
+            return False
+        producer = producers.get(tensor_name)
+        if producer is None:
+            return False
+        return any(depends_on_initializer(input_name, depth + 1) for input_name in producer.input)
+
+    excluded_outputs = {"/decoder/MatMul_output_0", "/lm_head/MatMul_output_0"}
+    tensors = []
+    seen_tensors = set()
+    for node in keep_nodes:
+        if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        for output_index, output_name in enumerate(node.output):
+            if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
+                continue
+            output_basename = output_name.rsplit("/", maxsplit=1)[-1]
+            if is_sampler_graph and (
+                output_basename in _NPI_DISCRETE_SAMPLER_OUTPUTS
+                or node.op_type in _NPI_DISCRETE_SAMPLER_OPS
+                or (node.op_type == "TopK" and output_index == 1)
+                or (output_name in tensor_dtypes and tensor_dtypes[output_name] not in _NPI_FLOATING_POINT_TENSOR_TYPES)
+            ):
+                continue
+            if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
+                continue
+            if node.op_type in {
+                "Cast",
+                "Transpose",
+                "Reshape",
+                "DequantizeLinear",
+                "QuantizeLinear",
+            } and depends_on_initializer(output_name):
+                continue
+            seen_tensors.add(output_name)
+            tensors.append(output_name)
+
+    npi_path = onnx_path.with_name("npi_fp32_unified_accum.yaml")
+    with open(npi_path, "w", encoding="utf-8") as handle:
+        handle.write("FP32NodeInstanceNames: [")
+        handle.write(", ".join(f"'{name}'" for name in sorted(tensors)))
+        handle.write("]\n")
+    print(f"  unified fp32 accumulation island: {len(tensors)} tensors -> {npi_path}")
+    return str(npi_path)
 
 
 def _top_k_self_conditioning_embeddings(
@@ -667,6 +823,13 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
     def get_qeff_unified_wrapper(self) -> QEffDiffusionGemmaUnifiedWrapper:
         """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
         return QEffDiffusionGemmaUnifiedWrapper(self)
+
+    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+        del model_name
+        onnx_path = onnx_path or self.onnx_path
+        if onnx_path is None:
+            raise ValueError("ONNX path is required to generate DiffusionGemma NPI file.")
+        return _write_unified_accum_npi(onnx_path)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffDiffusionGemmaEncoderTextLayer}

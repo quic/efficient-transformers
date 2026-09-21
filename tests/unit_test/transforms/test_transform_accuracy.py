@@ -64,11 +64,11 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
 
 import QEfficient.transformers.models.pytorch_transforms as pytorch_transforms
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.base.modeling_qeff import _write_unified_accum_npi
 from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     QEffDiffusionGemmaEncoderTextModel,
     QEffDiffusionGemmaTextMoeBlock,
     _apply_rotary_pos_emb,
+    _write_unified_accum_npi,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,

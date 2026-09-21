@@ -72,18 +72,8 @@ def parse_args():
     parser.add_argument("--canvas-length", type=int, default=CANVAS_LENGTH, help="Tokens per denoising canvas.")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Total generated tokens.")
     parser.add_argument("--diffusion-steps", type=int, default=DIFFUSION_STEPS, help="Steps per canvas.")
-    parser.add_argument(
-        "--num-layers",
-        type=int,
-        default=None,
-        help="Use a reduced number of language layers; defaults to the full model.",
-    )
-    parser.add_argument(
-        "--sampler",
-        choices=("local", "hf"),
-        default="local",
-        help="Cumulative local freezing or Hugging Face per-step re-noising.",
-    )
+    parser.add_argument("--num-layers",type=int,default=None,help="Use a reduced number of language layers; defaults to the full model.",)
+    parser.add_argument("--sampler",choices=("local", "hf"),default="local",help="Cumulative local freezing or Hugging Face per-step re-noising.",)
     parser.add_argument("--no-stop-on-eos", action="store_true", help="Do not stop at the first EOS token.")
     parser.add_argument("--truncate-first-sentence", action="store_true", help="Return the first sentence only.")
     parser.add_argument("--verbose-steps", action="store_true", help="Decode a preview after each step.")
@@ -147,13 +137,8 @@ def main():
         result.total_steps * result.canvas_length / result.total_canvas_time if result.total_canvas_time > 0 else 0.0
     )
     print(f"\nTTFT: {result.ttft:.2f}s ({result.retained_kv_buffers} KV buffers retained)")
-    # print(
-    #     f"\nCanvas: {result.total_steps} steps across {result.executed_blocks} blocks, "
-    #     f"{result.total_canvas_time:.1f}s, {canvas_throughput:.1f} tok/s"
-    # )
-    # breakpoint()
     print(
-            f"\Average number of steps: {result.total_steps/result.executed_blocks}, "
+            f"Average number of steps: {result.total_steps/result.executed_blocks}, "
             f"Tokens per second: {clean_token_count/result.total_canvas_time:.1f}"
     )
     print(f"\nOutput:\n{output_text}")
