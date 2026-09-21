@@ -74,10 +74,25 @@ def test_dynamo_stage_recognised(gcr):
     assert "tests_log_dynamo_qaic.xml" in gcr.STAGE_MAP
     dynamo = gcr.STAGE_MAP["tests_log_dynamo_qaic.xml"]
     assert dynamo.gate == "RUN_DYNAMO_QAIC"
-    # Dynamo runs after CLI (order 8) and before Finetune (order 10).
-    assert dynamo.order == 9
+    # Dynamo runs after CLI (order 9) and before Finetune (order 11).
+    assert dynamo.order == 10
     finetune = gcr.STAGE_MAP["tests_log_finetune.xml"]
-    assert finetune.order == 10
+    assert finetune.order == 11
+
+
+def test_disagg_stage_recognised(gcr):
+    """DISAGG XML basename must be in STAGE_MAP — previously absent and silently unreported."""
+    assert "tests_log_disagg.xml" in gcr.STAGE_MAP
+    disagg = gcr.STAGE_MAP["tests_log_disagg.xml"]
+    assert disagg.display == "QAIC DISAGG"
+    assert disagg.gate == "RUN_QAIC_DISAGG"
+    # DISAGG sits between Multimodal (order 5) and Reranker (order 7).
+    assert disagg.order == 6
+    reranker = gcr.STAGE_MAP["tests_log_reranker.xml"]
+    assert reranker.order == 7
+    # A skipped DISAGG stage must warn the Causal LM category tile.
+    assert "tests_log_disagg.xml" in gcr._STAGE_FEEDS_CATEGORIES
+    assert gcr.CAT_CAUSAL in gcr._STAGE_FEEDS_CATEGORIES["tests_log_disagg.xml"]
 
 
 def test_merge_junit_results_includes_each_stage_once(tmp_path):
