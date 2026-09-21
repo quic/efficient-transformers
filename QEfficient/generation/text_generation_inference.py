@@ -79,50 +79,6 @@ class CloudAI100ExecInfoNew:
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
-io_files = []
-
-
-def write_io_files(
-    inputs: Dict[str, np.ndarray],
-    outputs: Dict[str, np.ndarray],
-    write_io_dir: str,
-    write_io_subdir: str,
-    write_io_name: str,
-    include_dims: bool = False,
-    reset: bool = False,
-):
-    global io_files
-    if reset:
-        io_files = []
-    io = []
-    os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
-    for iname, i_array in inputs.items():
-        i_array.tofile(f"{write_io_dir}/{write_io_subdir}/{iname}.raw")
-        i_spec = {
-            "path": f"{write_io_subdir}/{iname}.raw",
-            "io-direction": "in",
-            "elem-size": i_array.itemsize,
-            "map-to": iname,
-        }
-        if include_dims:
-            i_spec["dims"] = i_array.shape
-        io.append(i_spec)
-    for o_name, o_array in outputs.items():
-        o_array.tofile(f"{write_io_dir}/{write_io_subdir}/{o_name}.raw")
-        o_spec = {
-            "path": f"{write_io_subdir}/{o_name}.raw",
-            "io-direction": "out",
-            "elem-size": o_array.itemsize,
-            "map-to": o_name,
-        }
-        if include_dims or o_name.endswith("_RetainedState"):
-            o_spec["dims"] = o_array.shape
-        io.append(o_spec)
-    io_files.append(io)
-    with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
-        json.dump({"IO-files": io_files}, fp, indent=True)
-
-
 def latency_stats_bertstyle(
     model_name: str,
     qpc_path: str,
@@ -328,7 +284,6 @@ def cloud_ai_100_exec_kv(
     comp_ctx_lengths_decode: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
-    write_io_dir: Optional[str] = None,
     automation=False,
     iteration: int = 1,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
@@ -354,7 +309,6 @@ def cloud_ai_100_exec_kv(
         :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
         :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
-        :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
@@ -398,7 +352,6 @@ def cloud_ai_100_exec_kv(
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         enable_debug_logs=enable_debug_logs,
-        write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
         num_kv_blocks=num_kv_blocks,
         is_tlm=is_tlm,
@@ -450,7 +403,6 @@ class QEffTextGenerationBase:
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -461,7 +413,6 @@ class QEffTextGenerationBase:
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
         self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
-        self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
         self.include_guided_decoding = include_guided_decoding
@@ -854,8 +805,6 @@ class QEffTextGenerationBase:
 
             outputs = self._session.run(chunk_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
         return (
             outputs,
             position_ids,
@@ -1029,10 +978,6 @@ class QEffTextGenerationBase:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
             decode_inputs["position_ids"][:, -1] += 1
@@ -1067,10 +1012,6 @@ class QEffTextGenerationBase:
             yield decode_inputs["input_ids"]
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
             decode_inputs["position_ids"] += 1
@@ -1094,7 +1035,6 @@ class TextGeneration:
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -1111,7 +1051,6 @@ class TextGeneration:
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
             device_id=device_id,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,

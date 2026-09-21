@@ -54,7 +54,6 @@ from QEfficient.generation.text_generation_inference import (
     PerfMetrics,
     calculate_latency,
     get_compilation_dims,
-    write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
@@ -750,7 +749,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
-        write_io: bool = False,
         dtype: torch.dtype | None = torch.float32,
     ) -> torch.Tensor | np.ndarray:
         """
@@ -775,8 +773,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         torch.Tensor or np.ndarray
             Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -859,9 +855,6 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: torch.Tensor | np.ndarray) -> list[torch.Tensor]:
@@ -884,8 +877,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         outputs = model(**inputs)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
         return outputs
 
 
@@ -2378,9 +2369,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
-
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
             # Create VisionLanguageGeneration instance
@@ -2399,7 +2387,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
-                write_io_dir=self._write_io_dir,
                 **kwargs,
             )
 
@@ -2669,9 +2656,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
@@ -2730,9 +2714,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
             outputs = lang_session.run(lang_inputs)
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
 
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -3135,7 +3116,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: int | None = None,
-        write_io: bool = False,
         processor: Optional[AutoImageProcessor] = None,
         images: List[str] = None,
         prompts: List[str] = None,
@@ -3176,8 +3156,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             return write_single_qpc_vlm_runner_bundle(model=self, processor=processor, images=images, prompts=prompts)
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
-
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
         return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
@@ -3302,9 +3280,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(chunk_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
@@ -3347,9 +3322,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                     inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
             outputs = qpc_session.run(inputs)
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
 
             # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -5020,7 +4992,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
-            - `write_io (bool, optional)`: Whether to save the io files.
 
         artifacts : bool, optional
             Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
@@ -5036,9 +5007,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         if artifacts:
             return write_causal_lm_runner_bundle(
                 model=self,
@@ -5061,7 +5029,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
-                write_io_dir=self._write_io_dir,
                 **kwargs,
             )
         else:
@@ -5363,7 +5330,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         generation_len: int,
         streamer: TextStreamer | None = None,
         device_ids: list[int] | None = None,
-        write_io: bool = False,
     ) -> torch.Tensor | np.ndarray:
         """
         Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
@@ -5401,8 +5367,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         inputs = self.auto_correct_inputs(inputs)
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
@@ -5432,9 +5396,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         start = perf_counter()
         outputs = self.qpc_session.run(inputs)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
         # array to hold generated tokens
         generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
         generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
@@ -5450,9 +5411,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
             outputs = self.qpc_session.run(inputs)
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
 
             logits = outputs["logits"]
             next_token = logits.argmax(-1)
@@ -5690,7 +5648,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
-        write_io: bool = False,
     ) -> torch.Tensor | np.ndarray:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -5703,8 +5660,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -5749,9 +5704,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         inputs = {"input_values": input_values}
         outputs = self.qpc_session.run(inputs)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-
         logits = outputs["logits"]
         predicted_ids = np.argmax(logits, axis=-1)
         transcriptions = processor.batch_decode(torch.tensor(predicted_ids))
@@ -5771,9 +5723,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             inputs[0], return_tensors="pt", max_length=self.seq_len, truncation=True, padding="max_length"
         ).input_values
         outputs = model(input_values[0])
-
-        if self._write_io_dir is not None:
-            write_io_files(input_values[0], outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
 
         logits = outputs.logits
         logits = logits.detach().numpy()

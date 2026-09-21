@@ -932,8 +932,6 @@ class TestQEFFAutoModel:
         """pytorch_feature_generate runs the model and returns output."""
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
-        # _write_io_dir must be initialised before calling pytorch_feature_generate directly
-        qeff._write_io_dir = None
         inputs = {
             "input_ids": torch.zeros((1, SEQ_LEN), dtype=torch.int64),
             "attention_mask": torch.ones((1, SEQ_LEN), dtype=torch.int64),

@@ -10,7 +10,7 @@ CPU-only tests for QEfficient.generation module.
 Tests verify:
   - Module importability and dataclass construction
   - Pure utility functions (calculate_latency, fix_prompts, etc.)
-  - File I/O (write_io_files, get_compilation_dims, read_prompts_txt_file)
+  - File I/O (get_compilation_dims, read_prompts_txt_file)
   - VisionHandler initialization and config-based methods
   - QEffTextGenerationBase: prefill, decode, chunking, continuous batching,
     prepare_decode_inputs, initialize_decode_inputs, update_decode_input,
@@ -38,7 +38,6 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
     get_input_prompts,
     read_prompts_txt_file,
-    write_io_files,
 )
 
 # ---------------------------------------------------------------------------
@@ -386,45 +385,6 @@ class TestReadPromptsTxtFile:
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             read_prompts_txt_file("/no/such/file.txt")
-
-
-# ---------------------------------------------------------------------------
-# Tests: write_io_files
-# ---------------------------------------------------------------------------
-
-
-class TestWriteIoFiles:
-    def test_creates_json_and_raw_files(self, tmp_path):
-        inputs = {"input_ids": np.array([[1, 2, 3]], dtype=np.int64)}
-        outputs = {"logits": np.array([[0.1, 0.2, 0.3]], dtype=np.float32)}
-        write_io_files(inputs, outputs, str(tmp_path), "sub", "io", reset=True)
-        assert (tmp_path / "io.json").exists()
-        assert (tmp_path / "sub" / "input_ids.raw").exists()
-        assert (tmp_path / "sub" / "logits.raw").exists()
-
-    def test_json_structure(self, tmp_path):
-        inputs = {"x": np.zeros((1, 4), dtype=np.float32)}
-        outputs = {"y": np.zeros((1, 4), dtype=np.float32)}
-        write_io_files(inputs, outputs, str(tmp_path), "s", "io", reset=True)
-        data = json.loads((tmp_path / "io.json").read_text())
-        assert "IO-files" in data
-        assert len(data["IO-files"]) == 1
-
-    def test_reset_clears_previous(self, tmp_path):
-        inputs = {"x": np.zeros((1,), dtype=np.float32)}
-        outputs = {"y": np.zeros((1,), dtype=np.float32)}
-        write_io_files(inputs, outputs, str(tmp_path), "s1", "io", reset=True)
-        write_io_files(inputs, outputs, str(tmp_path), "s2", "io", reset=False)
-        data = json.loads((tmp_path / "io.json").read_text())
-        assert len(data["IO-files"]) == 2
-
-    def test_include_dims(self, tmp_path):
-        inputs = {"x": np.zeros((2, 4), dtype=np.float32)}
-        outputs = {"y": np.zeros((2, 4), dtype=np.float32)}
-        write_io_files(inputs, outputs, str(tmp_path), "s", "io", include_dims=True, reset=True)
-        data = json.loads((tmp_path / "io.json").read_text())
-        has_dims = any("dims" in e for e in data["IO-files"][0])
-        assert has_dims
 
 
 # ---------------------------------------------------------------------------
@@ -1138,7 +1098,6 @@ def _make_vlg_stub(full_batch_size=None, prefill_seq_len=8):
     obj.include_sampler = False
     obj.comp_ctx_lengths_prefill = None
     obj._prefill_seq_len = prefill_seq_len
-    obj._write_io_dir = None
     obj._lang_skip_buffers = []
 
     session = MagicMock()
