@@ -511,6 +511,18 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         cumulative_probabilities = log_probs.exp().cumsum(dim=2)
         denoiser_canvas = (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1)
         new_canvas = torch.where(newly_accepted_mask.bool(), denoiser_canvas, input_ids)
+        is_encode_mask = is_encode.bool().view(1, 1, 1)
+        is_encode_mask_2d = is_encode_mask.squeeze(-1)
+        topk_logits = torch.where(is_encode_mask, torch.zeros_like(topk_logits), topk_logits)
+        topk_indices = torch.where(is_encode_mask, torch.zeros_like(topk_indices), topk_indices)
+        newly_accepted_mask = torch.where(
+            is_encode_mask_2d,
+            torch.zeros_like(newly_accepted_mask),
+            newly_accepted_mask,
+        )
+        mean_entropy = token_entropy.mean(dim=-1, keepdim=True)
+        mean_entropy = torch.where(is_encode_mask_2d, torch.zeros_like(mean_entropy), mean_entropy)
+        new_canvas = torch.where(is_encode_mask_2d, input_ids, new_canvas)
         pkv = [
             (past_key_values.layers[layer_index].keys, past_key_values.layers[layer_index].values)
             for layer_index in range(self.text_config.num_hidden_layers)
@@ -519,7 +531,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             topk_logits,
             topk_indices,
             newly_accepted_mask,
-            token_entropy.mean(dim=-1, keepdim=True),
+            mean_entropy,
             new_canvas,
             next_image_idx,
             pkv,
