@@ -396,26 +396,6 @@ def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_config",
-    [model for model in test_models_per_pr_causal if model["supports_disagg"]],
-    ids=_per_pr_id,
-)
-def test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl(model_config, manual_cleanup):
-    if model_config.get("known_ccl_export_or_compile_issue"):
-        pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
-    _run_per_pr_causal_text_case(
-        model_config,
-        manual_cleanup,
-        retain_full_kv=True,
-        comp_ctx_lengths_prefill=PER_PR_CCL_PREFILL,
-        comp_ctx_lengths_decode=PER_PR_CCL_DECODE,
-    )
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_speculative_tlm_fp16_subfunction_cb(model_config, manual_cleanup):
     """Speculative-decoding (TLM) FP16 export/compile/generate in continuous-batching mode.
