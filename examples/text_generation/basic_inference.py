@@ -39,8 +39,8 @@ def main():
         "--stats-level",
         dest="stats_level",
         type=int,
-        default=0,
-        help="Level of statistics to collect. Default: 0",
+        default=None,
+        help="Level of statistics to collect. Default: None",
     )
     parser.add_argument(
         "--profiling-type",
@@ -72,17 +72,21 @@ def main():
             logger.warning("Need to set --stats-level to enable profiling. Setting stats_level=100.")
             args.stats_level = 100
 
+    compile_kwargs = {
+        "prefill_seq_len": args.prefill_seq_len,
+        "ctx_len": args.ctx_len,
+        "num_cores": args.num_cores,
+        "aic_hw_version": args.aic_hw_version,
+        "num_devices": (1 if args.device_group is None else len(args.device_group)),
+        "dynamo": args.dynamo,
+        "use_onnx_subfunctions": args.use_onnx_subfunctions,
+    }
+
+    if args.stats_level is not None:
+        compile_kwargs["stats_level"] = args.stats_level
+
     # Compile the model
-    qpc_path = model.compile(
-        prefill_seq_len=args.prefill_seq_len,
-        ctx_len=args.ctx_len,
-        num_cores=args.num_cores,
-        stats_level=args.stats_level,
-        aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
-        dynamo=args.dynamo,
-        use_onnx_subfunctions=args.use_onnx_subfunctions,
-    )
+    qpc_path = model.compile(**compile_kwargs)
     print(f"Model compiled to: {qpc_path}")
 
     # Generate text
