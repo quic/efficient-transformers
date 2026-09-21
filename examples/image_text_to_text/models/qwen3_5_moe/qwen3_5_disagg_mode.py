@@ -24,8 +24,8 @@ DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.vision_config.depth = 5
-# config.text_config.num_hidden_layers = 2
+config.vision_config.depth = 5
+config.text_config.num_hidden_layers = 2
 config.torch_dtype = "float16"
 layer_types = list(getattr(config.text_config, "layer_types", []))
 if len(layer_types) < config.text_config.num_hidden_layers:
@@ -52,6 +52,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 BS = 1
+GDN_CHUNK_SIZE = PREFILL_SEQ_LEN
 
 qaic_config = {}
 
@@ -101,6 +102,7 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
+    gdn_chunk_size=GDN_CHUNK_SIZE,
     qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -121,6 +123,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
+    gdn_chunk_size=1,
     use_onnx_subfunctions=True,
     qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
@@ -311,5 +314,7 @@ for i in range(generation_len - 2):
         }
     )
 ft = perf_counter()
+
+print(f"For PL = {PREFILL_SEQ_LEN}")
 print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
 print(f"\noutput\n{tokenizer.decode(all_outputs)}")
