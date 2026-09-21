@@ -165,7 +165,7 @@ class VisionHandler:
             }:
                 vision_inputs[k] = np.array(v)
 
-        self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
+        self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -210,7 +210,7 @@ class VisionHandler:
                 }:
                     vision_inputs[k] = np.array(v)
 
-            self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -333,7 +333,7 @@ class VisionHandler:
                 vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
                 vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
 
-            self._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 

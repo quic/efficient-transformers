@@ -41,6 +41,7 @@ from QEfficient.generation.text_generation_inference import (
     read_prompts_txt_file,
     write_io_files,
 )
+from QEfficient.utils import constants
 
 # ---------------------------------------------------------------------------
 # Shared mock helpers
@@ -1135,7 +1136,7 @@ class TestVisionHandlerInit:
         values = np.array([1.0, -2.5, np.pi], dtype=np.float32)
         vision_inputs = {"pixel_values": values.copy(), "image_masks": values.copy()}
 
-        handler._cast_vision_inputs(vision_inputs, {"pixel_values", "image_masks"})
+        handler._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
         assert vision_inputs["pixel_values"].dtype == np.float16
         np.testing.assert_array_equal(

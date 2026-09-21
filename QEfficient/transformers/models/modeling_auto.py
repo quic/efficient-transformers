@@ -2507,8 +2507,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             }
         }
 
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        for k in vision_inputs_fp16:
+        for k in constants.VISION_FP16_INPUTS:
             if k not in vision_inputs:
                 continue
             if self.vision_model.qpc_path and vision_session.binding_is_bfloat16(k):
