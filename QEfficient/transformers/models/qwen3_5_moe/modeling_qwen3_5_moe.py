@@ -1380,7 +1380,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def set_gdn_chunk_size(self, chunk_size: int) -> None:
         """Forward the export-time GDN setting to the text transformer."""
-        self.model.language_model.set_gdn_chunk_size(chunk_size)
+        self.model.set_gdn_chunk_size(chunk_size)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}

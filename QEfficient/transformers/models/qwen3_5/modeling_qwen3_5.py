@@ -1369,7 +1369,7 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
     def set_gdn_chunk_size(self, chunk_size: int) -> None:
         """Forward the export-time GDN setting to the text transformer."""
-        self.model.language_model.set_gdn_chunk_size(chunk_size)
+        self.model.set_gdn_chunk_size(chunk_size)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
