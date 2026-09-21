@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import math
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -15,7 +14,6 @@ from time import perf_counter
 from typing import Callable, Dict, Optional
 
 import numpy as np
-import onnx
 import requests
 import torch
 from PIL import Image
@@ -29,7 +27,6 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEffCausalLMForTextImageToTextModel
 
 _DEVICE_ENTROPY_BOUND = 0.1
-
 
 
 @dataclass
@@ -90,7 +87,7 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
     def get_model_config(self):
         return self.model.model.config.__dict__
 
-    def export(self, inputs, output_names, dynamic_axes,qaic_config, **kwargs):
+    def export(self, inputs, output_names, dynamic_axes, qaic_config, **kwargs):
         # breakpoint()
         return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes)
 
@@ -353,12 +350,8 @@ class DiffusionGemmaSingleQPCGenerator:
             feed = self._shared_feed(
                 cache_position_ids=self.position_ids,
                 is_encode=True,
-                self_conditioning_topk_logits=np.zeros(
-                    (1, self.canvas_length, 128), dtype=np.float32
-                ),
-                self_conditioning_topk_indices=np.zeros(
-                    (1, self.canvas_length, 128), dtype=np.int64
-                ),
+                self_conditioning_topk_logits=np.zeros((1, self.canvas_length, 128), dtype=np.float32),
+                self_conditioning_topk_indices=np.zeros((1, self.canvas_length, 128), dtype=np.int64),
                 sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
                 temperature=np.ones((1, 1), dtype=np.float32),
                 use_self_conditioning=False,
@@ -423,9 +416,7 @@ class DiffusionGemmaSingleQPCGenerator:
                         is_encode=False,
                         self_conditioning_topk_logits=self_conditioning_topk_logits,
                         self_conditioning_topk_indices=self_conditioning_topk_indices,
-                        sampling_uniforms=self.rng.uniform(
-                            size=(1, self.canvas_length, 1)
-                        ).astype(np.float32),
+                        sampling_uniforms=self.rng.uniform(size=(1, self.canvas_length, 1)).astype(np.float32),
                         temperature=np.full((1, 1), temperature, dtype=np.float32),
                         use_self_conditioning=step > 0,
                     ),
@@ -448,7 +439,7 @@ class DiffusionGemmaSingleQPCGenerator:
             if len(argmax_canvas_history) > stability_threshold:
                 argmax_canvas_history.pop(0)
             # accepted_mask = accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
-            accepted_mask = newly_accepted #accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
+            accepted_mask = newly_accepted  # accepted_mask | newly_accepted #if sampler == "local" else newly_accepted
             canvas = np.where(
                 ~accepted_mask,
                 self.rng.randint(0, self.vocab_size, size=(1, self.canvas_length)).astype(np.int64),
@@ -506,12 +497,8 @@ class DiffusionGemmaSingleQPCGenerator:
                 self._shared_feed(
                     cache_position_ids=self.position_ids,
                     is_encode=True,
-                    self_conditioning_topk_logits=np.zeros(
-                        (1, self.canvas_length, 128), dtype=np.float32
-                    ),
-                    self_conditioning_topk_indices=np.zeros(
-                        (1, self.canvas_length, 128), dtype=np.int64
-                    ),
+                    self_conditioning_topk_logits=np.zeros((1, self.canvas_length, 128), dtype=np.float32),
+                    self_conditioning_topk_indices=np.zeros((1, self.canvas_length, 128), dtype=np.int64),
                     sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
                     temperature=np.ones((1, 1), dtype=np.float32),
                     use_self_conditioning=False,
@@ -693,24 +680,25 @@ def compile_unified_qpc(
     start = time.time()
     unified = UnifiedQPC(qeff_model)
     qaic_config_moe = {
-                "moe_config": {
-                    "flavour": "expert_parallel",
-                    "expert_parallel_chunk_size": 128,
-                    "tree_reduce":True,
-                }
-            } 
-    # unified.export(
-    #     unified.model.get_dummy_inputs(),
-    #     unified.model.get_output_names(),
-    #     unified.model.get_onnx_dynamic_axes(),
-    #     qaic_config = qaic_config_moe
-    # )
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": 128,
+            "tree_reduce": True,
+        }
+    }
     specializations, _ = unified.model.get_specializations(
         batch_size=1,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         canvas_length=canvas_length,
     )
+    onnx_path = unified.get_onnx_path(
+        specializations=specializations,
+        mdp_ts_num_devices=num_devices,
+        qaic_config=qaic_config_moe,
+        aic_num_cores=num_cores,
+    )
+    npi_file_path = qeff_model.generate_npi_file(onnx_path)
 
     custom_io = {"vision_embeds": "float16"}
     for layer_index in range(qeff_model.config.text_config.num_hidden_layers):
@@ -718,11 +706,8 @@ def compile_unified_qpc(
             custom_io[f"past_{kv_name}.{layer_index}"] = "mxint8"
             custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "mxint8"
 
-            # custom_io[f"past_{kv_name}.{layer_index}"] = "float16"
-            # custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "float16"
-
     qpc_path = unified._compile(
-        # onnx_path=unified.onnx_path,
+        onnx_path=onnx_path,
         compile_dir=None,
         specializations=specializations,
         convert_to_fp16=True,
@@ -732,10 +717,8 @@ def compile_unified_qpc(
         custom_io=custom_io,
         retained_state=True,
         qaic_config=qaic_config_moe,
-        # aic_enable_depth_first=True,
         user_tiled=True,
-        # node_precision_info=_write_unified_accum_npi(unified.onnx_path),
-        # node_precision_info=_write_unified_accum_npi("/home/jsaisaga/qeff_llama/DiffusionGemmaForBlockDiffusion_old/DiffusionGemmaUnifiedWrapper-4a99121a82e31174/DiffusionGemmaUnifiedWrapper.onnx"),
+        node_precision_info=npi_file_path,
     )
     print(f"  unified QPC: {qpc_path} ({time.time() - start:.0f}s)")
     return qpc_path
