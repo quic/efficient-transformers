@@ -266,7 +266,9 @@ class TestQEFFBaseModelHashParams:
 class TestQEFFBaseModelTransformBlocking:
     """Tests for QEFFBaseModel.transform() attention blocking behavior."""
 
-    @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hq", "hkv", "hqkv"])
+    @pytest.mark.parametrize(
+        "blocking_mode", ["kv", "kv_paged", "q", "qkv", "qkv_paged", "hq", "hkv", "hkv_paged", "hqkv", "hqkv_paged"]
+    )
     def test_transform_blocking_mode_runs_auto_configurator(self, blocking_mode):
         # Use a slightly larger head count here to make it possible for "h" mode to result in head blocking
         # when num_devices > 1.
@@ -370,6 +372,84 @@ class TestQEFFBaseModelTransformBlocking:
                 prefill_only=True,
                 prefill_seq_len=8,
                 mdp_num_partitions=0,
+            )
+
+    @pytest.mark.parametrize("blocking_mode", ["h_paged", "hq_paged", "q_paged"])
+    def test_paged_mode_without_kv_blocking_raises_value_error(self, blocking_mode):
+        # Paged attention reads the cache block-wise, so it is only valid alongside
+        # KV blocking. h_paged/hq_paged/q_paged never enable KV blocking, so they
+        # must fail clearly instead of silently exporting a wrong-output graph.
+        from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config
+
+        cfg = LlamaConfig(
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=VOCAB_SIZE,
+            max_position_embeddings=131072,
+        )
+        high_cl = 131072
+
+        with pytest.raises(ValueError, match="Paged attention is only valid alongside KV blocking"):
+            build_transformer_blocking_config(
+                cfg,
+                blocking_mode=blocking_mode,
+                ctx_len=high_cl,
+                seq_len=high_cl,
+                bs=1,
+                compile_config={"mdp_ts_num_devices": 2, "aic_num_cores": 16},
+            )
+
+    def test_cpl_greater_than_kv_block_size_raises_not_implemented(self):
+        # qeff.export()'s own dummy-input construction always forces
+        # seq_len == kv_block_size when paged attention is enabled
+        # (modeling_auto.py's `seq_len = kv_block_size = -(-seq_len // num_kv_blocks)`),
+        # so a real qeff.export() call can never actually exercise CPL > kv_block_size.
+        # Call the transformed model's forward() directly instead, with a
+        # deliberately smaller physical KV block than the input sequence length,
+        # to prove the write_only_paged_attention guard is reachable through the
+        # full model (not just the raw cache layer) and fails clearly instead of
+        # silently writing into the wrong physical block.
+        cfg = LlamaConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            hidden_size=32,
+            intermediate_size=64,
+            vocab_size=VOCAB_SIZE,
+            max_position_embeddings=CTX_LEN,
+        )
+        model = LlamaForCausalLM(cfg).eval()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.transform(
+            ctx_len=CTX_LEN,
+            seq_len=CTX_LEN,
+            qaic_config={"enable_blocking": True, "blocking_mode": "kv_paged", "num_kv_blocks": 4},
+        )
+
+        block_size = 4  # deliberately smaller than seq_len below
+        seq_len = 8  # seq_len > block_size
+        head_dim = cfg.hidden_size // cfg.num_attention_heads
+        past_key_values = tuple(
+            (
+                torch.zeros(1, cfg.num_key_value_heads, block_size, head_dim),
+                torch.zeros(1, cfg.num_key_value_heads, block_size, head_dim),
+            )
+            for _ in range(cfg.num_hidden_layers)
+        )
+
+        with pytest.raises(
+            NotImplementedError, match="write_only_paged_attention only supports writing within a single KV block"
+        ):
+            qeff.model(
+                input_ids=torch.randint(0, VOCAB_SIZE, (1, seq_len)),
+                position_ids=torch.arange(seq_len).unsqueeze(0),
+                past_key_values=past_key_values,
+                block_table=torch.tensor([[0]]),
+                slot_id=torch.tensor([0]),
+                use_cache=True,
             )
 
 
