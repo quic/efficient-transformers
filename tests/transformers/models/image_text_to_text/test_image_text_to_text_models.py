@@ -227,7 +227,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             torch_dtype=torch_dtype,
             ignore_mismatched_sizes=True,
         )
-    aic_hw_version="ai200" if torch_dtype == torch.bfloat16 else "ai100"
+    aic_hw_version = "ai200" if torch_dtype == torch.bfloat16 else "ai100"
     compile_kwargs = {
         "num_devices": num_devices,
         "num_cores": 4 if aic_hw_version == "ai200" else 16,
