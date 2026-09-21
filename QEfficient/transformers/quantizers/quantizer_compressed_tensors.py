@@ -20,6 +20,19 @@ from QEfficient.utils.logging_utils import logger
 
 FP8_DTYPE = torch.float8_e4m3fn
 
+_DEEPSEEK_V4_FP8_UNSCALED_MODULES = (
+    "self_attn.compressor.kv_proj",
+    "self_attn.compressor.gate_proj",
+    "self_attn.compressor.indexer.kv_proj",
+    "self_attn.compressor.indexer.gate_proj",
+)
+
+
+def _get_model_specific_fp8_exclusions(model: torch.nn.Module) -> tuple[str, ...]:
+    if getattr(getattr(model, "config", None), "model_type", None) == "deepseek_v4":
+        return _DEEPSEEK_V4_FP8_UNSCALED_MODULES
+    return ()
+
 
 class QEffExtendedQuantizationMethod(str, Enum):
     FP8 = "fp8"
@@ -463,6 +476,7 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
     def _process_model_before_weight_loading(self, model, **kwargs):
         if not self.modules_to_not_convert or "lm_head" not in self.modules_to_not_convert:
             self.modules_to_not_convert.extend(get_keys_to_not_convert(model))
+        self.modules_to_not_convert.extend(_get_model_specific_fp8_exclusions(model))
 
         logger.warning(
             f"activations quantization strategy = {self.quantization_config.activation_scheme}, will be ignored and the layers will be run with de-quantized weights"
