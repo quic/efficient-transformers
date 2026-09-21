@@ -1376,8 +1376,11 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: int | None = None,
         full_batch_size: int | None = None,
+        vision_batch_size: int | None = None,
         **compiler_options,
     ):
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
@@ -1389,7 +1392,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         else:
             vision_size = self._get_mm_tokens_per_image()
 
-        vision = [{"batch_size": batch_size, "max_patches": max_patches}]
+        vision = [{"vision_batch_size": vision_batch_size, "max_patches": max_patches}]
 
         def build_lang_prefill_spec(comp_ctx_lengths: int | None = None):
             spec = {
@@ -1397,7 +1400,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
@@ -1416,7 +1419,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "seq_len": compiler_options.pop("dflash_block_size", None) or "1",
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
@@ -1440,8 +1443,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         self, comp_ctx_lengths: list[int] | None = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "max_patches"},
-            "image_position_ids": {0: "batch_size", 1: "max_patches"},
+            "pixel_values": {0: "vision_batch_size", 1: "max_patches"},
+            "image_position_ids": {0: "vision_batch_size", 1: "max_patches"},
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},

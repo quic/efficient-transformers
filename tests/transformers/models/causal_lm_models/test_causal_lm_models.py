@@ -12,8 +12,7 @@ import pytest
 import torch
 from transformers import AutoConfig
 
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import ModelConfig
 from tests.two_phase import resolve_two_phase_cleanup
 
@@ -439,35 +438,7 @@ def test_per_pr_causal_speculative_tlm_fp16_subfunction_cb(model_config, manual_
     )
 
 
-######################### QNN Tests #########################
-
-
-@pytest.mark.on_qaic
-@pytest.mark.qnn
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_causal)
-def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Setup
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-    n_layer = get_custom_n_layers(model_name)
-
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        n_layer=n_layer,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-# NOTE: The prompt_len=1 ("pl1") decode-only tests (formerly test_causal_lm_pl1.py and
-# test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn) were removed. They fed the fixed
+# NOTE: The prompt_len=1 ("pl1") decode-only tests were removed. They fed the fixed
 # 3-token prompt ("My name is") through a seq_len=1 PyTorch/ORT reference, so the reference
 # input padding computed prompt_len - input_len = 1 - 3 = -2 and crashed before any real
 # HF <-> KV <-> ORT parity could be checked. Decode-only behavior is already covered:

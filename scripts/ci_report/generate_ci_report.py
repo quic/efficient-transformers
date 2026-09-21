@@ -92,40 +92,70 @@ class StageSpec:
     order: int
 
 
-# Full 10-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
+# Full 11-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
 # This is the source of truth for the stage list, so absent files render as "Not Run".
 STAGE_MAP = OrderedDict(
     [
         (
             "tests_log1.xml",
-            StageSpec("HL API: Export & Compile", "(not on_qaic) and (not finetune) and <PROFILE>", "RUN_HL_APIS", 1),
+            StageSpec(
+                "HL API: Export & Compile",
+                "(not reproducer) and (not on_qaic) and (not finetune) and <PROFILE>",
+                "RUN_HL_APIS",
+                1,
+            ),
         ),
-        ("tests_log2.xml", StageSpec("HL API: QAIC LLM", "(llm_model) and (not qnn) and <PROFILE>", "RUN_HL_APIS", 2)),
+        (
+            "tests_log2.xml",
+            StageSpec(
+                "HL API: QAIC LLM",
+                "(not reproducer) and (llm_model) and <PROFILE>",
+                "RUN_HL_APIS",
+                2,
+            ),
+        ),
         (
             "tests_log2_feature.xml",
-            StageSpec("QAIC Feature", "(on_qaic) and (feature) and (not qnn) and <PROFILE>", "RUN_QAIC_FEATURE", 3),
+            StageSpec(
+                "QAIC Feature",
+                "(not reproducer) and (on_qaic) and (feature) and <PROFILE>",
+                "RUN_QAIC_FEATURE",
+                3,
+            ),
         ),
         (
             "tests_log_embedding_audio.xml",
             StageSpec(
                 "QAIC Embedding & Audio",
-                "(embedding_audio_model) and (not qnn) and <PROFILE>",
+                "(not reproducer) and (embedding_audio_model) and <PROFILE>",
                 "RUN_QAIC_EMBEDDING_AUDIO",
                 4,
             ),
         ),
-        ("tests_log6.xml", StageSpec("QAIC Multimodal", "(multimodal) and (not qnn) and <PROFILE>", "RUN_QAIC_MM", 5)),
+        (
+            "tests_log6.xml",
+            StageSpec(
+                "QAIC Multimodal",
+                "(not reproducer) and (multimodal) and <PROFILE>",
+                "RUN_QAIC_MM",
+                5,
+            ),
+        ),
         (
             "tests_log_reranker.xml",
             StageSpec("QAIC Reranker", "tests/transformers/models/reranker/test_reranker_mad.py", "RUN_QAIC_MM", 6),
         ),
         ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 7)),
-        ("tests_log3.xml", StageSpec("CLI", "(cli and not qnn) and (not finetune)", "RUN_CLI", 8)),
+        ("tests_log3.xml", StageSpec("CLI", "(cli) and (not finetune)", "RUN_CLI", 8)),
         (
             "tests_log_dynamo_qaic.xml",
             StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 9),
         ),
         ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 10)),
+        (
+            "tests_log_reproducer.xml",
+            StageSpec("Reproducer Configs", "tests/reproducer_configs/test_reported_reproducer_configs.py", "", 11),
+        ),
     ]
 )
 
@@ -561,7 +591,7 @@ def _vlm_scenario_key(test_fn):
     """Strip the per-PR profile prefix from a VLM test-fn to get its scenario key.
 
     Returns the empty string when ``test_fn`` doesn't carry one of the known VLM
-    profile prefixes (so unrelated VLM tests — reference/qnn/custom — don't collide
+    profile prefixes (so unrelated VLM tests — reference/custom — don't collide
     with a curated scenario column).
     """
     for prefix in _VLM_TESTFN_PROFILE_PREFIXES:

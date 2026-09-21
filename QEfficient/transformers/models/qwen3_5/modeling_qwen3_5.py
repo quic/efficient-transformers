@@ -220,11 +220,11 @@ class QEffQwen3_5DynamicCache(Cache):
         past_seen_tokens = self.get_seq_length(layer_idx)
         return query_length + past_seen_tokens, kv_offset
 
-    def read_only_blockedKV(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+    def read_only_blocked_kv(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
-        return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
+        return layer.read_only_blocked_kv(start_index, end_index, cache_kwargs)
 
     def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
@@ -1970,10 +1970,13 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
 
         language_model = getattr(self.model, "language_model", None)
         blocking_config = None
@@ -2033,7 +2036,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = (grid_height // 4) * time
-            grid_height = grid_height * time * batch_size
+            grid_height = grid_height * time * vision_batch_size
 
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
@@ -2055,7 +2058,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
             vision.append(
                 {
-                    "batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "vision_size": vision_size,
                     "grid_height": grid_height,
                     "grid_width": grid_width,
@@ -2075,7 +2078,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             }
             if kv_offload:
                 spec["vision_size"] = max_vision_size
-                spec["vision_batch_size"] = batch_size
+                spec["vision_batch_size"] = vision_batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
             if continuous_batching:
@@ -2117,7 +2120,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
+            "image_grid_thw": {0: "vision_batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
