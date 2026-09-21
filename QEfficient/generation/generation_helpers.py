@@ -1,6 +1,7 @@
 """Shared helpers for qaic-runner IO bundle generation."""
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -85,21 +86,22 @@ def load_prefill_specialization(compile_dir: Union[str, Path]) -> Dict[str, int]
     return specializations[0].get("symbols", specializations[0])
 
 
-def _custom_io_precisions(compile_dir: Path) -> Dict[str, str]:
+def _custom_io_maps(compile_dir: Path) -> Tuple[Dict[str, str], Dict[str, int]]:
     custom_io_path = compile_dir / "custom_io.yaml"
     if not custom_io_path.is_file():
-        return {}
+        return {}, {}
 
-    entries = yaml.safe_load(custom_io_path.read_text()) or []
-    return {entry["IOName"]: entry["Precision"] for entry in entries if entry.get("IOName") and entry.get("Precision")}
-
-
-def _custom_io_item_sizes(compile_dir: Path) -> Dict[str, int]:
-    return {
-        name: _PRECISION_ITEM_SIZES[precision]
-        for name, precision in _custom_io_precisions(compile_dir).items()
-        if precision in _PRECISION_ITEM_SIZES
-    }
+    precision_map = {}
+    item_size_map = {}
+    for entry in yaml.safe_load(custom_io_path.read_text()) or []:
+        io_name = entry.get("IOName")
+        precision = entry.get("Precision")
+        if not io_name or not precision:
+            continue
+        precision_map[io_name] = precision
+        if precision in _PRECISION_ITEM_SIZES:
+            item_size_map[io_name] = _PRECISION_ITEM_SIZES[precision]
+    return precision_map, item_size_map
 
 
 def _specialization_symbols(specialization: Mapping[str, int]) -> Dict[str, int]:
@@ -190,27 +192,64 @@ def _resolve_output_shape(
     return shape
 
 
-def _required_host_input_names(model: onnx.ModelProto) -> set[str]:
+def _required_host_input_names(graph: onnx.GraphProto) -> set[str]:
     retained_inputs = set()
-    for output in model.graph.output:
+    for output in graph.output:
         for suffix in ("_InternalRetainedState", "_RetainedState"):
             if output.name.endswith(suffix):
                 retained_inputs.add(output.name[: -len(suffix)])
-    initializer_names = {initializer.name for initializer in model.graph.initializer}
+    initializer_names = {initializer.name for initializer in graph.initializer}
     return {
         graph_input.name
-        for graph_input in model.graph.input
+        for graph_input in graph.input
         if graph_input.name not in retained_inputs and graph_input.name not in initializer_names
     }
 
 
+@dataclass
+class RunnerMetadata:
+    """Cached ONNX and compile metadata for qaic-runner IO helpers."""
+
+    onnx_path: Path
+    compile_dir: Path
+    model: onnx.ModelProto
+    graph: onnx.GraphProto
+    input_names: set[str]
+    required_host_input_names: set[str]
+    output_names: set[str]
+    custom_io_precisions: Dict[str, str]
+    custom_io_item_sizes: Dict[str, int]
+
+    @classmethod
+    def from_paths(cls, onnx_path: Union[str, Path], compile_dir: Union[str, Path]) -> "RunnerMetadata":
+        onnx_path = Path(onnx_path)
+        if not onnx_path.is_file():
+            raise FileNotFoundError(f"Exported ONNX not found at {onnx_path}.")
+
+        compile_dir = Path(compile_dir)
+        model = onnx.load(str(onnx_path), load_external_data=False)
+        graph = model.graph
+        custom_io_precisions, custom_io_item_sizes = _custom_io_maps(compile_dir)
+        return cls(
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
+            model=model,
+            graph=graph,
+            input_names={graph_input.name for graph_input in graph.input},
+            required_host_input_names=_required_host_input_names(graph),
+            output_names={output.name for output in graph.output},
+            custom_io_precisions=custom_io_precisions,
+            custom_io_item_sizes=custom_io_item_sizes,
+        )
+
+
 def _add_specialization_control_inputs(
-    onnx_path: Union[str, Path],
+    runner_metadata: RunnerMetadata,
     host_inputs: Dict[str, np.ndarray],
     specialization: Mapping[str, int],
     sampling_params: Optional[Mapping[str, np.ndarray]] = None,
 ) -> None:
-    input_names = _required_host_input_names(onnx.load(str(onnx_path), load_external_data=False))
+    input_names = runner_metadata.required_host_input_names
     batch_size = int(specialization.get("batch_size", 1))
     if "batch_index" in input_names and "batch_index" not in host_inputs:
         host_inputs["batch_index"] = np.zeros((batch_size, 1), dtype=np.int64)
@@ -253,21 +292,23 @@ def _slice_vlm_prefill_inputs(lang_inputs: Mapping[str, np.ndarray], prefill_seq
     return host_inputs
 
 
-def _filter_graph_inputs(onnx_path: Union[str, Path], *input_groups: Mapping[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    graph = onnx.load(str(onnx_path), load_external_data=False).graph
-    graph_input_names = {graph_input.name for graph_input in graph.input}
+def _filter_graph_inputs(
+    runner_metadata: RunnerMetadata, *input_groups: Mapping[str, np.ndarray]
+) -> Dict[str, np.ndarray]:
     return {
         name: np.asarray(value)
         for inputs in input_groups
         for name, value in inputs.items()
-        if name in graph_input_names
+        if name in runner_metadata.input_names
     }
 
 
-def _add_cross_qpc_placeholders(model, host_inputs: Dict[str, np.ndarray], specialization: Mapping[str, int]) -> None:
-    graph = onnx.load(str(model.onnx_path), load_external_data=False).graph
+def _add_cross_qpc_placeholders(
+    runner_metadata: RunnerMetadata, host_inputs: Dict[str, np.ndarray], specialization: Mapping[str, int]
+) -> None:
+    graph = runner_metadata.graph
     symbols = _specialization_symbols(specialization)
-    custom_precisions = _custom_io_precisions(_get_compile_dir(model))
+    custom_precisions = runner_metadata.custom_io_precisions
     precision_dtypes = {
         "bfloat16": np.uint16,
         "float16": np.float16,
@@ -300,11 +341,18 @@ def _add_cross_qpc_placeholders(model, host_inputs: Dict[str, np.ndarray], speci
         )
 
 
-def _cross_qpc_output_shapes(model, specialization: Mapping[str, int]) -> Dict[str, List[int]]:
+def _cross_qpc_output_shapes(
+    model, specialization: Mapping[str, int], vision_metadata: Optional[RunnerMetadata] = None
+) -> Dict[str, List[int]]:
     """Resolve vision outputs from the paired language input contract when available."""
-    vision_outputs = {
-        output.name for output in onnx.load(str(model.vision_model.onnx_path), load_external_data=False).graph.output
-    }
+    vision_outputs = (
+        vision_metadata.output_names
+        if vision_metadata is not None
+        else {
+            output.name
+            for output in onnx.load(str(model.vision_model.onnx_path), load_external_data=False).graph.output
+        }
+    )
     symbols = _specialization_symbols(specialization)
     language_symbols = _component_prefill_symbols(getattr(model, "lang_model", None))
     for name, value in language_symbols.items():

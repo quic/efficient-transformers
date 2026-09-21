@@ -1367,11 +1367,88 @@ def test_runner_io_resolves_exporter_generated_logits_symbols():
 
 
 @pytest.mark.cpu_only
+def test_custom_io_maps_derive_precisions_and_item_sizes_from_one_yaml_load(tmp_path, monkeypatch):
+    from QEfficient.generation import generation_helpers
+
+    (tmp_path / "custom_io.yaml").write_text(
+        """ - IOName: vision_embeds
+   Precision: bfloat16
+
+ - IOName: logits
+   Precision: float32
+
+ - IOName: opaque_tensor
+   Precision: custom_precision
+
+ - IOName: missing_precision
+"""
+    )
+    yaml_load_count = 0
+    safe_load = generation_helpers.yaml.safe_load
+
+    def counting_safe_load(payload):
+        nonlocal yaml_load_count
+        yaml_load_count += 1
+        return safe_load(payload)
+
+    monkeypatch.setattr(generation_helpers.yaml, "safe_load", counting_safe_load)
+
+    precision_map, item_size_map = generation_helpers._custom_io_maps(tmp_path)
+
+    assert yaml_load_count == 1
+    assert precision_map == {
+        "vision_embeds": "bfloat16",
+        "logits": "float32",
+        "opaque_tensor": "custom_precision",
+    }
+    assert item_size_map == {"vision_embeds": 2, "logits": 4}
+
+
+@pytest.mark.cpu_only
+def test_runner_metadata_reuses_loaded_onnx_across_runner_helpers(tmp_path, monkeypatch):
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation import generation_helpers, runner_io
+
+    input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 1])
+    batch_index = helper.make_tensor_value_info("batch_index", TensorProto.INT64, [1, 1])
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1, 4])
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(
+        helper.make_model(helper.make_graph([], "runner_metadata", [input_ids, batch_index], [logits])), onnx_path
+    )
+
+    load_count = 0
+    onnx_load = generation_helpers.onnx.load
+
+    def counting_load(*args, **kwargs):
+        nonlocal load_count
+        load_count += 1
+        return onnx_load(*args, **kwargs)
+
+    monkeypatch.setattr(generation_helpers.onnx, "load", counting_load)
+
+    runner_metadata = generation_helpers.RunnerMetadata.from_paths(onnx_path, tmp_path)
+    host_inputs = {"input_ids": np.array([[1]], dtype=np.int64)}
+    generation_helpers._add_specialization_control_inputs(runner_metadata, host_inputs, {"batch_size": 1})
+    host_inputs = generation_helpers._filter_graph_inputs(runner_metadata, host_inputs, {"extra": np.array([[0]])})
+
+    runner_io.write_runner_io_bundle(
+        runner_metadata=runner_metadata,
+        specialization={"batch_size": 1, "seq_len": 1},
+        host_inputs=host_inputs,
+    )
+
+    assert load_count == 1
+
+
+@pytest.mark.cpu_only
 def test_graph_input_filter_selects_model_specific_vision_metadata(tmp_path):
     import onnx
     from onnx import TensorProto, helper
 
-    from QEfficient.generation.generation_helpers import _filter_graph_inputs
+    from QEfficient.generation.generation_helpers import RunnerMetadata, _filter_graph_inputs
 
     pixel_values = helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [1, 3, 2, 2])
     image_grid_thw = helper.make_tensor_value_info("image_grid_thw", TensorProto.INT64, [1, 3])
@@ -1379,8 +1456,10 @@ def test_graph_input_filter_selects_model_specific_vision_metadata(tmp_path):
     onnx_path = tmp_path / "vision.onnx"
     onnx.save(helper.make_model(graph), onnx_path)
 
+    runner_metadata = RunnerMetadata.from_paths(onnx_path, tmp_path)
+
     inputs = _filter_graph_inputs(
-        onnx_path,
+        runner_metadata,
         {"pixel_values": np.ones((1, 3, 2, 2), dtype=np.float32)},
         {"image_grid_thw": np.array([[1, 2, 2]]), "input_ids": np.array([[1]])},
     )

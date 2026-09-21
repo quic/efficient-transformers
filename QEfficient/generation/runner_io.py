@@ -16,25 +16,24 @@ dual-QPC VLM artifacts mode generation flows.
 
 import json
 from pathlib import Path
-from typing import List, Mapping, Optional, Sequence, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import onnx
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.generation_helpers import (
+    RunnerMetadata,
     _add_cross_qpc_placeholders,
     _add_specialization_control_inputs,
     _apply_input_shapes,
     _cross_qpc_output_shapes,
-    _custom_io_item_sizes,
     _execution_batch_size,
     _filter_graph_inputs,
     _first_execution_batch,
     _get_compile_dir,
     _prepare_vlm_execution_inputs,
     _proxy_logits_width,
-    _required_host_input_names,
     _resolve_output_shape,
     build_prefill_inputs,
     load_prefill_specialization,
@@ -55,31 +54,32 @@ __all__ = [
 
 def write_runner_io_bundle(
     *,
-    onnx_path: Union[str, Path],
-    compile_dir: Union[str, Path],
     specialization: Mapping[str, int],
     host_inputs: Mapping[str, np.ndarray],
+    onnx_path: Optional[Union[str, Path]] = None,
+    compile_dir: Optional[Union[str, Path]] = None,
+    runner_metadata: Optional[RunnerMetadata] = None,
     input_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
     output_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
     fallback_logits_width: Optional[int] = None,
 ) -> Path:
     """Write raw inputs and ``aic_batch_io.json`` for one qaic-runner invocation."""
-    onnx_path = Path(onnx_path)
-    if not onnx_path.is_file():
-        raise FileNotFoundError(f"Exported ONNX not found at {onnx_path}.")
+    if runner_metadata is None:
+        if onnx_path is None or compile_dir is None:
+            raise TypeError("`onnx_path` and `compile_dir` are required when `runner_metadata` is not provided.")
+        runner_metadata = RunnerMetadata.from_paths(onnx_path, compile_dir)
 
-    compile_dir = Path(compile_dir)
+    compile_dir = runner_metadata.compile_dir
     io_dir = compile_dir / "io"
     data_dir = io_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    model = onnx.load(str(onnx_path), load_external_data=False)
-    required_inputs = _required_host_input_names(model)
-    missing_inputs = required_inputs - host_inputs.keys()
+    onnx_model = onnx.ModelProto()
+    onnx_model.CopyFrom(runner_metadata.model)
+    missing_inputs = runner_metadata.required_host_input_names - host_inputs.keys()
     if missing_inputs:
         raise ValueError(f"Missing qaic-runner host inputs: {sorted(missing_inputs)}")
-    graph_input_names = {graph_input.name for graph_input in model.graph.input}
-    unexpected_inputs = host_inputs.keys() - graph_input_names
+    unexpected_inputs = host_inputs.keys() - runner_metadata.input_names
     if unexpected_inputs:
         raise ValueError(f"Inputs are not present in the exported ONNX graph: {sorted(unexpected_inputs)}")
 
@@ -99,9 +99,9 @@ def write_runner_io_bundle(
 
     shapes = {name: value.shape for name, value in numpy_inputs.items()}
     shapes.update(input_shape_overrides or {})
-    _apply_input_shapes(model, shapes)
+    _apply_input_shapes(onnx_model, shapes)
     try:
-        model = onnx.shape_inference.infer_shapes(model, strict_mode=False, data_prop=True)
+        onnx_model = onnx.shape_inference.infer_shapes(onnx_model, strict_mode=False, data_prop=True)
     except Exception as error:
         logger.warning(f"ONNX shape inference failed while creating runner inputs: {error}")
 
@@ -109,8 +109,8 @@ def write_runner_io_bundle(
     symbols["seq_len"] = 1
     batch_source = numpy_inputs.get("input_ids")
     fallback_batch_size = int(batch_source.shape[0]) if batch_source is not None else None
-    custom_item_sizes = _custom_io_item_sizes(compile_dir)
-    for output in model.graph.output:
+    custom_item_sizes = runner_metadata.custom_io_item_sizes
+    for output in onnx_model.graph.output:
         if output.name.endswith(("_RetainedState", "_InternalRetainedState")):
             continue
         dtype = onnx.helper.tensor_dtype_to_np_dtype(output.type.tensor_type.elem_type)
@@ -142,7 +142,9 @@ def write_causal_lm_runner_bundle(
     if not prompts:
         raise ValueError("`prompts` must contain at least one prompt.")
 
-    specialization = load_prefill_specialization(_get_compile_dir(model))
+    compile_dir = _get_compile_dir(model)
+    runner_metadata = RunnerMetadata.from_paths(model.onnx_path, compile_dir)
+    specialization = load_prefill_specialization(compile_dir)
     prefill_seq_len = int(specialization["seq_len"])
     batch_prompts = _first_execution_batch(prompts, _execution_batch_size(specialization), "prompts")
     prepare_tokenizer(tokenizer)
@@ -150,23 +152,21 @@ def write_causal_lm_runner_bundle(
     host_inputs = slice_prefill_inputs(prefill_inputs, 0, prefill_seq_len)
 
     full_batch_size = specialization.get("full_batch_size")
-    _add_specialization_control_inputs(model.onnx_path, host_inputs, specialization, sampling_params=sampling_params)
+    _add_specialization_control_inputs(runner_metadata, host_inputs, specialization, sampling_params=sampling_params)
 
     shape_overrides = {}
     context_length = specialization.get("ctx_len")
     if context_length is not None:
         cache_batch_size = int(full_batch_size or specialization["batch_size"])
         cache_shape = get_padding_shape_from_config(model.model.config, cache_batch_size, int(context_length))
-        graph = onnx.load(str(model.onnx_path), load_external_data=False).graph
         shape_overrides = {
             graph_input.name: cache_shape
-            for graph_input in graph.input
+            for graph_input in runner_metadata.graph.input
             if graph_input.name.startswith(("past_key.", "past_value.")) and graph_input.name not in host_inputs
         }
 
     return write_runner_io_bundle(
-        onnx_path=model.onnx_path,
-        compile_dir=_get_compile_dir(model),
+        runner_metadata=runner_metadata,
         specialization=specialization,
         host_inputs=host_inputs,
         input_shape_overrides=shape_overrides,
@@ -174,15 +174,23 @@ def write_causal_lm_runner_bundle(
     )
 
 
-def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], prompts: List[str]) -> Path:
-    """Prepare and write the first fused vision-language prefill invocation."""
+def _prepare_vlm_runner_inputs(
+    *,
+    model,
+    active_model,
+    processor,
+    images: Sequence[str],
+    prompts: Sequence[str],
+) -> Tuple[Mapping[str, int], RunnerMetadata, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
     if processor is None or not images or not prompts:
         raise ValueError("`processor`, `images`, and `prompts` are required in artifacts mode.")
 
     from QEfficient.generation.embedding_handler import VisionHandler
 
-    specialization = load_prefill_specialization(_get_compile_dir(model))
-    prefill_seq_len = int(specialization["seq_len"])
+    compile_dir = _get_compile_dir(active_model)
+    runner_metadata = RunnerMetadata.from_paths(active_model.onnx_path, compile_dir)
+    specialization = load_prefill_specialization(compile_dir)
+    prefill_seq_len = max(int(specialization.get("seq_len", 1)), 1)
     batch_size = _execution_batch_size(specialization)
     handler = VisionHandler(
         qeff_model=model,
@@ -190,16 +198,41 @@ def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], p
         processor=processor,
         tokenizer=getattr(processor, "tokenizer", None),
     )
-    vision_inputs, host_inputs = _prepare_vlm_execution_inputs(handler, images, prompts, prefill_seq_len, batch_size)
-    host_inputs.update(vision_inputs)
-    _add_specialization_control_inputs(model.onnx_path, host_inputs, specialization)
-    host_inputs = _filter_graph_inputs(model.onnx_path, host_inputs)
+    vision_inputs, lang_inputs = _prepare_vlm_execution_inputs(handler, images, prompts, prefill_seq_len, batch_size)
+    return specialization, runner_metadata, vision_inputs, lang_inputs
+
+
+def _write_vlm_runner_bundle(
+    *,
+    model,
+    runner_metadata: RunnerMetadata,
+    specialization: Mapping[str, int],
+    host_inputs: Mapping[str, np.ndarray],
+    output_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
+) -> Path:
     return write_runner_io_bundle(
-        onnx_path=model.onnx_path,
-        compile_dir=_get_compile_dir(model),
+        runner_metadata=runner_metadata,
         specialization=specialization,
         host_inputs=host_inputs,
+        output_shape_overrides=output_shape_overrides,
         fallback_logits_width=_proxy_logits_width(model),
+    )
+
+
+def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], prompts: List[str]) -> Path:
+    """Prepare and write the first fused vision-language prefill invocation."""
+    specialization, runner_metadata, vision_inputs, host_inputs = _prepare_vlm_runner_inputs(
+        model=model,
+        active_model=model,
+        processor=processor,
+        images=images,
+        prompts=prompts,
+    )
+    host_inputs.update(vision_inputs)
+    _add_specialization_control_inputs(runner_metadata, host_inputs, specialization)
+    host_inputs = _filter_graph_inputs(runner_metadata, host_inputs)
+    return _write_vlm_runner_bundle(
+        model=model, runner_metadata=runner_metadata, specialization=specialization, host_inputs=host_inputs
     )
 
 
@@ -218,44 +251,32 @@ def write_dual_qpc_vlm_runner_bundle(
             "Artifacts mode dual-QPC generation requires exactly one of `skip_vision=True` or `skip_lang=True`; "
             "use the same component selection passed to compile()."
         )
-    if processor is None or not images or not prompts:
-        raise ValueError("`processor`, `images`, and `prompts` are required in artifacts mode.")
-
-    from QEfficient.generation.embedding_handler import VisionHandler
-
     active_model = model.vision_model if skip_lang else model.lang_model
     if not getattr(active_model, "compile_artifacts_path", None) and not active_model.qpc_path:
         raise TypeError("Compile the active ImageTextToText component before generating runner inputs.")
-    specialization = load_prefill_specialization(_get_compile_dir(active_model))
-    prefill_seq_len = max(int(specialization.get("seq_len", 1)), 1)
-    batch_size = _execution_batch_size(specialization)
-    handler = VisionHandler(
-        qeff_model=model,
-        vision_session=None,
+    specialization, runner_metadata, vision_inputs, lang_inputs = _prepare_vlm_runner_inputs(
+        model=model,
+        active_model=active_model,
         processor=processor,
-        tokenizer=getattr(processor, "tokenizer", None),
+        images=images,
+        prompts=prompts,
     )
-    vision_inputs, lang_inputs = _prepare_vlm_execution_inputs(handler, images, prompts, prefill_seq_len, batch_size)
     if skip_lang:
         # Some processors leave model-specific vision metadata in the language group.
         # The active ONNX graph is the source of truth for the replay invocation.
-        host_inputs = _filter_graph_inputs(active_model.onnx_path, vision_inputs, lang_inputs)
-        shape_overrides = {}
-        output_shape_overrides = _cross_qpc_output_shapes(model, specialization)
+        host_inputs = _filter_graph_inputs(runner_metadata, vision_inputs, lang_inputs)
+        output_shape_overrides = _cross_qpc_output_shapes(model, specialization, vision_metadata=runner_metadata)
     else:
         host_inputs = lang_inputs
-        _add_specialization_control_inputs(active_model.onnx_path, host_inputs, specialization)
-        host_inputs = _filter_graph_inputs(active_model.onnx_path, host_inputs)
-        _add_cross_qpc_placeholders(active_model, host_inputs, specialization)
-        shape_overrides = {}
-        output_shape_overrides = {}
+        _add_specialization_control_inputs(runner_metadata, host_inputs, specialization)
+        host_inputs = _filter_graph_inputs(runner_metadata, host_inputs)
+        _add_cross_qpc_placeholders(runner_metadata, host_inputs, specialization)
+        output_shape_overrides = None
 
-    return write_runner_io_bundle(
-        onnx_path=active_model.onnx_path,
-        compile_dir=_get_compile_dir(active_model),
+    return _write_vlm_runner_bundle(
+        model=active_model,
+        runner_metadata=runner_metadata,
         specialization=specialization,
         host_inputs=host_inputs,
-        input_shape_overrides=shape_overrides,
         output_shape_overrides=output_shape_overrides,
-        fallback_logits_width=_proxy_logits_width(active_model),
     )
