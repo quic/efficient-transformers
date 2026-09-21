@@ -10,6 +10,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
+from typing import List, Optional, Union
 
 import numpy as np
 import onnx

@@ -804,10 +804,6 @@ class QEffTextGenerationBase:
         # Set the prefill output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
 
-        inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs.pop("token_type_ids", None)
-
         if block_table is not None:
             inputs["block_table"] = block_table
             inputs["slot_id"] = np.zeros((prefill_logit_bs), dtype=np.int64)
@@ -847,13 +843,7 @@ class QEffTextGenerationBase:
                     prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
-            chunk_inputs = inputs.copy()
-            chunk_inputs["input_ids"] = inputs["input_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
-            chunk_inputs["position_ids"] = inputs["position_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
+            chunk_inputs = slice_prefill_inputs(inputs, i, self._prefill_seq_len)
             if block_table is not None:
                 chunk_start_position_id = i * self._prefill_seq_len
                 chunk_inputs["slot_id"] = np.full(
