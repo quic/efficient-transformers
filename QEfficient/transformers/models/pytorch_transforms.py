@@ -397,6 +397,7 @@ from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
     QEffGlmMoeDsaIndexer,
     QEffGlmMoeDsaModel,
     QEffGlmMoeDsaMoE,
+    QEffGlmMoeDsaRMSNorm,
     QEffGlmMoeDsaRotaryEmbedding,
     QEffGlmMoeDsaTopkRouter,
 )
@@ -715,7 +716,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
-        GlmMoeDsaRMSNorm: CustomRMSNormAIC,
+        GlmMoeDsaRMSNorm: QEffGlmMoeDsaRMSNorm,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
