@@ -231,11 +231,11 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         past_seen_tokens = self.get_seq_length(layer_idx)
         return query_length + past_seen_tokens, kv_offset
 
-    def read_only_blockedKV(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+    def read_only_blocked_kv(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
-        return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
+        return layer.read_only_blocked_kv(start_index, end_index, cache_kwargs)
 
     def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
@@ -480,7 +480,6 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
     # MIN_MASKED_ATTENTION_VALUE = -10000
     if attention_mask is not None:
         attn_weights = torch.where(
@@ -643,8 +642,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
-        self.chunk_gated_delta_solver = "recursive_sns"
-        chunk_size = 64  # must match what's used in the function
+        self.chunk_gated_delta_solver = "tree"
+        chunk_size = 64
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
@@ -683,14 +682,50 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
             attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
-        return attn + eye.to(dtype=attn.dtype, device=attn.device)
+        return attn + eye.to(dtype=attn.dtype)
+
+    def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
+            raise ValueError(f"tree solver requires power-of-two chunk_size, got {chunk_size}")
+
+        source = attn.masked_fill(mask, 0)
+        # Build the inverse of (I - source) bottom-up from 1x1 unit blocks.
+        # Starting from full chunk_size x chunk_size blocks causes shape mismatches
+        # in the first merge (block_size=1).
+        unit = torch.ones_like(source[..., :1, :1])
+        blocks = [unit for _ in range(chunk_size)]
+        block_size = 1
+
+        while len(blocks) > 1:
+            merged = []
+            for pair in range(0, len(blocks), 2):
+                left = blocks[pair]
+                right = blocks[pair + 1]
+                row0 = pair * block_size
+                row1 = row0 + block_size
+                lower_left = source[..., row1 : row1 + block_size, row0 : row0 + block_size]
+                solved_lower_left = right @ lower_left @ left
+                zeros = torch.zeros_like(left)
+                merged.append(
+                    torch.cat(
+                        [
+                            torch.cat([left, zeros], dim=-1),
+                            torch.cat([solved_lower_left, right], dim=-1),
+                        ],
+                        dim=-2,
+                    )
+                )
+            blocks = merged
+            block_size *= 2
+
+        return blocks[0].to(attn.dtype)
 
     def _solve_chunk_attn_recursive_sns(
         self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
     ):
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         acc_dtype = attn.dtype
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         A64 = attn.masked_fill(mask, 0).to(acc_dtype)
         ns_iters = int(math.log2(chunk_size)) + 4
 
@@ -702,7 +737,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 X = ck.masked_fill(~strict_lower, 0) + I64
             return X
 
-        default_depth = max(1, (int(math.ceil(math.log2(chunk_size))) - 1) // 2)
+        default_depth = max(1, (math.ceil(math.log2(chunk_size)) - 1) // 2)
         depth = getattr(self, "recursive_sns_depth", None)
         depth = default_depth if depth is None else int(depth)
         depth = max(1, depth)
@@ -720,7 +755,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         attn_1 = attn.clone()
         acc_dtype = attn.dtype
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
         ns_iters = int(math.log2(chunk_size)) + 4
         As = 0.5 * A64
@@ -742,7 +777,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         return X.to(attn.dtype)
 
     def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
-        eye = eye.to(dtype=attn.dtype, device=attn.device)
+        eye = eye.to(dtype=attn.dtype)
         L = eye.clone()
         Apow = attn
         K = 32
@@ -755,7 +790,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         A = attn.masked_fill(mask, 0)
         acc_dtype = torch.float32
         A64 = A.to(acc_dtype)
-        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         K = chunk_size - 1
         S64 = I64.clone()
@@ -767,6 +802,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
         if solver == "original":
             return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
+        if solver in ("tree", "forward_sub_tree"):
+            return self._solve_chunk_attn_tree(attn, mask, eye, chunk_size)
         if solver == "factorized":
             return self._solve_chunk_attn_factorized(attn, eye)
         if solver == "horner":
@@ -845,7 +882,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
         mask = mask_causal
 
-        #
         # chunk decay
         # g = g.cumsum(dim=-1)
 
@@ -855,7 +891,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         g = g @ mask_g.T
 
-        #
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
 
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
@@ -864,7 +899,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, dtype=attn.dtype)
         attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
@@ -879,7 +914,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         mask = mask_strict
 
         # for each chunk
-        for i in range(0, total_sequence_length // chunk_size):
+        for i in range(total_sequence_length // chunk_size):
             q_i, k_i, v_i = query[:, :, i], key[:, :, i], value[:, :, i]
             attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
             v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
@@ -1108,6 +1143,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
+                chunk_size=64,
                 initial_state=None,
                 output_final_state=False,
                 use_qk_l2norm_in_kernel=True,
@@ -1117,7 +1153,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 eye=self._eye,
             )
 
-        #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
         core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
@@ -1133,7 +1168,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
 class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
     def __qeff_init__(self):
-        #
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5MoeGatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -1537,7 +1571,7 @@ class QEffQwen3_5MoeVisionModel(Qwen3_5MoeVisionModel):
         max_hw = max(grid_thw.shape)
         freq_table = self.rotary_pos_emb(max_hw)
         device = freq_table.device
-        bs, num_frames, height, width = grid_thw.shape
+        _bs, num_frames, height, width = grid_thw.shape
         grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
 
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
@@ -1813,8 +1847,6 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
 
         if inputs_embeds is None:
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-        else:
-            inputs_embeds = inputs_embeds
 
         if not is_layerwise_active():
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
@@ -1988,8 +2020,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         ```
         """
 
-        #
-
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -2029,10 +2059,13 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
 
         language_model = getattr(getattr(self, "model", None), "language_model", None)
         layers = getattr(language_model, "layers", ())
@@ -2093,7 +2126,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = (grid_height // 4) * time
-            grid_height = grid_height * time * batch_size
+            grid_height = grid_height * time * vision_batch_size
 
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
@@ -2115,7 +2148,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
             vision.append(
                 {
-                    "batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "vision_size": vision_size,
                     "grid_height": grid_height,
                     "grid_width": grid_width,
@@ -2135,7 +2168,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             }
             if kv_offload:
                 spec["vision_size"] = max_vision_size
-                spec["vision_batch_size"] = batch_size
+                spec["vision_batch_size"] = vision_batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
             if continuous_batching:
@@ -2177,7 +2210,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
+            "image_grid_thw": {0: "vision_batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
@@ -2301,7 +2334,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=kv_dtype))
                 lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=kv_dtype))
 
-        #
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
@@ -2359,10 +2391,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
-        pos_ids, rope_deltas = self.model.get_rope_index(
+        pos_ids, _rope_deltas = self.model.get_rope_index(
             inputs["input_ids"],
             inputs["mm_token_type_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            inputs.get("image_grid_thw", None),
             video_grid_thw=None,
             attention_mask=inputs["attention_mask"],
         )
