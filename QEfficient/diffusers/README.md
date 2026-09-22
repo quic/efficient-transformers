@@ -34,7 +34,7 @@ QEfficient Diffusers brings the power of state-of-the-art diffusion models to Qu
 
 ### Prerequisites
 
-Ensure you have Python 3.8+ and the required dependencies:
+Ensure you have Python 3.10+ and the required dependencies:
 
 ```bash
 # Create Python virtual environment (Recommended Python 3.10)
@@ -92,4 +92,3 @@ We welcome contributions! Please see our [Contributing Guide](../../CONTRIBUTING
 - 🐛 **Issues**: [GitHub Issues](https://github.com/quic/efficient-transformers/issues)
 
 ---
-

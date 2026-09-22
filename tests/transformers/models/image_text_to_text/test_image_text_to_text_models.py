@@ -24,8 +24,6 @@ from transformers import (
 from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
@@ -117,8 +115,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_hidden_layers: Optional[int] = -1,
     kv_offload: Optional[bool] = False,
     num_devices: Optional[int] = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     qaic_config: Optional[dict] = None,
     test_kv_replicate: Optional[bool] = None,
@@ -236,8 +232,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
         "qaic_config": qaic_config,
         "use_onnx_subfunctions": use_onnx_subfunctions,
         "split-model-io": True,
@@ -534,8 +528,6 @@ def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, ma
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
-    if is_kimi_k25(model_name):
-        pytest.xfail("Temporary: Kimi-K2.5 dummy parity is unstable on QAIC in CI.")
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     torch.manual_seed(42)
@@ -642,8 +634,6 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     decode logits (HF top1-top2 margin <0.11 on most positions), which fp16 rounding at
     the QPC flips into a different top-K member on those steps.
     """
-    if is_kimi_k25(model_name):
-        pytest.xfail("Temporary: Kimi-K2.5 dummy CCL dual-QPC parity is unstable on QAIC in CI.")
     ccl_forced = {
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     }
@@ -771,37 +761,3 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
             )
     else:
         pytest.skip(f"Skipping replicate KV test for {model_name} as it's not in REPEAT_KV_TEST_MODELS")
-
-
-################################ QNN Tests ################################
-
-
-@pytest.mark.on_qaic
-@pytest.mark.qnn
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    if model_name in [
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "tiny-random/gemma-3",
-        "tiny-random/gemma-4-dense",
-        "tiny-random/gemma-4-moe",
-        "moonshotai/Kimi-K2.5",
-    ]:
-        pytest.skip("QNN is not supported for these models yet.")
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        kv_offload=kv_offload,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )

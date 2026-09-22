@@ -292,9 +292,16 @@ class QEffQwen3VLEmbedder:
     def _run_ai100_vision(vision_qpc_path: str, prepared_inputs: Dict[str, torch.Tensor]) -> Dict[str, np.ndarray]:
         """Execute the vision QPC and return retained-state output buffers."""
         vision_session = QAICInferenceSession(vision_qpc_path)
+        pixel_values_np = prepared_inputs["pixel_values"].detach().cpu().numpy()
+        if vision_session.binding_is_bfloat16("pixel_values"):
+            pixel_values_np = (
+                torch.from_numpy(pixel_values_np).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+            )
+        else:
+            pixel_values_np = pixel_values_np.astype(np.float16)
         vision_outputs = vision_session.run(
             {
-                "pixel_values": prepared_inputs["pixel_values"].detach().cpu().numpy().astype(np.float16),
+                "pixel_values": pixel_values_np,
                 "image_grid_thw": prepared_inputs["image_grid_thw"].detach().cpu().numpy().astype(np.int64),
             }
         )
