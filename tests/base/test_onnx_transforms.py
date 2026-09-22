@@ -11,7 +11,9 @@ import onnx
 from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
     OnnxTransformPipeline,
+    QualifyOnnxNodeNamesTransform,
     RenameWsubNodesTransform,
+    RewriteSequenceSplitGetItemTransform,
     SplitTensorsTransform,
 )
 
@@ -112,6 +114,71 @@ def test_rename_wsub_nodes_transform():
         role.replace(".", "/") + "/" + op_type for role, op_type in weighted_ops
     ]
     assert not RenameWsubNodesTransform.apply(model)
+
+
+def test_qualify_onnx_node_names_transform():
+    function_node = onnx.helper.make_node("Identity", ["x"], ["y"], name="node_Identity_0")
+    function = onnx.helper.make_function(
+        "pkg.torch.__subgraph__",
+        "DecoderLayer",
+        ["x"],
+        ["y"],
+        [function_node],
+        [onnx.helper.make_opsetid("", 17)],
+    )
+    main_node = onnx.helper.make_node("Identity", ["input"], ["output"])
+    model = onnx.helper.make_model(
+        onnx.helper.make_graph([main_node], "test", [], []),
+        functions=[function],
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+
+    assert QualifyOnnxNodeNamesTransform.apply(model)
+    assert model.graph.node[0].name == "main/node_0_Identity"
+    assert model.functions[0].node[0].name == "DecoderLayer/node_Identity_0"
+    assert not QualifyOnnxNodeNamesTransform.apply(model)
+
+
+def test_rewrite_sequence_split_getitem_transform():
+    nodes = [
+        onnx.helper.make_node(
+            "Constant",
+            [],
+            ["split_size"],
+            name="split_size",
+            value=onnx.numpy_helper.from_array(np.asarray(4, dtype=np.int64)),
+        ),
+        onnx.helper.make_node("aten_split", ["x", "split_size"], ["parts"], name="split"),
+        onnx.helper.make_node(
+            "Constant",
+            [],
+            ["index"],
+            name="index",
+            value=onnx.numpy_helper.from_array(np.asarray(1, dtype=np.int64)),
+        ),
+        onnx.helper.make_node("aten_getitem", ["parts", "index"], ["y"], name="getitem"),
+    ]
+    function = onnx.helper.make_function(
+        "pkg.torch.__subgraph__",
+        "DecoderLayer",
+        ["x"],
+        ["y"],
+        nodes,
+        [onnx.helper.make_opsetid("", 17)],
+    )
+    model = onnx.helper.make_model(
+        onnx.helper.make_graph([], "test", [], []),
+        functions=[function],
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+
+    assert RewriteSequenceSplitGetItemTransform.apply(model)
+    rewritten = model.functions[0].node
+    assert rewritten[-1].op_type == "Slice"
+    assert [node.op_type for node in rewritten].count("Slice") == 1
+    assert rewritten[-1].input[0] == "x"
+    assert rewritten[-1].output[0] == "y"
+    assert not RewriteSequenceSplitGetItemTransform.apply(model)
 
 
 def test_split_tensors_transform(tmp_path):

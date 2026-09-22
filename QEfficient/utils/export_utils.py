@@ -19,7 +19,9 @@ from torch import nn
 from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
+    CanonicalizeWhileLoopInitialConditionTransform,
     CustomOpTransform,
+    DeduplicateRepeatedSubgraphTransform,
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
@@ -28,6 +30,8 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
+    DYNAMO_DIM_MAX_BATCH_SIZE,
+    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
     _KNOWN_DECODER_LAYER_ATTR_PATHS,
     _KNOWN_DECODER_LAYER_SUFFIXES,
 )
@@ -63,16 +67,14 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
     """
     sig_keys = list(inspect.signature(model.forward).parameters.keys())
     sig_key_set = set(sig_keys)
-    ordered_inputs, ordered_shapes = {}, {}
+    ordered_inputs = {}
     for k in sig_keys:
         if k in example_inputs:
             ordered_inputs[k] = example_inputs[k]
-        if dynamic_shapes is not None and k in dynamic_shapes:
-            ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {k: dynamic_shapes.get(k, {}) for k in reordered_inputs}
-        return reordered_inputs, reordered_shapes
+        dynamic_shapes = {k: dynamic_shapes.get(k) for k in reordered_inputs}
+        return reordered_inputs, dynamic_shapes
     return reordered_inputs, None
 
 
@@ -155,6 +157,50 @@ def convert_dynamic_axes_to_dynamic_shapes(
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
         dynamic_shapes["past_key_values"] = [
             [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+        ]
+
+    if compressed_kv_layers or k_pe_layers:
+        max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
+        dynamic_shapes["compressed_kvs"] = [
+            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
+
+    return dynamic_shapes
+
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    hybrid_states: dict[int, list[Any]] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
+
+    for input_name, axes_map in dynamic_axes.items():
+        resolved = {}
+        for axis_idx, dim_name in axes_map.items():
+            dim = resolve_dim(dim_name)
+            if isinstance(dim, int):
+                continue
+            resolved[axis_idx] = dim
+        if input_name.startswith("past_key."):
+            past_keys[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_value."):
+            past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            hybrid_states.setdefault(int(input_name.split(".")[1]), [{}, {}])[0] = resolved
+        elif input_name.startswith("recurrent_state."):
+            hybrid_states.setdefault(int(input_name.split(".")[1]), [{}, {}])[1] = resolved
+        elif input_name.startswith("compressed_kv."):
+            compressed_kv_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("k_pe."):
+            k_pe_layers[int(input_name.split(".")[1])] = resolved
+        else:
+            dynamic_shapes[input_name] = resolved
+
+    if past_keys or past_values or hybrid_states:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()) + list(hybrid_states.keys()))
+        dynamic_shapes["past_key_values"] = [
+            hybrid_states.get(i, [past_keys.get(i, {}), past_values.get(i, {})])
+            for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -496,8 +542,16 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
         # Dynamo: PreserveNestedCacheRetainedStateTransform + RenameRepeatedSubgraphTransform.
         if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
+        if CanonicalizeWhileLoopInitialConditionTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(CanonicalizeWhileLoopInitialConditionTransform)
+        if DeduplicateRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(DeduplicateRepeatedSubgraphTransform)
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
+        # if QualifyOnnxNodeNamesTransform not in qeff_model._onnx_transforms:
+        #     qeff_model._onnx_transforms.append(QualifyOnnxNodeNamesTransform)
+        # if RewriteSequenceSplitGetItemTransform not in qeff_model._onnx_transforms:
+        #     qeff_model._onnx_transforms.append(RewriteSequenceSplitGetItemTransform)
     else:
         # TorchScript: RenameFunctionOutputsTransform + CustomOpTransform.
         if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:

@@ -113,6 +113,8 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 
 
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+    cos = cos.to(device=position_ids.device)
+    sin = sin.to(device=position_ids.device)
     cos = cos[position_ids]
     sin = sin[position_ids]
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
@@ -225,10 +227,10 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
-        max_t = torch.tensor(self.num_grid_per_side - 1, device=device, dtype=h_idxs_floor.dtype)
-
-        h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_t)  # working
-        w_idxs_ceil = torch.minimum(w_idxs_floor + 1, max_t)
+        max_idx_h = torch.full_like(h_idxs_floor, self.num_grid_per_side - 1)
+        max_idx_w = torch.full_like(w_idxs_floor, self.num_grid_per_side - 1)
+        h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_idx_h)
+        w_idxs_ceil = torch.minimum(w_idxs_floor + 1, max_idx_w)
 
         dh = h_idxs - h_idxs_floor
         dw = w_idxs - w_idxs_floor
@@ -274,6 +276,7 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         return patch_pos_embeds
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+        grid_thw = grid_thw.to(device=hidden_states.device)
         hidden_states = self.patch_embed(hidden_states)
         pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
 
@@ -288,15 +291,15 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         position_embeddings = (emb.cos(), emb.sin())
         bs, t, h, w = grid_thw.shape
 
-        t = torch.arange(t, t + 1).squeeze().expand(bs)
-        h = torch.arange(h, h + 1).squeeze().expand(bs)
-        w = torch.arange(w, w + 1).squeeze().expand(bs)
+        t = torch.arange(t, t + 1, device=grid_thw.device).squeeze().expand(bs)
+        h = torch.arange(h, h + 1, device=grid_thw.device).squeeze().expand(bs)
+        w = torch.arange(w, w + 1, device=grid_thw.device).squeeze().expand(bs)
 
         cu_seqlens = (h * w).cumsum(
             dim=0,
             dtype=torch.int32,
         )
-        cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
+        cu_seqlens = torch.cat([torch.full_like(cu_seqlens[:1], 0), cu_seqlens])
 
         deepstack_feature_lists = []
         for layer_num, blk in enumerate(self.blocks):
@@ -343,11 +346,13 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
             sin = emb.sin()
         else:
             cos, sin = position_embeddings
+        cos = cos.to(device=q.device)
+        sin = sin.to(device=q.device)
         q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
 
         seq_len = seq_length
-        rows = torch.arange(seq_len).view(1, -1)
-        cols = torch.arange(seq_len).view(-1, 1)
+        rows = torch.arange(seq_len, device=q.device).view(1, -1)
+        cols = torch.arange(seq_len, device=q.device).view(-1, 1)
 
         start = cu_seqlens[:-1].view(-1, 1, 1)
         end = cu_seqlens[1:].view(-1, 1, 1)

@@ -930,14 +930,16 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             # indices1 = qeff_cumsum_dim1(selected.to(torch.int64)) - 1
             indices1 = selected.to(torch.int64).cumsum(1) - 1
             indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0], device=selected.device).view(-1, 1)
             image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
             num_features, bs, split_size, C = deepstack_features.shape
             x = deepstack_features.reshape(num_features, bs * split_size, C)
             deepstack_features_expanded = x[:, indices1, :]
             image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+            inputs_embeds = torch.where(
+                input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+            )
 
             image_mask = selected.clone()
             visual_pos_masks = None
@@ -957,7 +959,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 deepstack_visual_embeds=deepstack_visual_embeds,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            hidden_states = outputs.last_hidden_state[
+                torch.arange(position_ids[0].shape[0], device=position_ids.device).view(-1, 1), logit_index
+            ]
             if batch_fold_cb:
                 hidden_states = _batch_index_gather(hidden_states, batch_index)
             logits = self.model.lm_head(hidden_states)
@@ -970,14 +974,16 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             # indices1 = qeff_cumsum_dim1(selected.to(torch.int64)) - 1
             indices1 = selected.to(torch.int64).cumsum(1) - 1
             indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0], device=selected.device).view(-1, 1)
             image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
             num_features, bs, split_size, C = deepstack_features.shape
             x = deepstack_features.reshape(num_features, bs * split_size, C)
             deepstack_features_expanded = x[:, indices1, :]
             image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+            inputs_embeds = torch.where(
+                input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+            )
 
             image_mask = selected.clone()
 
@@ -1020,7 +1026,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            hidden_states = outputs.last_hidden_state[
+                torch.arange(position_ids[0].shape[0], device=position_ids.device).view(-1, 1), logit_index
+            ]
             if batch_fold_cb:
                 hidden_states = _batch_index_gather(hidden_states, batch_index)
             logits = self.model.lm_head(hidden_states)
@@ -1428,7 +1436,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
-        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+        inputs["position_ids"] = torch.arange(input_ids_length, device=inputs["input_ids"].device).view(
+            1, 1, input_ids_length
+        ).expand(-1, batch_size, -1)
 
         mm_token_type_ids = inputs.get("mm_token_type_ids")
         if mm_token_type_ids is None:

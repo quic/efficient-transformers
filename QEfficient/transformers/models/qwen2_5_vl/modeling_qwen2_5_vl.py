@@ -101,6 +101,8 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 
 
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+    cos = cos.to(device=position_ids.device)
+    sin = sin.to(device=position_ids.device)
     cos = cos[position_ids]
     sin = sin[position_ids]
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
@@ -211,6 +213,8 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
             sin = emb.sin()
         else:
             cos, sin = position_embeddings
+        cos = cos.to(device=q.device)
+        sin = sin.to(device=q.device)
         q, k = qeff_apply_rotary_pos_emb_vision(q, k, cos, sin)
 
         q = q.transpose(0, 1)
@@ -357,6 +361,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         Returns:
             `torch.Tensor`: hidden_states.
         """
+        grid_thw = grid_thw.to(device=hidden_states.device)
         hidden_states = self.patch_embed(hidden_states)
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
@@ -846,10 +851,12 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         # indices1 = qeff_cumsum_dim1(selected.to(torch.int64)) - 1
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        indices0 = torch.arange(selected.unsqueeze(0).shape[0], device=selected.device).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        inputs_embeds = torch.where(
+            input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+        )
         outputs = self.model.model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -860,7 +867,9 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         )
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        hidden_states = outputs.last_hidden_state[
+            torch.arange(position_ids[0].shape[0], device=position_ids.device).view(-1, 1), logit_index
+        ]
         logits = self.model.lm_head(hidden_states)
         logits = logits.float()
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
@@ -1187,7 +1196,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
 
-        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+        inputs["position_ids"] = torch.arange(input_ids_length, device=inputs["input_ids"].device).view(
+            1, 1, input_ids_length
+        ).expand(-1, batch_size, -1)
 
         mm_token_type_ids = inputs.get("mm_token_type_ids")
         if mm_token_type_ids is None:
