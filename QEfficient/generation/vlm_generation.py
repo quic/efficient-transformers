@@ -37,7 +37,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
     write_io_files,
 )
-from QEfficient.utils import LRUCache
+from QEfficient.utils import LRUCache, constants
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -660,8 +660,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in constants.VISION_FP16_INPUTS:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
 
         vision_outputs = {}
         if vision_inputs:
