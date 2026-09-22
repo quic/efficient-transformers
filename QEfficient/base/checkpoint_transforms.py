@@ -19,7 +19,7 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, List, Type
+from typing import Any, Dict, List, Type
 
 import torch
 
@@ -57,11 +57,12 @@ def _checkpoint_manifest(
     source_dir: Path,
     target_dtype: torch.dtype,
     transforms: List[Type["BaseCheckpointTransform"]],
+    transform_context: Dict[str, Any] | None = None,
 ) -> dict:
     files = _checkpoint_file_fingerprint(source_dir, "source")
     if source_dir != src:
         files.extend(_checkpoint_file_fingerprint(src, "original"))
-    return {
+    manifest = {
         "version": 1,
         "source": str(source_dir.resolve()),
         "original_source": str(src.resolve()),
@@ -69,6 +70,9 @@ def _checkpoint_manifest(
         "transforms": [f"{transform.__module__}.{transform.__name__}" for transform in transforms],
         "files": files,
     }
+    if transform_context:
+        manifest["transform_context"] = transform_context
+    return manifest
 
 
 def _manifest_matches(out: Path, expected: dict) -> bool:
@@ -221,7 +225,20 @@ class CheckpointTransformPipeline:
             source_dir = out.with_name(out.name + "-source-safetensors")
             convert_bin_to_safetensors(src, source_dir)
 
-        expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
+        model_config = kwargs.get("model_config")
+        manifest_context = None
+        if model_config is not None:
+            manifest_context = {
+                "model_type": getattr(model_config, "model_type", None),
+                "num_hidden_layers": getattr(model_config, "num_hidden_layers", None),
+            }
+        expected_manifest = _checkpoint_manifest(
+            src,
+            source_dir,
+            target_dtype,
+            self.transforms,
+            transform_context=manifest_context,
+        )
         if (
             (out / CHECKPOINT_PREPARED_SENTINEL).exists()
             and _manifest_matches(out, expected_manifest)
@@ -232,7 +249,7 @@ class CheckpointTransformPipeline:
 
         weight_map = read_weight_map(source_dir)
         for transform in self.transforms:
-            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
+            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype, **kwargs):
                 transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
                 if (out / CHECKPOINT_PREPARED_SENTINEL).exists():
                     _write_manifest(out, expected_manifest)

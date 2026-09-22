@@ -61,6 +61,9 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
         # config object (QEFFAutoModelForCausalLM.from_pretrained).  Normalise to an object.
         if isinstance(quant_config, dict):
             quant_type = quant_config.get("quant_method") or quant_config.get("quant_type")
+            if quant_type == "fp8" and getattr(qeff_model.model.config, "model_type", None) == "glm_moe_dsa":
+                qeff_model.model = qeff_model.model.to(dtype=target_dtype)
+                return qeff_model
             config_cls = QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.get(quant_type)
             if config_cls is None:
                 raise NotImplementedError(
@@ -71,6 +74,10 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
         else:
             quant_method = getattr(quant_config, "quant_method", None) or getattr(quant_config, "quant_type", None)
             quant_type = quant_method.value if hasattr(quant_method, "value") else quant_method
+
+        if quant_type == "fp8" and getattr(qeff_model.model.config, "model_type", None) == "glm_moe_dsa":
+            qeff_model.model = qeff_model.model.to(dtype=target_dtype)
+            return qeff_model
 
         quantizer_cls = QEFF_AUTO_QUANTIZER_MAPPING.get(quant_type) if quant_type else None
         if quantizer_cls is None:
@@ -86,6 +93,15 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
         qeff_model.model = qeff_model.model.to(dtype=target_dtype)
 
     return qeff_model
+
+
+def _resolve_weight_free_target_dtype(config) -> torch.dtype:
+    """Return the dtype used by the meta model and prepared checkpoint."""
+    target_dtype = getattr(config, "torch_dtype", None) or getattr(config, "dtype", None) or torch.float32
+    if isinstance(target_dtype, str):
+        target_dtype = target_dtype.removeprefix("torch.")
+        target_dtype = getattr(torch, target_dtype, torch.float32)
+    return target_dtype
 
 
 def _prune_unused_fake_initializers(onnx_program) -> None:
@@ -133,9 +149,10 @@ def _prepare_checkpoint_for_weight_free_export(
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
-    # TODO(wf): For different flavours of the model that expect different checkpoint weight layouts,
-    # we end up overriding old one. We need to add support of hashing/caching here.
-    prepared_name = source_dir.name + f"-qeff-prepared-{dtype_suffix}"
+    model_config = qeff_model.model.config
+    model_type = getattr(model_config, "model_type", "unknown")
+    num_hidden_layers = getattr(model_config, "num_hidden_layers", "unknown")
+    prepared_name = source_dir.name + f"-qeff-prepared-{model_type}-layers{num_hidden_layers}-{dtype_suffix}"
     if QEFF_CHECKPOINT_HOME:
         prepared_out = QEFF_CHECKPOINT_HOME.expanduser() / prepared_name
     else:
@@ -146,6 +163,7 @@ def _prepare_checkpoint_for_weight_free_export(
             src=source_dir,
             out=prepared_out,
             target_dtype=target_dtype,
+            model_config=model_config,
         )
     )
 
@@ -186,7 +204,7 @@ def export_weight_free_onnx(
     tuple
         Meta QEfficient model, updated ONNX transform kwargs, and cleanup callback.
     """
-    target_dtype = qeff_model.model.config.dtype
+    target_dtype = _resolve_weight_free_target_dtype(qeff_model.model.config)
     meta_qeff_model = _run_quantizer_for_wf(qeff_model, target_dtype)
 
     # export_wrapper (the @export_wrapper decorator on _export) already ran

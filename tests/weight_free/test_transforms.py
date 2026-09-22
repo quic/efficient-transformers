@@ -44,6 +44,7 @@ from QEfficient.exporter.weight_free import checkpoint_key_resolver
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import find_checkpoint_key
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
+    GlmMoeDsaReducedCheckpointTransform,
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
@@ -51,7 +52,7 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import runtime_requirements
-from QEfficient.utils.export_utils import _generate_export_hash
+from QEfficient.utils.export_utils import _generate_export_hash, convert_dynamic_axes_to_dynamic_shapes
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
@@ -162,6 +163,122 @@ def _load_prepared_tensors(root):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_prepares_reduced_glm_moe_dsa_fp8_checkpoint(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        q_b_proj = torch.arange(16, dtype=torch.float32).reshape(8, 2)
+        q_b_proj_scale = torch.full((4, 1), 2.0)
+        expert_gate = [torch.arange(8, dtype=torch.float32).reshape(2, 4) + offset for offset in (0, 10)]
+        expert_up = [torch.arange(8, dtype=torch.float32).reshape(2, 4) + offset for offset in (20, 30)]
+        expert_down = [torch.arange(8, dtype=torch.float32).reshape(4, 2) + offset for offset in (40, 50)]
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.embed_tokens.weight": torch.ones(2, 2),
+                "model.layers.0.self_attn.q_b_proj.weight": q_b_proj,
+                "model.layers.0.self_attn.q_b_proj.weight_scale_inv": q_b_proj_scale,
+                "model.layers.0.mlp.gate_proj.weight": torch.ones(2, 2),
+                "model.layers.0.mlp.up_proj.weight": torch.ones(2, 2),
+                "model.layers.0.mlp.down_proj.weight": torch.ones(2, 2),
+                "model.layers.0.input_layernorm.weight": torch.ones(2),
+                "model.layers.0.self_attn.indexer.wk.weight": torch.full((2, 2), 5.0),
+                "model.layers.0.self_attn.indexer.wq_b.weight": torch.arange(12, dtype=torch.float32).reshape(3, 4),
+                "model.layers.0.self_attn.indexer.wq_b.weight_scale_inv": torch.full((2, 2), 6.0),
+                **{
+                    f"model.layers.3.mlp.experts.{expert_idx}.{kind}_proj.weight": tensor
+                    for expert_idx in range(2)
+                    for kind, tensor in (
+                        ("gate", expert_gate[expert_idx]),
+                        ("up", expert_up[expert_idx]),
+                        ("down", expert_down[expert_idx]),
+                    )
+                },
+                **{
+                    f"model.layers.3.mlp.experts.{expert_idx}.{kind}_proj.weight_scale_inv": torch.full(
+                        (1, 2) if kind != "down" else (2, 1), scale
+                    )
+                    for expert_idx in range(2)
+                    for kind, scale in (("gate", 3.0), ("up", 4.0), ("down", 5.0))
+                },
+                "model.layers.3.mlp.gate.weight": torch.full((2, 2), 6.0),
+                "model.layers.4.self_attn.q_b_proj.weight": torch.full((8, 2), 9.0),
+                "model.mtp.layers.0.weight": torch.full((2, 2), 10.0),
+                "model.norm.weight": torch.ones(2),
+                "lm_head.weight": torch.ones(2, 2),
+            },
+        )
+        config = SimpleNamespace(
+            model_type="glm_moe_dsa",
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            qk_nope_head_dim=2,
+            qk_rope_head_dim=2,
+            n_routed_experts=2,
+            quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]},
+        )
+
+        assert GlmMoeDsaReducedCheckpointTransform.is_applicable(
+            json.loads((src / "model.safetensors.index.json").read_text())["weight_map"],
+            model_config=config,
+        )
+        assert GlmMoeDsaReducedCheckpointTransform.apply(src, out, model_config=config)
+
+        tensors = _load_prepared_tensors(out)
+        expected_q_b_proj = q_b_proj * 2
+        expected_q_up = expected_q_b_proj.T.view(-1, 2, 4)[..., :2].reshape(-1, 4).unsqueeze(0)
+        expected_q_rope = expected_q_b_proj.T.view(-1, 2, 4)[..., 2:].reshape(-1, 4).unsqueeze(0)
+        torch.testing.assert_close(tensors["model.layers.0.self_attn.q_up"], expected_q_up)
+        torch.testing.assert_close(tensors["model.layers.0.self_attn.q_rope"], expected_q_rope)
+        torch.testing.assert_close(
+            tensors["model.layers.3.mlp.moe_weights.gate"], torch.stack(expert_gate).transpose(1, 2) * 3
+        )
+        torch.testing.assert_close(
+            tensors["model.layers.3.mlp.moe_weights.up"], torch.stack(expert_up).transpose(1, 2) * 4
+        )
+        torch.testing.assert_close(
+            tensors["model.layers.3.mlp.moe_weights.down"], torch.stack(expert_down).transpose(1, 2) * 5
+        )
+        torch.testing.assert_close(tensors["model.layers.0.self_attn.indexer.wk.weight"], torch.full((2, 2), 5.0))
+        torch.testing.assert_close(
+            tensors["model.layers.0.self_attn.indexer.wq_b.weight"],
+            torch.arange(12, dtype=torch.float32).reshape(3, 4) * 6,
+        )
+        torch.testing.assert_close(tensors["model.layers.3.mlp.gate.weight"], torch.full((2, 2), 6.0))
+        assert not any("layers.4" in key or ".mtp." in key or key.endswith("_scale_inv") for key in tensors)
+
+    def test_reduced_glm_moe_dsa_checkpoint_requires_four_layers(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.layers.0.self_attn.q_b_proj.weight": torch.ones(8, 2),
+                "model.layers.0.self_attn.q_b_proj.weight_scale_inv": torch.ones(4, 1),
+                "model.layers.0.mlp.gate_proj.weight": torch.ones(2, 2),
+                "model.layers.0.mlp.up_proj.weight": torch.ones(2, 2),
+                "model.layers.0.mlp.down_proj.weight": torch.ones(2, 2),
+                "model.layers.3.mlp.experts.0.gate_proj.weight": torch.ones(2, 2),
+            },
+        )
+
+        with pytest.raises(ValueError, match="reduced four-layer"):
+            GlmMoeDsaReducedCheckpointTransform.apply(
+                src,
+                tmp_path / "out",
+                model_config=SimpleNamespace(
+                    model_type="glm_moe_dsa",
+                    num_hidden_layers=78,
+                    quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]},
+                ),
+            )
+
+    def test_glm_checkpoint_transform_precedes_generic_moe_stacking(self):
+        transforms = QEFFAutoModelForCausalLM._checkpoint_transforms
+        assert transforms.index(GlmMoeDsaReducedCheckpointTransform) < transforms.index(
+            MoEExpertStackingCheckpointTransform
+        )
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
@@ -180,6 +297,32 @@ class TestWeightFreeCheckpointTransforms:
 
         assert prepared == out
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(3, dtype=torch.float32))
+
+    def test_checkpoint_pipeline_rebuilds_when_model_context_changes(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+
+        pipeline.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            model_config=SimpleNamespace(model_type="glm_moe_dsa", num_hidden_layers=4),
+        )
+        stale_marker = out / "stale"
+        stale_marker.touch()
+        pipeline.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            model_config=SimpleNamespace(model_type="glm_moe_dsa", num_hidden_layers=78),
+        )
+
+        manifest = json.loads((out / CHECKPOINT_PREPARED_MANIFEST).read_text())
+        assert not stale_marker.exists()
+        assert manifest["transform_context"] == {"model_type": "glm_moe_dsa", "num_hidden_layers": 78}
 
     def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
         src = tmp_path / "src"
@@ -511,6 +654,36 @@ def _fake_export(
 
 
 class TestWeightFreeExportHash:
+    def test_ctx_gather_3d_fake_preserves_feature_dimension(self):
+        import QEfficient.customop.dynamo_ops  # noqa: F401
+
+        with torch._subclasses.fake_tensor.FakeTensorMode():
+            data = torch.empty((2, 8, 5))
+            ctx_indices = torch.empty((2, 3), dtype=torch.int32)
+            output = torch.ops.qefficient.ctx_gather_3d(data, ctx_indices)
+
+        assert tuple(output.shape) == (2, 3, 5)
+
+    def test_dynamic_shapes_preserve_glm_nested_caches(self):
+        dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
+            {
+                "input_ids": {0: "batch_size", 1: "seq_len"},
+                "compressed_kv.0": {0: "batch_size", 2: "ctx_len"},
+                "k_pe.0": {0: "batch_size", 2: "ctx_len"},
+                "compressed_kv.1": {0: "batch_size", 2: "ctx_len"},
+                "k_pe.1": {0: "batch_size", 2: "ctx_len"},
+                "indexer_key.0": {0: "batch_size", 1: "ctx_len"},
+                "indexer_key.2": {0: "batch_size", 1: "ctx_len"},
+            },
+            SimpleNamespace(model_type="glm_moe_dsa"),
+        )
+
+        assert "compressed_kvs" in dynamic_shapes
+        assert isinstance(dynamic_shapes["compressed_kvs"][0], list)
+        assert len(dynamic_shapes["compressed_kvs"]) == 2
+        assert "indexer_key_cache" in dynamic_shapes
+        assert len(dynamic_shapes["indexer_key_cache"]) == 2
+
     def test_weight_free_export_hash_differs_from_regular_dynamo(self):
         config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "llama"})
         common_model = SimpleNamespace(
