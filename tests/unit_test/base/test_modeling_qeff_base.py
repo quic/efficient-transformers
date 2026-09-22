@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import onnx
 import pytest
