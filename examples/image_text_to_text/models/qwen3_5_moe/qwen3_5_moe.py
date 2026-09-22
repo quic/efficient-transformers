@@ -13,7 +13,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "Qwen/Qwen3.6-35B-A3B"
+model_id = "Qwen/Qwen3.5-35B-A3B"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
@@ -22,7 +22,14 @@ config.text_config.num_hidden_layers = 4
 config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    # # For CCL activation
+    # qaic_config={
+    #     "ccl_enabled": True,
+    # },
 )
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
@@ -41,6 +48,16 @@ BS = 1
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 
+qaic_config = {}
+
+# Update qaic_config here for Blocking settings.
+# qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})
+
+# Compute-Context-Length (CCL) lists for prefill and decode. When both are None and
+# ccl_enabled=True, they are auto-generated from CTX_LEN.
+# comp_ctx_lengths_prefill = [2048]
+# comp_ctx_lengths_decode = [4096,65536]
+
 if skip_vision:
     ## Only Text ##
 
@@ -58,7 +75,9 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+        qaic_config=qaic_config,
+        # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     if enable_blocking:
@@ -129,8 +148,10 @@ else:
         mxfp6_matmul=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
+        qaic_config=qaic_config,
         mos=1,
-        # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+        # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     if enable_blocking:

@@ -14,6 +14,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from .model_age_utils import get_model_age, is_newer_model
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Linux is the supported environment here.
@@ -23,6 +25,16 @@ except ImportError:  # pragma: no cover - Linux is the supported environment her
 PIPELINE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PIPELINE_ROOT.parents[1]
 PIPELINE_CONFIG_PATH = PIPELINE_ROOT / "configs" / "pipeline_configs.json"
+NIGHTLY_TEST_FAILURES_FILE = "nightly_test_failures.json"
+
+NODEID_MODEL_CLASS_MAP = {
+    "audio_embedding_models": ("audio_embedding_model", "audio_embedding_model_configs"),
+    "audio_models": ("audio_model", "audio_model_configs"),
+    "causal_lm_models": ("causal_model", "causal_pipeline_configs"),
+    "embedding_models": ("embedding_model", "embedding_model_configs"),
+    "image_text_to_text_models": ("image_text_to_text_model", "image_text_to_text_model_configs"),
+    "sequence_models": ("sequence_model", "sequence_model_configs"),
+}
 
 
 def _load_pipeline_configs():
@@ -175,6 +187,62 @@ def save_artifacts(filepath, data):
         os.replace(tmp_path, filepath)
 
     return merged_data
+
+
+def _nightly_model_classes_from_nodeid(nodeid):
+    for path_part, model_classes in NODEID_MODEL_CLASS_MAP.items():
+        if f"/{path_part}/" in nodeid or f"\\{path_part}\\" in nodeid:
+            return model_classes
+    return None, None
+
+
+def _short_failure_reason(report):
+    reason = getattr(report, "longreprtext", "") or str(report.longrepr)
+    reason = " ".join(reason.split())
+    return reason[:500] if reason else "pytest test failed"
+
+
+def _record_nightly_test_failure(item, report):
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return
+
+    model_name = callspec.params.get("model_name")
+    if not model_name:
+        return
+
+    report_class, config_class = _nightly_model_classes_from_nodeid(item.nodeid)
+    if report_class is None or config_class is None:
+        return
+
+    artifacts_path = item.config._nightly_pipeline_artifacts_dir
+    failure_file = artifacts_path / NIGHTLY_TEST_FAILURES_FILE
+    model_age = get_model_age(model_name, config_class)
+    status = "failed" if is_newer_model(model_name, config_class) else "warning"
+    row = {
+        "model_class": report_class,
+        "model_name": model_name,
+        "model_age": model_age,
+        "status": status,
+        "failure_reason": _short_failure_reason(report),
+        "test_nodeid": item.nodeid,
+    }
+
+    with _locked_file(_lock_path(failure_file)):
+        existing_data = load_artifacts(failure_file)
+        existing_data[item.nodeid] = row
+        tmp_path = failure_file.with_suffix(failure_file.suffix + f".{os.getpid()}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            json.dump(existing_data, file, indent=2)
+        os.replace(tmp_path, failure_file)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        _record_nightly_test_failure(item, report)
 
 
 @pytest.fixture

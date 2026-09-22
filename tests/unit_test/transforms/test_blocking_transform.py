@@ -26,6 +26,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from QEfficient.blocking import attention_blocking
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 
 VOCAB_SIZE = 500
@@ -266,7 +267,7 @@ class TestBlockingModes:
 
         model = make_tiny_llama()
         model, _ = KVCacheTransform.apply(model)
-        config = AttentionBlockingConfig(mode=mode, head_block_size=8, num_kv_blocks=2, num_q_blocks=2)
+        config = AttentionBlockingConfig(mode=mode, head_block_size=8, num_kv_blocks=2, num_q_blocks=2, ctx_len=128)
         model, transformed = BlockingAttentionTransform.apply(model, config)
 
         assert transformed
@@ -285,6 +286,7 @@ class TestBlockingModes:
             head_block_size=8,
             skip_kv=False,
             num_batch_blocks=1,
+            ctx_len=128,
         )
         model, transformed = BlockingAttentionTransform.apply(model, config)
 
@@ -297,6 +299,64 @@ class TestBlockingModes:
             assert c.head_block_size == 8
             assert c.skip_kv is False
             assert c.num_batch_blocks == 1
+
+
+@pytest.mark.transforms
+def test_generic_blocked_attention_infers_prefill_only_from_mode(monkeypatch):
+    class Cache:
+        def __init__(self):
+            self.write_only_calls = []
+
+        def write_only(self, key, value, layer_idx, cache_kwargs):
+            self.write_only_calls.append((key, value, layer_idx, cache_kwargs))
+
+    cache = Cache()
+    query = torch.ones(1, 1, 1, 1)
+    key = torch.ones(1, 1, 1, 1)
+    value = torch.ones(1, 1, 1, 1)
+    strategy_calls = []
+
+    def prefill_strategy(**kwargs):
+        strategy_calls.append(kwargs)
+        return kwargs["query"], None
+
+    monkeypatch.setitem(attention_blocking._STRATEGIES, BlockingMode.PREFILL_Q, prefill_strategy)
+
+    output, weights = attention_blocking.generic_blocked_attention_interface(
+        module=type("Attention", (), {"layer_idx": 0})(),
+        query=query,
+        key=key,
+        value=value,
+        past_key_value=cache,
+        blocking_config=AttentionBlockingConfig(mode=BlockingMode.PREFILL_Q, num_q_blocks=1),
+    )
+
+    assert torch.equal(output, query)
+    assert weights is None
+    assert len(cache.write_only_calls) == 1
+    assert len(strategy_calls) == 1
+
+
+@pytest.mark.transforms
+def test_kv_batch_fold_preserves_optional_gdn_num_head_blocks():
+    from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+    config = build_transformer_blocking_config_for_transform(
+        model_config=object(),
+        ctx_len=1024,
+        seq_len=1,
+        bs=512,
+        num_devices=4,
+        qaic_config={
+            "blocking_mode": "kv_batch_fold",
+            "num_kv_blocks": 16,
+            "gdn_num_head_blocks": 8,
+        },
+    )
+
+    assert config.mode == BlockingMode.KV_BATCH_FOLD
+    assert config.batch_fold is True
+    assert config.gdn_num_head_blocks == 8
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +374,7 @@ class TestBlockingTransformIdempotent:
         model = make_tiny_llama()
         model, _ = KVCacheTransform.apply(model)
 
-        config1 = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2)
+        config1 = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=1024)
         config2 = AttentionBlockingConfig(mode=BlockingMode.Q, num_q_blocks=4)
 
         model, _ = BlockingAttentionTransform.apply(model, config1)
@@ -358,7 +418,7 @@ class TestBlockingWrapperFallbackAndParity:
             def forward(self, *args, **kwargs):
                 return self.model(*args, **kwargs)
 
-        cfg = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2)
+        cfg = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128)
         wrapped = _WrapperWithoutConfig(_DeepseekContainer())
         wrapped, transformed = BlockingAttentionTransform.apply(wrapped, cfg)
 
@@ -369,7 +429,7 @@ class TestBlockingWrapperFallbackAndParity:
         "blocking_cfg",
         [
             AttentionBlockingConfig(mode=BlockingMode.NONE),
-            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128),
         ],
         ids=["mode_none", "mode_kv"],
     )
@@ -393,4 +453,59 @@ class TestBlockingWrapperFallbackAndParity:
 
         assert torch.equal(original_token, transformed_token), (
             "Original and transformed model outputs diverged for same CPU input"
+        )
+
+    @pytest.mark.parametrize(
+        "blocking_cfg",
+        [
+            AttentionBlockingConfig(mode=BlockingMode.NONE),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128),
+            AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=2, num_q_blocks=2, ctx_len=128),
+            AttentionBlockingConfig(
+                mode=BlockingMode.HQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1, ctx_len=128
+            ),
+            AttentionBlockingConfig(
+                mode=BlockingMode.BHQKV,
+                num_kv_blocks=2,
+                num_q_blocks=2,
+                head_block_size=1,
+                num_batch_blocks=2,
+                ctx_len=128,
+            ),
+        ],
+        ids=["mode_none", "mode_kv", "mode_qkv", "mode_hqkv", "mode_bhqkv"],
+    )
+    def test_cpu_logits_allclose_original_vs_blocked(self, blocking_cfg):
+        """Blocked attention (kv/qkv/hqkv, paged_attention=False) must reproduce the
+        unblocked model's logits to numerical precision, not just the same argmax
+        token - splitting attention into blocks with running-softmax accumulation
+        is a reformulation of the same computation, so it should match tightly.
+        Also covers "non-paged generation unchanged when num_kv_blocks is absent"
+        via the mode_none case, which never sets num_kv_blocks.
+
+        QEffLlamaForCausalLM.forward always gathers only the last token's hidden
+        state (via position_ids.argmax) before the lm_head projection, so it never
+        returns per-position logits for the full prompt - compare the last position
+        only, but with allclose instead of just argmax to make this a real numeric
+        tightening over test_cpu_parity_original_vs_transformed_with_same_input."""
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform, KVCacheTransform
+
+        torch.manual_seed(7)
+        base = make_tiny_llama()
+        original = deepcopy(base).eval()
+        transformed = deepcopy(base).eval()
+        transformed, _ = KVCacheTransform.apply(transformed)
+        transformed, applied = BlockingAttentionTransform.apply(transformed, blocking_cfg)
+        assert applied
+
+        input_ids = torch.randint(0, VOCAB_SIZE, (1, 8))
+        qeff_inputs = _make_qeff_inputs(input_ids, transformed.config)
+
+        with torch.no_grad():
+            original_logits = original(input_ids=input_ids).logits[:, -1, :]
+            transformed_logits = transformed(**qeff_inputs).logits[:, -1, :]
+
+        assert torch.allclose(original_logits, transformed_logits, atol=1e-4, rtol=1e-4), (
+            f"Logits diverged beyond tolerance for blocking_cfg.mode={blocking_cfg.mode} "
+            f"(max abs diff={(original_logits - transformed_logits).abs().max().item()})"
         )

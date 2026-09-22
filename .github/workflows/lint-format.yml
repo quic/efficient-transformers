@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip3 install ruff
+      - run: pip3 install ruff==0.15.22
       - run: ruff check
     env:
       RUFF_OUTPUT_FORMAT: github
@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip3 install ruff
+      - run: pip3 install ruff==0.15.22
       - run: ruff format --check
     env:
       RUFF_OUTPUT_FORMAT: github

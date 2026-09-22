@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-import os
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -40,19 +40,19 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
+    blocked_gdn_decode_forward,
     generic_blocked_attention_interface,
+    get_gdn_num_head_blocks,
+    recurrent_gdn_decode_forward,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
-from QEfficient.transformers.cache_utils import (
+from QEfficient.customop import (
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
+)
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -61,14 +61,44 @@ from QEfficient.transformers.models._layerwise import (
     is_layerwise_active,
     resolve_layer_window,
 )
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
-# EXPERT_BLOCKING_NUM_NSP = 16
-# EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
+
+
+def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
+    if position_ids is None:
+        return cache_position.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 1:
+        return position_ids.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 2:
+        return position_ids.unsqueeze(0).expand(4, position_ids.shape[0], -1)
+    return position_ids
+
+
+def _batch_index_scatter(tensor: torch.Tensor, batch_index: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
+    """Place logical request rows into their physical batch slots."""
+    batch_first = tensor if batch_dim == 0 else tensor.transpose(0, batch_dim)
+    slots = batch_index.reshape(-1).long()
+    batch_first = torch.zeros_like(batch_first).index_put((slots,), batch_first, accumulate=False)
+    return batch_first if batch_dim == 0 else batch_first.transpose(0, batch_dim)
+
+
+def _batch_index_gather(tensor: torch.Tensor, batch_index: torch.Tensor) -> torch.Tensor:
+    """Restore physical-slot rows to logical request order."""
+    return tensor.index_select(0, batch_index.reshape(-1).long())
 
 
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
@@ -201,17 +231,54 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         past_seen_tokens = self.get_seq_length(layer_idx)
         return query_length + past_seen_tokens, kv_offset
 
-    def read_only_blockedKV(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+    def read_only_blocked_kv(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
-        return layer.read_only_blockedKV(start_index, end_index, cache_kwargs)
+        return layer.read_only_blocked_kv(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_K(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.read_only_blocked_V(start_index, end_index, cache_kwargs)
+
+    def get_batch_folded_kv(self, layer_idx: int):
+        return self.kv_layers[layer_idx].get_batch_folded_kv()
+
+    def read_only_blocked_K_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        return self.kv_layers[layer_idx].read_only_blocked_K_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
+
+    def read_only_blocked_V_batch(
+        self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict, folded_cache=None
+    ):
+        return self.kv_layers[layer_idx].read_only_blocked_V_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
 
     def write_only(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.write_only(key_states, value_states, cache_kwargs)
+
+    def write_only_batch(
+        self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict
+    ):
+        layer = self.kv_layers[layer_idx]
+        if layer is None:
+            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
+        return layer.write_only_batch(key_states, value_states, cache_kwargs)
 
     def has_previous_state(self, layer_idx=None) -> bool:
         if layer_idx is not None:
@@ -413,7 +480,6 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
     # MIN_MASKED_ATTENTION_VALUE = -10000
     if attention_mask is not None:
         attn_weights = torch.where(
@@ -434,22 +500,43 @@ def qeff_torch_causal_conv1d_update(
     bias: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
-    state_len = conv_state.shape[-1]
+    grouped_conv_state = conv_state.ndim == 4
+
+    if grouped_conv_state:
+        bsz, num_kv_heads, conv_group_dim, state_len = conv_state.shape
+        if hidden_size != num_kv_heads * conv_group_dim:
+            raise ValueError(
+                "Grouped conv_state shape mismatch: "
+                f"hidden_size={hidden_size}, num_kv_heads={num_kv_heads}, conv_group_dim={conv_group_dim}"
+            )
+        conv_state_flat = conv_state.reshape(bsz, hidden_size, state_len)
+    else:
+        conv_state_flat = conv_state
+
+    state_len = conv_state_flat.shape[-1]
     pos_ids = position_ids[0]
-    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
-    out = torch.cat([zeros, pos_ids], dim=1)
-    order = torch.argsort(out, dim=1)  # sorted positions per batch row
-    last_positions = order[:, -state_len:]  # (B, state_len)
+    hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
-    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    is_decode = seq_len == torch.tensor(1)
 
-    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
-    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
-    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
-    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
-    # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
-    # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
+    # Decode is a fixed shift. Keep this branch tensor-only so the compiler can
+    # select it for both BS1 and folded decode graphs.
+    shifted_conv_state = torch.cat([conv_state_flat[..., 1:], hidden_states_new[..., -1:]], dim=-1)
+    valid_decode = (pos_ids[:, -1:] >= 0).to(shifted_conv_state.dtype).reshape(-1, 1, 1)
+    shifted_conv_state = shifted_conv_state * valid_decode + conv_state_flat * (1 - valid_decode)
+
+    # Prefill and padded chunks retain the general last-valid-position gather.
+    # Derive zeros from an existing state view; torch.zeros emits a dynamic ConstantOfShape in subfunctions.
+    zeros = conv_state_flat[:, 0, :].to(pos_ids.dtype) * 0
+    order = torch.argsort(torch.cat([zeros, pos_ids], dim=1), dim=1)
+    last_positions = order[:, -state_len:]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+    gathered_conv_state = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+
+    if grouped_conv_state:
+        shifted_conv_state = shifted_conv_state.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+        gathered_conv_state = gathered_conv_state.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+    updated_conv_state = torch.where(is_decode, shifted_conv_state, gathered_conv_state)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:]).to(hidden_states.dtype)
     return out, updated_conv_state
@@ -511,7 +598,7 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
@@ -555,7 +642,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
-        chunk_size = 64  # must match what's used in the function
+        self.chunk_gated_delta_solver = "tree"
+        chunk_size = 64
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
@@ -588,6 +676,142 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
 
+    # TODO: It would be better to use it directly from HF
+    def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
+        return attn + eye.to(dtype=attn.dtype)
+
+    def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
+            raise ValueError(f"tree solver requires power-of-two chunk_size, got {chunk_size}")
+
+        source = attn.masked_fill(mask, 0)
+        # Build the inverse of (I - source) bottom-up from 1x1 unit blocks.
+        # Starting from full chunk_size x chunk_size blocks causes shape mismatches
+        # in the first merge (block_size=1).
+        unit = torch.ones_like(source[..., :1, :1])
+        blocks = [unit for _ in range(chunk_size)]
+        block_size = 1
+
+        while len(blocks) > 1:
+            merged = []
+            for pair in range(0, len(blocks), 2):
+                left = blocks[pair]
+                right = blocks[pair + 1]
+                row0 = pair * block_size
+                row1 = row0 + block_size
+                lower_left = source[..., row1 : row1 + block_size, row0 : row0 + block_size]
+                solved_lower_left = right @ lower_left @ left
+                zeros = torch.zeros_like(left)
+                merged.append(
+                    torch.cat(
+                        [
+                            torch.cat([left, zeros], dim=-1),
+                            torch.cat([solved_lower_left, right], dim=-1),
+                        ],
+                        dim=-2,
+                    )
+                )
+            blocks = merged
+            block_size *= 2
+
+        return blocks[0].to(attn.dtype)
+
+    def _solve_chunk_attn_recursive_sns(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        acc_dtype = attn.dtype
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+
+        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
+            X = I64.clone()
+            for _ in range(ns_iters):
+                R = I64 - ((I64 - L) @ X)
+                ck = X + (X @ R).masked_fill(~strict_lower, 0)
+                X = ck.masked_fill(~strict_lower, 0) + I64
+            return X
+
+        default_depth = max(1, (math.ceil(math.log2(chunk_size)) - 1) // 2)
+        depth = getattr(self, "recursive_sns_depth", None)
+        depth = default_depth if depth is None else int(depth)
+        depth = max(1, depth)
+
+        X = _ns_solve(A64 * (0.5**depth))
+        for _ in range(depth):
+            M = (X - I64).masked_fill(~strict_lower, 0)
+            Z = _ns_solve(M)
+            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_scaled_newton_schulz(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        attn_1 = attn.clone()
+        acc_dtype = attn.dtype
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+        As = 0.5 * A64
+
+        Xs = I64.clone()
+        for _ in range(ns_iters):
+            Rs = I64 - ((I64 - As) @ Xs)
+            ck = Xs + (Xs @ Rs).masked_fill(~strict_lower, 0)
+            Xs = ck.masked_fill(~strict_lower, 0) + I64
+
+        M = (Xs - I64).masked_fill(~strict_lower, 0)
+        Z = I64.clone()
+        for _ in range(ns_iters):
+            Rz = I64 - ((I64 - M) @ Z)
+            ck = Z + (Z @ Rz).masked_fill(~strict_lower, 0)
+            Z = ck.masked_fill(~strict_lower, 0) + I64
+
+        X = (Z @ Xs).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
+        eye = eye.to(dtype=attn.dtype)
+        L = eye.clone()
+        Apow = attn
+        K = 32
+        for _ in range(int(math.log2(K))):
+            L = L @ (eye + Apow)
+            Apow = Apow @ Apow
+        return L
+
+    def _solve_chunk_attn_horner(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        A = attn.masked_fill(mask, 0)
+        acc_dtype = torch.float32
+        A64 = A.to(acc_dtype)
+        I64 = eye.to(dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        K = chunk_size - 1
+        S64 = I64.clone()
+        for _ in range(K):
+            S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+        return S64.to(A.dtype)
+
+    def _solve_chunk_attn(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
+        if solver == "original":
+            return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
+        if solver in ("tree", "forward_sub_tree"):
+            return self._solve_chunk_attn_tree(attn, mask, eye, chunk_size)
+        if solver == "factorized":
+            return self._solve_chunk_attn_factorized(attn, eye)
+        if solver == "horner":
+            return self._solve_chunk_attn_horner(attn, mask, eye, chunk_size)
+        if solver == "scaled_newton_schulz":
+            return self._solve_chunk_attn_scaled_newton_schulz(attn, mask, eye, chunk_size)
+        return self._solve_chunk_attn_recursive_sns(attn, mask, eye, chunk_size)
+
     def torch_chunk_gated_delta_rule_qeff(
         self,
         query,
@@ -610,8 +834,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     query = l2norm(query, dim=-1, eps=1e-6)
         #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
-            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
+            query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+            key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -656,10 +880,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
         mask = mask_causal
 
-        #
         # chunk decay
         # g = g.cumsum(dim=-1)
 
@@ -669,7 +891,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         g = g @ mask_g.T
 
-        #
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
 
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
@@ -678,50 +899,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
-
-        ## Approximation code ##
-        # A = attn
-        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        # Ak = A
-
-        # K = 16
-        # for _ in range(K):
-        #     L = L + Ak
-        #     Ak = Ak @ A
-
-        # attn = L
-
-        ## Factorized Approximation code ##
-        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        # L = eye.clone()
-        # Apow = attn
-
-        # K = 32
-        # for _ in range(int(math.log2(K))):
-        #     L = L @ (eye + Apow)
-        #     Apow = Apow @ Apow  # square for next power
-
-        # attn = L
-
-        # Horners Method
-        # A = attn.masked_fill(mask, 0)
-        # acc_dtype = torch.float32
-        # A64 = A.to(acc_dtype)
-        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
-
-        # K = chunk_size - 1
-        # S64 = I64.clone()
-        # for _ in range(K):
-        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
-
-        # attn = S64.to(A.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, dtype=attn.dtype)
+        attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -732,11 +911,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
         mask = mask_strict
 
         # for each chunk
-        for i in range(0, total_sequence_length // chunk_size):
+        for i in range(total_sequence_length // chunk_size):
             q_i, k_i, v_i = query[:, :, i], key[:, :, i], value[:, :, i]
             attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
             v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
@@ -757,49 +935,20 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
         return core_attn_out, last_recurrent_state
 
-    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state):
-        """
-        Pure tensor ops, no loop, no padding.
-        Works for any T but intended for T=1 decode.
-        Shapes: query/key/value (B, T, H, d_k/d_v)
-        """
-        dtype = query.dtype
-
-        # L2 norm (matching chunk kernel behavior)
-        q = query.float()
-        k = key.float()
-        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
-        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
-
-        v = value.float()
-
-        scale = 1.0 / (q.shape[-1] ** 0.5)
-        q = q * scale  # (B, T, H, d_k)
-
-        # For T=1 decode, this is a single step
-        # Transpose to (B, H, T, d_k/d_v) to match recurrent state layout
-        q = q.transpose(1, 2)  # (B, H, T, d_k)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-        b = beta.transpose(1, 2).float().unsqueeze(-1)  # (B, H, T, 1)
-        decay = g.transpose(1, 2).float().exp()  # (B, H, T)
-        decay = decay.unsqueeze(-1).unsqueeze(-1)  # (B, H, T, 1, 1)
-
-        S = recurrent_state.float()  # (B, H, d_k, d_v)
-
-        # Single step — no loop because T=1
-        # S update
-        S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
-        delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
-        S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
-        out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
-        return out, S_new.to(recurrent_state.dtype)
+    def _recurrent_step_batched(self, query, key, value, g, beta, recurrent_state, gdn_num_head_blocks: int = 1):
+        if query.shape[1] != 1:
+            raise ValueError("_recurrent_step_batched is decode-only and requires sequence_length == 1")
+        if gdn_num_head_blocks <= 1:
+            return recurrent_gdn_decode_forward(query, key, value, g, beta, recurrent_state)
+        return blocked_gdn_decode_forward(
+            query,
+            key,
+            value,
+            g,
+            beta,
+            recurrent_state,
+            gdn_num_head_blocks=gdn_num_head_blocks,
+        )
 
     def forward(
         self,
@@ -809,6 +958,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         attention_mask=None,
         position_ids=None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
     ):
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -825,11 +976,24 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                conv_state_grouped = conv_state_all.ndim == 4
+                if conv_state_grouped:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all_flat, conv_batch_index, conv_ctx_indices)
+                if conv_state_grouped:
+                    conv_state = conv_state.reshape(
+                        conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
+                    )
 
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
@@ -842,6 +1006,21 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
+            if batch_fold and position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
+                conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
+                    conv_state.shape[0], *([1] * (conv_state.ndim - 1))
+                )
+                # Blend the small reset mask instead of broadcasting it through
+                # a full Select/Where tensor in the folded decode graph.
+                conv_keep = (~conv_reset_mask).to(conv_state.dtype)
+                conv_state = conv_state * conv_keep
+
+                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device)
+                recurrent_keep = (~recurrent_reset_mask).to(recurrent_state.dtype)
+                recurrent_state = recurrent_state * recurrent_keep
+
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
                 conv_state,
@@ -850,13 +1029,35 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                if conv_state_all.ndim == 4:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                    new_conv_state_flat = new_conv_state.reshape(
+                        new_conv_state.shape[0],
+                        new_conv_state.shape[1] * new_conv_state.shape[2],
+                        new_conv_state.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                    new_conv_state_flat = new_conv_state
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                scattered_conv = CtxScatterFuncCB3D.apply(
+                    conv_state_all_flat, conv_batch_index, conv_position_ids, new_conv_state_flat
                 )
+                if conv_state_all.ndim == 4:
+                    scattered_conv = scattered_conv.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1],
+                        conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                cache_params.conv_states[self.layer_idx] = scattered_conv
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -879,35 +1080,46 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ── Recurrent State ───────────────────────────────────
         if cache_params is not None:
-            # Decode branch — pure tensor ops, no loop, no padding
-            # Shape: (B, 1, H, d_v), (B, H, d_k, d_v)
-            recurrent_out, recurrent_S = self._recurrent_step_batched(query, key, value, g, beta, recurrent_state)
-
-            # Prefill branch — chunked parallel scan
-            # Shape: (B, T, H, d_v), (B, H, d_k, d_v)
-            chunk_out, chunk_S = self.chunk_gated_delta_rule(
-                query,
-                key,
-                value,
-                g=g,
-                beta=beta,
-                position_ids=position_ids,
-                initial_state=recurrent_state,
-                output_final_state=True,
-                use_qk_l2norm_in_kernel=True,
-                mask_causal=self._mask_causal,
-                mask_strict=self._mask_strict,
-                ones_lower=self._ones_lower,
-                eye=self._eye,
-            )
-
-            # Select based on seq_len
-            # is_decode is SCALAR — torch.where broadcasts efficiently
-            # HW predicates entire branch at runtime
-            is_decode = hidden_states.shape[1] == torch.tensor(1)
-
-            core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-            last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
+            if batch_fold:
+                # Folded decode is exported with a static one-token sequence.
+                core_attn_out, last_recurrent_state = self._recurrent_step_batched(
+                    query,
+                    key,
+                    value,
+                    g,
+                    beta,
+                    recurrent_state,
+                    gdn_num_head_blocks=gdn_num_head_blocks,
+                )
+            else:
+                # General graphs serve both prefill and decode; select the
+                # matching branch at runtime after export.
+                recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
+                    query,
+                    key,
+                    value,
+                    g,
+                    beta,
+                    recurrent_state,
+                )
+                chunk_out, chunk_state = self.chunk_gated_delta_rule(
+                    query,
+                    key,
+                    value,
+                    g=g,
+                    beta=beta,
+                    position_ids=position_ids,
+                    initial_state=recurrent_state,
+                    output_final_state=True,
+                    use_qk_l2norm_in_kernel=True,
+                    mask_causal=self._mask_causal,
+                    mask_strict=self._mask_strict,
+                    ones_lower=self._ones_lower,
+                    eye=self._eye,
+                )
+                is_decode = hidden_states.shape[1] == torch.tensor(1)
+                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
@@ -931,6 +1143,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
+                chunk_size=64,
                 initial_state=None,
                 output_final_state=False,
                 use_qk_l2norm_in_kernel=True,
@@ -940,11 +1153,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 eye=self._eye,
             )
 
-        #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
-        # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
-        return self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
+        return self.out_proj(core_attn_out)
 
     @staticmethod
     def apply_mask_to_padding_states(hidden_states, attention_mask):
@@ -956,7 +1168,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
 class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
     def __qeff_init__(self):
-        #
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5MoeGatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -973,6 +1184,8 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         past_key_values: Optional[QEffQwen3_5MoeDynamicCache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -989,6 +1202,8 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
+                batch_fold=batch_fold,
+                gdn_num_head_blocks=gdn_num_head_blocks,
             )
         else:
             hidden_states, _ = self.self_attn(
@@ -1037,6 +1252,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         past_key_values: Optional[Union[QEffQwen3_5MoeDynamicCache, Tuple[Tuple[torch.FloatTensor, ...], ...]]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -1073,19 +1290,20 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 cache_position = torch.arange(
                     past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
                 )
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+        position_ids = _expand_mrope_position_ids(position_ids, cache_position, inputs_embeds.shape[0])
+        text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+        rotary_position_ids = (
+            position_ids[1:] if position_ids.ndim == 3 and position_ids.shape[0] == 4 else position_ids
+        )
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
         else:
             pos_max = 0
-            if position_ids is not None:
-                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
-                pos_max = int(text_position_ids.max().item()) + 1
+            pos_max = int(text_position_ids.max().item()) + 1
             target_length = max(past_seen_tokens, pos_max)
         causal_mask = _create_causal_mask(
-            position_ids=position_ids[0], target_length=target_length, sliding_window=None
+            position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
         linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
 
@@ -1094,7 +1312,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
         mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
         cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, position_ids[1:], mrope_section, dtype=hidden_states.dtype
+            self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
         )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
@@ -1117,6 +1335,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
+                batch_fold=batch_fold,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -1162,6 +1382,11 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
 
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
+
     def get_onnx_retained_state_specs(
         self,
         batch_size: int,
@@ -1193,7 +1418,16 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
                 ]
             else:
                 layer = self.model.layers[layer_idx].linear_attn
-                conv_shape = (batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
@@ -1268,6 +1502,8 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         pixel_values_videos: torch.FloatTensor | None = None,
@@ -1316,6 +1552,8 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             **kwargs,
@@ -1333,7 +1571,7 @@ class QEffQwen3_5MoeVisionModel(Qwen3_5MoeVisionModel):
         max_hw = max(grid_thw.shape)
         freq_table = self.rotary_pos_emb(max_hw)
         device = freq_table.device
-        bs, num_frames, height, width = grid_thw.shape
+        _bs, num_frames, height, width = grid_thw.shape
         grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
 
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
@@ -1556,6 +1794,14 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
 
+    def _get_attention_blocking_config(self) -> Optional[AttentionBlockingConfig]:
+        for layer in getattr(self.language_model, "layers", ()):
+            attention = getattr(layer, "self_attn", None)
+            blocking_config = getattr(attention, "attn_blocking_config", None)
+            if blocking_config is not None:
+                return blocking_config
+        return None
+
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
         if self.config.text_config.layer_types[layer_idx] == "full_attention":
             return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
@@ -1572,10 +1818,35 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
+        # Continuous batching also supplies batch_index for prefill. Folded
+        # attention is decode-only, so do not infer it from batch_index alone.
+        seq_len = input_ids.shape[1] if input_ids is not None else position_ids.shape[-1]
+        blocking_config = self._get_attention_blocking_config()
+        batch_fold_cb = (
+            batch_index is not None
+            and seq_len == 1
+            and blocking_config is not None
+            and bool(blocking_config.batch_fold)
+        )
+        gdn_num_head_blocks = get_gdn_num_head_blocks(blocking_config, batch_fold_cb)
+        layerwise = is_layerwise_active()
+        first_layer_window = not layerwise or QEffQwen3_5MoeTextModel._start == 0
+
+        if batch_fold_cb:
+            # Folded attention expects physical batch rows at the model input.
+            if first_layer_window:
+                if input_ids is not None:
+                    input_ids = _batch_index_scatter(input_ids, batch_index)
+                elif inputs_embeds is not None:
+                    inputs_embeds = _batch_index_scatter(inputs_embeds, batch_index)
+            if position_ids is not None:
+                position_ids = _batch_index_scatter(position_ids, batch_index, batch_dim=1)
+            cache_batch_index = None
+        else:
+            cache_batch_index = batch_index
+
         if inputs_embeds is None:
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-        else:
-            inputs_embeds = inputs_embeds
 
         if not is_layerwise_active():
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
@@ -1594,11 +1865,15 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
+                batch_fold=batch_fold_cb,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            if batch_fold_cb:
+                hidden_states = _batch_index_gather(hidden_states, batch_index)
             logits = self.model.lm_head(hidden_states)
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
@@ -1620,7 +1895,9 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
+                batch_fold=batch_fold_cb,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1638,11 +1915,15 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
+                batch_fold=batch_fold_cb,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            if batch_fold_cb:
+                hidden_states = _batch_index_gather(hidden_states, batch_index)
             logits = self.model.lm_head(hidden_states)
             return logits, outputs.past_key_values
 
@@ -1652,7 +1933,9 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
+                batch_fold=batch_fold_cb,
+                gdn_num_head_blocks=gdn_num_head_blocks,
                 use_cache=True,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -1677,6 +1960,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
@@ -1735,8 +2020,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         ```
         """
 
-        #
-
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -1746,6 +2029,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             mm_token_type_ids=mm_token_type_ids,
@@ -1774,10 +2059,29 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
+
+        language_model = getattr(getattr(self, "model", None), "language_model", None)
+        layers = getattr(language_model, "layers", ())
+        blocking_config = None
+        for layer in layers:
+            attention = getattr(layer, "self_attn", None)
+            blocking_config = getattr(attention, "attn_blocking_config", None)
+            if blocking_config is not None:
+                break
+        if (
+            continuous_batching
+            and blocking_config is not None
+            and blocking_config.batch_fold
+            and batch_size != full_batch_size
+        ):
+            raise ValueError("Batch-folded continuous batching requires batch_size == full_batch_size.")
 
         if height is None or width is None:
             height = constants.QWEN3_VL_HEIGHT
@@ -1822,7 +2126,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = (grid_height // 4) * time
-            grid_height = grid_height * time * batch_size
+            grid_height = grid_height * time * vision_batch_size
 
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
@@ -1844,7 +2148,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
             vision.append(
                 {
-                    "batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                     "vision_size": vision_size,
                     "grid_height": grid_height,
                     "grid_width": grid_width,
@@ -1864,7 +2168,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             }
             if kv_offload:
                 spec["vision_size"] = max_vision_size
-                spec["vision_batch_size"] = batch_size
+                spec["vision_batch_size"] = vision_batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
             if continuous_batching:
@@ -1876,8 +2180,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             return spec
 
         lang = []
-        if comp_ctx_lengths_prefill is not None:
-            for comp_ctx in comp_ctx_lengths_prefill:
+        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            for comp_ctx in comp_ctx_lengths_prefill or []:
                 lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
             for comp_ctx in comp_ctx_lengths_decode or []:
                 lang.append(_build_lang_spec(1, comp_ctx_len=comp_ctx))
@@ -1894,19 +2198,24 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
+        input_batch_axis = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
+            "image_grid_thw": {0: "vision_batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {1: "batch_size", 2: "seq_len"},
+            "input_ids": {0: input_batch_axis, 1: "seq_len"},
+            "position_ids": {1: input_batch_axis, 2: "seq_len"},
             "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
@@ -1919,7 +2228,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
-            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+            lang_dynamic_axes["batch_index"] = {0: input_batch_axis}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -1944,23 +2253,30 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     ):
         inputs_shapes = {}
 
-        dummy_seq_len = 32
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
+        dummy_seq_len = int(kwargs.get("prefill_seq_len", 32))
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if bs > 1:
+            bs = 2
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        batch_fold = kwargs.pop("batch_fold", False)
+        if continuous_batching and batch_fold:
+            bs = fbs
+        inputs_shapes["input_ids"] = (bs, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
             4,
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             dummy_seq_len,
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
         inputs_shapes["image_grid_thw"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             1,
             86,
             128,
         )
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             2752,
             self.model.config.text_config.hidden_size,
         )
@@ -1975,18 +2291,11 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=float_dtype)
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(dummy_seq_len, dtype=torch.int64)
-                .view(1, dummy_seq_len)
-                .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-            )
+            (torch.arange(dummy_seq_len, dtype=torch.int64).view(1, dummy_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
@@ -2011,17 +2320,25 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                     lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=kv_dtype))
             else:
                 layer = self.model.language_model.layers[i].linear_attn
-                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    linear_batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=kv_dtype))
                 lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=kv_dtype))
 
-        #
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
         if kv_offload:
@@ -2074,10 +2391,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
-        pos_ids, rope_deltas = self.model.get_rope_index(
+        pos_ids, _rope_deltas = self.model.get_rope_index(
             inputs["input_ids"],
             inputs["mm_token_type_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            inputs.get("image_grid_thw", None),
             video_grid_thw=None,
             attention_mask=inputs["attention_mask"],
         )
@@ -2101,7 +2418,7 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
         router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value / router_top_value.sum(dim=-1, keepdim=True)
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
@@ -2109,172 +2426,61 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
 
 class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
     def __qeff_init__(self):
-        # HF 5.x keeps fused gate_up projections. Keep aliases expected by
-        # QEff MoE execution paths without changing checkpoint behavior.
+        self.weights_transformed = False
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
 
-
-class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        _, top_w, top_i = self.gate(hidden_states)
-        idx = top_i.reshape(-1)
-
-        gate_proj = self.experts.gate_proj[idx.flatten()]
-        up_proj = self.experts.up_proj[idx.flatten()]
-        w_dn = self.experts.down_proj_t[idx.flatten()]
-
-        xk = x.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous()
-        xk = xk.view(-1, 1, H)
-
-        gate = torch.bmm(xk, gate_proj)
-        up = torch.bmm(xk, up_proj)
-
-        intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, w_dn)
-        experts_out = experts_out.view(T, self.gate.top_k, H) * top_w.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
-
-        shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
-
-        expert_output = experts_out + shared_expert_output
-        return expert_output.reshape(B, S, H)
-
-
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
-
-
-def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index"""
-    batch_size, seq_len = T2Ei.shape
-    int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
-    valid_dest = valid_prefix - 1
-    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
-    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
-    matched_idx = CtxScatterFunc3DInt.apply(
-        matched_idx.unsqueeze(-1),
-        scatter_pos,
-        token_idx.unsqueeze(-1),
-    ).squeeze(-1)
-    return matched_idx
-
-
-def _cumsum_scatter_gather_update_expert_blocked(
-    x: torch.Tensor,
-    T2Ei: torch.Tensor,
-    W_g: torch.Tensor,
-    W_u: torch.Tensor,
-    W_d: torch.Tensor,
-    routing_weight: torch.Tensor,
-    expert_out: torch.Tensor,
-    act_fn,
-    packed_chunk_size: int,
-) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
-
-    Accumulates one local expert's contribution in-place onto ``expert_out``.
-    Uses a packed/cumsum layout so the MLP runs only over active rows, then
-    scatters the weighted output back to original token positions.
-    """
-    batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
-
-    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
-    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
-        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-
-        gate_prime = x_chunk @ W_g
-        up_prime = x_chunk @ W_u
-        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
-
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
-        down_chunk = down_chunk * rw_chunk
-
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-        updated_chunk = expert_out_chunk + down_chunk
-
-        chunk_valid_rows = torch.clamp(
-            valid_rows - packed_start,
-            min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, packed_chunk_size),
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
         )
-        updated_chunk = torch.where(
-            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
-        )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
-
-    return expert_out
+        delete_module_attrs(self, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
 
 
-class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    supports_moe_prefill_blocking = True
+class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
 
     def __qeff_init__(self):
+        super().__qeff_init__()
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0])
+        self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        router_logits, top_w, top_i = self.gate(x)
-        top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        weights = self.experts.transform_weights()
+        self.moe_weights = weights
+        self.weights_transformed = True
+        return self.moe_weights
 
-        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
-        if self.num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
-            )
-
-        local_experts = self.num_experts // num_nsp
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-        expert_out = x.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
+    @property
+    def moe_profile(self) -> MoEProfile:
         act_fn = getattr(self.experts, "act_fn", F.silu)
-        for slot in range(local_experts):
-            T2Ei = rw[:, slot, :] > 0
-            expert_out = _cumsum_scatter_gather_update_expert_blocked(
-                x=x,
-                T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
-                routing_weight=routing_weights_unsqueezed[:, slot],
-                expert_out=expert_out,
-                act_fn=act_fn,
-                packed_chunk_size=packed_chunk_size,
-            )
-        experts_out = torch.einsum("ijk->jk", expert_out)
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=act_fn))
 
-        shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
+    def route(self, x: torch.Tensor):
+        _, top_w, top_i = self.gate(x)
+        top_w = top_w.to(x.dtype)
+        return (top_i, top_w), None
 
-        expert_output = experts_out + shared_expert_output
-        return expert_output.reshape(B, S, H)
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        shared = self.shared_expert(residual)
+        shared = F.sigmoid(self.shared_expert_gate(residual)) * shared
+        return out + shared
+
+
+QEffPrefillChunkedQwen3_5MoeSparseMoeBlock = QEffQwen3_5MoeSparseMoeBlock

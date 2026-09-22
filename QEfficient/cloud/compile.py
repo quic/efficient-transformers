@@ -7,7 +7,7 @@
 
 import argparse
 
-import QEfficient
+from QEfficient.cloud import warn_deprecated_cloud_api
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compilation script.")
@@ -110,4 +110,7 @@ if __name__ == "__main__":
                 else True
             )
             compiler_options_dict[key] = value
+    warn_deprecated_cloud_api("compile")
+    import QEfficient
+
     QEfficient.compile(**args.__dict__, **compiler_options_dict)

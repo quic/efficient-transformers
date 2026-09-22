@@ -81,12 +81,44 @@ class VisionHandler:
         """
         return self._vision_session is not None and self._processor is not None
 
+    @staticmethod
+    def _load_image(image_source: Any) -> Image.Image:
+        if isinstance(image_source, Image.Image):
+            return image_source.convert("RGB")
+        if isinstance(image_source, str) and image_source.startswith(("http://", "https://")):
+            response = requests.get(image_source, stream=True)
+            response.raise_for_status()
+            return Image.open(BytesIO(response.content)).convert("RGB")
+        return Image.open(image_source).convert("RGB")
+
+    def _cast_vision_inputs(self, vision_inputs: Dict[str, np.ndarray], keys: set) -> None:
+        """
+        Cast the given vision_inputs entries to the dtype the vision session's
+        compiled binding actually expects, in place.
+
+        The pixel_values/image_masks bindings are exported at the model's
+        configured torch_dtype, which may be real float16 or bfloat16. numpy has
+        no native bfloat16, so a bfloat16 binding is carried on the host as a
+        float16-sized byte buffer holding real bfloat16 bit patterns; numerically
+        casting with `.astype(np.float16)` would instead produce IEEE float16
+        values and corrupt the buffer once its raw bytes are shipped to the device.
+        """
+        for k in keys:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
+
     def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             prompt: Text query to process with image
         """
         if not self._tokenizer:
@@ -94,8 +126,7 @@ class VisionHandler:
         pixel_values = []
         num_patches_list = []
         questions = []
-        img = requests.get(img_url, stream=True)
-        image = Image.open(BytesIO(img.content)).convert("RGB")
+        image = self._load_image(img_url)
 
         if self._image_height and self._image_width:
             image = image.resize((self._image_height, self._image_width))
@@ -134,11 +165,7 @@ class VisionHandler:
             }:
                 vision_inputs[k] = np.array(v)
 
-        # Convert specific inputs to float16
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        for k in vision_inputs_fp16:
-            if k in vision_inputs:
-                vision_inputs[k] = vision_inputs[k].astype("float16")
+        self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -148,7 +175,7 @@ class VisionHandler:
         """
         Download and preprocess image into model inputs
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query to process with image
         Returns:
             Dictionary of vision model inputs
@@ -160,11 +187,7 @@ class VisionHandler:
             raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
 
         try:
-            # Download image
-            if image_url.startswith(("http://", "https://")):
-                image = Image.open(requests.get(image_url, stream=True).raw)
-            else:
-                image = Image.open(image_url)
+            image = self._load_image(image_url)
             image = image.resize((constants.MOLMO_IMAGE_HEIGHT, constants.MOLMO_IMAGE_WIDTH))
             inputs = self._processor.process(images=[image], text=query)
             inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
@@ -187,11 +210,7 @@ class VisionHandler:
                 }:
                     vision_inputs[k] = np.array(v)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -204,7 +223,7 @@ class VisionHandler:
         Download and preprocess image into model inputs
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query to process with image
             prefill_seq_len: Padded sequence length for language model
 
@@ -219,11 +238,7 @@ class VisionHandler:
             raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
 
         try:
-            # Download image
-            if image_url.startswith(("http://", "https://")):
-                image = Image.open(requests.get(image_url, stream=True).raw)
-            else:
-                image = Image.open(image_url)
+            image = self._load_image(image_url)
 
             if self._image_height and self._image_width:
                 image = image.resize((self._image_width, self._image_height))
@@ -235,18 +250,23 @@ class VisionHandler:
                     image = image.resize(
                         (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
                     )
+            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+
             # Gemma4 expects the processor-rendered prompt with the image placeholder ahead of user text.
             is_gemma4 = (
                 hasattr(self._qeff_model.model.config, "model_type")
                 and self._qeff_model.model.config.model_type == "gemma4"
             )
+            is_kimi_k25 = model_type == "kimi_k25"
 
             # Prepare conversation format
             conversation = [
                 {
                     "role": "user",
                     "content": (
-                        [{"type": "image"}, {"type": "text", "text": query}]
+                        [{"type": "image_url", "image_url": image}, {"type": "text", "text": query}]
+                        if is_kimi_k25
+                        else [{"type": "image"}, {"type": "text", "text": query}]
                         if is_gemma4
                         else [{"type": "text", "text": query}, {"type": "image"}]
                     ),
@@ -254,22 +274,29 @@ class VisionHandler:
             ]
 
             # Apply chat template
-            if is_gemma4:
+            if is_kimi_k25:
+                inputs = self._processor(
+                    messages=conversation,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    return_tensors="pt",
+                )
+            elif is_gemma4:
                 prompt = self._processor.apply_chat_template(
                     conversation,
                     tokenize=False,
                     add_generation_prompt=True,
                     enable_thinking=False,
                 )
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
             else:
                 prompt = self._processor.apply_chat_template(
                     conversation,
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-            # Process image and text
-            inputs = self._processor(images=image, text=prompt, return_tensors="pt")
-            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
+
             if model_type in {
                 "qwen2_5_vl",
                 "qwen3_vl_moe",
@@ -299,11 +326,14 @@ class VisionHandler:
                 }:
                     vision_inputs[k] = np.array(v)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            if is_kimi_k25:
+                grid_thws = inputs.get("grid_thws")
+                if grid_thws is None:
+                    raise ValueError("Kimi-K2.5 processor output must include grid_thws for vision export.")
+                vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
+                vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
+
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -449,7 +479,7 @@ class VisionHandler:
         Complete pipeline: prepare inputs and run vision inference
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query
 
         Returns:
@@ -473,7 +503,7 @@ class VisionHandler:
         Process vision inputs and prepare language model inputs
 
         Args:
-            image_url: URL or path to image
+            image_url: URL, path, or PIL image
             query: Text query
             padded_len: Padded sequence length for language model
 

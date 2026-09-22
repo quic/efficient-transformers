@@ -144,6 +144,88 @@ class TestQEffDynamicLayerCorrectness:
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
+    def test_batch_fold_continuous_batching_uses_preordered_physical_slots(self):
+        batch_size, heads, ctx_len, head_dim = 3, 2, 8, 4
+        layer = QEffDynamicLayer.from_tensors(
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
+        )
+
+        batch_index = torch.tensor([[2], [0], [1]], dtype=torch.int64)
+        logical_positions = torch.tensor([[3], [5], [1]], dtype=torch.int32)
+        logical_keys = torch.stack(
+            [
+                torch.full((heads, 1, head_dim), 2.0),
+                torch.full((heads, 1, head_dim), 7.0),
+                torch.full((heads, 1, head_dim), 11.0),
+            ]
+        )
+        logical_values = logical_keys + 10.0
+
+        slots = batch_index.flatten()
+        physical_positions = torch.empty_like(logical_positions).index_copy(0, slots, logical_positions)
+        physical_keys = torch.empty_like(logical_keys).index_copy(0, slots, logical_keys)
+        physical_values = torch.empty_like(logical_values).index_copy(0, slots, logical_values)
+        layer.write_only_batch(
+            physical_keys,
+            physical_values,
+            cache_kwargs={"position_ids": physical_positions},
+        )
+
+        assert layer.keys.shape == (batch_size, heads, ctx_len, head_dim)
+        assert layer.values.shape == (batch_size, heads, ctx_len, head_dim)
+        for logical_row, physical_slot in enumerate(slots):
+            position = logical_positions[logical_row, 0]
+            assert torch.equal(layer.keys[physical_slot, :, position], logical_keys[logical_row, :, 0])
+            assert torch.equal(layer.values[physical_slot, :, position], logical_values[logical_row, :, 0])
+
+        read_kwargs = {"position_ids": torch.full((batch_size, 1), ctx_len - 1)}
+        key_out = layer.read_only_blocked_K_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        value_out = layer.read_only_blocked_V_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        assert torch.equal(key_out, layer.keys[:, :, :6])
+        assert torch.equal(value_out, layer.values[:, :, :6])
+
+    def test_batch_fold_write_preserves_standard_cache_layout(self):
+        batch, heads, ctx_len, head_dim = 3, 2, 8, 4
+        layer = QEffDynamicLayer.from_tensors(
+            torch.zeros(batch, heads, ctx_len, head_dim),
+            torch.zeros(batch, heads, ctx_len, head_dim),
+        )
+        positions = torch.tensor([[1], [3], [5]])
+        keys = torch.arange(batch * heads * head_dim, dtype=torch.float32).reshape(batch, heads, 1, head_dim)
+        values = keys + 100
+
+        layer.write_only_batch(keys, values, cache_kwargs={"position_ids": positions})
+
+        assert layer.keys.shape == (batch, heads, ctx_len, head_dim)
+        assert layer.values.shape == (batch, heads, ctx_len, head_dim)
+        for batch_idx, position in enumerate(positions.flatten()):
+            assert torch.equal(layer.keys[batch_idx, :, position], keys[batch_idx, :, 0])
+            assert torch.equal(layer.values[batch_idx, :, position], values[batch_idx, :, 0])
+
+    def test_batch_fold_read_uses_folded_compute_view(self):
+        batch, heads, ctx_len, head_dim = 3, 2, 8, 4
+        keys = torch.arange(batch * heads * ctx_len * head_dim, dtype=torch.float32).reshape(
+            batch, heads, ctx_len, head_dim
+        )
+        values = keys + 100
+        layer = QEffDynamicLayer.from_tensors(keys, values)
+        positions = torch.full((batch, 1), ctx_len - 1)
+        cache_kwargs = {"position_ids": positions, "num_kv_heads": heads}
+
+        folded_keys, folded_values = layer.get_batch_folded_kv()
+        key_block = layer.read_only_blocked_K_batch(2, 6, cache_kwargs, folded_cache=folded_keys)
+        value_block = layer.read_only_blocked_V_batch(2, 6, cache_kwargs, folded_cache=folded_values)
+
+        expected_keys = keys[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
+        expected_values = values[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
+        assert folded_keys.shape == (1, batch * heads, ctx_len, head_dim)
+        assert folded_values.shape == (1, batch * heads, ctx_len, head_dim)
+        assert key_block.shape == (1, batch * heads, 4, head_dim)
+        assert value_block.shape == (1, batch * heads, 4, head_dim)
+        assert torch.equal(key_block, expected_keys)
+        assert torch.equal(value_block, expected_values)
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEffDynamicCache
@@ -399,3 +481,230 @@ class TestCacheScatterGatherNumericalCorrectness:
         assert k_out[0, 0, 0, 0].item() == pytest.approx(0.0, abs=1e-5)
         assert k_out[0, 0, 1, 0].item() == pytest.approx(1.0, abs=1e-5)
         assert k_out[0, 0, 2, 0].item() == pytest.approx(2.0, abs=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_only_paged_attention must reject writes larger than one block
+# ---------------------------------------------------------------------------
+
+
+def make_paged_cache(num_phys_blocks=16, heads=1, block_size=4, head_dim=2):
+    layer = QEffDynamicLayer()
+    layer.keys = torch.zeros(num_phys_blocks, heads, block_size, head_dim)
+    layer.values = torch.zeros(num_phys_blocks, heads, block_size, head_dim)
+    layer.is_initialized = True
+    return layer
+
+
+@pytest.mark.cache
+class TestPagedAttentionSingleBlockWriteLimit:
+    """write_only_paged_attention assumes a write never spans more than one
+    physical block; PL > kv_block_size must raise, not silently mis-scatter."""
+
+    def test_write_within_block_size_succeeds(self):
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 4, 2)
+        v = torch.ones(1, 1, 4, 2)
+        layer.write_only_paged_attention(
+            k,
+            v,
+            cache_kwargs={
+                "position_ids": torch.arange(4).unsqueeze(0),
+                "block_table": torch.tensor([[0]]),
+                "slot_id": torch.tensor([0]),
+            },
+        )
+        assert torch.allclose(layer.keys[0], k[0])
+
+    def test_write_exceeding_block_size_raises_not_implemented(self):
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 5, 2)  # seq_len=5 > block_size=4
+        v = torch.ones(1, 1, 5, 2)
+        with pytest.raises(NotImplementedError):
+            layer.write_only_paged_attention(
+                k,
+                v,
+                cache_kwargs={
+                    "position_ids": torch.arange(5).unsqueeze(0),
+                    "block_table": torch.tensor([[0]]),
+                    "slot_id": torch.tensor([0]),
+                },
+            )
+
+    def test_slot_id_plus_seq_len_crossing_block_boundary_raises_not_implemented(self):
+        """seq_len alone fits within block_size, but slot_id offset pushes the
+        write past the block boundary."""
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 2, 2)  # seq_len=2, fits within block_size=4 on its own
+        v = torch.ones(1, 1, 2, 2)
+        with pytest.raises(NotImplementedError):
+            layer.write_only_paged_attention(
+                k,
+                v,
+                cache_kwargs={
+                    "position_ids": torch.tensor([[3, 4]]),
+                    "block_table": torch.tensor([[0]]),
+                    "slot_id": torch.tensor([3]),  # 3 + 2 = 5 > block_size=4
+                },
+            )
+
+    def test_slot_id_plus_seq_len_exactly_at_boundary_succeeds(self):
+        """slot_id + seq_len == block_size is the boundary case and must be allowed."""
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 2, 2)
+        v = torch.ones(1, 1, 2, 2)
+        layer.write_only_paged_attention(
+            k,
+            v,
+            cache_kwargs={
+                "position_ids": torch.tensor([[2, 3]]),
+                "block_table": torch.tensor([[0]]),
+                "slot_id": torch.tensor([2]),  # 2 + 2 = 4 == block_size
+            },
+        )
+        assert torch.allclose(layer.keys[0, 0, 2:4], k[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# Tests: paged-attention block_table handling for caller-supplied block
+# tables where two rows alias the same physical block (e.g. an external
+# scheduler doing prefix-sharing across requests) and later diverge.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.cache
+class TestPagedAttentionBlockTableRegression:
+    """These tests construct a block_table by hand (kv_block_size=4, block_table=[[3,7],[3,12]],
+    position_ids=[[4],[4]], slot_id=[0,0]) to verify the per-row block_table
+    lookup (block_table[rows, block_index]) handles that correctly."""
+
+    BLOCK_SIZE = 4
+    HEAD_DIM = 2
+    # Row 0's logical blocks map to physical blocks 3 (shared prefix) and 7.
+    # Row 1's logical blocks map to physical blocks 3 (shared prefix) and 12.
+    BLOCK_TABLE = torch.tensor([[3, 7], [3, 12]])
+
+    def _write_shared_prefix(self, layer):
+        """Both rows prefill the same prompt and are handed a block_table
+        that maps them both to physical block 3 (as a prefix-sharing caller
+        would do) -> both writes target physical block 3."""
+        shared_prefix = (
+            torch.arange(self.BLOCK_SIZE * self.HEAD_DIM, dtype=torch.float32)
+            .reshape(1, 1, self.BLOCK_SIZE, self.HEAD_DIM)
+            .expand(2, 1, self.BLOCK_SIZE, self.HEAD_DIM)
+        )
+        layer.write_only_paged_attention(
+            shared_prefix.clone(),
+            shared_prefix.clone(),
+            cache_kwargs={
+                "position_ids": torch.arange(self.BLOCK_SIZE).unsqueeze(0).expand(2, -1),
+                "block_table": self.BLOCK_TABLE,
+                "slot_id": torch.tensor([0, 0]),
+            },
+        )
+        return shared_prefix
+
+    def test_shared_prefix_written_to_common_physical_block(self):
+        layer = make_paged_cache(block_size=self.BLOCK_SIZE, head_dim=self.HEAD_DIM)
+        shared_prefix = self._write_shared_prefix(layer)
+
+        assert torch.allclose(layer.keys[3], shared_prefix[0]), "Shared prefix must land in physical block 3"
+        assert torch.allclose(layer.values[3], shared_prefix[0]), "Shared prefix must land in physical block 3"
+
+    def test_divergent_decode_writes_go_to_separate_physical_blocks(self):
+        layer = make_paged_cache(block_size=self.BLOCK_SIZE, head_dim=self.HEAD_DIM)
+        self._write_shared_prefix(layer)
+
+        k_decode = torch.tensor([[[[100.0, 100.0]]], [[[200.0, 200.0]]]])  # (batch=2, heads=1, seq=1, dh=2)
+        v_decode = torch.tensor([[[[101.0, 101.0]]], [[[201.0, 201.0]]]])
+        layer.write_only_paged_attention(
+            k_decode,
+            v_decode,
+            cache_kwargs={
+                "position_ids": torch.tensor([[4], [4]]),
+                "block_table": self.BLOCK_TABLE,
+                "slot_id": torch.tensor([0, 0]),
+            },
+        )
+
+        # Row 0's new token must land in physical block 7, at slot 0.
+        assert torch.allclose(layer.keys[7, 0, 0], torch.tensor([100.0, 100.0]))
+        assert torch.allclose(layer.values[7, 0, 0], torch.tensor([101.0, 101.0]))
+
+        # Row 1's new token must land in physical block 12, at slot 0.
+        assert torch.allclose(layer.keys[12, 0, 0], torch.tensor([200.0, 200.0]))
+        assert torch.allclose(layer.values[12, 0, 0], torch.tensor([201.0, 201.0]))
+
+        # The two rows' decode writes must not have bled into each other's block.
+        assert not torch.allclose(layer.keys[7], layer.keys[12])
+
+        # The shared prefix block must be untouched by either decode write.
+        assert layer.keys[3, 0, 0, 0].item() == pytest.approx(0.0, abs=1e-5)
+
+        # Blocks that were never targeted must remain at their initial value.
+        for untouched_block in (0, 1, 2, 4, 5, 6, 8, 9, 10, 11, 13, 14, 15):
+            assert torch.allclose(layer.keys[untouched_block], torch.zeros(1, self.BLOCK_SIZE, self.HEAD_DIM)), (
+                f"Physical block {untouched_block} should not have been written to"
+            )
+
+    def test_read_back_gathers_shared_prefix_and_divergent_tail_per_row(self):
+        layer = make_paged_cache(block_size=self.BLOCK_SIZE, head_dim=self.HEAD_DIM)
+        self._write_shared_prefix(layer)
+
+        k_decode = torch.tensor([[[[100.0, 100.0]]], [[[200.0, 200.0]]]])
+        v_decode = torch.tensor([[[[101.0, 101.0]]], [[[201.0, 201.0]]]])
+        layer.write_only_paged_attention(
+            k_decode,
+            v_decode,
+            cache_kwargs={
+                "position_ids": torch.tensor([[4], [4]]),
+                "block_table": self.BLOCK_TABLE,
+                "slot_id": torch.tensor([0, 0]),
+            },
+        )
+
+        # Gather logical block 0 (shared prefix, physical block 3) for both rows.
+        k_block0, v_block0 = layer.read_only_paged_attention(
+            block_index=self.BLOCK_TABLE[:, 0],
+            updated=torch.tensor([[False], [False]]),
+            cache_kwargs={"position_ids": torch.arange(self.BLOCK_SIZE).unsqueeze(0).expand(2, -1)},
+        )
+        assert torch.allclose(k_block0[0], k_block0[1]), "Both rows must read the identical shared prefix"
+
+        # Gather logical block 1 (divergent tail, physical blocks 7/12) for both rows.
+        k_block1, v_block1 = layer.read_only_paged_attention(
+            block_index=self.BLOCK_TABLE[:, 1],
+            updated=torch.tensor([[True], [True]]),
+            cache_kwargs={"position_ids": torch.tensor([[4], [4]])},
+        )
+        assert k_block1[0, 0, 0, 0].item() == pytest.approx(100.0, abs=1e-5)
+        assert k_block1[1, 0, 0, 0].item() == pytest.approx(200.0, abs=1e-5)
+
+    def test_replacement_prefill_uses_request_specific_block_table_row(self):
+        """A replacement prefill must key off each request's own block_table
+        row, not row 0's for every row. Uses two rows whose logical block 0
+        maps to two *different* physical blocks."""
+        layer = make_paged_cache(block_size=self.BLOCK_SIZE, head_dim=self.HEAD_DIM)
+
+        # Row 0's logical block 0 -> physical block 3; row 1's logical block 0
+        # (a freshly assigned block, distinct from row 0's) -> physical block 9.
+        block_table = torch.tensor([[3, 7], [9, 12]])
+        k_prefill = torch.tensor([[400.0, 400.0]] * self.BLOCK_SIZE + [[500.0, 500.0]] * self.BLOCK_SIZE).reshape(
+            2, 1, self.BLOCK_SIZE, self.HEAD_DIM
+        )
+        v_prefill = k_prefill + 1.0
+
+        layer.write_only_paged_attention(
+            k_prefill,
+            v_prefill,
+            cache_kwargs={
+                "position_ids": torch.arange(self.BLOCK_SIZE).unsqueeze(0).expand(2, -1),
+                "block_table": block_table,
+                "slot_id": torch.tensor([0, 0]),
+            },
+        )
+
+        # Row 0 must land in its own physical block (3), not row 1's (9).
+        assert torch.allclose(layer.keys[3], torch.full((1, self.BLOCK_SIZE, self.HEAD_DIM), 400.0))
+        # Row 1 must land in its own physical block (9), not row 0's (3).
+        assert torch.allclose(layer.keys[9], torch.full((1, self.BLOCK_SIZE, self.HEAD_DIM), 500.0))

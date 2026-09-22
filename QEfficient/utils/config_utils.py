@@ -45,24 +45,25 @@ def calculate_num_replicate_kv_heads(num_devices: int, text_model_config) -> int
     Choose a KV-repeat value from model config and device count.
 
     Primary criteria:
-    1. num_kv_heads * repeat is divisible by num_devices
+    1. num_devices is divisible by num_kv_heads * repeat
     2. num_attention_heads is divisible by (num_kv_heads * repeat)
 
-    Fallback:
-    repeat = num_attention_heads / num_kv_heads (integer-truncated if needed).
+    Returns 1 if no valid repeat exists (replication not applicable or not achievable).
     """
     num_attention_heads = resolve_attention_heads(text_model_config)
     num_kv_heads = resolve_kv_heads(text_model_config)
 
     if num_attention_heads is None or num_kv_heads is None or num_attention_heads < 1 or num_kv_heads < 1:
-        return 1
+        return None
 
     num_devices = max(1, int(num_devices))
-    max_repeat = max(1, int(num_attention_heads / num_kv_heads))
-
-    for repeat in range(max_repeat, 0, -1):
-        repeated_kv_heads = num_kv_heads * repeat
-        if (repeated_kv_heads % num_devices == 0) and (num_attention_heads % repeated_kv_heads == 0):
+    max_repeat = max(1, num_attention_heads // num_kv_heads)
+    if num_devices <= num_kv_heads or num_devices % num_kv_heads != 0:
+        # Replication not possible with current configuration
+        return None
+    for repeat in range(2, max_repeat + 1):
+        new_kv_heads = num_kv_heads * repeat
+        if (num_devices % new_kv_heads == 0) and (num_attention_heads % new_kv_heads == 0):
             return repeat
 
     return 1

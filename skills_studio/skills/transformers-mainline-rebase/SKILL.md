@@ -40,7 +40,7 @@ This sequencing keeps diffs understandable, makes regressions easier to bisect, 
   - `python -m pytest -q tests/test_model_quickcheck.py -n auto`
 
 ## Rebase Workflow (Always)
-1. Align dependency stack first, then install.
+1. Audit dependency stack first.
 2. Run full quickcheck once to capture failure baseline.
 3. Fix failures in focused groups (small diffs, re-test quickly).
 4. Re-run full quickcheck.
@@ -51,7 +51,7 @@ Use this exact sequence for a smooth first-time rebase execution:
 
 1. Environment bootstrap
 - activate the user-provided environment
-- install/update dependencies from `pyproject.toml` (plus optional test extras)
+- install dependencies from `pyproject.toml` (plus optional test extras)
 
 2. Hygiene cleanup
 - clear stale temp/export/cache artifacts before any test run
@@ -101,7 +101,7 @@ If still blocked after these checks:
 
 ## Rebase Workflow (Detailed Execution Contract)
 1. Dependency and API surface lock
-- update dependency pins together (`transformers`, `huggingface-hub`, `diffusers`, `peft`, export/runtime libs)
+- audit dependency pins together (`transformers`, `huggingface-hub`, `diffusers`, `peft`, export/runtime libs)
 - ensure no mixed-era cache/quantizer imports remain
 
 2. Baseline failure snapshot

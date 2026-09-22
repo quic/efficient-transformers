@@ -22,6 +22,7 @@ is required.
 
 import json
 from collections import deque
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -40,6 +41,7 @@ from QEfficient.generation.text_generation_inference import (
     read_prompts_txt_file,
     write_io_files,
 )
+from QEfficient.utils import constants
 
 # ---------------------------------------------------------------------------
 # Shared mock helpers
@@ -441,15 +443,23 @@ class TestGetCompilationDims:
 
     def test_basic(self, tmp_path):
         path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert bs == 4 and cl == 128 and fbs is None
 
     def test_with_full_batch_size(self, tmp_path):
         path = self._write_spec(
             tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16"}]}
         )
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert fbs == 16
+
+    def test_with_pagedAttention(self, tmp_path):
+        path = self._write_spec(
+            tmp_path,
+            {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16", "num_kv_blocks": "8"}]},
+        )
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
+        assert num_kv_blocks == 8
 
     def test_missing_file_raises(self, tmp_path):
         qpc_dir = tmp_path / "qpc"
@@ -459,8 +469,22 @@ class TestGetCompilationDims:
 
     def test_returns_ints(self, tmp_path):
         path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "2", "ctx_len": "64"}]})
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert isinstance(bs, int) and isinstance(cl, int)
+
+    def test_strict_three_value_unpack_raises(self, tmp_path):
+        # get_compilation_dims always returns a 4-tuple. A caller written against
+        # the old 3-value contract must use extended unpacking (see test below);
+        # a strict 3-target unpack raises ValueError. Pinned here so a future
+        # change to the return arity doesn't silently break either calling style.
+        path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
+        with pytest.raises(ValueError):
+            bs, cl, fbs = get_compilation_dims(path)
+
+    def test_legacy_caller_with_extended_unpack_still_works(self, tmp_path):
+        path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
+        bs, cl, fbs, *_ = get_compilation_dims(path)
+        assert bs == 4 and cl == 128 and fbs is None
 
 
 # ---------------------------------------------------------------------------
@@ -1102,6 +1126,37 @@ class TestVisionHandlerInit:
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises((ValueError, AttributeError)):
             h.prepare_vlm_inputs("image.jpg", "query", 128)
+
+    def test_cast_vision_inputs_preserves_bfloat16_payload(self):
+        from QEfficient.generation.embedding_handler import VisionHandler
+
+        vision_session = MagicMock()
+        vision_session.binding_is_bfloat16.side_effect = lambda name: name == "pixel_values"
+        handler = VisionHandler(qeff_model=None, vision_session=vision_session, processor=MagicMock(), tokenizer=None)
+        values = np.array([1.0, -2.5, np.pi], dtype=np.float32)
+        vision_inputs = {"pixel_values": values.copy(), "image_masks": values.copy()}
+
+        handler._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
+
+        assert vision_inputs["pixel_values"].dtype == np.float16
+        np.testing.assert_array_equal(
+            vision_inputs["pixel_values"].view(np.uint16),
+            np.array([0x3F80, 0xC020, 0x4049], dtype=np.uint16),
+        )
+        np.testing.assert_array_equal(vision_inputs["image_masks"], values.astype(np.float16))
+
+
+def test_binding_is_bfloat16_uses_compiled_binding_type(monkeypatch):
+    from QEfficient.generation import cloud_infer
+
+    monkeypatch.setattr(cloud_infer, "aicapi", SimpleNamespace(BFLOAT16_TYPE=11), raising=False)
+    session = object.__new__(cloud_infer.QAICInferenceSession)
+    session.bindings = [SimpleNamespace(type=11), SimpleNamespace(type=1)]
+    session.binding_index_map = {"pixel_values": 0, "image_masks": 1}
+
+    assert session.binding_is_bfloat16("pixel_values") is True
+    assert session.binding_is_bfloat16("image_masks") is False
+    assert session.binding_is_bfloat16("missing") is False
 
 
 # ---------------------------------------------------------------------------

@@ -6,9 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import os
-import re
-import subprocess
 from dataclasses import dataclass
+
+from QEfficient.utils.hardware_utils import (
+    get_default_aic_hw_version,
+    get_default_num_cores,
+    get_default_vtcm_size_threshold,
+)
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
@@ -26,9 +30,16 @@ ONNX_EXPORT_IMAGE_WIDTH = 560
 ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
+DYNAMO_DIM_MAX_BATCH_SIZE = 1024
+DYNAMO_DIM_MIN_COMP_CTX_LENGTHS = 4
+
+DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 
 NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
+    "tiny-random/gemma-3": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
     ),
     "google/gemma-3-27b-it": os.path.join(
@@ -37,10 +48,10 @@ NPI_MAPPING = {
 }
 
 # Blocking defaults
-VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+VTCM_SIZE_THRESHOLD = get_default_vtcm_size_threshold(DEFAULT_AIC_HW_VERSION)
 
 # Compiler defaults
-DEFAULT_AIC_NUM_CORES = 16
+DEFAULT_AIC_NUM_CORES = get_default_num_cores(DEFAULT_AIC_HW_VERSION)
 DEFAULT_AIC_MXPF6_MATMUL = False
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16
@@ -60,6 +71,7 @@ KWARGS_INCLUSION_LIST = [
 
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
+HEADPAR_MASKED_ATTENTION_VALUE = -3.0e4
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
@@ -98,46 +110,19 @@ ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
-ONNX_EXPORT_OPSET = 17
+ONNX_LEGACY_EXPORT_OPSET = 17
+ONNX_DYNAMO_EXPORT_OPSET = 18
+ONNX_EXPORT_OPSET = ONNX_LEGACY_EXPORT_OPSET
 FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
+def get_onnx_export_opset(dynamo: bool = False) -> int:
+    return ONNX_DYNAMO_EXPORT_OPSET if dynamo else ONNX_LEGACY_EXPORT_OPSET
+
+
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 
-
-def get_default_aic_hw_version() -> str:
-    """Detect the AIC hardware version from the first available device.
-
-    Runs ``qaic-util -q`` and inspects the ``FW IMAGE_VARIANT`` field of the
-    first device (QID 0) to determine whether the hardware is ``ai100`` or
-    ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
-    is unavailable.
-
-    Returns:
-        str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
-    """
-    qaic_util = "/opt/qti-aic/tools/qaic-util"
-    try:
-        result = subprocess.run(
-            [qaic_util, "-q"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stdout
-    except Exception:
-        return "ai100"
-
-    match = re.search(r"FW IMAGE_VARIANT\s*:\s*(\S+)", output)
-    if match:
-        variant = match.group(1).upper()
-        if "AIC200" in variant:
-            return "ai200"
-    return "ai100"
-
-
-DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
 # Generic config key aliases used across model families.
@@ -173,11 +158,17 @@ GRANITEVISION_CTX_LEN = 6000
 GRANITEVISION_NUM_CHANNELS = 3
 
 VISION_MXFP6_MATMUL = False
+VISION_FP16_INPUTS = {"pixel_values", "image_masks"}
+
 # Llama4 Constants
 LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
-# DeepSeek Kimi-k2 Constant
+# DeepSeek Kimi-k2.5 Constants
+KIMI_PATCH_SIZE = 14
+KIMI_EXAMPLE_IMAGE_NUM_IMAGE_TOKENS = 600
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT = 30
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH = 80
 MAX_POSITION_EMBEDDINGS = 32768
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64
@@ -251,6 +242,9 @@ CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
 CCL_UNIQNE_STEP = 32
+
+# constant for scaling down FC layer for dflash
+_DFLASH_TARGET_ABSMAX = 128.0
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
@@ -365,3 +359,43 @@ class QnnConstants:
         },
         "SKIP_QNN_CONVERTER_STEP": False,
     }
+
+
+_KNOWN_DECODER_LAYER_ATTR_PATHS = (
+    "layers",
+    "h",
+    "model.layers",
+    "model.h",
+    "decoder.layers",
+    "model.decoder.layers",
+    "encoder.layer",
+    "encoder.layers",
+    "model.encoder.layer",
+    "model.encoder.layers",
+    "transformer.h",
+    "transformer.layers",
+    "model.transformer.h",
+    "model.transformer.layers",
+    "language_model.layers",
+    "language_model.model.layers",
+    "llm.layers",
+    "llm.model.layers",
+    "vision_model.encoder.layers",
+    "vision_model.transformer.layers",
+    "model.vision_model.encoder.layers",
+    "model.vision_model.transformer.layers",
+    "vision_tower.transformer.layers",
+    "vision_tower.vision_model.encoder.layers",
+    "model.vision_tower.transformer.layers",
+    "model.vision_tower.vision_model.encoder.layers",
+)
+
+_KNOWN_DECODER_LAYER_SUFFIXES = (
+    ".layers",
+    ".layer",
+    ".h",
+    ".blocks",
+    ".block",
+    ".encoder_layers",
+    ".decoder_layers",
+)

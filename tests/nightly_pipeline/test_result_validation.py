@@ -10,7 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from .result_validator import ValidationTolerances, all_rows_passed, load_validation_tolerances, validate_artifact_file
+from .result_validator import (
+    ValidationTolerances,
+    all_rows_passed,
+    load_recorded_test_failure_rows,
+    load_validation_tolerances,
+    validate_artifact_file,
+    write_validation_csv,
+)
 
 MODEL_ARTIFACTS = [
     ("causal_pipeline_configs", "causal_model_artifacts.json", "causal_model_validation.csv"),
@@ -38,7 +45,12 @@ def test_validate_nightly_results(model_class, artifact_filename, csv_filename, 
             previous_artifact_file = previous_artifacts_path / artifact_filename
     output_csv_file = artifacts_dir / csv_filename
 
-    assert current_artifact_file.exists(), f"Current nightly artifact file is missing: {current_artifact_file}"
+    if not current_artifact_file.exists():
+        rows = load_recorded_test_failure_rows(artifacts_dir, model_class)
+        assert rows, f"Current nightly artifact file is missing: {current_artifact_file}"
+        write_validation_csv(output_csv_file, model_class, rows)
+        assert all_rows_passed(rows), _failure_summary(model_class, rows)
+        return
     if previous_artifact_file is not None:
         assert previous_artifact_file.exists(), f"Previous nightly artifact file is missing: {previous_artifact_file}"
 

@@ -27,7 +27,7 @@ Welcome to Efficient-Transformers Documentation!
    source/installation
 
 .. toctree::
-   :caption: Inference on Cloud AI 100
+   :caption: Inference on Cloud AIxxx
    :maxdepth: 4
 
    source/quick_start

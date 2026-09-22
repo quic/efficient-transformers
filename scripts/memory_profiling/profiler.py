@@ -715,7 +715,7 @@ QEfficient Operations Timeline:"""
         output_file = filename or self.config.output_file
 
         # Import visualization module
-        from visualizer import QEffMemoryVisualizer
+        from .visualizer import QEffMemoryVisualizer
 
         visualizer = QEffMemoryVisualizer(self)
         visualizer.generate_professional_graph(output_file)

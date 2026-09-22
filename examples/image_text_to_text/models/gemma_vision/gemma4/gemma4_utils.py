@@ -66,7 +66,7 @@ def build_messages(system_prompt: str, user_prompt: str, use_image: bool):
 
 
 def build_compile_kwargs(*, effective_prefill_seq_len: int, effective_ctx_len: int, skip_vision: bool, **kwargs):
-    kwargs = {
+    compile_kwargs = {
         "prefill_seq_len": effective_prefill_seq_len,
         "ctx_len": effective_ctx_len,
         "num_cores": kwargs["NUM_CORES"],
@@ -80,13 +80,15 @@ def build_compile_kwargs(*, effective_prefill_seq_len: int, effective_ctx_len: i
         "batch_size": kwargs.get("BATCH_SIZE", 1),
         "node_precision_info": kwargs.get("node_precision_info", None),
     }
+    # Carry the Compute-Context-Length lists through to compile() when provided.
+    for key in ("comp_ctx_lengths_prefill", "comp_ctx_lengths_decode"):
+        if kwargs.get(key) is not None:
+            compile_kwargs[key] = kwargs[key]
     if skip_vision:
-        kwargs["skip_vision"] = True
-    if kwargs["node_precision_info"] is None:
-        kwargs["node_precision_info"] = False
-    return kwargs
-
-    return kwargs
+        compile_kwargs["skip_vision"] = True
+    if compile_kwargs["node_precision_info"] is None:
+        compile_kwargs["node_precision_info"] = False
+    return compile_kwargs
 
 
 def remove_fp16clip_transform_if_disabled(model, effective_fp16clip: bool):

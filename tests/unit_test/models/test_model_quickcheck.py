@@ -18,6 +18,8 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import inspect
+import json
 import logging
 import os
 import shutil
@@ -26,13 +28,16 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, Optional, Set
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
 import onnxruntime as ort
 import pytest
 import torch
+from torch import nn
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -579,7 +584,7 @@ def _tiny_qwen3_vl_config() -> Qwen3VLConfig:
     )
 
 
-def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
+def _tiny_qwen3_vl_moe_config(num_experts: int = 2) -> Qwen3VLMoeConfig:
     text_config = Qwen3VLMoeTextConfig(
         vocab_size=64,
         hidden_size=16,
@@ -590,7 +595,7 @@ def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
         num_key_value_heads=1,
         head_dim=8,
         max_position_embeddings=32,
-        num_experts=2,
+        num_experts=num_experts,
         num_experts_per_tok=1,
         decoder_sparse_step=1,
         mlp_only_layers=[],
@@ -927,6 +932,125 @@ def _assert_qwen_hf_qeff_ort_parity(model_type: str, tmp_path, *, prefill_only: 
         assert np.allclose(qeff_logits, ort_logits, atol=atol, rtol=1e-4)
 
 
+def _kimi_k25_prompt_inputs(processor):
+    from PIL import Image
+
+    image = Image.new("RGB", (64, 64), color=(128, 64, 32))
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": image},
+                {"type": "text", "text": "Describe."},
+            ],
+        },
+    ]
+    inputs = processor(
+        messages=messages,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_tensors="pt",
+    )
+    return {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
+
+
+def _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds):
+    seq_len = inputs["input_ids"].shape[1]
+    lang_inputs = deepcopy(qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=seq_len)["lang"])
+    lang_inputs["input_ids"] = inputs["input_ids"].clone()
+    lang_inputs["position_ids"] = torch.where(
+        inputs["attention_mask"] > 0,
+        torch.arange(seq_len, dtype=torch.int64).view(1, seq_len),
+        -1,
+    )
+    lang_inputs["vision_embeds"] = vision_embeds
+    lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
+    return lang_inputs
+
+
+class _KimiSyntheticQuantLinear(nn.Module):
+    def __init__(self, linear: nn.Linear):
+        super().__init__()
+        if linear.in_features % 2 != 0:
+            raise ValueError("Synthetic int4 fixture requires an even input dimension")
+
+        self.in_features = linear.in_features
+        self.out_features = linear.out_features
+        self.bits = 4
+        self.group_size = 1
+        self.act_order = None
+        self.register_buffer(
+            "qweight", torch.full((linear.out_features, linear.in_features // 2), 0x99, dtype=torch.uint8)
+        )
+        self.register_buffer(
+            "qzeros", torch.full((linear.out_features, linear.in_features // 2), 0x88, dtype=torch.uint8)
+        )
+        self.register_buffer("scales", linear.weight.detach().clone().to(torch.float32))
+        self.register_buffer("g_idx", torch.arange(linear.in_features, dtype=torch.int32))
+        if linear.bias is None:
+            self.bias = None
+        else:
+            self.register_buffer("bias", linear.bias.detach().clone().to(torch.float32))
+
+    def forward(self, inputs):
+        output = torch.matmul(inputs.float(), self.scales.transpose(0, 1).float())
+        if self.bias is not None:
+            output = output + self.bias.to(output.dtype)
+        return output.to(inputs.dtype)
+
+
+def _install_kimi_synthetic_quant_experts(model):
+    for module in model.modules():
+        experts = getattr(module, "experts", None)
+        if experts is None:
+            continue
+        for expert in experts:
+            for projection_name in ("gate_proj", "up_proj", "down_proj"):
+                projection = getattr(expert, projection_name, None)
+                if isinstance(projection, nn.Linear):
+                    setattr(expert, projection_name, _KimiSyntheticQuantLinear(projection))
+
+
+@pytest.mark.llm_model
+def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
+    from tests.utils.load_kimi_utils import get_kimi_k25_test_config, load_kimi_k25_model_from_config
+
+    model_id = "moonshotai/Kimi-K2.5"
+    config_path = Path(__file__).parents[2] / "configs" / "image_text_model_configs.json"
+    model_configs = json.loads(config_path.read_text())["image_text_models"]
+    model_config_dict = {model["model_name"]: model for model in model_configs}
+
+    try:
+        config = get_kimi_k25_test_config(model_id, model_config_dict)
+        model_hf, _, processor = load_kimi_k25_model_from_config(config)
+        _install_kimi_synthetic_quant_experts(model_hf)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    inputs = _kimi_k25_prompt_inputs(processor)
+    with torch.no_grad():
+        hf_outputs = model_hf(**inputs, use_cache=False, return_dict=True)
+        hf_logits = hf_outputs.logits[:, -1:, :].detach().float().numpy()
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        deepcopy(model_hf),
+        kv_offload=True,
+        config=model_hf.config,
+        torch_dtype=torch.float32,
+    )
+    grid_thws = inputs["grid_thws"].to(torch.int64)
+    h_shape = torch.ones((int(grid_thws[0, 1].item()),), dtype=torch.int64)
+    w_shape = torch.ones((int(grid_thws[0, 2].item()),), dtype=torch.int64)
+
+    with torch.no_grad():
+        vision_embeds = qeff_model.vision_model.model(inputs["pixel_values"], h_shape, w_shape)
+        lang_inputs = _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds)
+        qeff_logits = qeff_model.lang_model.model(**lang_inputs)[0].detach().float().numpy()
+
+    assert qeff_logits.shape == hf_logits.shape
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
+
+
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "model_id"),
@@ -1138,6 +1262,34 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_causal_subfunction_export_uses_semantic_weight_and_node_names(tmp_path):
+    config = LlamaConfig(
+        vocab_size=128,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+    )
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "semantic-wsub-names", use_onnx_subfunctions=True, offload_pt_weights=False)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+
+    initializer_names = {initializer.name for initializer in onnx_model.graph.initializer}
+    assert "model.layers.0.self_attn.q_proj.weight" in initializer_names
+    assert not any(name.startswith("onnx::MatMul_") for name in initializer_names)
+
+    function_node_names = {node.name for function in onnx_model.functions for node in function.node}
+    assert "self_attn/q_proj/MatMul" in function_node_names
+    assert "mlp/down_proj/MatMul" in function_node_names
+
+
+@pytest.mark.llm_model
 def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
     """Gemma3 VLM export keeps retained-state/output signatures stable across subfunction toggles.
 
@@ -1195,7 +1347,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     )
     torch.manual_seed(0)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
-    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"num_replicate_kv_heads": 2})
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"replicate_kv_heads": True})
 
     input_ids = torch.arange(1, 5, dtype=torch.int64).view(1, 4)
     position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
@@ -1211,7 +1363,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     with torch.no_grad():
         hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids).logits[:, -1:, :].detach().numpy()
 
-    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, qaic_config=qeff_model.model.qaic_config)
+    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, num_devices=4, qaic_config=qeff_model.model.qaic_config)
     with torch.no_grad():
         qeff_logits = qeff_model.model(**inputs).logits.detach().numpy()
 
@@ -1235,11 +1387,21 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),
     ids=sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS),
 )
-def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, config_kwargs, tmp_path):
+def test_moe_prefill_subfunction_export_uses_reduce_sum_reductions(model_type, config_kwargs, tmp_path):
     config = AutoConfig.for_model(model_type, **config_kwargs)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+    qeff_model.transform(
+        ctx_len=64,
+        seq_len=64,
+        bs=1,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
+        prefill_seq_len=64,
+    )
 
     onnx_path = _exported_onnx_path(
         qeff_model.export(
@@ -1248,7 +1410,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
             enable_chunking=True,
             prefill_seq_len=64,
             num_cores=2,
-            moe_prefill_packed_chunk_size=32,
+            qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -1259,7 +1421,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     decoder_op_types = _function_op_types(onnx_model, decoder_function_names)
 
     assert len(decoder_function_names) == config.num_hidden_layers
-    assert "Einsum" in decoder_op_types
+    assert "ReduceSum" in decoder_op_types
     assert "CtxGather3D" in decoder_op_types
     assert "CtxScatter3D" in decoder_op_types
     assert "CtxScatter3DInt" in decoder_op_types
@@ -1733,7 +1895,7 @@ class TestToNamedSpecializations:
         flat = [
             {
                 "_graph_name": "Vision",
-                "batch_size": "1",
+                "vision_batch_size": "1",
                 "vision_size": "247",
                 "grid_height": "988",
                 "grid_width": "1176",
@@ -1744,6 +1906,7 @@ class TestToNamedSpecializations:
         result = to_named_specializations(flat)
         assert len(result) == 1
         assert result[0]["name"] == "Vision"
+        assert result[0]["symbols"]["vision_batch_size"] == "1"
         assert result[0]["symbols"]["vision_size"] == "247"
         assert "_graph_name" not in result[0]["symbols"]
 
@@ -1952,7 +2115,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
@@ -1975,7 +2138,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs == 16
@@ -1992,7 +2155,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
@@ -2075,8 +2238,98 @@ class TestDiffusersNamedSpecializations:
 
 
 # ---------------------------------------------------------------------------
+# Prefill Blocking Configurations
+# ---------------------------------------------------------------------------
+
+
+class _BlockedPrefillCache:
+    def __init__(self, batch_size, num_kv_heads, ctx_len, head_dim):
+        self.key = torch.zeros(batch_size, num_kv_heads, ctx_len, head_dim)
+        self.value = torch.zeros_like(self.key)
+
+    def read_only_blocked_K(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.key[:, :, start_index:end_index, :]
+
+    def read_only_blocked_V(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.value[:, :, start_index:end_index, :]
+
+
+@pytest.mark.parametrize(
+    "num_query_heads, num_kv_groups, num_cores",
+    [
+        (8, 4, 2),
+        (8, 4, 4),
+        (8, 4, 8),
+        (12, 3, 4),
+        (12, 3, 12),
+    ],
+)
+def test_blocked_prefill_online_accepts_valid_num_heads_and_num_cores(num_query_heads, num_kv_groups, num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 1, 4, 1
+    num_kv_heads = num_query_heads // num_kv_groups
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_kv_heads, ctx_len, head_dim)
+
+    output, attention_weights = blocked_qkv_attention_forward_prefill_online(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=1,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        num_cores_per_device=num_cores,
+    )
+
+    assert output.shape == (batch_size, sequence_length, num_query_heads, head_dim)
+
+
+@pytest.mark.parametrize(
+    "num_cores",
+    [
+        0,
+        1,
+        3,
+        6,
+    ],
+)
+def test_blocked_prefill_online_rejects_invalid_num_cores(num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    num_query_heads, num_kv_groups = 8, 4
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(1, num_query_heads, 1, 4)
+
+    with pytest.raises(ValueError):
+        blocked_qkv_attention_forward_prefill_online(
+            module=module,
+            query=query,
+            key=None,
+            value=None,
+            attention_mask=None,
+            scaling=1.0,
+            num_q_blocks=1,
+            num_kv_blocks=1,
+            cache_kwargs={},
+            layer_idx=0,
+            past_key_value=None,
+            ctx_len=1,
+            num_cores_per_device=num_cores,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer-wise export (provisional, scheduled for deprecation)
 # ---------------------------------------------------------------------------
+
 
 LAYERWISE_TINY_MODEL_ID = "tiny-random/qwen3-vl-moe"
 LAYERWISE_TINY_MODEL_IDS = {
@@ -2109,7 +2362,7 @@ def test_layerwise_supported_guard_rejects_unrelated_model():
         _layerwise.assert_layerwise_supported(config)
 
 
-def test_resolve_torch_dtype_normalizes_dtype_alias():
+def test_resolve_torch_dtype_normalizes_dtype_alias(caplog):
     """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
 
     Regression guard: passing ``dtype=float16`` used to be ignored, leaving the
@@ -2128,11 +2381,21 @@ def test_resolve_torch_dtype_normalizes_dtype_alias():
     _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float16
 
-    # bfloat16 is downgraded to float32 on ai100 regardless of which name is used.
+    # bfloat16 is kept as-is on ai100 (regardless of which name is used) so export/compile
+    # still run in bfloat16, with a warning that on-device generation is expected to fail.
+    caplog.set_level(logging.WARNING, logger="QEfficient")
     kwargs = {"dtype": torch.bfloat16}
     _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.bfloat16
+    assert kwargs["dtype"] == torch.bfloat16
+    assert "on-device generation is expected to fail" in caplog.text
+
+    # Regression guard: when torch_dtype/dtype is not set at all, default to float32 on
+    # ai100 so models whose config.json declares bfloat16 (e.g. Mistral-7B-v0.1) aren't
+    # silently loaded in bfloat16, which breaks KV-cache dtype (float32) parity.
+    kwargs = {}
+    _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float32
-    assert kwargs["dtype"] == torch.float32
 
 
 def test_qwen3_5_moe_gated_norm_preserves_float16():
@@ -2177,7 +2440,10 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
 
     model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
-    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
 
     specs, _ = model.get_specializations(
         batch_size=1,
@@ -2196,6 +2462,71 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     expected_vision_size = max(spec["vision_size"] * frames for spec, frames in zip(vision_specs, [1, 2]))
     assert all(spec["vision_size"] == expected_vision_size for spec in lang_specs)
     assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
+
+
+def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
+
+
+def test_qwen3_vl_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffQwen3VLMoeForConditionalGeneration,
+    )
+
+    model = QEffQwen3VLMoeForConditionalGeneration.__new__(QEffQwen3VLMoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1, deepstack_visual_indexes=[]),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+    model.model = SimpleNamespace(language_model=SimpleNamespace(layers=[]))
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
 def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
@@ -2223,31 +2554,610 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
     assert all("vision_batch_size" not in spec for spec in lang_specs)
 
 
-def test_moe_prefill_transform_does_not_require_enable_chunking():
-    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+def test_qwen3_vl_moe_batch_index_boundary_reorders_inputs_and_outputs():
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        _batch_index_gather,
+        _batch_index_scatter,
+    )
+
+    batch_index = torch.tensor([[2], [0], [3], [1]], dtype=torch.int64)
+    logical = torch.arange(4 * 3, dtype=torch.float32).reshape(4, 1, 3)
+    physical = _batch_index_scatter(logical, batch_index)
+
+    assert torch.equal(physical[batch_index.flatten()], logical)
+    assert torch.equal(_batch_index_gather(physical, batch_index), logical)
+
+    logical_positions = torch.arange(3 * 4, dtype=torch.int64).reshape(3, 4, 1)
+    physical_positions = _batch_index_scatter(logical_positions, batch_index, batch_dim=1)
+    assert torch.equal(physical_positions[:, batch_index.flatten()], logical_positions)
+
+
+@pytest.mark.parametrize("grouped_state", [False, True])
+def test_qwen3_5_moe_conv_decode_slice_matches_gather_reference(grouped_state):
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    flat_state = torch.randn(batch_size, hidden_size, state_len)
+    conv_state = flat_state.reshape(batch_size, 2, 4, state_len) if grouped_state else flat_state
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    state_input = flat_state
+    hidden_states_new = torch.cat([state_input, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = state_input[2]
+    expected_state = expected_state.reshape_as(conv_state)
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+    )
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+    )
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_conv_decode_slice_matches_gather_reference():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = conv_state[2]
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_batch_fold_dynamic_axes_separate_input_and_cache_batches():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5ForConditionalGeneration
+
+    model = QEffQwen3_5ForConditionalGeneration.__new__(QEffQwen3_5ForConditionalGeneration)
+    model.config = SimpleNamespace(
+        text_config=SimpleNamespace(num_hidden_layers=2, layer_types=["full_attention", "linear_attention"])
+    )
+
+    folded_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=True)
+    regular_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=False)
+
+    assert folded_axes["input_ids"][0] == "full_batch_size"
+    assert folded_axes["position_ids"][1] == "full_batch_size"
+    assert folded_axes["batch_index"][0] == "full_batch_size"
+    assert folded_axes["past_key.0"][0] == "full_batch_size"
+    assert regular_axes["input_ids"][0] == "batch_size"
+    assert regular_axes["batch_index"][0] == "batch_size"
+
+
+@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_moe"])
+def test_qwen3_5_decoder_wrapper_folds_decode_only(model_type):
+    from types import SimpleNamespace
+
+    if model_type == "qwen3_5":
+        from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5DecoderWrapper
+
+        wrapper_cls = QEffQwen3_5DecoderWrapper
+    else:
+        from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeDecoderWrapper
+
+        wrapper_cls = QEffQwen3_5MoeDecoderWrapper
+
+    class RecordingLanguageModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = [
+                SimpleNamespace(
+                    self_attn=SimpleNamespace(
+                        attn_blocking_config=SimpleNamespace(batch_fold=True),
+                    )
+                )
+            ]
+            self.calls = []
+
+        def forward(self, *, inputs_embeds, batch_index, batch_fold, **kwargs):
+            self.calls.append((batch_index, batch_fold))
+            return SimpleNamespace(last_hidden_state=inputs_embeds, past_key_values=[])
+
+    class Embedding(nn.Module):
+        def forward(self, input_ids):
+            return input_ids.to(torch.float32).unsqueeze(-1).expand(-1, -1, 2)
+
+    language_model = RecordingLanguageModel()
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            language_model=language_model,
+            get_input_embeddings=lambda: Embedding(),
+        ),
+        config=SimpleNamespace(image_token_id=99),
+        lm_head=nn.Identity(),
+    )
+    wrapper = wrapper_cls(model)
+    batch_index = torch.tensor([[1], [0]], dtype=torch.long)
+    vision_embeds = torch.zeros(2, 1, 2)
+    image_idx = torch.zeros(2, 1, dtype=torch.long)
+
+    for seq_len in (3, 1):
+        language_model.calls.clear()
+        input_ids = torch.tensor([[1] * seq_len, [2] * seq_len])
+        position_ids = torch.arange(seq_len).view(1, 1, seq_len).expand(1, 2, seq_len)
+
+        if model_type == "qwen3_5":
+            wrapper(
+                input_ids,
+                vision_embeds,
+                position_ids,
+                image_idx,
+                [],
+                batch_index=batch_index,
+            )
+        else:
+            wrapper(
+                input_ids=input_ids,
+                vision_embeds=vision_embeds,
+                position_ids=position_ids,
+                image_idx=image_idx,
+                past_key_values=[],
+                batch_index=batch_index,
+            )
+
+        received_batch_index, batch_fold = language_model.calls[0]
+        assert batch_fold is (seq_len == 1)
+        if seq_len == 1:
+            assert received_batch_index is None
+        else:
+            torch.testing.assert_close(received_batch_index, batch_index)
+
+
+def test_qwen3_5_moe_decode_expert_parallel_selection():
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEExpertParallelWeightsTransform,
+        OptimizedMoEExportConfigTransform,
+        OptimizedMoEMapperTransform,
+        OptimizedMoEWeightsTransform,
+    )
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeSparseMoeBlock
+    from QEfficient.transformers.moe import MoEFlavour
+
+    config = Qwen3_5MoeTextConfig(
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        vocab_size=128,
+        max_position_embeddings=128,
+        head_dim=32,
+        moe_intermediate_size=64,
+        shared_expert_intermediate_size=64,
+        num_experts=4,
+        num_experts_per_tok=2,
+        layer_types=["full_attention", "linear_attention"],
+    )
+    torch.manual_seed(2)
+    hf_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed and isinstance(qeff_block, QEffQwen3_5MoeSparseMoeBlock)
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        num_devices=1,
+        num_cores=2,
+        prefill_seq_len=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 1,
+                "tree_reduce": False,
+                "expert_parallel_chunk_size": 1,
+            }
+        },
+    )
+    OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+
+def test_moe_prefill_transform_does_not_require_enable_chunking():
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
+    from QEfficient.transformers.models.pytorch_transforms import (
+        PrefillOnlyChunkedTransform,
+        PrefillOnlyTransform,
+        RevertPrefillKeepAttentionTransform,
+        RevertPrefillOnlyTransform,
+    )
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
         QEffQwen3_5MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         QEffQwen3MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         QEffQwen3VLMoeTextSparseMoeBlock,
     )
+    from QEfficient.transformers.moe import MoEFlavour
 
-    assert PrefillOnlyTransform._module_mapping[QEffGlm4MoeMoE] is QEffPrefillChunkedGlm4MoeMoE
-    assert PrefillOnlyTransform._module_mapping[QEffQwen3MoeSparseMoeBlock] is QEffPrefillChunkedQwen3MoeSparseMoeBlock
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3VLMoeTextSparseMoeBlock]
-        is QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock
+    for moe_cls in (
+        QEffGlm4MoeMoE,
+        QEffQwen3MoeSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock,
+    ):
+        assert moe_cls not in PrefillOnlyTransform._module_mapping
+        assert moe_cls not in PrefillOnlyChunkedTransform._module_mapping
+        assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
+        assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
+        assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
+
+
+def _tiny_qwen3_vl_moe_sparse_block_pair(num_experts: int = 2):
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEMapperTransform,
+        OptimizedMoEWeightsTransform,
     )
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
+
+    config = _tiny_qwen3_vl_moe_config(num_experts=num_experts).text_config
+    torch.manual_seed(0)
+    hf_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    with torch.no_grad():
+        hf_block.gate.weight.normal_(mean=0.0, std=0.02)
+        hf_block.experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        hf_block.experts.down_proj.normal_(mean=0.0, std=0.02)
+
+    qeff_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    return hf_block, qeff_block, config
+
+
+def test_qwen3_vl_moe_sparse_gather_bmm_matches_hf():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        qaic_config={"moe_config": {"flavour": "decode_bmm"}},
     )
+    assert qeff_block._moe_flavour is MoEFlavour.DECODE_BMM
+    hidden_states = torch.randn(2, 3, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    (
+        "num_experts",
+        "num_devices",
+        "num_cores",
+        "cores_per_expert",
+        "tree_reduce",
+        "expected_experts_per_soc",
+    ),
+    [
+        pytest.param(2, 1, 2, 1, False, None, id="default-einsum"),
+        pytest.param(4, 2, 2, 1, False, 2, id="cross-soc-flat"),
+        pytest.param(4, 2, 2, 1, True, 2, id="cross-soc-tree"),
+        pytest.param(4, 2, 2, 2, False, 1, id="cores-per-expert-2"),
+    ],
+)
+def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(
+    num_experts,
+    num_devices,
+    num_cores,
+    cores_per_expert,
+    tree_reduce,
+    expected_experts_per_soc,
+):
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEExpertParallelWeightsTransform,
+        OptimizedMoEExportConfigTransform,
+    )
+    from QEfficient.transformers.moe import MoEFlavour
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=num_experts)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=num_devices,
+        num_cores=num_cores,
+        prefill_seq_len=4,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": cores_per_expert,
+                "tree_reduce": tree_reduce,
+                "expert_parallel_chunk_size": 2,
+            }
+        },
+    )
+    OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+    hidden_states = torch.randn(1, 4, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert qeff_block.total_avl_cores == num_devices * num_cores
+    assert qeff_block.cores_per_expert == cores_per_expert
+    assert qeff_block.experts_per_soc == expected_experts_per_soc
+    assert qeff_block.tree_reduce is tree_reduce
+    assert qeff_output.shape == hidden_states.shape
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    hash_params = {}
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=2,
+        num_cores=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 2,
+                "tree_reduce": True,
+                "expert_parallel_chunk_size": 3,
+            }
+        },
+        hash_params=hash_params,
+    )
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert qeff_block.expert_blocking_packed_chunk_size == 3
+    assert qeff_block.num_devices == 2
+    assert qeff_block.cores_per_expert == 2
+    assert qeff_block.total_avl_cores == 4
+    assert qeff_block.num_pipeline_stages == 2
+    assert qeff_block.num_parallelized_experts == 2
+    assert qeff_block.experts_per_soc == 1
+    assert qeff_block.tree_reduce is True
+    assert hash_params["moe_prefill_flavour"] == "expert_parallel"
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert hash_params["moe_prefill_total_avl_cores"] == 4
+    assert hash_params["moe_prefill_cores_per_expert"] == 2
+    assert hash_params["moe_prefill_tree_reduce"] is True
+    assert hash_params["moe_prefill_expert_parallel_chunk_size"] == 3
+    assert hash_params["moe_prefill_num_pipeline_stages"] == 2
+    assert hash_params["moe_prefill_num_parallelized_experts"] == 2
+    assert "moe_prefill_num_packed_chunks" in hash_params
+
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        num_devices=2,
+        num_cores=2,
+        qaic_config={"moe_config": {"flavour": "decode_bmm"}},
+        hash_params=hash_params,
+    )
+
+    assert qeff_block._moe_flavour is MoEFlavour.DECODE_BMM
+    assert hash_params["moe_prefill_flavour"] == "decode_bmm"
+    assert "moe_prefill_total_avl_cores" not in hash_params
+    assert "moe_prefill_cores_per_expert" not in hash_params
+    assert "moe_prefill_tree_reduce" not in hash_params
+    assert "moe_prefill_expert_parallel_chunk_size" not in hash_params
+    assert "moe_prefill_num_pipeline_stages" not in hash_params
+    assert "moe_prefill_num_parallelized_experts" not in hash_params
+    assert "moe_prefill_num_packed_chunks" not in hash_params
+
+    with torch.no_grad():
+        qeff_block(torch.randn(1, 2, config.hidden_size))
+
+
+def test_qwen3_vl_moe_sparse_configurator_rejects_invalid_core_layout():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    with pytest.raises(ValueError, match="total_avl_cores"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            num_devices=3,
+            num_cores=2,
+            qaic_config={
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "cores_per_expert": 1,
+                    "tree_reduce": False,
+                    "expert_parallel_chunk_size": 2,
+                }
+            },
+        )
+
+    with pytest.raises(TypeError, match="tree_reduce"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            num_devices=1,
+            num_cores=2,
+            qaic_config={
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "cores_per_expert": 1,
+                    "tree_reduce": "true",
+                    "expert_parallel_chunk_size": 2,
+                }
+            },
+        )
+
+
+def test_qwen3_vl_moe_sparse_expert_parallel_resolver_prefill_wins():
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    # prefill_only=True with no explicit flavour selects expert_parallel
+    _, qeff_block_prefill, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(qeff_block_prefill, prefill_only=True, num_devices=1, num_cores=2)
+    assert qeff_block_prefill._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+    # prefill_only=False with explicit expert_parallel flavour selects expert_parallel
+    _, qeff_block_explicit, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block_explicit,
+        prefill_only=False,
+        num_devices=1,
+        num_cores=2,
+        qaic_config={"moe_config": {"flavour": "expert_parallel"}},
+    )
+    assert qeff_block_explicit._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+
+    # prefill_only=False with no explicit flavour selects decode_bmm
+    _, qeff_block_decode, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(qeff_block_decode, prefill_only=False)
+    assert qeff_block_decode._moe_flavour is MoEFlavour.DECODE_BMM
+
+    # invalid tree_reduce type raises TypeError
+    _, qeff_block_err, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    with pytest.raises(TypeError, match="tree_reduce"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block_err,
+            prefill_only=True,
+            num_devices=1,
+            num_cores=2,
+            qaic_config={"moe_config": {"tree_reduce": "true"}},
+        )
+
+
+def test_qwen3_vl_moe_sparse_vlm_compile_signatures_expose_expert_parallel_args():
+    from QEfficient.transformers.models.modeling_auto import (
+        _QEffAutoModelForImageTextToTextDualQPC,
+        _QEFFAutoModelForImageTextToTextSingleQPC,
+    )
+    from QEfficient.transformers.models.pytorch_transforms import OptimizedMoEExportConfigTransform
+    from QEfficient.transformers.moe import MoEFlavour
+
+    for wrapper_cls in (_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC):
+        params = inspect.signature(wrapper_cls.compile).parameters
+        assert "qaic_config" in params
+        assert params["qaic_config"].default is None
+
+    # Verify that qaic_config["moe_config"] is the accepted interface for expert-parallel
+    # configuration by applying all expected keys to a real block.
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=2)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=True,
+        num_devices=1,
+        num_cores=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 1,
+                "tree_reduce": False,
+                "expert_parallel_chunk_size": 2,
+            }
+        },
+    )
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
@@ -2990,6 +3900,45 @@ def test_runtime_aliases_internal_retained_state_outputs():
 
 
 @pytest.mark.llm_model
+def test_runtime_failure_releases_qaic_program(monkeypatch):
+    from QEfficient.generation import cloud_infer
+
+    success = object()
+    monkeypatch.setattr(
+        cloud_infer,
+        "qaicrt",
+        SimpleNamespace(QStatus=SimpleNamespace(QS_SUCCESS=success)),
+        raising=False,
+    )
+
+    exec_obj = MagicMock()
+    exec_obj.setData.return_value = success
+    exec_obj.waitForCompletion.return_value = object()
+    program = MagicMock()
+    program.deactivate.return_value = success
+    program.unload.return_value = success
+    queue = MagicMock()
+    queue.enqueue.return_value = success
+
+    session = object.__new__(cloud_infer.QAICInferenceSession)
+    session.allowed_shapes = []
+    session.buf_dims = []
+    session.execObj = exec_obj
+    session.is_active = True
+    session.program = program
+    session.qbuffers = []
+    session.queue = queue
+    session.set_buffers = MagicMock()
+
+    with pytest.raises(ValueError, match="Failed to run"):
+        session.run({})
+
+    program.deactivate.assert_called_once_with()
+    program.unload.assert_called_once_with()
+    assert session.is_active is False
+
+
+@pytest.mark.llm_model
 def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
     from QEfficient.transformers.models import _layerwise
     from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
@@ -3009,6 +3958,46 @@ def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
     assert result == {"lang_decode_qpc_path": qpc_path}
     assert model.qpc_paths == result
     assert model.lang_model.qpc_path == qpc_path
+
+
+@pytest.mark.llm_model
+def test_dual_qpc_decode_only_continuous_batching_returns_decode_qpc_key(monkeypatch):
+    from QEfficient.transformers.models import modeling_auto
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model.continuous_batching = True
+    model.ccl_enabled = False
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.transform = lambda **kwargs: None
+    model.model = type(
+        "Model",
+        (),
+        {
+            "config": type("Config", (), {"torch_dtype": torch.float32, "model_type": "test"})(),
+            "get_output_names": lambda self, **kwargs: {"vision": [], "lang": []},
+            "get_specializations": lambda self, **kwargs: ({"vision": [], "lang": [{"seq_len": 1}]}, {}),
+        },
+    )()
+    model.lang_model = type(
+        "LanguageModel",
+        (),
+        {"onnx_path": "language.onnx", "_compile": staticmethod(lambda **kwargs: "decode.qpc")},
+    )()
+
+    monkeypatch.setattr(modeling_auto, "_filter_custom_io_for_onnx", lambda custom_io, onnx_path: custom_io)
+
+    result = model.compile(
+        prefill_seq_len=1,
+        ctx_len=16,
+        batch_size=1,
+        full_batch_size=4,
+        skip_vision=True,
+        lang_onnx_path="language.onnx",
+    )
+
+    assert result == {"lang_decode_qpc_path": "decode.qpc"}
 
 
 @pytest.mark.llm_model
@@ -3343,7 +4332,6 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
         "mxfp6_matmul",
         # compile-time args added by causal compile():
         "aic_num_cores",
-        "moe_prefill_packed_chunk_size",
     }
     implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
     assert "kv_cache_prefix" not in implicit_compiler_options, (
@@ -3551,3 +4539,50 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
+
+
+def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
+    """Kimi K2.5 accepts list-valued image sizes for multi-resolution specs."""
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import QEffKimiK25ForConditionalGeneration
+
+    model = QEffKimiK25ForConditionalGeneration.__new__(QEffKimiK25ForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=14, merge_kernel_size=(2, 2)))
+
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        image_height=[512, 448],
+        image_width=[910, 448],
+        num_frames=[1, 1],
+        kv_offload=True,
+    )
+    assert specs["vision"] == [
+        {"num_patches": 2508, "grid_h": 38, "grid_w": 66, "num_image_tokens": 627},
+        {"num_patches": 1024, "grid_h": 32, "grid_w": 32, "num_image_tokens": 256},
+    ]
+    assert all(spec["num_image_tokens"] == 627 for spec in specs["lang"])
+
+    with pytest.raises(ValueError, match="image_height and image_width"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            h=[30, 32],
+            w=[80, 64],
+            num_frames=[1, 2],
+            kv_offload=True,
+        )
+
+    with pytest.raises(ValueError, match="num_patches"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            image_height=512,
+            image_width=910,
+            num_patches=2508,
+            kv_offload=True,
+        )

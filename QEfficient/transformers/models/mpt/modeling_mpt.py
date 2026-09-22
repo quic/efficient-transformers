@@ -43,6 +43,8 @@ class QEffMptAttention(MptAttention):
         hidden_states: torch.Tensor,
         position_bias: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
@@ -52,7 +54,9 @@ class QEffMptAttention(MptAttention):
         batch_size, seq_length = hidden_states.shape[:2]
 
         mixed_qkv = self.Wqkv(hidden_states)
-        query_states, key_states, value_states = mixed_qkv.chunk(3, dim=2)
+        # refactored due to SplitToSequence error caused by .chunk()
+        qkv_split = self.n_heads * self.head_dim
+        query_states, key_states, value_states = mixed_qkv.split(qkv_split, dim=2)
         query_states = query_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
@@ -86,6 +90,8 @@ class QEffMptAttention(MptAttention):
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_seen_tokens=past_seen_tokens,
                 position_bias=position_bias,
             )
@@ -106,23 +112,21 @@ class QEffMptAttention(MptAttention):
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
 
-        query_length = seq_length if past_key_value is None else seq_length + past_key_value.get_seq_length()
-
         if position_bias is not None:
             if len(position_bias.shape) != 3:
                 raise ValueError(f"Expecting position_bias shape to be 3 dimensions, got {len(position_bias.shape)}")
             key_length = key_states.shape[-2]
-
-            position_bias_query_index = max(0, position_bias.size(1) - query_length)
-            position_bias_key_index = max(0, position_bias.size(2) - key_length)
-
-            position_bias = position_bias[:, position_bias_query_index:, position_bias_key_index:]
+            # MPT alibi has shape [num_heads, 1, max_seq_len], so only the key axis needs trimming here.
+            position_bias = position_bias[:, :, -key_length:]
+            position_bias = position_bias.unsqueeze(0).expand(batch_size, -1, seq_length, -1)
 
             attention_scores = attention_scores + position_bias
 
         if attention_mask is not None:
             attention_scores = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=value_states.dtype), attention_scores
+                attention_mask,
+                torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE, dtype=attention_scores.dtype),
+                attention_scores,
             )
 
         # (batch_size, n_heads, seq_length, key_length)
@@ -149,6 +153,8 @@ class QEffMptBlock(MptBlock):
         position_bias: torch.Tensor,
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
@@ -166,6 +172,8 @@ class QEffMptBlock(MptBlock):
             layernorm_output,
             position_bias=position_bias,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             batch_index=batch_index,
             attention_mask=attention_mask,
             past_key_value=layer_past,
@@ -199,6 +207,8 @@ class QEFfMptModel(MptModel):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -261,6 +271,8 @@ class QEFfMptModel(MptModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 batch_index=batch_index,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
@@ -316,6 +328,8 @@ class QEffMptForCausalLM(MptForCausalLM):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
@@ -338,6 +352,8 @@ class QEffMptForCausalLM(MptForCausalLM):
             comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,

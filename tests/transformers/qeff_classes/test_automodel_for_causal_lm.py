@@ -179,6 +179,11 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
     hash_params["max_seq_len_cached"] = None
     hash_params["qaic_config"] = None
+    hash_params["use_onnx_subfunctions"] = subfunc
+    hash_params["onnx_transform_version"] = 1
+    hash_params["dynamo"] = False
+    if subfunc:
+        hash_params["onnx_subfunction_version"] = 3
 
     # Create parameters separately for hash creation
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -226,6 +231,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     export_params = {}
     export_params["output_names"] = output_names
     export_params["dynamic_axes"] = dynamic_axes
+    export_params["dynamic_shapes"] = None
     hash_params["export_params"] = export_params
     if subfunc:
         hash_params["export_modules_as_functions"] = qeff_model.model.get_submodules_for_export()
@@ -240,17 +246,14 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
 def test_prefill_only_specialized_models(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
-    if cb:
-        with pytest.raises(NotImplementedError):
-            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
-    else:
-        with pytest.raises(ValueError):
-            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
-        qeff_model.export(tmp_path, prefill_only=True, prefill_seq_len=256, offload_pt_weights=False)
-        first_export_hash = qeff_model.export_hash
-        qeff_model.export(tmp_path, prefill_only=False, offload_pt_weights=False)
-        second_export_hash = qeff_model.export_hash
-        assert first_export_hash != second_export_hash
+    qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
+    assert qeff_model.hash_params.get("chunking") is True
+    first_export_hash = qeff_model.export_hash
+
+    qeff_model.export(tmp_path, prefill_only=False, offload_pt_weights=False)
+    second_export_hash = qeff_model.export_hash
+
+    assert first_export_hash != second_export_hash
 
 
 @pytest.fixture

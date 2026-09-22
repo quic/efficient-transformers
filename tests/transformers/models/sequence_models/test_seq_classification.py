@@ -42,8 +42,6 @@ def check_seq_classification_pytorch_vs_ai100(
         manual_cleanup (callable): Function to clean up resources
         seq_len (Union[int, List[int]]): Sequence length(s) for compilation
         n_layer (int): Number of layers for the model
-        enable_qnn (bool): Enable QNN compilation
-        qnn_config (str): Path to QNN config file
     """
     # Prepare test input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -85,7 +83,7 @@ def check_seq_classification_pytorch_vs_ai100(
     assert os.path.isfile(qconfig_path), f"qconfig.json not found at {qconfig_path}"
 
     # Run on Cloud AI 100
-    ai100_outputs = qeff_model.generate(inputs=inputs, device_ids=[0])
+    ai100_outputs = qeff_model.generate(inputs=inputs, device_ids=None)
     ai100_logits = ai100_outputs["logits"]
     ai100_predicted_class = ai100_logits.argmax().item()
 

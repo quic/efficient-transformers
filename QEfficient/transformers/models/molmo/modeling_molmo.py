@@ -715,8 +715,11 @@ class QEffMolmoModel(nn.Module):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         # Extract Molmo specific paramters from compiler options if not provided as named args
         # vLLM passes num_crops instead of num_images, so that user don't get confused
         if num_images is None and "num_crops" in compiler_options:
@@ -737,7 +740,7 @@ class QEffMolmoModel(nn.Module):
 
         vision = [
             {
-                "batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "img_size": img_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
@@ -758,7 +761,7 @@ class QEffMolmoModel(nn.Module):
                     "ctx_len": ctx_len,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "valid_size": valid_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -787,7 +790,7 @@ class QEffMolmoModel(nn.Module):
                     "ctx_len": ctx_len,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "valid_size": valid_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_decode["full_batch_size"] = kv_cache_batch_size
@@ -812,7 +815,7 @@ class QEffMolmoModel(nn.Module):
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "valid_size": valid_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
 
             if continuous_batching:
@@ -828,7 +831,7 @@ class QEffMolmoModel(nn.Module):
                 "seq_len": "1",
                 "ctx_len": ctx_len,
                 "valid_size": valid_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
 
             if continuous_batching:
@@ -872,10 +875,15 @@ class QEffMolmoModel(nn.Module):
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "valid_size"}
 
-        vision_dynamic_axes["pixel_values"] = {0: "batch_size", 1: "num_images", 2: "img_tile", 3: "img_size"}
-        vision_dynamic_axes["image_input_idx"] = {0: "batch_size", 1: "num_images", 2: "num_patch"}
-        vision_dynamic_axes["image_masks"] = {0: "batch_size", 1: "num_images", 2: "img_tile"}
-        vision_dynamic_axes["valid_idx"] = {0: "batch_size", 1: "valid_size"}
+        vision_dynamic_axes["pixel_values"] = {
+            0: "vision_batch_size",
+            1: "num_images",
+            2: "img_tile",
+            3: "img_size",
+        }
+        vision_dynamic_axes["image_input_idx"] = {0: "vision_batch_size", 1: "num_images", 2: "num_patch"}
+        vision_dynamic_axes["image_masks"] = {0: "vision_batch_size", 1: "num_images", 2: "img_tile"}
+        vision_dynamic_axes["valid_idx"] = {0: "vision_batch_size", 1: "valid_size"}
 
         num_layers = self.model.config.n_layers
 

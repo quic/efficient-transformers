@@ -16,6 +16,7 @@ from transformers import PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
+from QEfficient.cloud import warn_deprecated_cloud_api
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -76,6 +77,7 @@ def execute_vlm_model(
     ValueError
         If neither ``image_url`` nor ``image_path`` is provided.
     """
+    warn_deprecated_cloud_api("infer")
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
@@ -140,6 +142,7 @@ def main(
     trust_remote_code: Optional[bool] = False,
     ccl_enabled: Optional[bool] = False,
     use_onnx_subfunctions: bool = False,
+    dynamo: bool = False,
     **kwargs,
 ) -> None:
     """
@@ -208,6 +211,8 @@ def main(
         If True, trusts remote code when loading models from HuggingFace. Default is False.
     use_onnx_subfunctions : bool, optional
         Enables ONNX subfunctions during export and compile. Default is False.
+    dynamo : bool, optional
+        Use the dynamo-based ONNX exporter instead of the legacy TorchScript exporter. Default is False.
     **kwargs :
         Additional compiler options passed directly to `qaic-compile`. Any flag supported by
         `qaic-compile` can be passed. Parameters are converted to flags as follows:
@@ -232,6 +237,7 @@ def main(
             --ctx-len 512 --img-size 560 --mxfp6-matmul
 
     """
+    warn_deprecated_cloud_api("infer")
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
     if "--mxfp6" in sys.argv and mxfp6:
@@ -282,6 +288,7 @@ def main(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
         use_onnx_subfunctions=use_onnx_subfunctions,
+        dynamo=dynamo,
         **kwargs,
     )
 
@@ -391,6 +398,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable ONNX subfunctions during export/compile.",
+    )
+    parser.add_argument(
+        "--dynamo",
+        dest="dynamo",
+        action="store_true",
+        default=False,
+        help="Use the dynamo-based ONNX exporter instead of the legacy TorchScript exporter.",
     )
     parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"

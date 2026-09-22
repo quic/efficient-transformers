@@ -13,12 +13,23 @@ that can be fed model config + pipeline compile config to derive blocking settin
 
 from __future__ import annotations
 
+import logging
 import math
+import warnings
 from typing import Any, Dict, List, Optional
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
+from QEfficient.blocking.attention_blocking import BLOCKING_MODE_REQUIRED_PARAMS, AttentionBlockingConfig, BlockingMode
 from QEfficient.utils import get_attr_or_key, require_value
-from QEfficient.utils.constants import DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
+from QEfficient.utils.constants import (
+    DEFAULT_AIC_NUM_CORES,
+    DEFAULT_NUM_HEADS,
+    FP16_BYTES,
+    KV_LORA_RANK,
+    ROPE_DIM,
+    VTCM_SIZE_THRESHOLD,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -67,14 +78,14 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
 
-    if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
-        return "h"
+    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1:
+        return "hqkv"
     if head_block_size > 1 and num_q_blocks > 1:
         return "hq"
     if head_block_size > 1 and num_kv_blocks > 1:
         return "hkv"
     if head_block_size > 1:
-        return "hqkv"
+        return "h"
     if num_q_blocks > 1 and num_kv_blocks > 1:
         return "qkv"
     if num_q_blocks > 1:
@@ -239,8 +250,9 @@ def attention_configurator(
 
         for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
-            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
-
+            qkv_size_per_nsp = q_size_per_nsp
+            # For KV Blocking for loop, q input and qkv output should be persistent in VTCM
+            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp + qkv_size_per_nsp
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
@@ -307,14 +319,25 @@ def build_transformer_blocking_config(
         if "kv" in blocking_mode:
             attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
-    resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
-    effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)
+    effective_mode = _resolve_effective_blocking_mode(attention_cfg, blocking_mode or "hqkv")
+    paged_attention = "paged" in str(blocking_mode or "").lower()
+
+    # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+    if paged_attention and "kv" not in effective_mode:
+        raise ValueError(f"Paged attention is only valid alongside KV blocking, got mode {effective_mode}")
+
+    requested = blocking_mode or "hqkv"
+    if effective_mode != requested:
+        warnings.warn(
+            f"Requested blocking_mode '{requested}'/'AUTO' reduced to '{effective_mode}' based on calculated attention config: {attention_cfg}",
+        )
 
     return AttentionBlockingConfig(
         mode=BlockingMode(effective_mode),
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],
+        paged_attention=paged_attention,
     )
 
 
@@ -327,53 +350,80 @@ def build_transformer_blocking_config_for_transform(
     qaic_config: Optional[dict] = None,
     **compile_options,
 ) -> Dict[str, Any]:
-    if qaic_config:
-        blocking_mode = BlockingMode(qaic_config.get("blocking_mode", "hqkv"))
-    else:
-        blocking_mode = BlockingMode.HQKV
-    enable_blocking = False if not qaic_config else qaic_config.get("enable_blocking", False)
+    if qaic_config and "enable_blocking" in qaic_config:
+        logger.warning(
+            "'enable_blocking' in qaic_config is deprecated and ignored. "
+            "Use 'blocking_mode' to enable attention blocking; omit 'blocking_mode' to disable it."
+        )
 
-    if qaic_config is None and enable_blocking:
+    requested_blocking_mode = None if not qaic_config else qaic_config.get("blocking_mode")
+    if requested_blocking_mode is None:
+        return None
+
+    # "paged" is an orthogonal flag on top of a base blocking mode (e.g. "kv_paged"), not its own
+    # BlockingMode member, so it must be stripped before resolving the base mode via the enum.
+    base_blocking_mode = str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
+    blocking_mode = BlockingMode.resolve(base_blocking_mode)
+
+    required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])
+    provided_keys = [key for key in required_keys if qaic_config.get(key)]
+    missing_keys = [key for key in required_keys if not qaic_config.get(key)]
+
+    if provided_keys and missing_keys:
+        raise ValueError(
+            f"blocking_mode '{requested_blocking_mode}' requires {required_keys} but only {provided_keys} were provided; "
+            f"either supply all of {missing_keys} or none to use automatic calculation"
+        )
+
+    # if we haven't been passed manual number of blocks, do automatic calculation
+    if missing_keys:
+        # Pass the raw requested mode (not the paged-stripped enum) through so the "paged"
+        # substring is still visible to build_transformer_blocking_config's own paged detection.
         blocking_config = build_transformer_blocking_config(
             model_config,
-            blocking_mode=blocking_mode,
+            blocking_mode=str(requested_blocking_mode),
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
             compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
         )
-    elif not enable_blocking:
-        blocking_config = None
+    # if we have been passed all number of blocks via qaic_config, set each in blocking config
     else:
         blocking_config = AttentionBlockingConfig()
-        mode_from_config = ""
-        if qaic_config.get("num_kv_blocks", False) and enable_blocking and "kv" in blocking_mode:
-            mode_from_config = "kv" + mode_from_config
-            blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
-        if qaic_config.get("num_q_blocks", False) and enable_blocking and "q" in blocking_mode:
-            mode_from_config = "q" + mode_from_config
-            blocking_config.num_q_blocks = _get_valid_num_blocks(qaic_config, "num_q_blocks")
-        if qaic_config.get("head_block_size", False) and enable_blocking and "h" in blocking_mode:
-            mode_from_config = "h" + mode_from_config
-            blocking_config.head_block_size = _get_valid_num_blocks(qaic_config, "head_block_size")
-        if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
-            mode_from_config = "b" + mode_from_config
-            blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
+        for key in required_keys:
+            setattr(blocking_config, key, _get_valid_num_blocks(qaic_config, key))
+        blocking_config.mode = BlockingMode(blocking_mode)
+        # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+        blocking_config.paged_attention = (
+            "paged" in str(requested_blocking_mode or "").lower() and "num_kv_blocks" in required_keys
+        )
 
-        # check if qaic config did not provide any blocking details
-        if mode_from_config == "":
-            blocking_config = build_transformer_blocking_config(
-                model_config,
-                blocking_mode=blocking_mode,
-                ctx_len=ctx_len,
-                seq_len=seq_len,
-                bs=bs,
-                compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
-            )
-        else:
-            blocking_config.mode = BlockingMode(mode_from_config)
+    # For headpar modes: set headpar_split, defaulting to aic_num_cores when omitted
+    _HEADPAR_MODES = {BlockingMode.KV_HEADPAR, BlockingMode.PREFILL_KV, BlockingMode.PREFILL_QKV}
+    if blocking_mode in _HEADPAR_MODES:
+        headpar_split = qaic_config.get("headpar_split")
+        if headpar_split is None:
+            headpar_split = compile_options.get("aic_num_cores", DEFAULT_AIC_NUM_CORES)
+        blocking_config.headpar_split = headpar_split
 
-        if qaic_config.get("skip_kv", False) and enable_blocking:
-            blocking_config.skip_kv = qaic_config.get("skip_kv")
+    if blocking_mode == BlockingMode.KV_BATCH_FOLD:
+        blocking_config.batch_fold = True
+
+    # optional blocking parameters to set if given in qaic_config
+    for param in ("skip_kv", "n_rep_chunk", "ctx_len", "kv_block_unroll", "num_cores_per_device"):
+        if qaic_config.get(param) is not None:
+            setattr(blocking_config, param, qaic_config.get(param))
+
+    # KV_BATCH_FOLD also uses this value to block Qwen3.5 linear-attention
+    # recurrence across the head dimension. It is a required field for BHQKV,
+    # but an optional tuning knob for the folded decode path.
+    if qaic_config.get("gdn_num_head_blocks") is not None:
+        blocking_config.gdn_num_head_blocks = _get_valid_num_blocks(qaic_config, "gdn_num_head_blocks")
+
+    if qaic_config.get("ctx_len") is None:
+        blocking_config.ctx_len = ctx_len
+
+    if qaic_config.get("num_cores_per_device") is None:
+        blocking_config.num_cores_per_device = compile_options.get("aic_num_cores")
 
     return blocking_config
