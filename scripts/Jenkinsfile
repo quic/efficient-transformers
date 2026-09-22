@@ -546,13 +546,13 @@ pipeline {
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                             export QEFF_HOME=/efficient-transformers/Non_cli_qaic_disagg &&
-                            python -m pytest -o addopts="" -m "$QAIC_MARKEXPR" -k "tiny_model" tests/transformers/disaggregated --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_disagg --impact-catalog=.ci-impact-catalog-disagg-scratch.json | { grep "::" || true; } > .ci-disagg-tiny-collected.txt &&
-                            mapfile -t SELECTED_TESTS < .ci-disagg-tiny-collected.txt &&
+                            python -m pytest -o addopts="" -m "$QAIC_MARKEXPR" tests/transformers/disaggregated --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_disagg --impact-catalog=.ci-impact-catalog-disagg-scratch.json | { grep "::" || true; } > .ci-disagg-collected.txt &&
+                            mapfile -t SELECTED_TESTS < .ci-disagg-collected.txt &&
                             if [ "${#SELECTED_TESTS[@]}" -eq 0 ]; then
-                              echo "No tiny_model disagg tests selected for this run" &&
+                              echo "No disagg tests selected for this run" &&
                               echo "<?xml version=\\"1.0\\" encoding=\\"utf-8\\"?><testsuites></testsuites>" > tests/tests_log_disagg.xml
                             else
-                              printf "Selected disagg tiny_model tests:\\n%s\\n" "${SELECTED_TESTS[@]}" &&
+                              printf "Selected disagg tests:\\n%s\\n" "${SELECTED_TESTS[@]}" &&
                               rm -f tests/tests_log_disagg_batch_*.xml &&
                               batch=0 &&
                               # Keep one test per worker process so QAIC contexts are released between tests.

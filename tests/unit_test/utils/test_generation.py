@@ -22,6 +22,7 @@ is required.
 
 import json
 from collections import deque
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -39,6 +40,7 @@ from QEfficient.generation.text_generation_inference import (
     get_input_prompts,
     read_prompts_txt_file,
 )
+from QEfficient.utils import constants
 
 # ---------------------------------------------------------------------------
 # Shared mock helpers
@@ -1084,6 +1086,37 @@ class TestVisionHandlerInit:
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises((ValueError, AttributeError)):
             h.prepare_vlm_inputs("image.jpg", "query", 128)
+
+    def test_cast_vision_inputs_preserves_bfloat16_payload(self):
+        from QEfficient.generation.embedding_handler import VisionHandler
+
+        vision_session = MagicMock()
+        vision_session.binding_is_bfloat16.side_effect = lambda name: name == "pixel_values"
+        handler = VisionHandler(qeff_model=None, vision_session=vision_session, processor=MagicMock(), tokenizer=None)
+        values = np.array([1.0, -2.5, np.pi], dtype=np.float32)
+        vision_inputs = {"pixel_values": values.copy(), "image_masks": values.copy()}
+
+        handler._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
+
+        assert vision_inputs["pixel_values"].dtype == np.float16
+        np.testing.assert_array_equal(
+            vision_inputs["pixel_values"].view(np.uint16),
+            np.array([0x3F80, 0xC020, 0x4049], dtype=np.uint16),
+        )
+        np.testing.assert_array_equal(vision_inputs["image_masks"], values.astype(np.float16))
+
+
+def test_binding_is_bfloat16_uses_compiled_binding_type(monkeypatch):
+    from QEfficient.generation import cloud_infer
+
+    monkeypatch.setattr(cloud_infer, "aicapi", SimpleNamespace(BFLOAT16_TYPE=11), raising=False)
+    session = object.__new__(cloud_infer.QAICInferenceSession)
+    session.bindings = [SimpleNamespace(type=11), SimpleNamespace(type=1)]
+    session.binding_index_map = {"pixel_values": 0, "image_masks": 1}
+
+    assert session.binding_is_bfloat16("pixel_values") is True
+    assert session.binding_is_bfloat16("image_masks") is False
+    assert session.binding_is_bfloat16("missing") is False
 
 
 # ---------------------------------------------------------------------------
