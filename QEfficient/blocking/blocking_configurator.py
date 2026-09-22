@@ -374,7 +374,11 @@ def build_transformer_blocking_config_for_transform(
         "indexer_n_head",
         "indexer_q_size",
         "indexer_q_chunk",
+        "indexer_prefill_parallel",
+        "indexer_num_blocks",
+        "msa_num_kv_blocks",
         "msa_q_chunk",
+        "page_block_size",
         "num_cores_per_device",
     ):
         if qaic_config.get(param) is not None:

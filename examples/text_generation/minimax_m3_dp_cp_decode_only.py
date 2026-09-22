@@ -47,6 +47,7 @@ def _run_pytorch_parity_test(
     msa_indexer_dp: int = 1,
     msa_indexer_cp: int = 1,
     msa_attn_dp: int = 1,
+    msa_attn_cp: int = 1,
     indexer_n_head: int = 1,
     num_cores_per_device: int = 16,
     batch_size: int = 1,
@@ -85,7 +86,7 @@ def _run_pytorch_parity_test(
             "tree_reduce": tree_reduce,
         }
     }
-    if msa_indexer_dp > 1 or msa_attn_dp > 1:
+    if msa_indexer_dp > 1 or msa_attn_dp > 1 or msa_attn_cp > 1:
         qaic_config["blocking_mode"] = "kv_headpar"
         qaic_config["num_kv_blocks"] = 2
         if msa_indexer_dp > 1 or msa_indexer_cp > 1:
@@ -93,13 +94,15 @@ def _run_pytorch_parity_test(
             qaic_config["msa_indexer_cp"] = msa_indexer_cp
             qaic_config["indexer_n_head"] = indexer_n_head
             qaic_config["num_cores_per_device"] = num_cores_per_device
-        if msa_attn_dp > 1:
+        if msa_attn_dp > 1 or msa_attn_cp > 1:
+            qaic_config["msa_attn_cp"] = msa_attn_cp
             qaic_config["msa_attn_dp"] = msa_attn_dp
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, torch_dtype=torch.float32)
     qeff_model.compile(
         batch_size=execution_batch_size,
         prefill_seq_len=1,
+        prefill_only=False,
         ctx_len=ctx_len,
         num_cores=num_cores,
         num_devices=num_devices,
@@ -176,6 +179,12 @@ def main():
         help="DP factor for GP attention (_baseline_attention_gp path). Must divide batch_size.",
     )
     parser.add_argument(
+        "--msa-attn-cp",
+        type=int,
+        default=1,
+        help="CP factor for GP attention cache layout.",
+    )
+    parser.add_argument(
         "--indexer-n-head",
         type=int,
         default=1,
@@ -212,6 +221,7 @@ def main():
                 msa_indexer_dp=args.msa_indexer_dp,
                 msa_indexer_cp=args.msa_indexer_cp,
                 msa_attn_dp=args.msa_attn_dp,
+                msa_attn_cp=args.msa_attn_cp,
                 indexer_n_head=args.indexer_n_head,
                 num_cores_per_device=args.num_cores_per_device,
                 batch_size=args.batch_size,
@@ -232,6 +242,7 @@ def main():
     qpc_paths = qeff_model.compile(
         batch_size=execution_batch_size,
         prefill_seq_len=1,
+        prefill_only=False,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
@@ -248,6 +259,7 @@ def main():
             "msa_indexer_dp": args.msa_indexer_dp,
             "msa_indexer_cp": args.msa_indexer_cp,
             "msa_attn_dp": args.msa_attn_dp,
+            "msa_attn_cp": args.msa_attn_cp,
             "indexer_n_head": args.indexer_n_head,
             "num_cores_per_device": args.num_cores_per_device,
             "moe_config": {

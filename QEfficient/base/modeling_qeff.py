@@ -634,10 +634,8 @@ class QEFFBaseModel(ABC):
             onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-            # Keep this strictly layerwise-scoped so regular non-layerwise export
-            # remains backward compatible.
-            if QEFFBaseModel._layerwise_active:
-                _restore_retained_state_output_names(model, output_names)
+            # Restore retained-state names when exporters or transforms assign numeric aliases.
+            _restore_retained_state_output_names(model, output_names)
 
             transform_names = [transform.__name__ for transform in self._pytorch_transforms + active_transforms]
             model.metadata_props.append(

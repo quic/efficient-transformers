@@ -162,8 +162,9 @@ def update_running_softmax(
     )
     delta_max = previous_max - updated_max
     current_exp = torch.exp(attn_weights_block - updated_max.unsqueeze(-1))
+    curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
     updated_denominator = (
-        current_denominator * torch.exp(delta_max) + current_exp.sum(dim=-1)
+        current_denominator * torch.exp(delta_max) + curr_exp_sum
     )
     if value_block.ndim == current_exp.ndim + 1:
         queries_per_group = value_block.shape[-3]
@@ -230,18 +231,27 @@ def qeff_eager_attention_forward(
     return attn_output, attn_weights
 
 
+def _gather_paged_kv_selected_heads(pool: torch.Tensor, physical_ids: torch.Tensor) -> torch.Tensor:
+    """Gather per-batch, per-head pages from a physical KV pool."""
+    if physical_ids.ndim != 3:
+        raise ValueError("physical_ids must have shape [B, H, pages].")
+    batch, heads, num_pages = physical_ids.shape
+    gathered = []
+    for batch_idx in range(batch):
+        block_ids = physical_ids[batch_idx].transpose(0, 1).contiguous().to(torch.int32)
+        pages = CtxGatherFuncPagedKVDP.apply(pool, block_ids)
+        gathered.append(pages.squeeze(0).view(heads, num_pages, pool.shape[2], pool.shape[3]))
+    return torch.stack(gathered, dim=0)
+
+
 class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
     @staticmethod
     def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        """Apply rotary embeddings to an indexer tensor in standard or GP layout."""
-        rotary_dim = cos.shape[-1]
-        rotated = x[..., :rotary_dim]
-        passthrough = x[..., rotary_dim:]
+        """Apply RoPE to an indexer tensor whose final dimension is already rotary-sized."""
         head_axis = x.ndim - 3
         cos = cos.unsqueeze(head_axis)
         sin = sin.unsqueeze(head_axis)
-        rotated = rotated * cos + rotate_half(rotated) * sin
-        return torch.cat((rotated, passthrough), dim=-1)
+        return x * cos + rotate_half(x) * sin
 
     def _project_index_q_prefill(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Project prefill index queries in bounded sequence chunks."""
@@ -362,6 +372,467 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         )
         return CtxGatherFuncPagedKVDP.apply(index_key_cache, block_ids_by_row.to(torch.int32))
 
+    def _read_blocked_k_core(
+        self,
+        index_key_cache: torch.Tensor,
+        position_ids_dp: torch.Tensor,
+        start_index: int,
+        end_index: int,
+        num_cores: int,
+        position_max: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Gather one compact index block split across prefill cores."""
+        batch_local, rows, _, head_dim = index_key_cache.shape
+        if rows != 1 or position_ids_dp.shape[1] != 1:
+            raise NotImplementedError("Core-split MSA prefill requires DP=CP=1 and one indexer KV row.")
+        block_len = end_index - start_index
+        if block_len < num_cores or block_len % num_cores:
+            raise ValueError("Core-split MSA prefill KV block must divide evenly across cores.")
+        tokens_per_core = block_len // num_cores
+        offsets = (
+            torch.arange(num_cores, device=index_key_cache.device).view(1, num_cores, 1) * tokens_per_core
+            + torch.arange(tokens_per_core, device=index_key_cache.device).view(1, 1, tokens_per_core)
+            + start_index
+        ).to(torch.int32)
+        if position_max is None:
+            position_max = position_ids_dp.max(dim=-1).values
+        invalid = offsets > position_max[:, :, None]
+        invalid_value = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
+        offsets = torch.where(invalid, _scalar_like(offsets, invalid_value), offsets)
+        gathered = CtxGatherFuncBlockedKV.apply(index_key_cache, offsets.reshape(batch_local, 1, block_len))
+        return gathered.reshape(batch_local, num_cores, tokens_per_core, head_dim)
+
+    def _write_msa_paged_prefill_cache(
+        self,
+        cache: torch.Tensor,
+        updates: torch.Tensor,
+        position_ids: torch.Tensor,
+        block_table: torch.Tensor,
+    ) -> torch.Tensor:
+        """Scatter a contiguous prefill sequence into a physical page pool."""
+        page_size = int(cache.shape[2])
+        batch, query_len = position_ids.shape
+        if page_size != self.config.index_block_size:
+            raise ValueError("Paged MSA prefill requires page_block_size == index_block_size.")
+        if query_len <= 0 or query_len % page_size:
+            raise ValueError("Paged MSA prefill query length must be a multiple of page size.")
+        if position_ids.shape[1] > 1 and not torch.equal(position_ids[:, 1:], position_ids[:, :-1] + 1):
+            raise ValueError("Paged MSA prefill positions must be contiguous.")
+        if (position_ids[:, 0] % page_size != 0).any():
+            raise ValueError("Paged MSA prefill start positions must be page aligned.")
+        if block_table.ndim != 3 or block_table.shape[0] != 1 or block_table.shape[1] != batch:
+            raise ValueError("Paged MSA prefill block tables must have shape [1, B, pages].")
+        rows = updates.shape[1]
+        logical_page = position_ids // page_size
+        physical_page = torch.gather(block_table[0].to(torch.int64), 1, logical_page).to(torch.int32)
+        block_ids = physical_page.unsqueeze(1).expand(batch, rows, query_len)
+        addresses = (position_ids % page_size).to(torch.int32).unsqueeze(1).expand_as(block_ids)
+        return CtxPagedScatterFuncDP.apply(cache, block_ids, addresses, updates)
+
+    def _read_msa_prefill_paged_block(
+        self,
+        index_key_cache: torch.Tensor,
+        block_table: torch.Tensor,
+        start_index: int,
+        end_index: int,
+        position_max: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Gather one logical index block from the physical page pool."""
+        page_size = int(index_key_cache.shape[2])
+        if start_index % page_size or end_index % page_size:
+            raise ValueError("Paged MSA prefill blocks must be page aligned.")
+        if block_table.ndim != 2:
+            raise ValueError("Paged MSA prefill block_table must have shape [B, pages].")
+        batch = block_table.shape[0]
+        page_start, page_end = start_index // page_size, end_index // page_size
+        page_ids = block_table[:, page_start:page_end].to(torch.int32)
+        fallback_ids = block_table[:, :1].to(torch.int32)
+        gathered = []
+        for batch_idx in range(batch):
+            ids = torch.cat((page_ids[batch_idx], fallback_ids[batch_idx])).view(-1, 1).expand(
+                page_end - page_start + 1, index_key_cache.shape[1]
+            )
+            pages = CtxGatherFuncPagedKVDP.apply(index_key_cache, ids).squeeze(0)
+            block_len = end_index - start_index
+            block = pages[:, :block_len]
+            if position_max is not None:
+                positions = torch.arange(start_index, end_index, device=block.device).view(1, block_len)
+                invalid = positions > position_max[batch_idx]
+                block = torch.where(invalid.unsqueeze(-1), pages[:, block_len:block_len + 1], block)
+            gathered.append(block)
+        return torch.stack(gathered, dim=0)
+
+    def _read_msa_prefill_paged_block_core(
+        self,
+        index_key_cache: torch.Tensor,
+        block_table: torch.Tensor,
+        start_index: int,
+        end_index: int,
+        num_cores: int,
+        position_max: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        block = self._read_msa_prefill_paged_block(index_key_cache, block_table, start_index, end_index, position_max)
+        batch, _, block_len, head_dim = block.shape
+        if block.shape[1] != 1 or block_len < num_cores or block_len % num_cores:
+            raise ValueError("Paged MSA prefill KV block must divide evenly across cores.")
+        return block[:, 0].reshape(batch, num_cores, block_len // num_cores, head_dim)
+
+    def _select_blocks_prefill_par(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values: "QEffMiniMaxSparseCache",
+        layer_idx: int,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        blocking_config: Optional[AttentionBlockingConfig],
+        paged_block_table: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        index_key_cache = past_key_values.index_keys[layer_idx]
+        token_indices, token_valid, index_key_cache = self._select_blocks_prefill_par_impl(
+            hidden_states,
+            position_ids,
+            index_key_cache,
+            cos,
+            sin,
+            blocking_config,
+            paged_block_table,
+        )
+        past_key_values.index_keys[layer_idx] = index_key_cache
+        return token_indices, token_valid
+
+    def _select_blocks_prefill_par_impl(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        index_key_cache: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        blocking_config: Optional[AttentionBlockingConfig],
+        paged_block_table: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Select MSA blocks with mixed Q-head and KV-token parallelism."""
+        cfg = self.config
+        batch, query_len, _ = hidden_states.shape
+        num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
+        num_index_heads = cfg.index_n_heads
+        num_kv_heads = int(getattr(blocking_config, "indexer_n_head", None) or getattr(cfg, "indexer_n_head", 1) or 1)
+        dim = cfg.index_head_dim
+        num_kv_blocks = max(1, int(getattr(blocking_config, "indexer_num_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
+        q_block_size = int(getattr(blocking_config, "indexer_q_size", None) or cfg.index_block_size)
+        q_block_chunk = int(getattr(blocking_config, "indexer_q_chunk", None) or q_block_size)
+        ctx_len = int(getattr(blocking_config, "ctx_len", None) or getattr(cfg, "ctx_len", None) or (paged_block_table.shape[1] * index_key_cache.shape[2] if paged_block_table is not None else index_key_cache.shape[-2]))
+        skip_kv = bool(getattr(blocking_config, "skip_kv", True))
+        # A Q head owns C/Hq cores when Hq <= C.  If Hq > C, clamp to one
+        # core per Q head; no additional KV split is possible in that case.
+        cores_per_q_head = max(1, num_cores // num_index_heads)
+
+        if getattr(blocking_config, "msa_indexer_dp", 1) not in (None, 1) or getattr(blocking_config, "msa_indexer_cp", 1) not in (None, 1):
+            raise ValueError("MSA prefill selection currently requires DP=1 and CP=1.")
+        if query_len <= 1:
+            raise ValueError("MSA prefill selection requires QL > 1.")
+        if num_index_heads % num_kv_heads:
+            raise ValueError(
+                "MSA prefill index_n_heads must be divisible by indexer_n_head."
+            )
+        if ctx_len % cfg.index_block_size or ctx_len % num_kv_blocks:
+            raise ValueError(
+                "MSA prefill selection requires ctx_len divisible by index_block_size "
+                "and num_kv_blocks."
+            )
+        if q_block_size <= 0 or q_block_chunk < q_block_size:
+            raise ValueError("MSA prefill Q block sizes must be positive and ordered.")
+        if q_block_chunk % q_block_size:
+            raise ValueError("MSA prefill q_block_chunk must divide evenly by q_block_size.")
+
+        if paged_block_table is None:
+            expected_cache_shape = (batch, num_kv_heads, ctx_len, dim)
+            if tuple(index_key_cache.shape) != expected_cache_shape:
+                raise ValueError(
+                    f"MSA prefill index_key_cache shape {tuple(index_key_cache.shape)} != "
+                    f"{expected_cache_shape}."
+                )
+        else:
+            if getattr(blocking_config, "msa_indexer_dp", 1) not in (None, 1) or getattr(blocking_config, "msa_indexer_cp", 1) not in (None, 1):
+                raise ValueError(
+                    "Paged MSA prefill selection currently requires indexer DP=1 and CP=1."
+                )
+            if paged_block_table.ndim != 2 or paged_block_table.shape[0] != batch:
+                raise ValueError(
+                    "Paged MSA prefill indexer block_table must have shape [B, pages]."
+                )
+            if index_key_cache.ndim != 4 or tuple(index_key_cache.shape[1:]) != (num_kv_heads, index_key_cache.shape[2], dim):
+                raise ValueError("Paged MSA index cache shape is incompatible with prefill.")
+            page_size = int(index_key_cache.shape[2])
+            configured_page_size = getattr(blocking_config, "page_block_size", None)
+            if configured_page_size is not None and int(configured_page_size) != page_size:
+                raise ValueError("Paged MSA prefill page size does not match blocking_config.page_block_size.")
+            if page_size != cfg.index_block_size:
+                raise ValueError("Paged MSA prefill requires page size == index_block_size.")
+            if paged_block_table.shape[1] < (ctx_len + page_size - 1) // page_size:
+                raise ValueError("Paged MSA prefill indexer block_table is too short for ctx_len.")
+
+        idx_q = self._project_index_q_prefill(hidden_states)[
+            ..., : num_index_heads * dim
+        ]
+        idx_q = idx_q.view(batch, query_len, num_index_heads, dim).transpose(1, 2)
+        idx_k = self.k_proj(hidden_states)[..., : num_kv_heads * dim]
+        idx_k = idx_k.view(batch, query_len, num_kv_heads, dim).transpose(1, 2)
+        idx_q = self.q_norm(idx_q)
+        idx_k = self.k_norm(idx_k)
+        idx_q = self._apply_rope(idx_q, cos, sin)
+        idx_k = self._apply_rope(idx_k, cos, sin)
+        if paged_block_table is None:
+            index_key_cache = M3CtxScatterFunc.apply(
+                index_key_cache, position_ids.to(torch.int32), idx_k
+            )
+        else:
+            index_key_cache = self._write_msa_paged_prefill_cache(
+                index_key_cache,
+                idx_k,
+                position_ids,
+                paged_block_table.unsqueeze(0),
+            )
+        position_max = position_ids.unsqueeze(1).max(dim=-1).values
+
+        kv_block_size = ctx_len // num_kv_blocks
+        if kv_block_size < num_cores or kv_block_size % num_cores:
+            raise ValueError(
+                "MSA parallel prefill KV block must divide evenly across all cores."
+            )
+        if kv_block_size % cores_per_q_head:
+            raise ValueError(
+                "MSA parallel prefill KV block must divide evenly across "
+                "the cores assigned to each Q head."
+            )
+        index_block_size = cfg.index_block_size
+        tokens_per_q_head = kv_block_size // cores_per_q_head
+        if tokens_per_q_head % index_block_size:
+            raise ValueError(
+                "MSA prefill Q-head KV split must contain complete index blocks."
+            )
+        blocks_per_q_head = tokens_per_q_head // index_block_size
+        num_blocks = ctx_len // index_block_size
+        mask_value = MASKED_ATTENTION_LOGIT
+        topk = min(cfg.index_topk_blocks, num_blocks)
+        topk_indices_chunks: list[torch.Tensor] = []
+        topk_valid_chunks: list[torch.Tensor] = []
+
+        for q_chunk_start in range(0, query_len, q_block_chunk):
+            q_chunk_end = min(q_chunk_start + q_block_chunk, query_len)
+            query_chunk = q_chunk_end - q_chunk_start
+            if query_chunk % q_block_size:
+                raise ValueError(
+                    "MSA prefill query length must be divisible by q_block_size "
+                    "within every q_block_chunk."
+                )
+            score_blocks: list[list[torch.Tensor]] = [
+                [] for _ in range(query_chunk // q_block_size)
+            ]
+            q_chunk = idx_q[:, :, q_chunk_start:q_chunk_end]
+            query_positions = position_ids[:, q_chunk_start:q_chunk_end]
+            q_chunk_position = query_positions.max(dim=-1).values
+            is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+
+            for block_idx in range(num_kv_blocks):
+                start = block_idx * kv_block_size
+                end = start + kv_block_size
+                block_skip_future_chunk = (
+                    torch.tensor(start, device=hidden_states.device)
+                    > q_chunk_position
+                )
+                if skip_kv and not is_export and bool(
+                    block_skip_future_chunk.all().item()
+                ):
+                    # Keep one reduced score tensor per skipped indexer KV
+                    # block.  The block is entirely future, so the score
+                    # placeholder is sufficient for top-k while avoiding
+                    # the cache gather and QK matmul in eager execution.
+                    masked_block = torch.full(
+                        (
+                            batch,
+                            num_index_heads,
+                            cores_per_q_head,
+                            q_block_size,
+                            blocks_per_q_head,
+                        ),
+                        mask_value,
+                        dtype=torch.float32,
+                        device=hidden_states.device,
+                    )
+                    for q_block_idx in range(len(score_blocks)):
+                        score_blocks[q_block_idx].extend(
+                            masked_block.clone()
+                            for _ in range(block_idx, num_kv_blocks)
+                        )
+                    break
+                if paged_block_table is None:
+                    key_block = self._read_blocked_k_core(
+                        index_key_cache,
+                        position_ids.unsqueeze(1),
+                        start,
+                        end,
+                        num_cores,
+                        position_max,
+                    ).float()
+                else:
+                    key_block = self._read_msa_prefill_paged_block_core(
+                        index_key_cache,
+                        paged_block_table,
+                        start,
+                        end,
+                        num_cores,
+                        position_max,
+                    ).float()
+                # The gather already exposes the full-core KV split. Replicate
+                # that split for every Q head and reshape it into each Q
+                # head's remaining core group.
+                tokens_per_core = kv_block_size // num_cores
+                key_core = key_block.unsqueeze(1).expand(
+                    batch,
+                    num_index_heads,
+                    num_cores,
+                    tokens_per_core,
+                    dim,
+                ).reshape(
+                    batch,
+                    num_index_heads,
+                    cores_per_q_head,
+                    kv_block_size // cores_per_q_head,
+                    dim,
+                )
+                for q_block_idx, q_start in enumerate(
+                    range(0, query_chunk, q_block_size)
+                ):
+                    q_block = q_chunk[:, :, q_start : q_start + q_block_size]
+                    # Move Q heads to the core axis (one Q head per logical
+                    # core group), then replicate Q over that group's cores.
+                    q_core = q_block.unsqueeze(2).expand(
+                        batch,
+                        num_index_heads,
+                        cores_per_q_head,
+                        q_block_size,
+                        dim,
+                    )
+                    scores = torch.matmul(
+                        q_core.float(),
+                        key_core.transpose(-1, -2).float(),
+                    )
+                    q_positions = query_positions[
+                        :, q_start : q_start + q_block_size
+                    ]
+                    block_skip_future = (
+                        torch.tensor(start, device=hidden_states.device)
+                        > q_positions[:, None, None, :, None]
+                    )
+                    if skip_kv:
+                        scores = torch.where(
+                            block_skip_future,
+                            _scalar_like(scores, mask_value),
+                            scores,
+                        )
+                    if cfg.index_local_blocks == 0:
+                        key_offsets = torch.arange(
+                            kv_block_size, device=hidden_states.device
+                        ).view(1, 1, 1, 1, -1)
+                        q_positions = q_positions.view(
+                            batch, 1, 1, q_block_size, 1
+                        )
+                        scores = torch.where(
+                            key_offsets > (q_positions - start),
+                            _scalar_like(scores, mask_value),
+                            scores,
+                        )
+                    # Reduce each index block while this KV block is local.
+                    scores = scores.reshape(
+                        batch,
+                        num_index_heads,
+                        cores_per_q_head,
+                        q_block_size,
+                        blocks_per_q_head,
+                        index_block_size,
+                    )
+                    scores = scores.amax(dim=-1)
+                    # Keep the future-block predicate attached to the
+                    # reduction result before changing its core/block layout.
+                    if skip_kv:
+                        scores = torch.where(
+                            block_skip_future,
+                            _scalar_like(scores, mask_value),
+                            scores,
+                        )
+                    # Keep each KV super-block in the reduction-native
+                    # [B, H, core, Q, block] layout.  The layout conversion
+                    # is deferred until all KV super-blocks are collected.
+                    score_blocks[q_block_idx].append(scores)
+
+            for q_block_idx in range(len(score_blocks)):
+                # Stack in KV-super-block order, then restore the logical
+                # [B, H, Q, block] selector layout once at the end.  A plain
+                # cat on the last dimension would change the core/block
+                # ordering relative to the previous per-block permute.
+                scores = torch.stack(score_blocks[q_block_idx], dim=2)
+                scores = scores.permute(0, 1, 4, 2, 3, 5).reshape(
+                    batch, num_index_heads, q_block_size, num_blocks
+                )
+                q_positions = query_positions[
+                    :, q_block_idx * q_block_size : (q_block_idx + 1) * q_block_size
+                ]
+                block_ids = torch.arange(
+                    num_blocks, device=hidden_states.device
+                ).view(1, 1, 1, num_blocks)
+                mask_score = torch.tensor(
+                    mask_value, dtype=scores.dtype, device=scores.device
+                )
+                local_score = torch.tensor(
+                    -mask_value, dtype=scores.dtype, device=scores.device
+                )
+                block_skip_future = (
+                    block_ids * index_block_size
+                    > q_positions[:, None, :, None]
+                )
+                scores = torch.where(
+                    block_skip_future,
+                    mask_score,
+                    scores,
+                )
+                for local_offset in range(cfg.index_local_blocks):
+                    local_block = q_positions // index_block_size - local_offset
+                    local_block = torch.where(
+                        local_block >= 0,
+                        local_block,
+                        torch.zeros_like(local_block),
+                    )
+                    scores = torch.where(
+                        block_ids == local_block[:, None, :, None],
+                        local_score,
+                        scores,
+                    )
+                top_scores, top_order = torch.topk(scores, k=topk, dim=-1)
+                topk_indices_chunks.append(
+                    torch.gather(
+                        block_ids.expand_as(scores).to(torch.int32),
+                        -1,
+                        top_order,
+                    )
+                )
+                block_valid = top_scores > (mask_value / 2)
+                if skip_kv:
+                    top_block_skip_future = torch.gather(
+                        block_skip_future.expand_as(scores), -1, top_order
+                    )
+                    block_valid = block_valid & ~top_block_skip_future
+                topk_valid_chunks.append(block_valid)
+
+        block_indices = torch.cat(topk_indices_chunks, dim=2)
+        block_valid = torch.cat(topk_valid_chunks, dim=2)
+        safe_indices = torch.where(
+            block_valid, block_indices, torch.zeros_like(block_indices)
+        ).to(torch.int32)
+        if not torch.onnx.is_in_onnx_export():
+            self.last_block_indices = safe_indices.detach()
+        return safe_indices, block_valid, index_key_cache
+
     def _select_blocks(
         self,
         hidden_states: torch.Tensor,
@@ -387,7 +858,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         dp = blocking_config.msa_indexer_dp if (blocking_config and blocking_config.msa_indexer_dp) else 1
         cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
         hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
-        num_kv_blocks = blocking_config.num_kv_blocks if (blocking_config and blocking_config.num_kv_blocks) else 1
+        num_kv_blocks = max(1, int(getattr(blocking_config, "indexer_num_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
         num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
         if num_cores < 1:
             raise ValueError(f"num_cores_per_device must be positive, got {num_cores}.")
@@ -506,7 +977,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         num_cores = (
             blocking_config.num_cores_per_device if blocking_config and blocking_config.num_cores_per_device else 1
         )
-        num_kv_blocks = blocking_config.num_kv_blocks if blocking_config and blocking_config.num_kv_blocks else 1
+        num_kv_blocks = max(1, int(getattr(blocking_config, "indexer_num_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
         index_key_cache = past_key_values.index_keys.get(layer_idx)
         if index_key_cache is None or index_key_cache.ndim != 4:
             raise ValueError("Paged MSA index selection requires a physical index-key cache.")
@@ -803,7 +1274,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         dp = blocking_config.msa_indexer_dp
         cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
         hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
-        num_kv_blocks = blocking_config.num_kv_blocks if (blocking_config and blocking_config.num_kv_blocks) else 1
+        num_kv_blocks = max(1, int(getattr(blocking_config, "indexer_num_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
         num_cores = (
             blocking_config.num_cores_per_device if (blocking_config and blocking_config.num_cores_per_device) else 1
         )
@@ -870,23 +1341,21 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         # batches, ...].  Convert once to the internal [B_local, DP, ...]
         # layout; keep the row axis [B_local, DP*cp*hkv] unchanged.
         position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
-        cos_dp = cos.view(dp, batch_local, query_len, cos.shape[-1]).permute(1, 0, 2, 3)
-        sin_dp = sin.view(dp, batch_local, query_len, sin.shape[-1]).permute(1, 0, 2, 3)
         idx_q = self.q_proj(hidden_states).view(dp, batch_local, query_len, num_index_heads, dim).permute(1, 0, 3, 2, 4)
         idx_k = self.k_proj(hidden_states).view(dp, batch_local, query_len, hkv, dim).permute(1, 0, 3, 2, 4)
         idx_q = self.q_norm(idx_q)
         idx_k = self.k_norm(idx_k)
         idx_q = self._apply_rope_dp(
             idx_q,
-            cos_dp[..., : cfg.index_head_dim],
-            sin_dp[..., : cfg.index_head_dim],
-            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
+            cos,
+            sin,
+            cfg.index_head_dim,
         )
         idx_k = self._apply_rope_dp(
             idx_k,
-            cos_dp[..., : cfg.index_head_dim],
-            sin_dp[..., : cfg.index_head_dim],
-            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
+            cos,
+            sin,
+            cfg.index_head_dim,
         )
 
         k_updates = (
@@ -1169,11 +1638,11 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         dim = cfg.index_head_dim
         num_index_heads = cfg.index_n_heads
         indexer_n_head = (getattr(blocking_config, "indexer_n_head", None) or getattr(cfg, "indexer_n_head", 1) or 1)
-        num_kv_blocks = (getattr(blocking_config, "num_kv_blocks", None) or getattr(cfg, "msa_kv_blocks", 1) or 1)
+        num_kv_blocks = max(1, int(getattr(blocking_config, "indexer_num_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
         num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
-        ctx_len = (getattr(blocking_config, "ctx_len", None) or getattr(cfg, "ctx_len", None) or past_key_values.layers[layer_idx].keys.shape[2])
+        ctx_len = int(getattr(blocking_config, "ctx_len", None) or getattr(cfg, "ctx_len", None) or (paged_block_table.shape[1] * index_key_cache.shape[2] if paged_block_table is not None else index_key_cache.shape[-2]))
         q_block_size = getattr(blocking_config, "indexer_q_size", None) or cfg.index_block_size
-        q_block_chunk = (getattr(blocking_config, "indexer_q_chunk", None) or getattr(cfg, "msa_q_chunk", None) or q_block_size)
+        q_block_chunk = int(getattr(blocking_config, "indexer_q_chunk", None) or q_block_size)
         index_block_size = cfg.index_block_size
         if query_len <= 1:
             raise ValueError("MSA prefill selection requires QL > 1.")
@@ -1206,6 +1675,16 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                 raise ValueError(
                     "Paged MSA prefill selection currently requires DP=1 and CP=1."
                 )
+            if index_key_cache.ndim != 4 or tuple(index_key_cache.shape[1:]) != (indexer_n_head, index_key_cache.shape[2], dim):
+                raise ValueError("Paged MSA index cache shape is incompatible with prefill.")
+            page_size = int(index_key_cache.shape[2])
+            configured_page_size = getattr(blocking_config, "page_block_size", None)
+            if configured_page_size is not None and int(configured_page_size) != page_size:
+                raise ValueError("Paged MSA prefill page size does not match blocking_config.page_block_size.")
+            if page_size != index_block_size:
+                raise ValueError("Paged MSA prefill requires page size == index_block_size.")
+            if paged_block_table.shape[1] < (ctx_len + page_size - 1) // page_size:
+                raise ValueError("Paged MSA prefill indexer block_table is too short for ctx_len.")
 
         idx_q = self._project_index_q_prefill(hidden_states)[
             ..., : num_index_heads * dim
@@ -1215,8 +1694,8 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         idx_k = idx_k.view(batch, query_len, indexer_n_head, dim).transpose(1, 2)
         idx_q = self.q_norm(idx_q)
         idx_k = self.k_norm(idx_k)
-        idx_q = self._apply_rope(idx_q, cos[..., :dim], sin[..., :dim])
-        idx_k = self._apply_rope(idx_k, cos[..., :dim], sin[..., :dim])
+        idx_q = self._apply_rope(idx_q, cos, sin)
+        idx_k = self._apply_rope(idx_k, cos, sin)
         if paged_block_table is None:
             index_key_cache = M3CtxScatterFunc.apply(
                 index_key_cache, position_ids.to(torch.int32), idx_k
@@ -1414,8 +1893,8 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         # disjoint group of cores, so the query split and the per-head gather
         # expansion use only this smaller group rather than all device cores.
         cores_per_kv_head = num_cores // num_kv_heads
-        ql_chunk = blocking_config.msa_q_chunk or getattr(cfg, "msa_q_chunk", None) or query_len
-        kv_num_blocks = max(1, getattr(blocking_config, "num_kv_blocks", None) or getattr(cfg, "msa_kv_blocks", 1) or 1)
+        ql_chunk = int(getattr(blocking_config, "msa_q_chunk", None) or query_len)
+        kv_num_blocks = max(1, int(getattr(blocking_config, "msa_num_kv_blocks", None) or getattr(blocking_config, "num_kv_blocks", None) or 1))
         selected_blocks = int(token_indices.shape[-1])
         block_size = cfg.index_block_size
         mask_value = float(MIN_MASKED_ATTENTION_VALUE)
@@ -1467,10 +1946,14 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 raise ValueError(
                     "Paged MSA prefill attention block_table must have shape [B, pages]."
                 )
+            page_size = int(key_cache.shape[2])
+            configured_page_size = getattr(blocking_config, "page_block_size", None)
+            if configured_page_size is not None and int(configured_page_size) != page_size:
+                raise ValueError("Paged MSA prefill page size does not match blocking_config.page_block_size.")
             expected_paged_shape = (
-                cfg.num_msa_attn_physical_blocks,
+                key_cache.shape[0],
                 num_kv_heads,
-                cfg.page_block_size,
+                page_size,
                 cfg.head_dim,
             )
             if tuple(key_cache.shape) != expected_paged_shape:
@@ -1483,6 +1966,12 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                     f"Paged MSA prefill value_cache shape {tuple(value_cache.shape)} != "
                     f"{expected_paged_shape}."
                 )
+            logical_page = position_ids // page_size
+            physical_page = torch.gather(paged_block_table.to(torch.int64), 1, logical_page).to(torch.int32)
+            block_ids = physical_page.unsqueeze(1).expand(batch, num_kv_heads, query_len)
+            addresses = (position_ids % page_size).to(torch.int32).unsqueeze(1).expand_as(block_ids)
+            key_cache = CtxPagedScatterFuncDP.apply(key_cache, block_ids, addresses, k)
+            value_cache = CtxPagedScatterFuncDP.apply(value_cache, block_ids, addresses, v)
 
         q = q.reshape(
             batch, num_kv_heads, n_rep, query_len, cfg.head_dim
@@ -2288,23 +2777,67 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 cache_kwargs["cp"] = getattr(blocking_config, "msa_attn_cp", 1) or 1
 
             indexer_block_table = kwargs.get("msa_indexer_block_table")
-            if input_shape[1] > 1:
-                if indexer_block_table is not None:
-                    raise ValueError("Paged MSA prefill is not yet supported")
-                token_indices, token_valid = self.indexer._select_blocks_prefill(
-                    hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin, blocking_config
+            attention_block_table = kwargs.get("msa_attn_block_table")
+            paged = attention_block_table is not None
+            is_prefill = input_shape[1] > 1
+            indexer_position_embeddings = kwargs.get("indexer_position_embeddings")
+            indexer_dp = getattr(blocking_config, "msa_indexer_dp", 1) or 1
+            if (is_prefill or paged or indexer_dp > 1) and indexer_position_embeddings is not None:
+                indexer_cos, indexer_sin = indexer_position_embeddings
+            else:
+                indexer_cos, indexer_sin = cos, sin
+            if is_prefill:
+                selector = (
+                    self.indexer._select_blocks_prefill_par
+                    if getattr(blocking_config, "indexer_prefill_parallel", False)
+                    else self.indexer._select_blocks_prefill
+                )
+                token_indices, token_valid = selector(
+                    hidden_states,
+                    position_ids,
+                    past_key_values,
+                    self.layer_idx,
+                    indexer_cos,
+                    indexer_sin,
+                    blocking_config,
+                    paged_block_table=indexer_block_table[0] if paged else None,
                 )
             else:
                 token_indices, token_valid = self.indexer._select_blocks(
-                    hidden_states, position_ids, past_key_values, self.layer_idx, cos, sin,
+                    hidden_states,
+                    position_ids,
+                    past_key_values,
+                    self.layer_idx,
+                    indexer_cos,
+                    indexer_sin,
                     blocking_config=blocking_config,
                     block_table=indexer_block_table,
                 )
-
-            attention_block_table = kwargs.get("msa_attn_block_table")
-            paged = attention_block_table is not None
             attn_dp = blocking_config.msa_attn_dp if (blocking_config and blocking_config.msa_attn_dp) else 1
             attn_cp = blocking_config.msa_attn_cp if (blocking_config and blocking_config.msa_attn_cp) else 1
+            if paged and is_prefill:
+                layer = past_key_values.layers[self.layer_idx]
+                key_cache = layer.keys
+                value_cache = layer.values
+                attn_output, key_cache, value_cache = self._msa_attention_prefill(
+                    query_states,
+                    hidden_states,
+                    cos,
+                    sin,
+                    key_cache,
+                    value_cache,
+                    token_indices,
+                    token_valid,
+                    position_ids,
+                    blocking_config,
+                    paged_block_table=attention_block_table[0],
+                )
+                layer.keys = key_cache
+                layer.values = value_cache
+                attn_output = attn_output.transpose(1, 2).reshape(
+                    *input_shape, self.config.num_attention_heads * self.head_dim
+                )
+                return self.o_proj(attn_output.to(dtype=self.o_proj.weight.dtype).contiguous()), None
             if paged:
                 layer = past_key_values.layers[self.layer_idx]
                 key_cache = layer.keys
@@ -2367,8 +2900,9 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                 past_key_values.layers[self.layer_idx].keys = key_cache
                 past_key_values.layers[self.layer_idx].values = value_cache
                 return self.o_proj(attn_output.to(dtype=self.o_proj.weight.dtype).contiguous()), None
+            # Sparse decode gathers from the retained cache, so write the current token before either path.
+            past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
             if attn_dp > 1 or attn_cp > 1:
-                past_key_values.write_only_sparse(key_states, value_states, self.layer_idx, cache_kwargs)
                 dp = cache_kwargs["dp"]
                 batch = input_shape[0]
                 batch_local = batch // dp
@@ -2574,6 +3108,32 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
+        indexer_position_embeddings = None
+        indexer = None
+        blocking_config = None
+        for layer in self.layers:
+            attention = getattr(layer, "self_attn", None)
+            candidate = getattr(attention, "indexer", None)
+            if candidate is not None:
+                indexer = candidate
+                blocking_config = getattr(attention, "attn_blocking_config", None)
+                break
+        indexer_dim = getattr(getattr(indexer, "config", None), "index_head_dim", None)
+        indexer_dp = getattr(blocking_config, "msa_indexer_dp", 1) or 1
+        if indexer_dim is not None:
+            cos, sin = position_embeddings
+            rotary_dim = min(cos.shape[-1], indexer_dim)
+            indexer_cos = cos[..., :rotary_dim]
+            indexer_sin = sin[..., :rotary_dim]
+            if rotary_dim < indexer_dim:
+                pad = indexer_dim - rotary_dim
+                indexer_cos = F.pad(indexer_cos, (0, pad), value=1.0)
+                indexer_sin = F.pad(indexer_sin, (0, pad), value=0.0)
+            if inputs_embeds.shape[1] == 1 and indexer_dp > 1:
+                batch_local = inputs_embeds.shape[0] // indexer_dp
+                indexer_cos = indexer_cos.view(indexer_dp, batch_local, indexer_cos.shape[1], indexer_cos.shape[-1]).permute(1, 0, 2, 3)
+                indexer_sin = indexer_sin.view(indexer_dp, batch_local, indexer_sin.shape[1], indexer_sin.shape[-1]).permute(1, 0, 2, 3)
+            indexer_position_embeddings = (indexer_cos, indexer_sin)
         for decoder_layer in self.layers:
             hidden_states = decoder_layer(
                 hidden_states,
@@ -2582,6 +3142,7 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
+                indexer_position_embeddings=indexer_position_embeddings,
                 **kwargs,
             )
         hidden_states = self.norm(hidden_states)

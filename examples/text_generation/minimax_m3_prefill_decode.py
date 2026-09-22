@@ -53,6 +53,7 @@ def _run_pytorch_parity_test(
     msa_indexer_cp: int = 1,
     msa_attn_dp: int = 1,
     indexer_n_head: int = 1,
+    indexer_prefill_parallel: bool = False,
     num_cores_per_device: int = 16,
     msa_q_chunk: int = 64,
     batch_size: int = 1,
@@ -89,7 +90,8 @@ def _run_pytorch_parity_test(
             "expert_parallel_chunk_size": expert_parallel_chunk_size,
             "cores_per_expert": cores_per_expert,
             "tree_reduce": tree_reduce,
-        }
+        },
+        "indexer_prefill_parallel": indexer_prefill_parallel,
     }
     if msa_indexer_dp > 1 or msa_attn_dp > 1:
         qaic_config["blocking_mode"] = "kv_headpar"
@@ -194,6 +196,13 @@ def main():
         help="Number of KV heads used by the MSA indexer in the DP path.",
     )
     parser.add_argument(
+        "--indexer-prefill-parallel",
+        dest="indexer_prefill_parallel",
+        action="store_true",
+        default=False,
+        help="Use the parallel indexer prefill selector.",
+    )
+    parser.add_argument(
         "--msa-q-chunk",
         type=int,
         default=64,
@@ -235,6 +244,7 @@ def main():
                 msa_indexer_cp=args.msa_indexer_cp,
                 msa_attn_dp=args.msa_attn_dp,
                 indexer_n_head=args.indexer_n_head,
+                indexer_prefill_parallel=args.indexer_prefill_parallel,
                 num_cores_per_device=args.num_cores_per_device,
                 msa_q_chunk=args.msa_q_chunk,
                 batch_size=args.batch_size,
@@ -272,6 +282,7 @@ def main():
             "msa_indexer_cp": args.msa_indexer_cp,
             "msa_attn_dp": args.msa_attn_dp,
             "indexer_n_head": args.indexer_n_head,
+            "indexer_prefill_parallel": args.indexer_prefill_parallel,
             "num_cores_per_device": args.num_cores_per_device,
             "msa_q_chunk": args.msa_q_chunk,
             "moe_config": {
