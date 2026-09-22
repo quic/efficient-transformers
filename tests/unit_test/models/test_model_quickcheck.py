@@ -2495,26 +2495,29 @@ def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
     assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
-def test_vlm_compile_forwards_gdn_chunk_size_to_export_path():
-    """GDN chunk size remains a model/export setting and never becomes a compiler option."""
+def test_vlm_compile_forwards_gdn_chunk_size_in_qaic_config_to_export_path():
+    """GDN chunk size is configured only through qaic_config."""
     from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
 
     model = _QEffAutoModelForImageTextToTextDualQPC.__new__(_QEffAutoModelForImageTextToTextDualQPC)
     model._run_layerwise_compile = MagicMock(return_value="qpc_paths")
 
-    result = model.compile(layerwise=True, gdn_chunk_size=512)
+    result = model.compile(layerwise=True, qaic_config={"GDN_CHUNK_SIZE": 512})
 
     assert result == "qpc_paths"
     compile_kwargs = model._run_layerwise_compile.call_args.kwargs
-    assert compile_kwargs["gdn_chunk_size"] == 512
+    assert compile_kwargs["qaic_config"]["GDN_CHUNK_SIZE"] == 512
+    assert "gdn_chunk_size" not in compile_kwargs
     assert "qeff_chunk_size" not in compile_kwargs
 
     model._run_layerwise_compile.reset_mock()
     model.compile(layerwise=True, prefill_seq_len=1024)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
     assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
 
     model._run_layerwise_compile.reset_mock()
     model.compile(layerwise=True)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
     assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
 
 

@@ -453,46 +453,57 @@ class TestQEFFBaseModelTransformBlocking:
                 use_cache=True,
             )
 
-    def test_transform_consumes_gdn_chunk_size_before_compiler_options(self):
-        """GDN chunk size configures export and is not forwarded as a compiler flag."""
+    def test_transform_consumes_gdn_chunk_size_from_qaic_config(self):
+        """GDN chunk size is sourced from qaic_config and applied via gated-delta transform."""
         from QEfficient.base import modeling_qeff
 
         model, _ = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
-        set_gdn_chunk_size = MagicMock()
-        qeff.model.set_gdn_chunk_size = set_gdn_chunk_size
 
-        with patch.object(modeling_qeff.OptimizedMoETransform, "apply", return_value=(qeff.model, False)) as apply:
+        with (
+            patch.object(
+                modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+            ) as gated_apply,
+            patch.object(modeling_qeff.OptimizedMoETransform, "apply", return_value=(qeff.model, False)) as moe_apply,
+        ):
             qeff.transform(
                 ctx_len=32,
                 seq_len=8,
                 bs=1,
                 prefill_seq_len=8,
-                gdn_chunk_size=4,
+                qaic_config={"GDN_CHUNK_SIZE": 4},
             )
 
-        set_gdn_chunk_size.assert_called_once_with(4)
-        assert "gdn_chunk_size" not in apply.call_args.kwargs
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 4})
+        assert "gdn_chunk_size" not in moe_apply.call_args.kwargs
 
-    def test_transform_rejects_gdn_chunk_larger_than_prefill_length(self):
-        """A GDN mini-chunk cannot exceed the sequence length it chunks."""
+    def test_transform_allows_gdn_chunk_larger_than_prefill_length(self):
+        """No transform-time prefill-length check exists for GDN chunk size in qaic_config."""
+        from QEfficient.base import modeling_qeff
+
         model, _ = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
-        qeff.model.set_gdn_chunk_size = MagicMock()
 
-        with pytest.raises(ValueError, match="gdn_chunk_size.*prefill_seq_len"):
-            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, gdn_chunk_size=16)
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, qaic_config={"GDN_CHUNK_SIZE": 16})
 
-    def test_transform_defaults_gdn_chunk_size_to_prefill_length(self):
-        """A GDN model uses the prefill length when no mini-chunk is supplied."""
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 16})
+
+    def test_transform_defaults_gdn_chunk_size_to_internal_default(self):
+        """Without qaic_config, transform sends no gated-delta chunk override."""
+        from QEfficient.base import modeling_qeff
+
         model, _ = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
-        set_gdn_chunk_size = MagicMock()
-        qeff.model.set_gdn_chunk_size = set_gdn_chunk_size
 
-        qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8)
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, False)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8)
 
-        set_gdn_chunk_size.assert_called_once_with(8)
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config=None)
 
 
 @pytest.mark.cpu_only
