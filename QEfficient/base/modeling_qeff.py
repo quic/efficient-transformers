@@ -294,6 +294,42 @@ class QEFFBaseModel(ABC):
     def _post_pytorch_transform(self) -> bool:
         return False
 
+    def _apply_static_pytorch_transforms(self, qaic_config: Optional[dict], compiler_options: dict) -> None:
+        any_transformed = self._apply_pytorch_transforms()
+        pooling = compiler_options.pop("pooling", getattr(self, "_pooling", None))
+        if pooling:
+            self._apply_pooling_transform(pooling)
+            any_transformed = True
+
+        any_transformed = self._post_pytorch_transform() or any_transformed
+        self._set_qaic_config(qaic_config)
+
+        if self._supports_spd_transform():
+            self.model, spd_transformed = SpDTransform.apply(
+                self.model,
+                qaic_config,
+                **compiler_options,
+            )
+            self.is_tlm = getattr(self, "is_tlm", False) or spd_transformed
+            any_transformed = any_transformed or spd_transformed
+
+        if self._supports_sampler_transform():
+            self.model, sampler_transformed = SamplerTransform.apply(
+                self.model,
+                qaic_config,
+                **compiler_options,
+            )
+            any_transformed = any_transformed or sampler_transformed
+        if getattr(self, "is_tlm", False) and qaic_config is not None:
+            qaic_config["return_pdfs"] = True
+            setattr(self.model, "qaic_config", qaic_config)
+
+        if not any_transformed:
+            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+        else:
+            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+        self.is_transformed = True
+
     def _apply_pooling_transform(self, pooling=None) -> None:
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
@@ -1202,40 +1238,7 @@ class QEFFBaseModel(ABC):
     ):
         qaic_config = self._resolve_qaic_config(qaic_config)
         if not self.is_transformed:
-            any_transformed = self._apply_pytorch_transforms()
-            pooling = compiler_options.pop("pooling", getattr(self, "_pooling", None))
-            if pooling:
-                self._apply_pooling_transform(pooling)
-                any_transformed = True
-
-            any_transformed = self._post_pytorch_transform() or any_transformed
-            self._set_qaic_config(qaic_config)
-
-            if self._supports_spd_transform():
-                self.model, spd_transformed = SpDTransform.apply(
-                    self.model,
-                    qaic_config,
-                    **compiler_options,
-                )
-                self.is_tlm = getattr(self, "is_tlm", False) or spd_transformed
-                any_transformed = any_transformed or spd_transformed
-
-            if self._supports_sampler_transform():
-                self.model, sampler_transformed = SamplerTransform.apply(
-                    self.model,
-                    qaic_config,
-                    **compiler_options,
-                )
-                any_transformed = any_transformed or sampler_transformed
-            if getattr(self, "is_tlm", False) and qaic_config is not None:
-                qaic_config["return_pdfs"] = True
-                setattr(self.model, "qaic_config", qaic_config)
-
-            if not any_transformed:
-                warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
-            else:
-                logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-            self.is_transformed = True
+            self._apply_static_pytorch_transforms(qaic_config, compiler_options)
 
         # Apply the transformations that are dependent on compilation parameters
         moe_batch_size = compiler_options.pop("moe_batch_size", bs)

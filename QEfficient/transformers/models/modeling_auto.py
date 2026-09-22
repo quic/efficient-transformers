@@ -1709,7 +1709,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        if self.lang_model.qaic_config is not None and self.lang_model.qaic_config.get("include_sampler", False):
+        if qaic_config is not None and qaic_config.get("include_sampler", False):
             logits_index = output_names["lang"].index("logits")
             output_names["lang"][logits_index] = "next_tokens"
             inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
@@ -1718,7 +1718,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.model.language_model.config.vocab_size,
-                qaic_config=self.lang_model.qaic_config,
+                qaic_config=qaic_config,
             )
 
         layerwise_export = QEFFBaseModel._layerwise_active
@@ -3646,17 +3646,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.continuous_batching = continuous_batching
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
 
-        # DFlash changes the model structure and output contract, so apply it before
-        # the generic speculative-decoding and sampler transforms wrap model.forward.
         self.dflash_dlm = bool(qaic_config and qaic_config.get("dflash_dlm", False))
         self.dflash_tlm = bool(qaic_config and qaic_config.get("target_layer_ids", None))
-        if self.dflash_dlm:
-            self.model, _ = DFlashTransform.apply(self.model, qaic_config)
-            self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
-        if self.dflash_tlm:
-            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
         self._activate_qaic_config(qaic_config)
+
+        if self.dflash_dlm or self.dflash_tlm:
+            self._apply_static_pytorch_transforms(self._qaic_config, kwargs)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
@@ -3664,6 +3660,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         self.hidden_size = self.model.config.hidden_size
         self.vocab_size = self.model.config.vocab_size
+
+    def _post_pytorch_transform(self) -> bool:
+        transformed = False
+        qaic_config = self._qaic_config
+
+        self.dflash_dlm = bool(qaic_config and qaic_config.get("dflash_dlm", False))
+        self.dflash_tlm = bool(qaic_config and qaic_config.get("target_layer_ids", None))
+        if self.dflash_dlm:
+            self.model, dflash_transformed = DFlashTransform.apply(self.model, qaic_config)
+            self.model, dflash_dlm_transformed = DFlashDLMTransform.apply(self.model, qaic_config)
+            transformed = dflash_transformed or dflash_dlm_transformed
+        if self.dflash_tlm:
+            self.model, dflash_tlm_transformed = DFlashTLMTransform.apply(self.model, qaic_config)
+            transformed = transformed or dflash_tlm_transformed
+        return transformed
 
     def _activate_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
         qaic_config = self._resolve_qaic_config(qaic_config)
