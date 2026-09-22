@@ -1361,11 +1361,6 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
-    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
-        if self.config.text_config.layer_types[layer_idx] == "full_attention":
-            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
-        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
-
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
         if hasattr(past_key_values, "reorder_cache"):
