@@ -20,7 +20,7 @@ pip install -e .
 pip install -r examples/dynamo/causal_lm/requirements.txt
 ```
 
-> **Note:** `requirements.txt` installs PyTorch 2.13 CPU wheels and `onnxscript`/`compressed-tensors`. These override any existing torch installation. For x86_64 and aarch64 — Python 3.9–3.12.
+> **Note:** `requirements.txt` installs PyTorch 2.13 CPU wheels and `onnxscript`/`compressed-tensors`. These override any existing torch installation. For x86_64 and aarch64 — Python 3.10–3.12.
 
 ### 3. HuggingFace authentication (gated models)
 ```bash

@@ -20,8 +20,8 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import get_padding_shape_from_config, hf_download
-from QEfficient.utils._utils import create_json, load_hf_processor
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils._utils import load_hf_processor
+from QEfficient.utils.constants import Constants
 
 from ..check_model_results import dump_and_compare_results
 
@@ -298,8 +298,6 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     num_devices: int = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
     compare_results: Optional[bool] = False,
 ):
     """
@@ -339,8 +337,6 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         ctx_len=ctx_len,
         num_devices=num_devices,
         batch_size=batch_size,
-        enable_qnn=enable_qnn,
-        qnn_config=qnn_config,
     )
 
     exec_info = qeff_model.generate(
@@ -356,7 +352,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     if compare_results is False:
         return
 
-    compile_params = {"enable_qnn": enable_qnn, "qnn_config": qnn_config, "seq_len": ctx_len, "n_layer": n_layer}
+    compile_params = {"seq_len": ctx_len, "n_layer": n_layer}
     assert dump_and_compare_results(
         model_name,
         compile_params,
@@ -386,28 +382,3 @@ def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     torch.manual_seed(42)
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
-
-
-# =================== QNN Tests ======================
-@pytest.mark.on_qaic
-@pytest.mark.embedding_audio_model
-@pytest.mark.qnn
-@pytest.mark.skip(reason="Whisper is currently not supported on QNN")
-@pytest.mark.parametrize("model_name", test_models)
-def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        n_layer=4,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
