@@ -67,6 +67,11 @@ _NPI_DISCRETE_SAMPLER_OPS = {
     "ScatterND",
     "Shape",
 }
+_NPI_EXCLUDED_OUTPUTS = {
+    "/Cast_9_output_0",
+    "/Div_1_output_0",
+    "/Reshape_6_output_0",
+}
 _NPI_FLOATING_POINT_TENSOR_TYPES = {
     onnx.TensorProto.BFLOAT16,
     onnx.TensorProto.DOUBLE,
@@ -170,7 +175,12 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
         if is_moe_node(node) or is_excluded_npi_node(node):
             continue
         for output_index, output_name in enumerate(node.output):
-            if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
+            if (
+                not output_name
+                or output_name in seen_tensors
+                or output_name in excluded_outputs
+                or output_name in _NPI_EXCLUDED_OUTPUTS
+            ):
                 continue
             output_basename = output_name.rsplit("/", maxsplit=1)[-1]
             if is_sampler_graph and (
