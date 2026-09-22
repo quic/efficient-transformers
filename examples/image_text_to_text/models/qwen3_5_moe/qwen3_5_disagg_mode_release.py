@@ -165,6 +165,7 @@ qaic_config = {
     "num_q_blocks": 4,
     "n_rep_chunk": 1,
     "skip_kv": True,
+    "GDN_CHUNK_SIZE": GDN_CHUNK_SIZE,
 }
 
 # CL 64K BSZ1
@@ -264,8 +265,6 @@ else:
             ddr_stats=True,
             aic_pmu_recipe="KernelUtil",
             aic_perf_metrics=True,
-            # GDN prefill mini-chunk is aligned with the prefill/CPL length.
-            gdn_chunk_size=GDN_CHUNK_SIZE,
             qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
             kv_cache_prefix="vllmKvCache",
             allow_mxint8_mdp_io=True,
@@ -315,8 +314,6 @@ else:
             ddr_stats=True,
             aic_pmu_recipe="KernelUtil",
             aic_perf_metrics=True,
-            # Decode is compiled with seq_len=1, so keep its GDN mini-chunk at 1.
-            gdn_chunk_size=1,
             qaic_config=decode_qaic_config,  # Enable KV blocking - comment out to disable
             kv_cache_prefix="vllmKvCache",
             allow_mxint8_mdp_io=True,

@@ -49,21 +49,21 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 64
+PREFILL_SEQ_LEN = 512
 CTX_LEN = 4096
 BS = 1
-GDN_CHUNK_SIZE = PREFILL_SEQ_LEN
 
+# qaic_config here controls only gated-delta settings (no KV blocking).
+# Use this for qwen3_5 family of models, ow it will affect hte accuracy.
 qaic_config = {}
+qaic_config["GDN_CHUNK_SIZE"] = PREFILL_SEQ_LEN
 
 # Update qaic_config here for Blocking settings.
 # qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})
 
-enable_blocking = False  ## By default it is false
-
 generation_len = 256
 
-skip_vision = True
+skip_vision = False
 
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -102,7 +102,6 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    gdn_chunk_size=GDN_CHUNK_SIZE,
     qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -123,38 +122,8 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
-    gdn_chunk_size=1,
     use_onnx_subfunctions=True,
-    qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
-
-
-if enable_blocking:
-    print("\n" + "=" * 80)
-    print("Verifying KV Blocking Applied During Compilation")
-    print("=" * 80)
-
-    # The compile() method internally calls BlockingAttentionTransform.apply()
-    # which sets attn_blocking_config on all supported attention modules
-    # This happens BEFORE ONNX export, so blocking operations are in the ONNX graph
-
-    if qaic_config and qaic_config.get("blocking_mode"):
-        print("✓ qaic_config passed to compile():")
-        print(f"    Blocking Mode: {qaic_config.get('blocking_mode')}")
-        print(f"    Num KV Blocks: {qaic_config.get('num_kv_blocks')}")
-        print(f"    Skip KV: {qaic_config.get('skip_kv', False)}")
-        print("\n✓ BlockingAttentionTransform.apply() called during compile()")
-        print("  - Sets attn_blocking_config on all supported attention modules")
-        print("  - Blocked attention forward pass is used during ONNX export")
-        print("  - Blocking operations are in the ONNX graph and QPC")
-        print("\n  Status: ACTIVE")
-        print("  Verification: Config-based verification")
-        print("  Note: Blocking IS applied - torch model is freed after ONNX export")
-    else:
-        print("✗ No qaic_config provided - eager attention will be used")
-        print("  Status: INACTIVE - Model compiled without blocking")
-
-    print("=" * 80 + "\n")
 
 lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
 lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
@@ -314,7 +283,5 @@ for i in range(generation_len - 2):
         }
     )
 ft = perf_counter()
-
-print(f"For PL = {PREFILL_SEQ_LEN}")
 print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
 print(f"\noutput\n{tokenizer.decode(all_outputs)}")

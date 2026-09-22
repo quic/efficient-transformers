@@ -63,7 +63,6 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
 QWEN3_5_ROPE_CACHE_EXPORT_CAP = 76800
-GDN_DEFAULT_CHUNK_SIZE = 64
 
 
 def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
@@ -631,13 +630,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
         self.chunk_gated_delta_solver = "tree"
-        self._configure_gdn_chunk_size(getattr(self, "gdn_chunk_size", GDN_DEFAULT_CHUNK_SIZE))
-
-    def _configure_gdn_chunk_size(self, chunk_size: int) -> None:
-        chunk_size = int(chunk_size)
-        if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
-            raise ValueError(f"GDN chunk size must be a positive power of two, got {chunk_size}")
+        chunk_size = int(getattr(self, "gdn_chunk_size", 64) or 64)
+        if chunk_size <= 0:
+            chunk_size = 64
         self.gdn_chunk_size = chunk_size
+
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
@@ -670,10 +667,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
-
-    def set_gdn_chunk_size(self, chunk_size: int) -> None:
-        """Set the static masks used by the exported GDN chunk path."""
-        self._configure_gdn_chunk_size(chunk_size)
 
     # TODO: It would be better to use it directly from HF
     def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
@@ -1242,12 +1235,6 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
             (self.rotary_emb.cos_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
         )
 
-    def set_gdn_chunk_size(self, chunk_size: int) -> None:
-        """Set the static GDN chunk size for every linear-attention layer."""
-        for layer in self.layers:
-            if layer.layer_type == "linear_attention":
-                layer.linear_attn.set_gdn_chunk_size(chunk_size)
-
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -1367,10 +1354,6 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
 
 class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
-    def set_gdn_chunk_size(self, chunk_size: int) -> None:
-        """Forward the export-time GDN setting to the text transformer."""
-        self.model.set_gdn_chunk_size(chunk_size)
-
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
@@ -1800,10 +1783,6 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model.language_model
         self.config = model.config
-
-    def set_gdn_chunk_size(self, chunk_size: int) -> None:
-        """Forward the export-time GDN setting to the text transformer."""
-        self.language_model.set_gdn_chunk_size(chunk_size)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}

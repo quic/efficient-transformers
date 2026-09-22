@@ -32,7 +32,10 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.blocking.blocking_configurator import (
+    build_gated_delta_config_for_transform,
+    build_transformer_blocking_config_for_transform,
+)
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_config,
@@ -43,6 +46,7 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    GatedDeltaConfigTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
@@ -998,10 +1002,6 @@ class QEFFBaseModel(ABC):
     ):
         # Apply the transformations that are dependent on compilation parameters
         moe_batch_size = compiler_options.pop("moe_batch_size", bs)
-        # GDN chunking changes the model graph (static masks and reshape dimensions),
-        # so it must be applied before export. It is not a qaic-compile option.
-        # Models without GDN layers do not expose this hook and remain unchanged.
-        gdn_chunk_size = compiler_options.pop("gdn_chunk_size", None)
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -1029,25 +1029,24 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
+        self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
+            self.model, gated_delta_config=gated_delta_config
+        )
+        if gated_delta_transformed and gated_delta_config is not None:
+            self.hash_params["gated_delta_kwargs"] = gated_delta_config
+        else:
+            self.hash_params.pop("gated_delta_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
+        else:
+            self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
         if num_cores is None:
             num_cores = constants.DEFAULT_AIC_NUM_CORES
         prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
-        set_gdn_chunk_size = getattr(self.model, "set_gdn_chunk_size", None)
-        if callable(set_gdn_chunk_size):
-            gdn_chunk_size = prefill_seq_len if gdn_chunk_size is None else int(gdn_chunk_size)
-            if gdn_chunk_size is not None:
-                if prefill_seq_len is not None and gdn_chunk_size > prefill_seq_len:
-                    raise ValueError(
-                        f"gdn_chunk_size ({gdn_chunk_size}) cannot be greater than prefill_seq_len ({prefill_seq_len})"
-                    )
-                set_gdn_chunk_size(gdn_chunk_size)
-                # Include the graph-shaping value in the export cache identity.
-                self.hash_params["gdn_chunk_size"] = gdn_chunk_size
         mdp_num_partitions = compiler_options.get("mdp_num_partitions", 1)
         if mdp_num_partitions is None:
             mdp_num_partitions = 1
@@ -1173,11 +1172,6 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(onnx_path)
         if artifacts:
             self.onnx_path = onnx_path
-
-        # ``gdn_chunk_size`` was consumed by ``transform`` to shape the exported
-        # graph. Remove it before the generic compiler-option loop, which maps
-        # remaining keys directly to qaic-compile flags.
-        compiler_options.pop("gdn_chunk_size", None)
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
