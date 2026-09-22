@@ -56,7 +56,7 @@ BS = 1
 # qaic_config here controls only gated-delta settings (no KV blocking).
 # Use this for qwen3_5 family of models, ow it will affect hte accuracy.
 qaic_config = {}
-qaic_config["GDN_CHUNK_SIZE"] = PREFILL_SEQ_LEN
+qaic_config["gdn_chunk_size"] = PREFILL_SEQ_LEN
 
 # Update qaic_config here for Blocking settings.
 # qaic_config.update({"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True})

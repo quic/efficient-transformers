@@ -436,7 +436,7 @@ def build_gated_delta_config_for_transform(
     if not qaic_config:
         return None
 
-    chunk_size = qaic_config.get("GDN_CHUNK_SIZE")
+    chunk_size = qaic_config.get("gdn_chunk_size")
 
     if chunk_size is None:
         return None

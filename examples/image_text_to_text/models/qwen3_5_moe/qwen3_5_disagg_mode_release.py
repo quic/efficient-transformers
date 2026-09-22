@@ -149,7 +149,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 512
 # The GDN prefill mini-chunk follows the prefill/CPL by default. This is passed
 # explicitly because the shared compile API does not infer model-specific options.
-GDN_CHUNK_SIZE = PREFILL_SEQ_LEN
+gdn_chunk_size = PREFILL_SEQ_LEN
 CTX_LEN = 14 * 1024
 BATCH_SIZE = 512  # Per-slot prefill batch size
 BS = BATCH_SIZE
@@ -165,7 +165,7 @@ qaic_config = {
     "num_q_blocks": 4,
     "n_rep_chunk": 1,
     "skip_kv": True,
-    "GDN_CHUNK_SIZE": GDN_CHUNK_SIZE,
+    "gdn_chunk_size": gdn_chunk_size,
 }
 
 # CL 64K BSZ1

@@ -471,7 +471,7 @@ class TestQEFFBaseModelTransformBlocking:
                 seq_len=8,
                 bs=1,
                 prefill_seq_len=8,
-                qaic_config={"GDN_CHUNK_SIZE": 4},
+                qaic_config={"gdn_chunk_size": 4},
             )
 
         gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 4})
@@ -487,7 +487,7 @@ class TestQEFFBaseModelTransformBlocking:
         with patch.object(
             modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
         ) as gated_apply:
-            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, qaic_config={"GDN_CHUNK_SIZE": 16})
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, qaic_config={"gdn_chunk_size": 16})
 
         gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 16})
 
