@@ -1725,7 +1725,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
-                vocab_size=self.model.language_model.config.vocab_size,
+                vocab_size=self.lang_model.get_model_config["vocab_size"],
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
