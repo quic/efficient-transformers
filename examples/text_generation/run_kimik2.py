@@ -49,7 +49,7 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 #    out = model(**inputs)
 #    predictions = torch.argmax(out.logits, dim=-1)
 
-qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
+qeff_model = QEFFAutoModelForCausalLM(model)
 qeff_model.transform(ctx_len=CTX_LEN, seq_len=PREFILL_SEQ_LEN, bs=1, num_devices=TS, qaic_config=qaic_config)
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)

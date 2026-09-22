@@ -11,7 +11,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
-## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
+## Activate Compute-Context-Length (CCL) feature by passing ccl_enabled=True to compile().
 ## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
@@ -21,15 +21,15 @@ model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 ctx_len = 4096
 ccl_enabled = True
+qaic_config = {
+    "ccl_enabled": ccl_enabled,
+}
 # Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
 # In moe models like gpt-oss, since prefill_seq_len=1 both comp_ctx_lengths_prefill and comp_ctx_lengths_decode can share similar lists.
 comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [1024, ctx_len]
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
-    qaic_config={
-        "ccl_enabled": True,
-    },
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
@@ -45,6 +45,7 @@ qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    qaic_config=qaic_config,
 )
 print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)

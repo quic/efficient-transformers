@@ -151,7 +151,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         is_tlm=is_tlm,
         pretrained_model_name_or_path=model_name,
         continuous_batching=continuous_batching,
-        qaic_config=qaic_config,
     )
     qeff_model.transform(
         ctx_len=ctx_len,
@@ -221,7 +220,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         )
 
     with model_export_compile_lock(model_name):
-        onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
+        onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions, qaic_config=qaic_config)
         if _RUN_CPU_REFERENCES and not compile_only and continuous_batching is False and not skip_onnxruntime:
             ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
             gen_len = ort_tokens.shape[-1]

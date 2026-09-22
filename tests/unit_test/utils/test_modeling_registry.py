@@ -36,6 +36,11 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForSpeechSeq2Seq,
 )
 
+
+def get_pytorch_transform_pipeline(wrapper_cls):
+    return wrapper_cls.__new__(wrapper_cls)._all_pytorch_transforms()
+
+
 # ---------------------------------------------------------------------------
 # Tests: qeff_supported_architectures
 # ---------------------------------------------------------------------------
@@ -423,18 +428,20 @@ class TestQEFFAutoModelForCausalLMClassStructure:
 
     def test_kv_cache_transform_in_pytorch_transforms(self):
         transform_names = [
-            t.__name__ if hasattr(t, "__name__") else str(t) for t in QEFFAutoModelForCausalLM._pytorch_transforms
+            t.__name__ if hasattr(t, "__name__") else str(t)
+            for t in get_pytorch_transform_pipeline(QEFFAutoModelForCausalLM)
         ]
         assert any("KVCache" in name for name in transform_names), (
-            f"KVCacheTransform not found in _pytorch_transforms: {transform_names}"
+            f"KVCacheTransform not found in resolved pytorch transforms: {transform_names}"
         )
 
     def test_custom_ops_transform_in_pytorch_transforms(self):
         transform_names = [
-            t.__name__ if hasattr(t, "__name__") else str(t) for t in QEFFAutoModelForCausalLM._pytorch_transforms
+            t.__name__ if hasattr(t, "__name__") else str(t)
+            for t in get_pytorch_transform_pipeline(QEFFAutoModelForCausalLM)
         ]
         assert any("CustomOps" in name for name in transform_names), (
-            f"CustomOpsTransform not found in _pytorch_transforms: {transform_names}"
+            f"CustomOpsTransform not found in resolved pytorch transforms: {transform_names}"
         )
 
     def test_has_hf_auto_class(self):
@@ -477,7 +484,7 @@ class TestQEFFAutoModelForCausalLMClassStructure:
         assert len(qeff.model_name) > 0
 
     def test_model_attribute_is_transformed_model(self):
-        """After construction, qeff.model must be the KV-transformed model."""
+        """After transform(), qeff.model must be the KV-transformed model."""
         from transformers import GPT2Config, GPT2LMHeadModel
 
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
@@ -485,6 +492,7 @@ class TestQEFFAutoModelForCausalLMClassStructure:
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
+        qeff.transform()
         assert isinstance(qeff.model, QEffGPT2LMHeadModel), f"Expected QEffGPT2LMHeadModel, got {type(qeff.model)}"
 
     def test_onnx_transforms_contain_fp16_clip(self):

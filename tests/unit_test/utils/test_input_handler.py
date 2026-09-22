@@ -175,6 +175,7 @@ class TestUpdatePytorchInputs:
 
         model = GPT2LMHeadModel(cfg).eval()
         qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model.transform()
         handler = _make_handler(tok, cfg, prompt_len=prompt_len)
         inputs = handler.prepare_pytorch_inputs()
         with torch.no_grad():

@@ -16,7 +16,7 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 # We will use prompt_len=1 for compilation for both cb and non-cb inference
 """
 
-## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
+## Activate Compute-Context-Length (CCL) feature by passing ccl_enabled=True to compile().
 ## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
@@ -27,6 +27,9 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 ctx_len = 1024
 prefill_seq_len = 1
 ccl_enabled = True
+qaic_config = {
+    "ccl_enabled": ccl_enabled,
+}
 # Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
 # In moe models when compiling with prefill_seq_len=1 and non-continuous-batching mode, prefill and decode will share the same ccl specializations.
 comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [256, 512, ctx_len]
@@ -34,9 +37,6 @@ comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [256, 512, ctx_len]
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     continuous_batching=False,
-    qaic_config={
-        "ccl_enabled": ccl_enabled,
-    },
 )
 
 model.compile(
@@ -50,6 +50,7 @@ model.compile(
     mos=1,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    qaic_config=qaic_config,
 )
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 exec_info = model.generate(prompts=Constants.INPUT_STR, tokenizer=tokenizer)

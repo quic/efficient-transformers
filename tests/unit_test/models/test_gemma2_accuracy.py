@@ -106,6 +106,12 @@ def _decode_inputs(next_token, decode_position, past_key_values):
     }
 
 
+def _make_transformed_qeff_gemma2(model):
+    qeff = QEFFAutoModelForCausalLM(model)
+    qeff.transform(ctx_len=CTX_LEN, seq_len=PREFILL_LEN, bs=1)
+    return qeff
+
+
 def _extract_next_token(logits):
     """
     Extract greedy next token. QEffGemma2ForCausalLM returns (batch, 1, vocab),
@@ -166,24 +172,24 @@ class TestQEffGemma2Architecture:
 
     def test_qeff_wraps_without_error(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         assert qeff is not None
         assert hasattr(qeff, "model")
 
     def test_qeff_model_class_is_qeff_gemma2(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         assert isinstance(qeff.model, QEffGemma2ForCausalLM), f"Expected QEffGemma2ForCausalLM, got {type(qeff.model)}"
 
     def test_qeff_model_is_eval_mode(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         assert not qeff.model.training
 
     def test_qeff_model_has_same_parameter_count_as_hf(self):
         model, cfg = make_tiny_gemma2()
         hf_params = sum(p.numel() for p in model.parameters())
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         qeff_params = sum(p.numel() for p in qeff.model.parameters())
         # QEffGemma2Model registers sin_cached and cos_cached as nn.Parameter,
         # which adds extra parameters compared to the HF model. Allow for this.
@@ -210,7 +216,7 @@ class TestQEffGemma2LogitShape:
         not (1, PREFILL_LEN, VOCAB_SIZE).
         """
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -223,7 +229,7 @@ class TestQEffGemma2LogitShape:
     def test_decode_logits_shape_is_batch_1_vocab(self):
         """QEff Gemma2 decode must also return (1, 1, VOCAB_SIZE)."""
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             prefill_out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -236,7 +242,7 @@ class TestQEffGemma2LogitShape:
 
     def test_prefill_logits_are_finite(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -264,7 +270,7 @@ class TestQEffGemma2AccuracyVsHF:
         with torch.no_grad():
             hf_token = model(input_ids=input_ids).logits[:, -1, :].argmax(-1).item()
 
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         with torch.no_grad():
             qeff_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         qeff_token = _extract_next_token(qeff_out.logits)
@@ -282,7 +288,7 @@ class TestQEffGemma2AccuracyVsHF:
         with torch.no_grad():
             hf_logits = model(input_ids=input_ids).logits[:, -1, :]
 
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         with torch.no_grad():
             qeff_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         # qeff_out.logits is (1, 1, vocab) — squeeze to (1, vocab)
@@ -301,7 +307,7 @@ class TestQEffGemma2AccuracyVsHF:
         with torch.no_grad():
             hf_top5 = set(model(input_ids=input_ids).logits[:, -1, :].topk(5).indices.squeeze().tolist())
 
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         with torch.no_grad():
             qeff_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         qeff_top5 = set(qeff_out.logits[:, -1, :].topk(5).indices.squeeze().tolist())
@@ -326,7 +332,7 @@ class TestQEffGemma2CacheWritten:
 
     def test_past_key_values_not_none_after_prefill(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -338,7 +344,7 @@ class TestQEffGemma2CacheWritten:
         At least one position in the prefill range must be non-zero.
         """
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -365,7 +371,7 @@ class TestQEffGemma2CacheWritten:
     def test_cache_has_correct_number_of_layers(self):
         """past_key_values must have one entry per transformer layer."""
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -399,7 +405,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
     def test_decode_with_real_cache_produces_valid_token(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
@@ -414,7 +420,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
     def test_decode_with_real_cache_returns_finite_logits(self):
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
@@ -429,7 +435,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
     def test_three_decode_steps_all_valid(self):
         """Three consecutive decode steps with real cache must all produce valid tokens."""
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
@@ -455,7 +461,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
     def test_three_decode_steps_all_finite(self):
         """All decode logits must be finite."""
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
@@ -482,7 +488,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         def _run(m):
-            qeff = QEFFAutoModelForCausalLM(m)
+            qeff = _make_transformed_qeff_gemma2(m)
             with torch.no_grad():
                 prefill_out = qeff.model(**_prefill_inputs(input_ids, cfg))
             token = _extract_next_token(prefill_out.logits)
@@ -510,7 +516,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
         for seed in range(8):
             torch.manual_seed(seed)
-            qeff = QEFFAutoModelForCausalLM(model)
+            qeff = _make_transformed_qeff_gemma2(model)
             input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
             with torch.no_grad():
@@ -540,7 +546,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
     def test_decode_position_advances_strictly(self):
         """Each decode step must use a strictly increasing position_id."""
         model, cfg = make_tiny_gemma2()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_gemma2(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
