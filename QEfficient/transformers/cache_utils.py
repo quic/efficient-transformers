@@ -483,6 +483,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         k_out, v_out = self.keys, self.values
         if k_out is not None:
             self._mark_initialized(k_out)
+            self._ensure_cache_dtype(key_states, value_states)
         position_ids = cache_kwargs.get("position_ids")
         batch, seq_len = position_ids.shape
         num_kv_blocks, num_kv_heads, block_size, dh = k_out.shape
