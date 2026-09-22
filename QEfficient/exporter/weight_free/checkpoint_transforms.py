@@ -25,7 +25,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_SENTINEL, BaseCheckpointTransform
-from QEfficient.transformers.quantizers.quantizer_utils import convert_moe_packed_tensors
+from QEfficient.transformers.quantizers.quantizer_utils import blockwise_dequantize, convert_moe_packed_tensors
 from QEfficient.utils.checkpoint_utils import (
     atomic_save,
     available_ram_gb,
@@ -255,6 +255,210 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         write_index(out, new_weight_map)
         sentinel.touch()
         logger.info(f"DtypeConversionCheckpointTransform: done → {out}")
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Transform 2: reduced GLM-MoE-DSA FP8 checkpoint preparation
+# ---------------------------------------------------------------------------
+
+
+class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
+    """Prepare the approved four-layer GLM-MoE-DSA checkpoint slice.
+
+    The source checkpoint contains blockwise FP8 weights for the full model. A
+    reduced GLM config traces only layers 0-3, so this transform reads just
+    those tensors, dequantizes active FP8 weights, and materializes QEff-only
+    attention and MoE parameters that do not exist in the upstream checkpoint.
+    """
+
+    _LAYER_RE = re.compile(r"^model\.layers\.(\d+)\.")
+    _EXPERT_RE = re.compile(r"^(model\.layers\.(\d+)\.mlp\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$")
+    _Q_B_PROJ_SUFFIX = ".self_attn.q_b_proj.weight"
+    _SCALE_SUFFIX = "_scale_inv"
+
+    @classmethod
+    def is_applicable(cls, weight_map: dict[str, str], **kwargs) -> bool:
+        """Return True for GLM-MoE-DSA FP8 checkpoints."""
+        model_config = kwargs.get("model_config")
+        is_glm_config = getattr(model_config, "model_type", None) == "glm_moe_dsa"
+        quantization_config = getattr(model_config, "quantization_config", None)
+        if isinstance(quantization_config, dict):
+            quant_method = quantization_config.get("quant_method") or quantization_config.get("quant_type")
+        else:
+            quant_method = getattr(quantization_config, "quant_method", None) or getattr(
+                quantization_config, "quant_type", None
+            )
+        quant_method = quant_method.value if hasattr(quant_method, "value") else quant_method
+        has_q_b_proj = any(
+            key.endswith(cls._Q_B_PROJ_SUFFIX) and f"{key}{cls._SCALE_SUFFIX}" in weight_map for key in weight_map
+        )
+        dense_mlp_suffixes = (".mlp.gate_proj.weight", ".mlp.up_proj.weight", ".mlp.down_proj.weight")
+        has_dense_mlp = all(any(key.endswith(suffix) for key in weight_map) for suffix in dense_mlp_suffixes)
+        has_per_expert_mlp = any(cls._EXPERT_RE.match(key) for key in weight_map)
+        return is_glm_config and quant_method == "fp8" and has_q_b_proj and has_dense_mlp and has_per_expert_mlp
+
+    @staticmethod
+    def _weight_block_size(model_config) -> tuple[int, int]:
+        quantization_config = getattr(model_config, "quantization_config", None)
+        if isinstance(quantization_config, dict):
+            block_size = quantization_config.get("weight_block_size")
+        else:
+            block_size = getattr(quantization_config, "weight_block_size", None)
+        if not isinstance(block_size, (list, tuple)) or len(block_size) != 2:
+            raise ValueError("GLM-MoE-DSA weight-free export requires a two-dimensional FP8 weight_block_size.")
+        return tuple(int(size) for size in block_size)
+
+    @staticmethod
+    def _dequantize_fp8_weight(
+        tensor: torch.Tensor,
+        scale: torch.Tensor,
+        block_size: tuple[int, int],
+    ) -> torch.Tensor:
+        """Dequantize a blockwise FP8 tensor, including a partial final block."""
+        rows, cols = tensor.shape[-2:]
+        block_rows, block_cols = block_size
+        padded_rows = scale.shape[-2] * block_rows
+        padded_cols = scale.shape[-1] * block_cols
+        if padded_rows == rows and padded_cols == cols:
+            return blockwise_dequantize(tensor, scale, block_size)
+        if padded_rows < rows or padded_cols < cols:
+            raise ValueError(
+                f"FP8 scale grid {tuple(scale.shape[-2:])} cannot cover weight shape {(rows, cols)} "
+                f"with block size {block_size}."
+            )
+        padded = torch.zeros((*tensor.shape[:-2], padded_rows, padded_cols), dtype=tensor.dtype, device=tensor.device)
+        padded[..., :rows, :cols] = tensor
+        return blockwise_dequantize(padded, scale, block_size)[..., :rows, :cols]
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        model_config=None,
+        **kwargs,
+    ) -> bool:
+        """Write a dequantized four-layer GLM-MoE-DSA checkpoint slice."""
+        sentinel = out / _SENTINEL
+        if sentinel.exists():
+            logger.info("GlmMoeDsaReducedCheckpointTransform: prepared checkpoint exists, skipping.")
+            return False
+        if model_config is None or getattr(model_config, "num_hidden_layers", None) != 4:
+            raise ValueError(
+                "GLM-MoE-DSA weight-free export is approved only for the reduced four-layer configuration."
+            )
+
+        block_size = cls._weight_block_size(model_config)
+        weight_map = read_weight_map(src)
+        if not cls.is_applicable(weight_map, model_config=model_config):
+            raise ValueError("Checkpoint does not use the supported GLM-5.3 FP8 per-expert layout.")
+
+        base_entries: dict[str, str] = {}
+        expert_entries: dict[tuple[int, str], tuple[str, str]] = {}
+        for key, shard_name in weight_map.items():
+            layer_match = cls._LAYER_RE.match(key)
+            if layer_match is not None and int(layer_match.group(1)) >= model_config.num_hidden_layers:
+                continue
+            if key.startswith("model.mtp"):
+                continue
+            expert_match = cls._EXPERT_RE.match(key)
+            if expert_match is not None:
+                layer_idx = int(expert_match.group(2))
+                if layer_idx == 3:
+                    expert_idx = int(expert_match.group(3))
+                    expert_entries[(expert_idx, expert_match.group(4))] = (shard_name, key)
+                continue
+            if key.endswith(cls._SCALE_SUFFIX):
+                continue
+            base_entries[key] = shard_name
+
+        num_experts = getattr(model_config, "n_routed_experts", None) or getattr(
+            model_config, "num_local_experts", None
+        )
+        if num_experts is None:
+            num_experts = len({expert_idx for expert_idx, _ in expert_entries})
+        expected_expert_entries = {
+            (expert_idx, kind) for expert_idx in range(num_experts) for kind in ("gate_proj", "up_proj", "down_proj")
+        }
+        missing_expert_entries = expected_expert_entries.difference(expert_entries)
+        if missing_expert_entries:
+            sample = ", ".join(f"expert {idx} {kind}" for idx, kind in sorted(missing_expert_entries)[:3])
+            raise ValueError(f"GLM-5.3 layer 3 is missing required expert weights: {sample}.")
+
+        out.mkdir(parents=True, exist_ok=True)
+        copy_checkpoint_aux_files(src, out)
+        new_weight_map: dict[str, str] = {}
+        entries_by_shard: dict[str, list[str]] = {}
+        for key, shard_name in base_entries.items():
+            entries_by_shard.setdefault(shard_name, []).append(key)
+
+        from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import split_glm_moe_dsa_q_b_proj
+
+        def _load_dequantized(key: str, checkpoint=None) -> torch.Tensor:
+            shard_name = weight_map[key]
+            if checkpoint is not None:
+                tensor = checkpoint.get_tensor(key)
+            else:
+                with safe_open(str(src / shard_name), framework="pt") as source_checkpoint:
+                    tensor = source_checkpoint.get_tensor(key)
+            scale_key = f"{key}{cls._SCALE_SUFFIX}"
+            if scale_key in weight_map:
+                scale_shard = weight_map[scale_key]
+                if checkpoint is not None and scale_shard == shard_name:
+                    scale = checkpoint.get_tensor(scale_key)
+                else:
+                    with safe_open(str(src / scale_shard), framework="pt") as scale_checkpoint:
+                        scale = scale_checkpoint.get_tensor(scale_key)
+                return cls._dequantize_fp8_weight(tensor, scale, block_size).to(target_dtype)
+            return tensor.to(target_dtype) if tensor.is_floating_point() else tensor
+
+        for shard_index, (shard_name, keys) in enumerate(sorted(entries_by_shard.items())):
+            tensors: dict[str, torch.Tensor] = {}
+            with safe_open(str(src / shard_name), framework="pt") as checkpoint:
+                for key in keys:
+                    tensor = _load_dequantized(key, checkpoint)
+                    tensors[key] = tensor
+                    if key.endswith(cls._Q_B_PROJ_SUFFIX):
+                        prefix = key[: -len(".q_b_proj.weight")]
+                        q_up, q_rope = split_glm_moe_dsa_q_b_proj(
+                            tensor,
+                            model_config.num_attention_heads,
+                            model_config.qk_nope_head_dim,
+                            model_config.qk_rope_head_dim,
+                        )
+                        tensors[f"{prefix}.q_up"] = q_up
+                        tensors[f"{prefix}.q_rope"] = q_rope
+
+            out_name = f"model_{shard_index:04d}.safetensors"
+            atomic_save(tensors, out / out_name)
+            new_weight_map.update({key: out_name for key in tensors})
+
+        for kind_index, kind in enumerate(("gate_proj", "up_proj", "down_proj")):
+            entries_for_kind: dict[str, list[tuple[int, str]]] = {}
+            for expert_idx in range(num_experts):
+                shard_name, expert_key = expert_entries[(expert_idx, kind)]
+                entries_for_kind.setdefault(shard_name, []).append((expert_idx, expert_key))
+
+            first_key = expert_entries[(0, kind)][1]
+            with safe_open(str(src / weight_map[first_key]), framework="pt") as checkpoint:
+                first_shape = checkpoint.get_slice(first_key).get_shape()
+            stacked = torch.empty((num_experts, first_shape[1], first_shape[0]), dtype=target_dtype)
+            for shard_name, shard_entries in sorted(entries_for_kind.items()):
+                with safe_open(str(src / shard_name), framework="pt") as checkpoint:
+                    for expert_idx, expert_key in shard_entries:
+                        stacked[expert_idx] = _load_dequantized(expert_key, checkpoint).transpose(0, 1)
+
+            canonical_kind = kind.removesuffix("_proj")
+            canonical_key = f"model.layers.3.mlp.moe_weights.{canonical_kind}"
+            out_name = f"model_glm_experts_{kind_index:02d}.safetensors"
+            atomic_save({canonical_key: stacked}, out / out_name)
+            new_weight_map[canonical_key] = out_name
+
+        write_index(out, new_weight_map)
+        sentinel.touch()
+        logger.info("GlmMoeDsaReducedCheckpointTransform: done -> %s", out)
         return True
 
 

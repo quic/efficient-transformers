@@ -35,6 +35,7 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
+    GlmMoeDsaReducedCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
@@ -3519,6 +3520,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _onnx_transforms = []
 
     _checkpoint_transforms = [
+        GlmMoeDsaReducedCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
         MoEFusedExpertSplitCheckpointTransform,
