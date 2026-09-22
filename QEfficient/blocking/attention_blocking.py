@@ -150,7 +150,11 @@ class AttentionBlockingConfig:
     indexer_n_head: Optional[int] = None
     indexer_q_size: Optional[int] = None
     indexer_q_chunk: Optional[int] = None
+    indexer_prefill_parallel: Optional[bool] = None
+    indexer_num_blocks: Optional[int] = None
+    msa_num_kv_blocks: Optional[int] = None
     msa_q_chunk: Optional[int] = None
+    page_block_size: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
