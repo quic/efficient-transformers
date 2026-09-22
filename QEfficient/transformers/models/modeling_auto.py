@@ -11,6 +11,7 @@ import warnings
 from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
+from typing import List, Optional, Union
 
 import numpy as np
 import onnx
@@ -3644,7 +3645,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
-        
+
         # DFlash changes the model structure and output contract, so apply it before
         # the generic speculative-decoding and sampler transforms wrap model.forward.
         self.dflash_dlm = bool(qaic_config and qaic_config.get("dflash_dlm", False))

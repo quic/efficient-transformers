@@ -195,6 +195,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             full_batch_size=full_batch_size if continuous_batching else None,
             prompts=prompts,
             config_fp=config_fp,
+        )
 
         def _compute_hf_tokens():
             if continuous_batching:
