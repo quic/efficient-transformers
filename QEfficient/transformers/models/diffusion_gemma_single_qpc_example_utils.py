@@ -682,7 +682,7 @@ def compile_unified_qpc(
     qaic_config_moe = {
         "moe_config": {
             "flavour": "expert_parallel",
-            "expert_parallel_chunk_size": 128,
+            "expert_parallel_chunk_size": 256,
             "tree_reduce": True,
         }
     }
