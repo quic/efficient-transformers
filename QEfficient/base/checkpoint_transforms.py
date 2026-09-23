@@ -17,12 +17,13 @@ e.g. QEfficient/exporter/weight_free/checkpoint_transforms.py.
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Dict, List, Type
 
 import torch
 
-from QEfficient.utils.checkpoint_utils import convert_bin_to_safetensors, read_weight_map
+from QEfficient.utils.checkpoint_utils import checkpoint_files_complete, convert_bin_to_safetensors, read_weight_map
 
 # Marks a prepared checkpoint directory as complete, so re-runs can skip work.
 CHECKPOINT_PREPARED_SENTINEL = ".checkpoint_prepared"
@@ -46,7 +47,6 @@ def _checkpoint_file_fingerprint(root: Path, label: str) -> List[dict]:
                 "label": label,
                 "path": path.name,
                 "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
             }
         )
     return fingerprint
@@ -92,6 +92,48 @@ def _clear_stale_prepared_dir(out: Path, src: Path, source_dir: Path) -> None:
         shutil.rmtree(out)
     else:
         out.unlink()
+
+
+class _CheckpointPreparationLock:
+    """Small cross-process lock for shared checkpoint preparation directories."""
+
+    def __init__(self, out: Path):
+        self.path = out.with_name(out.name + ".lock")
+        self._lock_dir = out.with_name(out.name + ".lockdir")
+        self._handle = None
+        self._using_lock_dir = False
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import fcntl
+
+            self._handle = self.path.open("w")
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
+        except ImportError:
+            while True:
+                try:
+                    self._lock_dir.mkdir()
+                    self._using_lock_dir = True
+                    break
+                except FileExistsError:
+                    time.sleep(0.1)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            import fcntl
+
+            if self._handle is not None:
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        except ImportError:
+            if self._using_lock_dir:
+                try:
+                    self._lock_dir.rmdir()
+                except OSError:
+                    pass
+        if self._handle is not None:
+            self._handle.close()
 
 
 class BaseCheckpointTransform:
@@ -159,6 +201,18 @@ class CheckpointTransformPipeline:
         """Apply the first matching transform and return the usable checkpoint directory."""
         src, out = Path(src), Path(out)
 
+        with _CheckpointPreparationLock(out):
+            return self._apply_locked(src, out, target_dtype=target_dtype, **kwargs)
+
+    def _apply_locked(
+        self,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        **kwargs,
+    ) -> Path:
+        """Apply checkpoint preparation while holding the output lock."""
+
         source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
         if not has_safetensors and list(src.glob("*.bin")):
@@ -168,7 +222,11 @@ class CheckpointTransformPipeline:
             convert_bin_to_safetensors(src, source_dir)
 
         expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
-        if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
+        if (
+            (out / CHECKPOINT_PREPARED_SENTINEL).exists()
+            and _manifest_matches(out, expected_manifest)
+            and checkpoint_files_complete(out)
+        ):
             return out
         _clear_stale_prepared_dir(out, src, source_dir)
 
