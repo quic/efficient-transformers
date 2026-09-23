@@ -2385,7 +2385,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vision_qpc_path=self.vision_model.qpc_path,
                 tokenizer=tokenizer,
                 processor=processor,
-                device_id=device_ids,  # if device_ids is not None else [0],
+                device_ids=device_ids,  # if device_ids is not None else [0],
                 ctx_len=ctx_len_comp,
                 num_kv_blocks=num_kv_blocks_comp,
                 full_batch_size=fbs,
@@ -5000,7 +5000,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer,
         prompts: list[str],
-        device_id: list[int] | None = None,
+        device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
         artifacts: bool = False,
         **kwargs,
@@ -5017,7 +5017,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Tokenizer for the model.
         prompts : list of str
             List of prompts to generate output for.
-        device_id : list of int, optional
+        device_ids : list of int, optional
             Device IDs for running the QPC. Defaults to `[0]` if not specified.
         runtime_ai100 : bool, optional
             Whether to use AI 100 runtime. Default is True.
@@ -5056,7 +5056,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prompt=prompts,
                 comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
-                device_id=device_id,
+                device_ids=device_ids,
                 generation_len=generation_len,
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
@@ -5687,7 +5687,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
             :processor (AutoProcessor): The Processor to use for encoding the waveform.
         ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+            :device_ids (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.

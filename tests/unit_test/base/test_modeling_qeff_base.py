@@ -453,6 +453,58 @@ class TestQEFFBaseModelTransformBlocking:
                 use_cache=True,
             )
 
+    def test_transform_consumes_gdn_chunk_size_from_qaic_config(self):
+        """GDN chunk size is sourced from qaic_config and applied via gated-delta transform."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with (
+            patch.object(
+                modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+            ) as gated_apply,
+            patch.object(modeling_qeff.OptimizedMoETransform, "apply", return_value=(qeff.model, False)) as moe_apply,
+        ):
+            qeff.transform(
+                ctx_len=32,
+                seq_len=8,
+                bs=1,
+                prefill_seq_len=8,
+                qaic_config={"gdn_chunk_size": 4},
+            )
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 4})
+        assert "gdn_chunk_size" not in moe_apply.call_args.kwargs
+
+    def test_transform_allows_gdn_chunk_larger_than_prefill_length(self):
+        """No transform-time prefill-length check exists for GDN chunk size in qaic_config."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, qaic_config={"gdn_chunk_size": 16})
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 16})
+
+    def test_transform_defaults_gdn_chunk_size_to_internal_default(self):
+        """Without qaic_config, transform sends no gated-delta chunk override."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, False)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8)
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config=None)
+
 
 @pytest.mark.cpu_only
 @pytest.mark.onnx
