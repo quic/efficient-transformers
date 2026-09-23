@@ -94,9 +94,9 @@ def main():
     # Compile the model
     qpc_path = model.compile(**compile_kwargs)
     if args.artifacts:
-        print(f"Compiler artifacts written to: {compile_path}")
+        print(f"Compiler artifacts written to: {qpc_path}")
     else:
-        print(f"Model compiled to: {compile_path}")
+        print(f"Model compiled to: {qpc_path}")
 
     # Generate text
     generate_kwargs = {
