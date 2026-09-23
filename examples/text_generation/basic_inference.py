@@ -30,6 +30,11 @@ def main():
         "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="Version of aic hardware"
     )
     parser.add_argument(
+        "--artifacts",
+        action="store_true",
+        help="Write compiler and runner artifacts without executing either tool",
+    )
+    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -80,6 +85,7 @@ def main():
         "num_devices": (1 if args.device_group is None else len(args.device_group)),
         "dynamo": args.dynamo,
         "use_onnx_subfunctions": args.use_onnx_subfunctions,
+        "artifacts": args.artifacts,
     }
 
     if args.stats_level is not None:
@@ -87,7 +93,10 @@ def main():
 
     # Compile the model
     qpc_path = model.compile(**compile_kwargs)
-    print(f"Model compiled to: {qpc_path}")
+    if args.artifacts:
+        print(f"Compiler artifacts written to: {compile_path}")
+    else:
+        print(f"Model compiled to: {compile_path}")
 
     # Generate text
     generate_kwargs = {
@@ -95,12 +104,17 @@ def main():
         "prompts": [args.prompt],
         "device_id": args.device_group,
         "generation_len": args.generation_len,
+        "artifacts": args.artifacts,
     }
     if args.profiling_type is not None:
         generate_kwargs["profiling_type"] = args.profiling_type
         if args.profiling_output_dir is not None:
             generate_kwargs["profiling_output_dir"] = args.profiling_output_dir
     exec_info = model.generate(**generate_kwargs)
+
+    if args.artifacts:
+        print(f"Runner inputs written to: {exec_info}")
+        return
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info.generated_texts[0]}")
