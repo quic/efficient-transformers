@@ -661,6 +661,9 @@
         "linear_attention",
         "full_attention"
       ],
+      "qaic_config": {
+        "gdn_chunk_size": 64
+      },
       "config_overrides": {
         "hidden_size": 128,
         "intermediate_size": 256,
@@ -675,6 +678,9 @@
       "is_moe": true,
       "supports_blocking": true,
       "use_text_config": true,
+      "qaic_config": {
+        "gdn_chunk_size": 64
+      },
       "config_overrides": {
         "hidden_size": 128,
         "intermediate_size": 256,
