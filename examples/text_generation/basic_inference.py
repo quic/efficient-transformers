@@ -21,6 +21,11 @@ def main():
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
+    parser.add_argument(
+        "--weight-free",
+        action="store_true",
+        help="Export without embedding weights; useful with --artifacts for a replayable compiler bundle",
+    )
     parser.add_argument("--use-onnx-subfunctions", action="store_true", help="Use subfunctions while exporting")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=constants.DEFAULT_AIC_NUM_CORES, help="Number of cores")
@@ -45,7 +50,7 @@ def main():
     config = AutoConfig.from_pretrained(args.model_name)
     if args.num_hidden_layers > 0:
         config.num_hidden_layers = args.num_hidden_layers
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
+    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config, weight_free=args.weight_free)
 
     # Compile the model
     compile_path = model.compile(
@@ -60,6 +65,8 @@ def main():
     )
     if args.artifacts:
         print(f"Compiler artifacts written to: {compile_path}")
+        if args.weight_free:
+            print("Weight-free compiler bundle includes ONNX, weight_spec.json, and checkpoint weights.")
     else:
         print(f"Model compiled to: {compile_path}")
 

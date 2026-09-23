@@ -43,6 +43,7 @@ from QEfficient.compile.mdp_generator import (
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
+from QEfficient.exporter.weight_free.weight_spec import load_weight_spec
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -95,6 +96,92 @@ def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Pa
         if input_path.resolve() != artifact_path.resolve():
             shutil.copy2(input_path, artifact_path)
         command[index] = f"{flag}={artifact_path}"
+
+
+def _copy_onnx_external_data_files(source_onnx_path: Path, artifact_onnx_path: Path) -> None:
+    """Copy ONNX external tensor data referenced by source_onnx_path beside artifact_onnx_path."""
+    model = onnx.load(source_onnx_path, load_external_data=False)
+    for tensor in onnx.external_data_helper._get_all_tensors(model):
+        if tensor.data_location != onnx.TensorProto.EXTERNAL:
+            continue
+        location = next((entry.value for entry in tensor.external_data if entry.key == "location"), None)
+        if not location:
+            continue
+        location_path = Path(location)
+        if location_path.is_absolute():
+            source_path = location_path
+            artifact_path = artifact_onnx_path.parent / location_path.name
+        else:
+            source_path = source_onnx_path.parent / location_path
+            artifact_path = artifact_onnx_path.parent / location_path
+        if not source_path.is_file():
+            raise FileNotFoundError(f"ONNX external data file not found at: {source_path}")
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.resolve() != artifact_path.resolve():
+            shutil.copy2(source_path, artifact_path)
+
+
+def _copy_weight_free_compiler_inputs(weight_spec_path: Path, source_onnx_path: Path, artifact_dir: Path) -> None:
+    """Copy weight-free sidecar and checkpoint files needed to replay compilation."""
+    if not weight_spec_path.is_file():
+        raise FileNotFoundError(f"Weight spec file not found at: {weight_spec_path}")
+
+    artifact_weight_spec_path = artifact_dir / weight_spec_path.name
+    if weight_spec_path.resolve() != artifact_weight_spec_path.resolve():
+        shutil.copy2(weight_spec_path, artifact_weight_spec_path)
+
+    spec = load_weight_spec(weight_spec_path)
+    candidate_roots = [source_onnx_path.parent, weight_spec_path.parent]
+    model_id_path = Path(spec.model_id).expanduser()
+    if model_id_path.exists():
+        candidate_roots.append(model_id_path.parent)
+
+    for external_file in spec.files:
+        external_path = Path(external_file.path).expanduser()
+        if external_path.is_absolute():
+            source_path = external_path
+            artifact_relative_path = Path(external_path.name)
+        else:
+            source_path = next(
+                (root / external_path for root in candidate_roots if (root / external_path).is_file()),
+                None,
+            )
+            artifact_relative_path = external_path
+        if source_path is None or not source_path.is_file():
+            raise FileNotFoundError(f"Weight-free checkpoint file not found for artifact export: {external_file.path}")
+        artifact_path = artifact_dir / artifact_relative_path
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.resolve() != artifact_path.resolve():
+            shutil.copy2(source_path, artifact_path)
+
+
+def _copy_model_compiler_input(
+    command: List[str],
+    compile_dir: Path,
+    weight_spec_path: Optional[Union[str, Path]] = None,
+) -> None:
+    """Copy the ONNX compiler input and dependent files into compile_dir, updating command."""
+    for index, argument in enumerate(command):
+        option, separator, value = argument.partition("=")
+        if option != "-m" or not separator:
+            continue
+
+        source_onnx_path = Path(value)
+        if not source_onnx_path.is_file():
+            raise FileNotFoundError(f"ONNX file not found at: {source_onnx_path}")
+
+        artifact_onnx_path = compile_dir / source_onnx_path.name
+        if source_onnx_path.resolve() != artifact_onnx_path.resolve():
+            shutil.copy2(source_onnx_path, artifact_onnx_path)
+        _copy_onnx_external_data_files(source_onnx_path, artifact_onnx_path)
+
+        resolved_weight_spec_path = (
+            Path(weight_spec_path) if weight_spec_path is not None else source_onnx_path.with_name("weight_spec.json")
+        )
+        if resolved_weight_spec_path.is_file():
+            _copy_weight_free_compiler_inputs(resolved_weight_spec_path, source_onnx_path, compile_dir)
+        command[index] = f"-m={artifact_onnx_path}"
+        return
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -1364,6 +1451,7 @@ class QEFFBaseModel(ABC):
             logger.info(f"Running compiler: {' '.join(command)}")
 
         if artifacts:
+            _copy_model_compiler_input(command, compile_dir, self.weight_spec_path)
             _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
             path_flags = {
                 "-aic-binary-dir",
@@ -1376,10 +1464,11 @@ class QEFFBaseModel(ABC):
                 "-ols-config",
             }
             replay_command = [Path(command[0]).name]
+            replay_base_dir = compile_dir.resolve()
             for argument in command[1:]:
                 flag, separator, value = argument.partition("=")
                 if separator and flag in path_flags:
-                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), compile_dir)}"
+                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), replay_base_dir)}"
                 replay_command.append(argument)
             compile_command = shlex.join(replay_command)
             script_lines = (
