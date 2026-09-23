@@ -1,3 +1,61 @@
+# Efficient Transformer Library - 1.23.0 Release Notes
+
+Welcome to the official release of **Efficient Transformer Library v1.23.0**! This release focuses on serving/runtime hardening for large models, stronger ONNX subfunction and blocked-attention paths, improved disaggregated serving, and continued stabilization for Gemma4 and Qwen VLM/CausalLM flows.
+
+> ✅ The exact release content is available on the [`release/v1.23.0`](https://github.com/quic/efficient-transformers/tree/release/v1.23.0) branch.
+
+---
+
+## Branch Summary
+
+- **Release branch**: [`release/v1.23.0`](https://github.com/quic/efficient-transformers/tree/release/v1.23.0)
+- **Release head**: `3727a6e` (`Adding mdp fix for PP + Blocking + Subfunction`)
+- **Previous release baseline used for this summary**: `release/v1.22.0`
+- **Mainline comparison**: `release/v1.23.0` is 5 commits behind `upstream/main` at compare time and contains 0 release-only commits vs `upstream/main`
+
+---
+
+## Key Features & Enhancements
+
+- **Disaggregated serving and cache/runtime improvements**
+  - Added efficient KV handoff support for disaggregated serving.
+  - Fixed QPC key mismatch behavior between vLLM and QEff runtime paths.
+  - Added MDP generation and follow-up fixes for `mdp_strategy=intersection` and PP + blocking + subfunction combinations.
+
+- **Attention blocking and subfunction path strengthening**
+  - Landed blocked-attention forward-path performance optimizations.
+  - Added head-parallel and batch-fold blocking support for Qwen3-VL-MoE.
+  - Added multiple ONNX subfunction correctness fixes (including ReduceSum axes localization and Qwen3.5 Conv1D ConstantOfShape export fixes).
+
+- **Weight-free and export pipeline updates**
+  - Added weight-free ONNX export support for CausalLM models.
+  - Added guardrails for unsupported weight-free model classes/features.
+  - Reduced MoE export RAM by aliasing fused expert weights as views.
+
+- **Model-flow stability updates**
+  - Added/updated Gemma4 path fixes (cache rotary embedding handling, decode-MoE changes, blocking enablement, and sliding-window follow-ups).
+  - Improved Qwen3.5/Qwen3.6 and Qwen3-VL family stability and execution behavior, including vision-language batch decoupling fixes.
+  - Added support updates for Kimi K2.5 vision runtime/export flows.
+
+- **Toolchain and dependency alignment**
+  - Removed deprecated `compile_only` compiler flag usage.
+  - Updated pinned `numpy`/`protobuf` versions used by the release branch.
+  - Made `dataPathTimeoutMs` configurable (default 120s).
+
+---
+
+## Mainline Delta (Not Included In release/v1.23.0)
+
+Compared to `upstream/main` at `b3d60f4`, the following mainline commits are not part of `release/v1.23.0`:
+
+- `b3d60f4` - `fix(vlm): use decoder vocab size for sampler export`
+- `90f37b9` - `Fix bfloat16 pixel_values/image_masks corruption in VLM`
+- `b378401` - `Add DISAGG TESTS Report`
+- `8c1b35f` - `Adding PagedAttention support for CausalLM models`
+- `cc39555` - `Remove QNN tests from CI suites`
+
+---
+
 # Efficient Transformer Library - 1.22.0 Release Notes
 
 Welcome to the official release of **Efficient Transformer Library v1.22.0**! This release delivers major new model support including Gemma 4, Qwen3-VL, and GLM4-MOE, a full rebase to Transformers v5.5.4, Python 3.12 support, advanced attention blocking, Multi-head Latent Attention (MLA), and numerous performance and export improvements.
