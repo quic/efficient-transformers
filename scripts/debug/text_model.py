@@ -25,5 +25,5 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model.generate(
     prompts=["Hi there!!"],
     tokenizer=tokenizer,
-    write_io=True,  # Saves input/output tensors to files
+    artifacts=True,
 )
