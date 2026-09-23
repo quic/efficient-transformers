@@ -82,8 +82,6 @@ def check_image_text_to_text_subfunction_core(
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     batch_size = model_config_dict[model_name]["batch_size"]
-    enable_qnn = False
-    qnn_config = None
     max_gen_len = NEW_GENERATION_TOKENS
 
     if config is None and model_name in SYNTHESIZED_CONFIG_MODELS:
@@ -144,8 +142,6 @@ def check_image_text_to_text_subfunction_core(
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
         "use_onnx_subfunctions": True,
     }
 
@@ -266,7 +262,7 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_clean
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
-    if model_name in {"Qwen/Qwen3.5-35B-A3B", "tiny-random/qwen3.5-moe"}:
+    if model_name in {"Qwen/Qwen3.5-35B-A3B", "tiny-random/qwen3.5", "tiny-random/qwen3.5-moe"}:
         pytest.skip("Works with Apps SDK 1.23.0.30 but fails with newer Apps SDK >= 1.23.0.37.")
 
     torch.manual_seed(42)
