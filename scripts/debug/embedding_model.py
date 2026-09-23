@@ -25,5 +25,5 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 inputs = tokenizer(test_text, return_tensors="pt")
 
 # Generate embeddings with IO files
-output = model.generate(inputs, write_io=True)
+output = model.generate(inputs)
 print(output)
