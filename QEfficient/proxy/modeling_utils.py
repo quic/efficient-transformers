@@ -11,6 +11,7 @@ from collections import Counter
 
 from transformers import AutoConfig
 
+from QEfficient.utils import get_num_layers_from_config
 from QEfficient.utils.logging_utils import logger
 
 _CONFIG_LOAD_KWARGS = (
@@ -72,7 +73,7 @@ def apply_proxy_layer_config(
     """Reduce the language stack while retaining repeated instances of every layer type."""
     language_config = _get_language_config(config)
     configured_num_layers = (
-        num_hidden_layers if num_hidden_layers is not None else getattr(language_config, "num_hidden_layers", None)
+        num_hidden_layers if num_hidden_layers is not None else get_num_layers_from_config(language_config)
     )
     if configured_num_layers is None:
         raise ValueError("Proxy mode requires the language config to define `num_hidden_layers`.")

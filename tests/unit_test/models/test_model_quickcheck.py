@@ -1761,6 +1761,8 @@ def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
 
 
 def test_proxy_layer_config_preserves_repeated_layer_types():
+    from transformers import LlamaForCausalLM
+
     from QEfficient.proxy.modeling_utils import apply_proxy_layer_config, prepare_proxy_config
 
     llama_config = LlamaConfig(num_hidden_layers=16)
@@ -1794,10 +1796,88 @@ def test_proxy_layer_config_preserves_repeated_layer_types():
     assert kwargs["config"].num_hidden_layers == 2
     assert "num_hidden_layers" not in kwargs
 
+    llama_kwargs = {
+        "config": LlamaConfig(
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_hidden_layers=8,
+            num_key_value_heads=2,
+            vocab_size=32,
+        ),
+        "num_hidden_layers": 3,
+    }
+    prepare_proxy_config("unused-local-config", llama_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(
+        LlamaForCausalLM(llama_kwargs["config"]).eval(),
+        enable_proxy=True,
+    )
+    assert "num_hidden_layers" not in llama_kwargs
+    assert qeff_model.hash_params["proxy_num_hidden_layers"] == 3
+
+
+@pytest.mark.llm_model
+@pytest.mark.mdp
+def test_proxy_compile_artifacts_generate_disagg_mdp_config_for_tiny_model(tmp_path):
+    from transformers import LlamaForCausalLM
+
+    from QEfficient.proxy.modeling_utils import prepare_proxy_config
+
+    model_kwargs = {
+        "config": LlamaConfig(
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_hidden_layers=4,
+            num_key_value_heads=2,
+            vocab_size=32,
+            max_position_embeddings=32,
+            torch_dtype=torch.float32,
+        )
+    }
+    prepare_proxy_config("unused-local-config", model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(
+        LlamaForCausalLM(model_kwargs["config"]).eval(),
+        enable_proxy=True,
+        torch_dtype=torch.float32,
+    )
+
+    artifacts_dir = Path(
+        qeff_model.compile(
+            compile_dir=str(tmp_path / "proxy-mdp"),
+            prefill_seq_len=4,
+            ctx_len=8,
+            batch_size=1,
+            num_devices=2,
+            mdp_num_partitions=2,
+            artifacts=True,
+            offload_pt_weights=False,
+        )
+    )
+
+    assert qeff_model.num_layers == 2
+    assert qeff_model.hash_params["proxy_num_hidden_layers"] == 2
+    assert qeff_model.qpc_path is None
+    assert qeff_model.compile_artifacts_path == artifacts_dir
+
+    mdp_path = artifacts_dir / "mdp_disagg_2d_2p.json"
+    assert mdp_path.is_file()
+    mdp_data = json.loads(mdp_path.read_text())
+    assert len(mdp_data["partitions"]) == 2
+    assert [device["deviceId"] for device in mdp_data["partitions"][0]["devices"]] == [0]
+    assert [device["deviceId"] for device in mdp_data["partitions"][1]["devices"]] == [1]
+
+    replay_script = artifacts_dir / "qaic-compile.sh"
+    assert replay_script.is_file()
+    replay_command = replay_script.read_text()
+    assert "-mdp-load-partition-config=mdp_disagg_2d_2p.json" in replay_command
+    assert "-aic-binary-dir=qpc" in replay_command
+
 
 def test_proxy_layer_config_only_reduces_vlm_language_layers():
     from QEfficient.proxy.modeling_utils import apply_proxy_layer_config
 
+    # Proxy layer reduction is language-only; vision layers must remain untouched.
     config = Qwen3VLMoeConfig(
         text_config=Qwen3VLMoeTextConfig(num_hidden_layers=16),
         vision_config=Qwen3VLMoeVisionConfig(depth=8),
