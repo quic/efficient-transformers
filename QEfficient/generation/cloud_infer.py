@@ -66,7 +66,7 @@ class QAICInferenceSession:
         qpc_path: Union[Path, str],
         device_ids: Optional[List[int]] = None,
         activate: bool = True,
-        enable_debug_logs: bool = False,
+        enable_debug_logs: bool = True,
         data_path_timeout_ms: int = 60_000,
     ):
         """
