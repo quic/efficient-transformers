@@ -35,9 +35,8 @@ from QEfficient.generation.text_generation_inference import (
     TextGeneration,
     calculate_latency,
     get_compilation_dims,
-    write_io_files,
 )
-from QEfficient.utils import LRUCache
+from QEfficient.utils import LRUCache, constants
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -90,7 +89,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
@@ -115,7 +113,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 QPC (optional). When None (default), paged attention is disabled and
                 block_table/slot_id are never populated or sent to the language session.
             enable_debug_logs: Enable debug logging
-            write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
             image_height: Desired image height for resizing
             image_width: Desired image width for resizing
@@ -143,7 +140,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
             device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
@@ -423,9 +419,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             if "image_idx_output" in outputs:
                 chunk_image_idx = outputs["image_idx_output"]
 
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
         # Prepare decode-time cross_attention_mask
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
@@ -660,8 +653,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in constants.VISION_FP16_INPUTS:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
 
         vision_outputs = {}
         if vision_inputs:

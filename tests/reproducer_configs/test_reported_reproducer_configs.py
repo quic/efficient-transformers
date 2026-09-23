@@ -98,7 +98,7 @@ OFFICIAL_MODEL_ENV = "QEFF_REPRODUCER_USE_OFFICIAL_MODELS"
 REPORT_PATH_ENV = "QEFF_REPRODUCER_REPORT_MD"
 SCENARIO_FILTER_ENV = "QEFF_REPRODUCER_SCENARIO"
 DEFAULT_REPORT_PATH = Path("tests/reproducer_configs/reproducer_config_results.md")
-EXPECTED_SCENARIO_COUNT = 50
+EXPECTED_SCENARIO_COUNT = 51
 EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
     {
         "height",
@@ -641,6 +641,26 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
             "num_cores": 16,
             "use_onnx_subfunctions": True,
         },
+    ),
+    RegressionScenario(
+        name="qwen25-vl-dual-qpc-ods-vocab-size",
+        stage="export",
+        source_model_card="Qwen/Qwen2.5-VL-3B-Instruct",
+        tiny_model_id=TINY_QWEN2_5_VL,
+        summary="dual-QPC on-device sampler export must read vocab_size from the decoder wrapper",
+        model_api="image_text_to_text",
+        load_kwargs={
+            "continuous_batching": True,
+            "qaic_config": {
+                "include_sampler": True,
+                "return_pdfs": False,
+                "max_top_k_ids": 512,
+            },
+            "trust_remote_code": False,
+            "attn_implementation": "eager",
+            "kv_offload": True,
+        },
+        export_kwargs={"prefill_seq_len": 128},
     ),
     RegressionScenario(
         name="wan22-excessive-prints",

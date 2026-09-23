@@ -92,7 +92,7 @@ class StageSpec:
     order: int
 
 
-# Full 11-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
+# Full 12-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
 # This is the source of truth for the stage list, so absent files render as "Not Run".
 STAGE_MAP = OrderedDict(
     [
@@ -142,19 +142,23 @@ STAGE_MAP = OrderedDict(
             ),
         ),
         (
-            "tests_log_reranker.xml",
-            StageSpec("QAIC Reranker", "tests/transformers/models/reranker/test_reranker_mad.py", "RUN_QAIC_MM", 6),
+            "tests_log_disagg.xml",
+            StageSpec("QAIC DISAGG", "(on_qaic) and (disagg_dma) and <PROFILE>", "RUN_QAIC_DISAGG", 6),
         ),
-        ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 7)),
-        ("tests_log3.xml", StageSpec("CLI", "(cli) and (not finetune)", "RUN_CLI", 8)),
+        (
+            "tests_log_reranker.xml",
+            StageSpec("QAIC Reranker", "tests/transformers/models/reranker/test_reranker_mad.py", "RUN_QAIC_MM", 7),
+        ),
+        ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 8)),
+        ("tests_log3.xml", StageSpec("CLI", "(cli) and (not finetune)", "RUN_CLI", 9)),
         (
             "tests_log_dynamo_qaic.xml",
-            StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 9),
+            StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 10),
         ),
-        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 10)),
+        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 11)),
         (
             "tests_log_reproducer.xml",
-            StageSpec("Reproducer Configs", "tests/reproducer_configs/test_reported_reproducer_configs.py", "", 11),
+            StageSpec("Reproducer Configs", "tests/reproducer_configs/test_reported_reproducer_configs.py", "", 12),
         ),
     ]
 )
@@ -493,7 +497,8 @@ def category_of(module_path):
 # ── Feature coverage ───────────────────────────────────────────────────────────
 
 # Canonical column order for the model × feature coverage matrix. Each entry is
-# (key, display, predicate); the predicate receives (fn_tokens, param_tokens) —
+# (key, display, predicate); the predicate receives the test function, tokenized
+# function/parametrize id, and module path —
 # already lower-cased sets of ``-``-separated segments plus the raw joined strings
 # — and returns True when that test exercises the feature. Features are read
 # from the per-PR causal-LM test-function names *and* their parametrize ids
@@ -501,20 +506,22 @@ def category_of(module_path):
 # name has no ``cb`` in it), so the matrix reflects the actual run — no curated
 # data source.
 FEATURE_COLUMNS = [
-    ("fp32", "FP32", lambda fn, fn_tok, p, p_tok: "fp32" in fn),
-    ("fp16", "FP16", lambda fn, fn_tok, p, p_tok: "fp16" in fn),
-    ("bf16", "BF16", lambda fn, fn_tok, p, p_tok: "bf16" in fn),
+    ("fp32", "FP32", lambda fn, fn_tok, p, p_tok, module_path: "fp32" in fn),
+    ("fp16", "FP16", lambda fn, fn_tok, p, p_tok, module_path: "fp16" in fn),
+    ("bf16", "BF16", lambda fn, fn_tok, p, p_tok, module_path: "bf16" in fn),
     # CB is set when a ``cb`` segment is present in fn OR param, AND ``nocb`` is not.
     (
         "cb",
         "Cont. Batch",
-        lambda fn, fn_tok, p, p_tok: ("cb" in fn_tok or "cb" in p_tok) and "nocb" not in fn_tok and "nocb" not in p_tok,
+        lambda fn, fn_tok, p, p_tok, module_path: (
+            ("cb" in fn_tok or "cb" in p_tok) and "nocb" not in fn_tok and "nocb" not in p_tok
+        ),
     ),
-    ("ccl", "CCL", lambda fn, fn_tok, p, p_tok: "ccl" in fn_tok or "ccl" in p_tok),
+    ("ccl", "CCL", lambda fn, fn_tok, p, p_tok, module_path: "ccl" in fn_tok or "ccl" in p_tok),
     (
         "subfunction",
         "Subfunction",
-        lambda fn, fn_tok, p, p_tok: (
+        lambda fn, fn_tok, p, p_tok, module_path: (
             ("subfunction" in fn or "subfunc" in fn_tok or "subfunc" in p_tok)
             and "non-subfunc" not in p
             and "non_subfunc" not in p
@@ -523,25 +530,25 @@ FEATURE_COLUMNS = [
     (
         "prefix_caching",
         "Prefix Cache",
-        lambda fn, fn_tok, p, p_tok: "prefix_caching" in fn or "prefix_caching" in p,
+        lambda fn, fn_tok, p, p_tok, module_path: "prefix_caching" in fn or "prefix_caching" in p,
     ),
     (
         "blocking",
         "Blocking",
-        lambda fn, fn_tok, p, p_tok: (
+        lambda fn, fn_tok, p, p_tok, module_path: (
             ("blocking" in fn or "blocking" in p) and "non-blocking" not in p and "non_blocking" not in p
         ),
     ),
-    ("disagg", "Disagg", lambda fn, fn_tok, p, p_tok: "disagg" in fn or "disagg" in p),
+    ("disagg", "Disagg", lambda fn, fn_tok, p, p_tok, module_path: "disaggregated/" in (module_path or "")),
     (
         "spd",
         "SPD/PLD",
-        lambda fn, fn_tok, p, p_tok: "speculative" in fn or "_tlm" in fn or "tlm" in p_tok,
+        lambda fn, fn_tok, p, p_tok, module_path: "speculative" in fn or "_tlm" in fn or "tlm" in p_tok,
     ),
     (
         "compile_only",
         "Compile-only",
-        lambda fn, fn_tok, p, p_tok: "compile_only" in fn or "compile_only" in p,
+        lambda fn, fn_tok, p, p_tok, module_path: "compile_only" in fn or "compile_only" in p,
     ),
 ]
 
@@ -561,8 +568,10 @@ SCENARIO_COLUMNS = [
     ("test_per_pr_causal_fp16_subfunction_cb_blocking", "+ Blocking"),
     ("test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl", "FP32 export · CCL"),
     ("test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only", "BF16 · CCL · compile-only"),
-    ("test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl", "MoE disagg · CCL"),
     ("test_per_pr_causal_speculative_tlm_fp16_subfunction_cb", "+ Speculation (TLM)"),
+    # Populated exclusively from DISAGG stage tests (tests_log_disagg.xml) via the
+    # __disagg__ sentinel key — never from per-PR causal test function names.
+    ("__disagg__", "Disagg"),
 ]
 
 # VLM per-PR scenario columns. VLM test functions are split across three per-PR profile
@@ -579,6 +588,8 @@ VLM_SCENARIO_COLUMNS = [
     ("image_text_to_text_blocking_dual_qpc", "+ Blocking dual-QPC"),
     ("image_text_to_text_bf16_compile_only", "BF16 · compile-only"),
     ("image_text_to_text_onnx_mdp_compile_only", "MoE MDP · compile-only"),
+    # Populated exclusively from DISAGG stage tests (tests_log_disagg.xml).
+    ("__disagg__", "Disagg"),
 ]
 
 # Per-PR profile prefixes stripped from a VLM test-fn to derive its scenario key.
@@ -625,18 +636,57 @@ _CELL_SEVERITY = {
 
 
 def classify_features(tc):
-    """Return the set of feature keys a test exercises, inferred from its name.
+    """Return the feature keys exercised by a test.
 
-    We split both ``test_fn`` and ``param_id`` on ``-`` and pass every
-    predicate both the raw strings and the segment sets, so features
-    encoded in either dimension are picked up (per-PR causal-LM tests
-    encode features in ``test_fn``; unit tests encode them in ``param_id``).
+    Each feature predicate receives the test function name, parameter id, and
+    module path. Most features are inferred from the function name and parameter
+    tokens; ``disagg`` is identified from the module path of disaggregated-suite
+    tests.
     """
     fn = tc.test_fn.lower()
     p = tc.param_id.lower()
     fn_tokens = set(re.split(r"[-_]+", fn)) if fn else set()
     p_tokens = set(re.split(r"[-_]+", p)) if p else set()
-    return {key for key, _display, pred in FEATURE_COLUMNS if pred(fn, fn_tokens, p, p_tokens)}
+    return {key for key, _display, pred in FEATURE_COLUMNS if pred(fn, fn_tokens, p, p_tokens, tc.module_path)}
+
+
+# ── Disaggregated module-path → per-PR slug mapping ──────────────────────────
+
+# Maps disagg test file name substrings to the canonical model key.
+# Causal disagg files → per-PR model_type slug (matches SCENARIO_COLUMNS row keys).
+# VLM disagg files → raw HF card path (matches VLM per-PR param_ids like
+#   "tiny-random/gemma-4-moe", "moonshotai/Kimi-K2.5", "tiny-random/qwen3-vl-moe").
+# The model identity lives in the file name, not the param_id which carries
+# hardware config strings like "tiny_model_prefill2_decode1_stages2".
+_DISAGG_FILE_TO_SLUG = {
+    # Causal disagg — slugs match per-PR causal scenario matrix row keys
+    "test_gpt_oss": "gpt_oss_moe_text",
+    "test_qwen3_5_disagg": "qwen3_5_moe_text",
+    "test_qwen3moe": "qwen3_moe_text",
+    # VLM disagg — HF card paths match VLM per-PR scenario matrix row keys
+    "test_gemma4_moe": "tiny-random/gemma-4-moe",
+    "test_kimi_k25": "moonshotai/Kimi-K2.5",
+    "test_qwen3_vl_moe": "tiny-random/qwen3-vl-moe",
+}
+
+
+def normalize_model_for_tc(tc):
+    """Return the canonical model key for a TestCase.
+
+    For disaggregated suite tests the model identity is encoded in the file name.
+    Causal disagg files return a per-PR model_type slug (e.g. ``qwen3_moe_text``)
+    so they land on the same row as per-PR causal scenario matrix entries.
+    VLM disagg files return the raw HF card path (e.g. ``tiny-random/gemma-4-moe``)
+    so they land on the same row as VLM per-PR scenario matrix entries.
+    Falls back to scanning param_id for a known HF model card, then to the standard
+    :func:`normalize_model` for all other tests.
+    """
+    if "disagg" in classify_features(tc):
+        path = tc.module_path or ""
+        for file_substr, slug in _DISAGG_FILE_TO_SLUG.items():
+            if file_substr in path:
+                return slug
+    return normalize_model(tc.param_id)
 
 
 # ── Parsing ──────────────────────────────────────────────────────────────────
@@ -1271,7 +1321,7 @@ def render_by_model(report):
     for tc in report.all_cases:
         if tc.seeded:
             continue
-        key = normalize_model(tc.param_id)
+        key = normalize_model_for_tc(tc)
         agg.setdefault(key, Counter())[tc.outcome] += 1
     if not agg:
         return ""
@@ -1309,16 +1359,19 @@ def render_coverage_matrix(report):
     which features," not "how many unit-test files ran."
     """
     # cells[model][feature] -> Counter of outcomes; models with no feature hits never appear.
+    _DISAGG_VLM_FILES = ("test_qwen3_vl_moe", "test_gemma4_moe", "test_kimi_k25")
     cells = OrderedDict()
     for tc in report.all_cases:
         if tc.seeded:
             continue
-        if category_of(tc.module_path) != CAT_CAUSAL:
+        feats = classify_features(tc)
+        is_disagg = "disagg" in feats
+        is_vlm_disagg = is_disagg and any(f in (tc.module_path or "") for f in _DISAGG_VLM_FILES)
+        if category_of(tc.module_path) != CAT_CAUSAL and not (is_disagg and not is_vlm_disagg):
             continue
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         if model == _NO_MODEL:
             continue
-        feats = classify_features(tc)
         if not feats:
             continue
         by_feature = cells.setdefault(model, {})
@@ -1424,7 +1477,7 @@ def _render_scenario_matrix_body(cases, category, columns, empty_msg=""):
     for tc, matrix_key in cases:
         if tc.seeded or matrix_key not in col_keys:
             continue
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         if model == _NO_MODEL:
             continue
         cells.setdefault(model, {}).setdefault(matrix_key, Counter())[tc.outcome] += 1
@@ -1488,7 +1541,7 @@ def _render_rollup_body(cases):
     for tc in cases:
         if tc.seeded:
             continue
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         if model == _NO_MODEL:
             continue
         agg.setdefault(model, Counter())[tc.outcome] += 1
@@ -1547,7 +1600,7 @@ def _render_pipeline_list_body(cases, header="Pipeline test", show_models=False)
         module = (tc.module_path or "").rsplit("/", 1)[-1]
         key = f"{module}::{tc.test_fn}" if module else tc.test_fn
         per_fn.setdefault(key, Counter())[tc.outcome] += 1
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         if model != _NO_MODEL:
             models_by_fn.setdefault(key, []).append(model)
     if not per_fn:
@@ -1657,6 +1710,7 @@ _STAGE_FEEDS_CATEGORIES = {
     "tests_log2_feature.xml": (CAT_CAUSAL,),
     "tests_log_embedding_audio.xml": (CAT_EMBEDDING, CAT_AUDIO),
     "tests_log6.xml": (CAT_VLM,),
+    "tests_log_disagg.xml": (CAT_CAUSAL, CAT_VLM),
     "tests_log_reranker.xml": (CAT_SEQ_RERANKER,),
     "tests_log_diffusion.xml": (CAT_DIFFUSION,),
 }
@@ -1693,7 +1747,7 @@ def _category_dense_moe_split(category, cases):
         return None
     dense, moe = set(), set()
     for tc in cases:
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         if model == _NO_MODEL:
             continue
         group = moe_group_for(category, model)
@@ -1750,7 +1804,7 @@ def render_category_section(report):
         pill = status_pill(has_run, failed, empty=(has_run is False and total == 0))
         # Model tally (excludes _NO_MODEL and seeded, matching the matrix/rollup filters).
         models = {
-            normalize_model(tc.param_id) for tc in cases if not tc.seeded and normalize_model(tc.param_id) != _NO_MODEL
+            normalize_model_for_tc(tc) for tc in cases if not tc.seeded and normalize_model_for_tc(tc) != _NO_MODEL
         }
         split = _category_dense_moe_split(category, cases)
         tally_bits = []
@@ -1823,6 +1877,24 @@ def render_category_section(report):
                 keyed = [(tc, _vlm_scenario_key(tc.test_fn)) for tc in cases]
             else:
                 keyed = [(tc, tc.test_fn) for tc in cases]
+            # Inject disagg-stage tests as __disagg__ column entries for causal/VLM.
+            # File name determines which category a disagg test belongs to:
+            # VLM disagg files contain multimodal models (qwen3_vl_moe, gemma4_moe, kimi).
+            # All other disagg files are causal (gpt_oss, qwen3moe, qwen3_5).
+            _DISAGG_VLM_FILES = ("test_qwen3_vl_moe", "test_gemma4_moe", "test_kimi_k25")
+            if category in (CAT_CAUSAL, CAT_VLM):
+                for tc in report.all_cases:
+                    if tc.seeded or "disagg" not in classify_features(tc):
+                        continue
+                    slug = normalize_model_for_tc(tc)
+                    if slug == _NO_MODEL:
+                        continue
+                    is_vlm_disagg = any(f in (tc.module_path or "") for f in _DISAGG_VLM_FILES)
+                    if category == CAT_VLM and not is_vlm_disagg:
+                        continue
+                    if category == CAT_CAUSAL and is_vlm_disagg:
+                        continue
+                    keyed.append((tc, "__disagg__"))
             body = _render_scenario_matrix_body(keyed, category, columns)
             if not body:
                 body = (
@@ -1883,7 +1955,7 @@ def render_failures(report):
     rows = [f"    <h2>Failures &amp; Errors ({len(failures)})</h2>"]
     for i, tc in enumerate(failures):
         open_attr = " open" if i < 10 else ""
-        model = normalize_model(tc.param_id)
+        model = normalize_model_for_tc(tc)
         meta = f"{esc(model)} &middot; {esc(tc.stage)} &middot; {tc.duration:.1f}s"
         body = tc.message + ("\n\n" + tc.detail if tc.detail else "")
         rows.append(f'    <details class="fail"{open_attr}>')
@@ -1931,7 +2003,14 @@ def render_stage_detail(report):
         for tc in st.cases:
             search = esc(f"{tc.test_fn} {tc.param_id}".lower())
             test_disp = esc(f"{os.path.basename(tc.module_path)}::{tc.test_fn}" if tc.module_path else tc.test_fn)
-            param_disp = f"<code>{esc(tc.param_id)}</code>" if tc.param_id else "&mdash;"
+            if "disagg" in classify_features(tc):
+                model_slug = normalize_model_for_tc(tc)
+                if model_slug != _NO_MODEL and model_slug != normalize_model(tc.param_id):
+                    param_disp = f"<code>{esc(model_slug)}</code>"
+                else:
+                    param_disp = f"<code>{esc(tc.param_id)}</code>" if tc.param_id else "&mdash;"
+            else:
+                param_disp = f"<code>{esc(tc.param_id)}</code>" if tc.param_id else "&mdash;"
             rows.append(
                 f'        <tr data-status="{tc.outcome.value}" data-dur="{tc.duration:.2f}" data-s="{search}">'
                 f"<td>{badge(tc.outcome)}</td><td><code>{test_disp}</code></td>"

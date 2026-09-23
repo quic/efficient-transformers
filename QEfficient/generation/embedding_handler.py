@@ -91,6 +91,28 @@ class VisionHandler:
             return Image.open(BytesIO(response.content)).convert("RGB")
         return Image.open(image_source).convert("RGB")
 
+    def _cast_vision_inputs(self, vision_inputs: Dict[str, np.ndarray], keys: set) -> None:
+        """
+        Cast the given vision_inputs entries to the dtype the vision session's
+        compiled binding actually expects, in place.
+
+        The pixel_values/image_masks bindings are exported at the model's
+        configured torch_dtype, which may be real float16 or bfloat16. numpy has
+        no native bfloat16, so a bfloat16 binding is carried on the host as a
+        float16-sized byte buffer holding real bfloat16 bit patterns; numerically
+        casting with `.astype(np.float16)` would instead produce IEEE float16
+        values and corrupt the buffer once its raw bytes are shipped to the device.
+        """
+        for k in keys:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
+
     def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
@@ -143,11 +165,7 @@ class VisionHandler:
             }:
                 vision_inputs[k] = np.array(v)
 
-        # Convert specific inputs to float16
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        for k in vision_inputs_fp16:
-            if k in vision_inputs:
-                vision_inputs[k] = vision_inputs[k].astype("float16")
+        self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -165,8 +183,8 @@ class VisionHandler:
             ValueError: If vision handler is not properly initialized
             RuntimeError: If image processing fails
         """
-        if not self.is_available():
-            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+        if self._processor is None:
+            raise ValueError("A processor is required to prepare vision inputs.")
 
         try:
             image = self._load_image(image_url)
@@ -192,11 +210,7 @@ class VisionHandler:
                 }:
                     vision_inputs[k] = np.array(v)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -220,8 +234,8 @@ class VisionHandler:
             ValueError: If vision handler is not properly initialized
             RuntimeError: If image processing fails
         """
-        if not self.is_available():
-            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+        if self._processor is None:
+            raise ValueError("A processor is required to prepare vision inputs.")
 
         try:
             image = self._load_image(image_url)
@@ -319,11 +333,7 @@ class VisionHandler:
                 vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
                 vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
 
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
+            self._cast_vision_inputs(vision_inputs, constants.VISION_FP16_INPUTS)
 
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 
@@ -486,17 +496,56 @@ class VisionHandler:
 
         return vision_inputs, vision_outputs
 
+    def prepare_processor_inputs(
+        self, image_url: str, query: str, prefill_seq_len: int
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], int]:
+        """Build padded vision and language inputs without a runtime session."""
+        if self._processor is None:
+            raise ValueError("A processor is required to build vision-language inputs.")
+
+        model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+        if model_type == "internvl_chat":
+            vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
+        elif model_type == "molmo":
+            vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
+        else:
+            vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
+
+        pad_token_id = 1
+        input_length = lang_inputs["input_ids"].shape[1]
+        num_chunks = -(input_length // -prefill_seq_len)
+        padded_length = num_chunks * prefill_seq_len
+        lang_inputs["input_ids"] = torch.nn.functional.pad(
+            lang_inputs["input_ids"], (0, padded_length - input_length), "constant", pad_token_id
+        )
+        lang_inputs["attention_mask"] = torch.nn.functional.pad(
+            lang_inputs["attention_mask"], (0, padded_length - input_length), "constant", 0
+        )
+        if "mm_token_type_ids" in lang_inputs:
+            lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                lang_inputs["mm_token_type_ids"], (0, padded_length - input_length), "constant", 0
+            )
+        if "cross_attention_mask" in lang_inputs:
+            lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                lang_inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_length - input_length)
+            )
+
+        lang_inputs = {name: np.asarray(value) for name, value in lang_inputs.items()}
+        if "position_ids" in lang_inputs:
+            lang_inputs.pop("attention_mask", None)
+        else:
+            lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_length), -1)
+        lang_inputs["image_idx"] = np.array([[0]])
+        return vision_inputs, lang_inputs, num_chunks
+
     def get_processed_inputs(
         self, image_url: str, query: str, prefill_seq_len: int
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-        """
-        Process vision inputs and prepare language model inputs
-
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], int]:
+        """Prepare model inputs and execute the vision encoder.
         Args:
             image_url: URL, path, or PIL image
             query: Text query
             padded_len: Padded sequence length for language model
-
         Returns:
             Tuple of (language_inputs, vision_outputs)
         """
@@ -504,62 +553,11 @@ class VisionHandler:
             raise ValueError("Vision handler not properly initialized")
 
         try:
-            ## Get vlm inputs ##
-            if (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "internvl_chat"
-            ):
-                vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
-            elif (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "molmo"
-            ):
-                vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
-            else:
-                vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
-
-            # Handle padding for language model
-            pad_token_id = 1
-            input_ids_length = lang_inputs["input_ids"].shape[1]
-            num_chunks = -(input_ids_length // -prefill_seq_len)
-            padded_len = num_chunks * prefill_seq_len
-
-            lang_inputs["input_ids"] = torch.nn.functional.pad(
-                lang_inputs["input_ids"],
-                (0, padded_len - input_ids_length),
-                "constant",
-                pad_token_id,
-            )
-            lang_inputs["attention_mask"] = torch.nn.functional.pad(
-                lang_inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
-            )
-
-            if "mm_token_type_ids" in lang_inputs:
-                lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
-                    lang_inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
-                )
-
-            if "cross_attention_mask" in lang_inputs:
-                lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(
-                    lang_inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
-                )
-
-            for k, v in lang_inputs.items():
-                lang_inputs[k] = np.array(v)
-
+            vision_inputs, lang_inputs, num_chunks = self.prepare_processor_inputs(image_url, query, prefill_seq_len)
             vision_outputs = {}
             if vision_inputs:
                 self.setup_vision_buffers()
                 vision_outputs = self.run_vision_inference(vision_inputs)
-
-            if "position_ids" in lang_inputs:
-                lang_inputs.pop("attention_mask")
-            else:
-                lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
-
-            lang_inputs["image_idx"] = np.array([[0]])
-
             return lang_inputs, vision_outputs, num_chunks
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to process vision-language inputs: {str(e)}")
+        except Exception as error:
+            raise RuntimeError(f"Failed to process vision-language inputs: {error}") from error

@@ -214,6 +214,21 @@ class QAICInferenceSession:
     def output_names(self) -> List[str]:
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
 
+    def binding_is_bfloat16(self, name: str) -> bool:
+        """
+        True if the named binding's on-device dtype is bfloat16.
+
+        numpy has no native bfloat16 dtype, so `aic_to_np_dtype_mapping` maps
+        BFLOAT16_TYPE to `np.float16` purely to get a matching 2-byte itemsize;
+        the bytes carried in such a buffer are real bfloat16 bit patterns, not
+        numeric float16 values. Callers that build/consume these buffers must
+        bit-cast rather than numerically cast, and can use this to decide which
+        conversion applies.
+        """
+        if name not in self.binding_index_map:
+            return False
+        return self.bindings[self.binding_index_map[name]].type == getattr(aicapi, "BFLOAT16_TYPE", 11)
+
     def activate(self):
         """Activate qpc"""
         if not self.is_active:
