@@ -1673,6 +1673,104 @@ def test_proxy_subfunction_validation_accepts_repeated_function_calls(tmp_path):
     _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
 
 
+def test_proxy_subfunction_validation_ignores_single_use_vision_functions(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyDecoderLayer:
+        pass
+
+    class DummyVisionBlock:
+        pass
+
+    class DummyLanguageDecoder:
+        def get_submodules_for_export(self):
+            return {DummyDecoderLayer}
+
+    class DummyVlmModel:
+        def get_submodules_for_export(self):
+            return {DummyDecoderLayer, DummyVisionBlock}
+
+        def get_qeff_language_decoder(self):
+            return DummyLanguageDecoder()
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyVlmModel()
+
+    graph = helper.make_graph(
+        [
+            helper.make_node("DummyVisionBlock", ["x"], ["vision"]),
+            helper.make_node("DummyDecoderLayer", ["vision"], ["mid"]),
+            helper.make_node("DummyDecoderLayer", ["mid"], ["y"]),
+        ],
+        "proxy_subfunction_mixed_vlm",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    functions = [
+        helper.make_function(
+            "",
+            "DummyVisionBlock",
+            ["x"],
+            ["y"],
+            [helper.make_node("Identity", ["x"], ["y"])],
+            [helper.make_operatorsetid("", 17)],
+        ),
+        helper.make_function(
+            "",
+            "DummyDecoderLayer",
+            ["x"],
+            ["y"],
+            [helper.make_node("Identity", ["x"], ["y"])],
+            [helper.make_operatorsetid("", 17)],
+        ),
+    ]
+    model = helper.make_model(graph, functions=functions, opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "mixed_vlm.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
+def test_proxy_subfunction_validation_skips_vision_encoder_exports(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyVisionBlock:
+        pass
+
+    class DummyVisionModel:
+        def get_submodules_for_export(self):
+            return {DummyVisionBlock}
+
+    class QEffVisionEncoderForTextImageToTextModel:
+        _enable_proxy = True
+        model = DummyVisionModel()
+
+    graph = helper.make_graph(
+        [helper.make_node("DummyVisionBlock", ["x"], ["y"])],
+        "proxy_subfunction_vision_only",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyVisionBlock",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "vision_only.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(QEffVisionEncoderForTextImageToTextModel(), onnx_path)
+
+
 def test_subfunction_export_restores_onnx_transforms_on_failure():
     from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
     from QEfficient.transformers.cache_utils import InvalidIndexProvider

@@ -281,12 +281,35 @@ def _function_call_counts(onnx_model, function_names: set[str]) -> Counter:
     return Counter(node.op_type for node in nodes if node.op_type in function_names)
 
 
+def _proxy_subfunction_validation_classes(qeff_model) -> set[type[nn.Module]]:
+    """Return language-layer classes that need repeated proxy subfunction calls."""
+    if qeff_model.__class__.__name__ == "QEffVisionEncoderForTextImageToTextModel":
+        return set()
+
+    model = qeff_model.model
+    get_language_decoder = getattr(model, "get_qeff_language_decoder", None)
+    if callable(get_language_decoder):
+        try:
+            language_decoder = get_language_decoder()
+            language_classes = get_decoder_layer_classes_for_export(language_decoder)
+            if language_classes:
+                return set(language_classes)
+        except Exception as exc:
+            logger.warning(
+                f"get_qeff_language_decoder failed for {model.__class__.__name__}: "
+                f"{type(exc).__name__}: {exc}. Falling back to model-level subfunction validation."
+            )
+
+    submodule_classes = get_decoder_layer_classes_for_export(model)
+    return {cls for cls in submodule_classes if "vision" not in cls.__name__.lower()}
+
+
 def _validate_proxy_subfunction_calls(qeff_model, onnx_path) -> None:
     """Ensure proxy decoder subfunctions are repeated enough to be useful performance proxies."""
     if not getattr(qeff_model, "_enable_proxy", False):
         return
 
-    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
+    decoder_layer_classes = _proxy_subfunction_validation_classes(qeff_model)
     if not decoder_layer_classes:
         return
 
