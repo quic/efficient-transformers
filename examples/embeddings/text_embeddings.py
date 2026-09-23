@@ -72,11 +72,11 @@ def main():
     # You can specify the pooling strategy either as a string (e.g., "max") or by passing a custom pooling function.
     # If no pooling is specified, the model will return its default output (typically token embeddings).
     if args.pooling == "max":
-        qeff_model = AutoModel.from_pretrained(args.model_name, pooling=max_pooling, weight_free=args.weight_free, trust_remote_code=True)
+        qeff_model = AutoModel.from_pretrained(args.model_name, pooling=max_pooling, weight_free=args.weight_free)
     elif args.pooling == "mean":
-        qeff_model = AutoModel.from_pretrained(args.model_name, pooling="mean", weight_free=args.weight_free, trust_remote_code=True)
+        qeff_model = AutoModel.from_pretrained(args.model_name, pooling="mean", weight_free=args.weight_free)
     else:
-        qeff_model = AutoModel.from_pretrained(args.model_name, weight_free=args.weight_free, trust_remote_code=True)
+        qeff_model = AutoModel.from_pretrained(args.model_name, weight_free=args.weight_free)
 
     # Compile the model
     # seq_len can be a list of seq_len or single int
