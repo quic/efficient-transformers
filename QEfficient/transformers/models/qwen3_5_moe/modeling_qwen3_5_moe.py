@@ -37,6 +37,11 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     rotate_half,
 )
 
+try:
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import create_recurrent_attention_mask
+except ImportError:
+    create_recurrent_attention_mask = None
+
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
@@ -1172,6 +1177,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
 class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
     def __qeff_init__(self):
+        if not hasattr(self, "layer_type") and hasattr(self, "block_type"):
+            self.layer_type = self.block_type
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5MoeGatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -1309,7 +1316,15 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         causal_mask = _create_causal_mask(
             position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
-        linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        if hasattr(self, "_update_linear_attn_mask"):
+            linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        else:
+            linear_attn_mask = create_recurrent_attention_mask(
+                config=self.config,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+            )
 
         hidden_states = inputs_embeds
 
