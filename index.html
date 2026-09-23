@@ -55,6 +55,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/supported_features.html">Supported Features</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/supported_features.html#moe-execution-flavour-support-matrix">MOE Execution Flavour Support Matrix</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -159,6 +160,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/supported_features.html">Supported Features</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/supported_features.html#moe-execution-flavour-support-matrix">MOE Execution Flavour Support Matrix</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/validate.html#text-only-language-models">Text-only Language Models</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/validate.html#text-generation-task">Text Generation Task</a></li>
@@ -235,6 +237,7 @@
 <li class="toctree-l1"><a class="reference internal" href="source/features_enablement.html">Fetaures Enablement Guide</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/features_enablement.html#continuous-batching">Continuous Batching</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/features_enablement.html#multi-qranium-inference">Multi-Qranium Inference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/features_enablement.html#weight-free-causallm-export">Weight-Free CausalLM Export</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/features_enablement.html#qnn-compilation-via-python-api">QNN Compilation via Python API</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/features_enablement.html#draft-based-speculative-decoding">Draft-Based Speculative Decoding</a></li>
 </ul>
@@ -253,6 +256,7 @@
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.generate()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#mdp-compile-options">MDP Compile Options</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodel"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code></a><ul>
@@ -300,10 +304,11 @@
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText.from_pretrained()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id12">MDP Compile Options</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforspeechseq2seq"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id13">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id14">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.compile()</span></code></a></li>
@@ -313,7 +318,7 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforctc"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id15">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id16">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.compile()</span></code></a></li>
@@ -454,13 +459,8 @@
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="index.html">main</a></dd>
-        <dd><a href="source/release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="source/release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="source/release/v1.20/index.html">release/v1.20</a></dd>
-        <dd><a href="source/release/v1.21/index.html">release/v1.21</a></dd>
-        <dd><a href="source/release/v1.21.6/index.html">release/v1.21.6</a></dd>
-        <dd><a href="source/release/v1.23.0/index.html">release/v1.23.0</a></dd>
+        <dd><a href="../index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>
 </div><script>
