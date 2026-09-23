@@ -12,6 +12,7 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 """
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
@@ -266,7 +267,9 @@ class TestQEFFBaseModelHashParams:
 class TestQEFFBaseModelTransformBlocking:
     """Tests for QEFFBaseModel.transform() attention blocking behavior."""
 
-    @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hq", "hkv", "hqkv"])
+    @pytest.mark.parametrize(
+        "blocking_mode", ["kv", "kv_paged", "q", "qkv", "qkv_paged", "hq", "hkv", "hkv_paged", "hqkv", "hqkv_paged"]
+    )
     def test_transform_blocking_mode_runs_auto_configurator(self, blocking_mode):
         # Use a slightly larger head count here to make it possible for "h" mode to result in head blocking
         # when num_devices > 1.
@@ -371,6 +374,136 @@ class TestQEFFBaseModelTransformBlocking:
                 prefill_seq_len=8,
                 mdp_num_partitions=0,
             )
+
+    @pytest.mark.parametrize("blocking_mode", ["h_paged", "hq_paged", "q_paged"])
+    def test_paged_mode_without_kv_blocking_raises_value_error(self, blocking_mode):
+        # Paged attention reads the cache block-wise, so it is only valid alongside
+        # KV blocking. h_paged/hq_paged/q_paged never enable KV blocking, so they
+        # must fail clearly instead of silently exporting a wrong-output graph.
+        from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config
+
+        cfg = LlamaConfig(
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=VOCAB_SIZE,
+            max_position_embeddings=131072,
+        )
+        high_cl = 131072
+
+        with pytest.raises(ValueError, match="Paged attention is only valid alongside KV blocking"):
+            build_transformer_blocking_config(
+                cfg,
+                blocking_mode=blocking_mode,
+                ctx_len=high_cl,
+                seq_len=high_cl,
+                bs=1,
+                compile_config={"mdp_ts_num_devices": 2, "aic_num_cores": 16},
+            )
+
+    def test_cpl_greater_than_kv_block_size_raises_not_implemented(self):
+        # qeff.export()'s own dummy-input construction always forces
+        # seq_len == kv_block_size when paged attention is enabled
+        # (modeling_auto.py's `seq_len = kv_block_size = -(-seq_len // num_kv_blocks)`),
+        # so a real qeff.export() call can never actually exercise CPL > kv_block_size.
+        # Call the transformed model's forward() directly instead, with a
+        # deliberately smaller physical KV block than the input sequence length,
+        # to prove the write_only_paged_attention guard is reachable through the
+        # full model (not just the raw cache layer) and fails clearly instead of
+        # silently writing into the wrong physical block.
+        cfg = LlamaConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            hidden_size=32,
+            intermediate_size=64,
+            vocab_size=VOCAB_SIZE,
+            max_position_embeddings=CTX_LEN,
+        )
+        model = LlamaForCausalLM(cfg).eval()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.transform(
+            ctx_len=CTX_LEN,
+            seq_len=CTX_LEN,
+            qaic_config={"enable_blocking": True, "blocking_mode": "kv_paged", "num_kv_blocks": 4},
+        )
+
+        block_size = 4  # deliberately smaller than seq_len below
+        seq_len = 8  # seq_len > block_size
+        head_dim = cfg.hidden_size // cfg.num_attention_heads
+        past_key_values = tuple(
+            (
+                torch.zeros(1, cfg.num_key_value_heads, block_size, head_dim),
+                torch.zeros(1, cfg.num_key_value_heads, block_size, head_dim),
+            )
+            for _ in range(cfg.num_hidden_layers)
+        )
+
+        with pytest.raises(
+            NotImplementedError, match="write_only_paged_attention only supports writing within a single KV block"
+        ):
+            qeff.model(
+                input_ids=torch.randint(0, VOCAB_SIZE, (1, seq_len)),
+                position_ids=torch.arange(seq_len).unsqueeze(0),
+                past_key_values=past_key_values,
+                block_table=torch.tensor([[0]]),
+                slot_id=torch.tensor([0]),
+                use_cache=True,
+            )
+
+    def test_transform_consumes_gdn_chunk_size_from_qaic_config(self):
+        """GDN chunk size is sourced from qaic_config and applied via gated-delta transform."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with (
+            patch.object(
+                modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+            ) as gated_apply,
+            patch.object(modeling_qeff.OptimizedMoETransform, "apply", return_value=(qeff.model, False)) as moe_apply,
+        ):
+            qeff.transform(
+                ctx_len=32,
+                seq_len=8,
+                bs=1,
+                prefill_seq_len=8,
+                qaic_config={"gdn_chunk_size": 4},
+            )
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 4})
+        assert "gdn_chunk_size" not in moe_apply.call_args.kwargs
+
+    def test_transform_allows_gdn_chunk_larger_than_prefill_length(self):
+        """No transform-time prefill-length check exists for GDN chunk size in qaic_config."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, True)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8, qaic_config={"gdn_chunk_size": 16})
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config={"chunk_size": 16})
+
+    def test_transform_defaults_gdn_chunk_size_to_internal_default(self):
+        """Without qaic_config, transform sends no gated-delta chunk override."""
+        from QEfficient.base import modeling_qeff
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        with patch.object(
+            modeling_qeff.GatedDeltaConfigTransform, "apply", return_value=(qeff.model, False)
+        ) as gated_apply:
+            qeff.transform(ctx_len=32, seq_len=8, bs=1, prefill_seq_len=8)
+
+        gated_apply.assert_called_once_with(qeff.model, gated_delta_config=None)
 
 
 @pytest.mark.cpu_only
@@ -686,6 +819,53 @@ class TestMdpCompileIntegration:
         assert compiler_cfg.get("mdp_strategy") == "onnx", (
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
+
+    def test_compile_artifacts_writes_replay_without_invoking_compiler(self, tmp_path):
+        onnx_path = tmp_path / "model.onnx"
+        npi_path = tmp_path / "node_precision_info.yaml"
+        compile_root = tmp_path / "compile"
+        compile_dir = None
+
+        try:
+            _build_synthetic_gpt2_onnx(num_layers=2, out_path=onnx_path)
+            npi_path.write_text("FP32NodeInstanceNames: []\n")
+            model_hf, _ = make_tiny_gpt2()
+            qeff = QEFFAutoModelForCausalLM(model_hf)
+
+            with patch("QEfficient.base.modeling_qeff.subprocess.run") as compiler_run:
+                compile_dir = qeff._compile(
+                    onnx_path=str(onnx_path),
+                    compile_dir=str(compile_root),
+                    specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                    custom_io={"input_ids": "int64"},
+                    node_precision_info=str(npi_path),
+                    artifacts=True,
+                )
+
+            compiler_run.assert_not_called()
+            assert compile_dir == qeff.compile_artifacts_path
+            assert qeff.qpc_path is None
+            replay_script = compile_dir / "qaic-compile.sh"
+            assert replay_script.is_file()
+            assert replay_script.stat().st_mode & 0o111
+            subprocess.run(["bash", "-n", replay_script], check=True)
+            assert (compile_dir / "specializations.json").is_file()
+            assert (compile_dir / "custom_io.yaml").is_file()
+            assert (compile_dir / "hashed_compile_params.json").is_file()
+            assert (compile_dir / npi_path.name).read_text() == npi_path.read_text()
+            replay_command = replay_script.read_text()
+            assert 'cd -- "$(dirname -- "$0")"' in replay_command
+            assert "-aic-binary-dir=qpc" in replay_command
+            assert f"-node-precision-info={npi_path.name}" in replay_command
+            assert "-artifacts" not in replay_command
+            assert str(tmp_path) not in replay_command
+            assert not (compile_dir / "qpc").exists()
+        finally:
+            if compile_dir is not None:
+                shutil.rmtree(compile_dir, ignore_errors=True)
+            shutil.rmtree(compile_root, ignore_errors=True)
+            onnx_path.unlink(missing_ok=True)
+            npi_path.unlink(missing_ok=True)
 
     def test_user_mdp_compiler_dump_path_is_deprecated(self, compile_workspace):
         """User-provided compiler dumps are deprecated and ignored in favor of auto-generation."""

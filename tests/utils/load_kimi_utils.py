@@ -230,6 +230,8 @@ def load_kimi_k25_model_from_config(config, *, seed: int = 42):
         model = model.to(torch.float32)
     _simulate_kimi_k25_quantized_experts(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
+    # Random logits can change argmax after QAIC FP16 conversion. A zero language head keeps
+    # token parity deterministic while the test still exercises the complete VLM graph.
     model.language_model.lm_head.weight.data.zero_()
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
