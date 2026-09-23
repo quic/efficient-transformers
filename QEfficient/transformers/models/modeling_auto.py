@@ -358,7 +358,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
+        # _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -502,6 +502,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _checkpoint_transforms = [DtypeConversionCheckpointTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -534,7 +535,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, weight_free=False, *args, **kwargs):
         """
         Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
 
@@ -553,6 +554,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             - "avg": Average pooling
             - Callable: A custom pooling function
             - None: No pooling applied. Default is None.
+        weight_free : bool, optional
+            If True, the model will be loaded in weight-free mode, which avoids materializing checkpoint weights. Default is False.
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
@@ -566,8 +569,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
+
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -578,7 +583,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if weight_free:
+            # Weight-free mode: build the model on the meta device so no
+            # checkpoint weights are ever materialized here. The real weights
+            # are supplied later at export time via pretrained_model_name_or_path.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -590,7 +601,13 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload, **kwargs
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            pooling=pooling,
+            weight_free=weight_free,
+            **kwargs,
+        )
 
     @property
     def get_model_config(self) -> dict:
@@ -633,14 +650,24 @@ class QEFFAutoModel(QEFFTransformersBase):
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
+        dynamo = kwargs.get("dynamo", self._weight_free)
+        # Below change is for dynamo export to receive dynamic shape info for seq_len when multi specializations are used, eg [32,64].
+        # The 32,64 case creates two compiler specializations, so the ONNX must expose a dynamic seq_len input dimension.
+        # Earlier exported ONNX still had input_ids [1, 32] and attention_mask [1, 32], so the compiler could not tell which
+        # specialization to choose and failed with:
+        # <class 'torch.fx.experimental.symbolic_shapes.ConstraintViolationError'>: 1 not in range [2, 1024]
+        export_dynamic_axes = (
+            {"input_ids": {1: "seq_len"}, "attention_mask": {1: "seq_len"}} if dynamo else dynamic_axes
+        )
 
         output_names = ["output"]
 
         return self._export(
             example_inputs,
             output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            dynamic_axes=export_dynamic_axes,
             export_dir=export_dir,
+            dynamo=dynamo,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 

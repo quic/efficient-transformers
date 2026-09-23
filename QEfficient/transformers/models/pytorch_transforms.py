@@ -205,6 +205,7 @@ try:
 except ImportError:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm
 from transformers.models.bert.modeling_bert import BertModel
+from transformers.models.nomic_bert.modeling_nomic_bert import NomicBertEmbeddings
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3DecoderLayer,
@@ -277,7 +278,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
-from transformers.models.roberta.modeling_roberta import RobertaModel
+from transformers.models.roberta.modeling_roberta import RobertaEmbeddings, RobertaModel
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -302,7 +303,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperModel,
     WhisperPositionalEmbedding,
 )
-from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
+from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaEmbeddings, XLMRobertaModel
 
 from QEfficient.base.pytorch_transforms import (
     ExternalModuleMapperTransform,
@@ -314,7 +315,10 @@ from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.bert.modeling_bert import (
     QEffBertModel,
+    QEffNomicBertEmbeddings,
+    QEffRobertaEmbeddings,
     QEffRobertaModel,
+    QEffXLMRobertaEmbeddings,
     QEffXLMRobertaModel,
 )
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -712,6 +716,11 @@ class CustomOpsTransform(ModuleMappingTransform):
         BertModel: QEffBertModel,
         RobertaModel: QEffRobertaModel,
         XLMRobertaModel: QEffXLMRobertaModel,
+        # *Embeddings: fix a FakeTensor/meta-device mismatch in the buffered
+        # token_type_ids gather (see QEff*Embeddings docstrings in modeling_bert.py).
+        RobertaEmbeddings: QEffRobertaEmbeddings,
+        XLMRobertaEmbeddings: QEffXLMRobertaEmbeddings,
+        NomicBertEmbeddings: QEffNomicBertEmbeddings,
         Qwen3_5RMSNorm: GemmaCustomRMSNormAIC,
         Qwen3_5MoeRMSNorm: GemmaCustomRMSNormAIC,
         Qwen3_5RMSNormGated: QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
