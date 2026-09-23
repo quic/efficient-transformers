@@ -1051,6 +1051,34 @@ def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
     assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
 
 
+def test_kimi_k25_test_config_accepts_deterministic_seed(monkeypatch):
+    import inspect
+
+    from tests.utils import load_kimi_utils
+
+    seeded = []
+    monkeypatch.setattr(load_kimi_utils, "set_deterministic", seeded.append)
+
+    text_config = type("TextConfig", (), {})()
+    vision_config = type("VisionConfig", (), {})()
+    config = type(
+        "Config",
+        (),
+        {"_name_or_path": "kimi", "text_config": text_config, "vision_config": vision_config},
+    )()
+    monkeypatch.setattr(load_kimi_utils.AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
+    monkeypatch.setattr(load_kimi_utils, "load_kimi_k25_class", lambda *args: None)
+
+    assert (
+        load_kimi_utils.get_kimi_k25_test_config(
+            "kimi", {"kimi": {"additional_params": {"text_config": {}, "vision_config": {}}}}, seed=1234
+        )
+        is config
+    )
+    assert seeded == [1234]
+    assert "seed" in inspect.signature(load_kimi_utils.load_kimi_k25_model_from_config).parameters
+
+
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "model_id"),
