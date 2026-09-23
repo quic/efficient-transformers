@@ -17,7 +17,9 @@ import onnx
 import yaml
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def prepare_tokenizer(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:

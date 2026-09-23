@@ -35,7 +35,7 @@ from QEfficient.utils.constants import (
     DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
-from QEfficient.utils.logging_utils import QEFFLogger
+from QEfficient.utils.logging_utils import QEFFLogger, log_api_arguments
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
@@ -326,9 +326,15 @@ def export_wrapper(func):
 
         # 3. Generate hash and finalize export directory path
         export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func)
+        log_api_arguments(
+            "export",
+            self.__class__.__name__,
+            {"export_hash": export_hash, "hash_params": filtered_hash_params},
+        )
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
+        self._export_cache_hit = False
 
         # Re-inject cache probe flag if needed
         if cache_probe:
@@ -348,6 +354,7 @@ def export_wrapper(func):
                     with dynamo_patch:
                         onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
+                QEFFLogger.log_api_failure("export", self.__class__.__name__, export_exc)
                 if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(
                         "Export failed with dynamo=True and use_onnx_subfunctions=True "
@@ -366,6 +373,22 @@ def export_wrapper(func):
             if use_onnx_subfunctions:
                 _cleanup_onnx_subfunctions(self, subfunction_state)
 
+        if getattr(self, "_export_cache_hit", False):
+            QEFFLogger.log_event(
+                "milestone",
+                self.__class__.__name__,
+                "ONNX export skipped (cached ONNX).",
+                api="export",
+                milestone="export_skipped",
+            )
+        else:
+            QEFFLogger.log_event(
+                "milestone",
+                self.__class__.__name__,
+                "ONNX export completed.",
+                api="export",
+                milestone="export_complete",
+            )
         return onnx_path
 
     return wrapper
