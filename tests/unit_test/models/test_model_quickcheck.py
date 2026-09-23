@@ -2341,6 +2341,55 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
 
 
+@pytest.mark.parametrize(
+    "model_module,model_class_name",
+    [
+        ("QEfficient.transformers.models.qwen3_5.modeling_qwen3_5", "QEffQwen3_5ForConditionalGeneration"),
+        (
+            "QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe",
+            "QEffQwen3_5MoeForConditionalGeneration",
+        ),
+    ],
+)
+def test_qwen3_5_decode_dummy_inputs_separate_seq_len_and_ctx_len(model_module, model_class_name):
+    """Decode examples keep one token while full-attention cache examples keep ctx_len."""
+    from importlib import import_module
+    from types import SimpleNamespace
+
+    model_class = getattr(import_module(model_module), model_class_name)
+    layer_types = ["linear_attention", "full_attention"]
+    text_config = SimpleNamespace(
+        num_hidden_layers=len(layer_types),
+        layer_types=layer_types,
+        num_key_value_heads=2,
+        num_attention_heads=8,
+        head_dim=256,
+        hidden_size=1024,
+        torch_dtype=torch.float32,
+    )
+    linear_attn = SimpleNamespace(
+        conv_dim=16,
+        conv_kernel_size=4,
+        num_k_heads=16,
+        num_v_heads=16,
+        head_k_dim=128,
+        head_v_dim=128,
+    )
+    layers = [SimpleNamespace(linear_attn=linear_attn) for _ in layer_types]
+    model = SimpleNamespace(
+        config=SimpleNamespace(text_config=text_config),
+        language_model=SimpleNamespace(layers=layers),
+    )
+    wrapper = SimpleNamespace(model=model)
+
+    inputs = model_class.get_dummy_inputs(wrapper, kv_offload=True, prefill_seq_len=1, ctx_len=4096)
+    lang_inputs = inputs["lang"]
+
+    assert lang_inputs["input_ids"].shape[-1] == 1
+    assert lang_inputs["position_ids"].shape[-1] == 1
+    assert lang_inputs["past_key_values"][1][0].shape[2] == 4096
+
+
 def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     from types import SimpleNamespace
 
