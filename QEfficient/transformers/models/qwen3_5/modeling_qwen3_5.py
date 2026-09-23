@@ -630,7 +630,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
         self.chunk_gated_delta_solver = "tree"
-        chunk_size = 64
+        chunk_size = int(getattr(self, "gdn_chunk_size", 64) or 64)
+        if chunk_size <= 0:
+            chunk_size = 64
+        self.gdn_chunk_size = chunk_size
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
@@ -1099,6 +1102,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     g=g,
                     beta=beta,
                     position_ids=position_ids,
+                    chunk_size=self.gdn_chunk_size,
                     initial_state=recurrent_state,
                     output_final_state=True,
                     use_qk_l2norm_in_kernel=True,
@@ -1133,7 +1137,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
-                chunk_size=64,
+                chunk_size=self.gdn_chunk_size,
                 initial_state=None,
                 output_final_state=False,
                 use_qk_l2norm_in_kernel=True,
