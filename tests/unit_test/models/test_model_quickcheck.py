@@ -1895,7 +1895,7 @@ class TestToNamedSpecializations:
         flat = [
             {
                 "_graph_name": "Vision",
-                "batch_size": "1",
+                "vision_batch_size": "1",
                 "vision_size": "247",
                 "grid_height": "988",
                 "grid_width": "1176",
@@ -1906,6 +1906,7 @@ class TestToNamedSpecializations:
         result = to_named_specializations(flat)
         assert len(result) == 1
         assert result[0]["name"] == "Vision"
+        assert result[0]["symbols"]["vision_batch_size"] == "1"
         assert result[0]["symbols"]["vision_size"] == "247"
         assert "_graph_name" not in result[0]["symbols"]
 
@@ -2114,7 +2115,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
@@ -2137,7 +2138,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs == 16
@@ -2154,7 +2155,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
@@ -2237,8 +2238,98 @@ class TestDiffusersNamedSpecializations:
 
 
 # ---------------------------------------------------------------------------
+# Prefill Blocking Configurations
+# ---------------------------------------------------------------------------
+
+
+class _BlockedPrefillCache:
+    def __init__(self, batch_size, num_kv_heads, ctx_len, head_dim):
+        self.key = torch.zeros(batch_size, num_kv_heads, ctx_len, head_dim)
+        self.value = torch.zeros_like(self.key)
+
+    def read_only_blocked_K(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.key[:, :, start_index:end_index, :]
+
+    def read_only_blocked_V(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.value[:, :, start_index:end_index, :]
+
+
+@pytest.mark.parametrize(
+    "num_query_heads, num_kv_groups, num_cores",
+    [
+        (8, 4, 2),
+        (8, 4, 4),
+        (8, 4, 8),
+        (12, 3, 4),
+        (12, 3, 12),
+    ],
+)
+def test_blocked_prefill_online_accepts_valid_num_heads_and_num_cores(num_query_heads, num_kv_groups, num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 1, 4, 1
+    num_kv_heads = num_query_heads // num_kv_groups
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_kv_heads, ctx_len, head_dim)
+
+    output, attention_weights = blocked_qkv_attention_forward_prefill_online(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=1,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        num_cores_per_device=num_cores,
+    )
+
+    assert output.shape == (batch_size, sequence_length, num_query_heads, head_dim)
+
+
+@pytest.mark.parametrize(
+    "num_cores",
+    [
+        0,
+        1,
+        3,
+        6,
+    ],
+)
+def test_blocked_prefill_online_rejects_invalid_num_cores(num_cores):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    num_query_heads, num_kv_groups = 8, 4
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(1, num_query_heads, 1, 4)
+
+    with pytest.raises(ValueError):
+        blocked_qkv_attention_forward_prefill_online(
+            module=module,
+            query=query,
+            key=None,
+            value=None,
+            attention_mask=None,
+            scaling=1.0,
+            num_q_blocks=1,
+            num_kv_blocks=1,
+            cache_kwargs={},
+            layer_idx=0,
+            past_key_value=None,
+            ctx_len=1,
+            num_cores_per_device=num_cores,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer-wise export (provisional, scheduled for deprecation)
 # ---------------------------------------------------------------------------
+
 
 LAYERWISE_TINY_MODEL_ID = "tiny-random/qwen3-vl-moe"
 LAYERWISE_TINY_MODEL_IDS = {
@@ -2349,7 +2440,10 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
 
     model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
-    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
 
     specs, _ = model.get_specializations(
         batch_size=1,
@@ -2368,6 +2462,97 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     expected_vision_size = max(spec["vision_size"] * frames for spec, frames in zip(vision_specs, [1, 2]))
     assert all(spec["vision_size"] == expected_vision_size for spec in lang_specs)
     assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
+
+
+def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
+
+
+def test_vlm_compile_forwards_gdn_chunk_size_in_qaic_config_to_export_path():
+    """GDN chunk size is configured only through qaic_config."""
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = _QEffAutoModelForImageTextToTextDualQPC.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model._run_layerwise_compile = MagicMock(return_value="qpc_paths")
+
+    result = model.compile(layerwise=True, qaic_config={"gdn_chunk_size": 512})
+
+    assert result == "qpc_paths"
+    compile_kwargs = model._run_layerwise_compile.call_args.kwargs
+    assert compile_kwargs["qaic_config"]["gdn_chunk_size"] == 512
+    assert "gdn_chunk_size" not in compile_kwargs
+    assert "qeff_chunk_size" not in compile_kwargs
+
+    model._run_layerwise_compile.reset_mock()
+    model.compile(layerwise=True, prefill_seq_len=1024)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+    assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+
+    model._run_layerwise_compile.reset_mock()
+    model.compile(layerwise=True)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+    assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+
+
+def test_qwen3_vl_moe_get_specializations_decouples_vision_batch_size():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffQwen3VLMoeForConditionalGeneration,
+    )
+
+    model = QEffQwen3VLMoeForConditionalGeneration.__new__(QEffQwen3VLMoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1, deepstack_visual_indexes=[]),
+        text_config=SimpleNamespace(num_hidden_layers=0, layer_types=[]),
+    )
+    model.model = SimpleNamespace(language_model=SimpleNamespace(layers=[]))
+
+    specs, _ = model.get_specializations(
+        batch_size=4,
+        vision_batch_size=1,
+        kv_cache_batch_size=4,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=448,
+        width=448,
+        kv_offload=True,
+    )
+
+    assert specs["vision"][0]["vision_batch_size"] == 1
+    assert "batch_size" not in specs["vision"][0]
+    assert specs["lang"][0]["batch_size"] == 4
+    assert all(spec["vision_batch_size"] == 1 for spec in specs["lang"])
+    axes = model.get_onnx_dynamic_axes(kv_offload=True)
+    assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
+    assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
 def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
@@ -2411,6 +2596,285 @@ def test_qwen3_vl_moe_batch_index_boundary_reorders_inputs_and_outputs():
     logical_positions = torch.arange(3 * 4, dtype=torch.int64).reshape(3, 4, 1)
     physical_positions = _batch_index_scatter(logical_positions, batch_index, batch_dim=1)
     assert torch.equal(physical_positions[:, batch_index.flatten()], logical_positions)
+
+
+@pytest.mark.parametrize("grouped_state", [False, True])
+def test_qwen3_5_moe_conv_decode_slice_matches_gather_reference(grouped_state):
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    flat_state = torch.randn(batch_size, hidden_size, state_len)
+    conv_state = flat_state.reshape(batch_size, 2, 4, state_len) if grouped_state else flat_state
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    state_input = flat_state
+    hidden_states_new = torch.cat([state_input, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = state_input[2]
+    expected_state = expected_state.reshape_as(conv_state)
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+    )
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(
+        hidden_states,
+        conv_state,
+        weight,
+        position_ids,
+        bias,
+    )
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_conv_decode_slice_matches_gather_reference():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(0)
+    batch_size, hidden_size, state_len = 3, 8, 3
+    hidden_states = torch.randn(batch_size, hidden_size, 1)
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[4], [5], [-1]]])
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_state[2] = conv_state[2]
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -1:]
+
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_conv_decode_slice_keeps_prefill_gather_path():
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import qeff_torch_causal_conv1d_update
+
+    torch.manual_seed(1)
+    batch_size, hidden_size, state_len, seq_len = 2, 6, 3, 4
+    conv_state = torch.randn(batch_size, hidden_size, state_len)
+    hidden_states = torch.randn(batch_size, hidden_size, seq_len)
+    weight = torch.randn(hidden_size, 3)
+    bias = torch.randn(hidden_size)
+    position_ids = torch.tensor([[[0, 1, -1, 2], [0, -1, 1, 2]]])
+
+    output, state = qeff_torch_causal_conv1d_update(hidden_states, conv_state, weight, position_ids, bias)
+
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    order = torch.argsort(
+        torch.cat([torch.zeros((batch_size, state_len), dtype=position_ids.dtype), position_ids[0]], dim=1), dim=1
+    )
+    expected_state = torch.gather(hidden_states_new, 2, order[:, None, -state_len:].expand(-1, hidden_size, -1))
+    expected_output = torch.nn.functional.silu(
+        torch.nn.functional.conv1d(hidden_states_new, weight.unsqueeze(1), bias, groups=hidden_size)
+    )[:, :, -seq_len:]
+
+    torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
+    torch.testing.assert_close(state, expected_state)
+
+
+def test_qwen3_5_batch_fold_dynamic_axes_separate_input_and_cache_batches():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5ForConditionalGeneration
+
+    model = QEffQwen3_5ForConditionalGeneration.__new__(QEffQwen3_5ForConditionalGeneration)
+    model.config = SimpleNamespace(
+        text_config=SimpleNamespace(num_hidden_layers=2, layer_types=["full_attention", "linear_attention"])
+    )
+
+    folded_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=True)
+    regular_axes = model.get_onnx_dynamic_axes(continuous_batching=True, batch_fold=False)
+
+    assert folded_axes["input_ids"][0] == "full_batch_size"
+    assert folded_axes["position_ids"][1] == "full_batch_size"
+    assert folded_axes["batch_index"][0] == "full_batch_size"
+    assert folded_axes["past_key.0"][0] == "full_batch_size"
+    assert regular_axes["input_ids"][0] == "batch_size"
+    assert regular_axes["batch_index"][0] == "batch_size"
+
+
+@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_moe"])
+def test_qwen3_5_decoder_wrapper_folds_decode_only(model_type):
+    from types import SimpleNamespace
+
+    if model_type == "qwen3_5":
+        from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5DecoderWrapper
+
+        wrapper_cls = QEffQwen3_5DecoderWrapper
+    else:
+        from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeDecoderWrapper
+
+        wrapper_cls = QEffQwen3_5MoeDecoderWrapper
+
+    class RecordingLanguageModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = [
+                SimpleNamespace(
+                    self_attn=SimpleNamespace(
+                        attn_blocking_config=SimpleNamespace(batch_fold=True),
+                    )
+                )
+            ]
+            self.calls = []
+
+        def forward(self, *, inputs_embeds, batch_index, batch_fold, **kwargs):
+            self.calls.append((batch_index, batch_fold))
+            return SimpleNamespace(last_hidden_state=inputs_embeds, past_key_values=[])
+
+    class Embedding(nn.Module):
+        def forward(self, input_ids):
+            return input_ids.to(torch.float32).unsqueeze(-1).expand(-1, -1, 2)
+
+    language_model = RecordingLanguageModel()
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            language_model=language_model,
+            get_input_embeddings=lambda: Embedding(),
+        ),
+        config=SimpleNamespace(image_token_id=99),
+        lm_head=nn.Identity(),
+    )
+    wrapper = wrapper_cls(model)
+    batch_index = torch.tensor([[1], [0]], dtype=torch.long)
+    vision_embeds = torch.zeros(2, 1, 2)
+    image_idx = torch.zeros(2, 1, dtype=torch.long)
+
+    for seq_len in (3, 1):
+        language_model.calls.clear()
+        input_ids = torch.tensor([[1] * seq_len, [2] * seq_len])
+        position_ids = torch.arange(seq_len).view(1, 1, seq_len).expand(1, 2, seq_len)
+
+        if model_type == "qwen3_5":
+            wrapper(
+                input_ids,
+                vision_embeds,
+                position_ids,
+                image_idx,
+                [],
+                batch_index=batch_index,
+            )
+        else:
+            wrapper(
+                input_ids=input_ids,
+                vision_embeds=vision_embeds,
+                position_ids=position_ids,
+                image_idx=image_idx,
+                past_key_values=[],
+                batch_index=batch_index,
+            )
+
+        received_batch_index, batch_fold = language_model.calls[0]
+        assert batch_fold is (seq_len == 1)
+        if seq_len == 1:
+            assert received_batch_index is None
+        else:
+            torch.testing.assert_close(received_batch_index, batch_index)
+
+
+def test_qwen3_5_moe_decode_expert_parallel_selection():
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import (
+        OptimizedMoEExpertParallelWeightsTransform,
+        OptimizedMoEExportConfigTransform,
+        OptimizedMoEMapperTransform,
+        OptimizedMoEWeightsTransform,
+    )
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeSparseMoeBlock
+    from QEfficient.transformers.moe import MoEFlavour
+
+    config = Qwen3_5MoeTextConfig(
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        vocab_size=128,
+        max_position_embeddings=128,
+        head_dim=32,
+        moe_intermediate_size=64,
+        shared_expert_intermediate_size=64,
+        num_experts=4,
+        num_experts_per_tok=2,
+        layer_types=["full_attention", "linear_attention"],
+    )
+    torch.manual_seed(2)
+    hf_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block = Qwen3_5MoeSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed and isinstance(qeff_block, QEffQwen3_5MoeSparseMoeBlock)
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    OptimizedMoEExportConfigTransform.apply(
+        qeff_block,
+        prefill_only=False,
+        num_devices=1,
+        num_cores=2,
+        prefill_seq_len=2,
+        qaic_config={
+            "moe_config": {
+                "flavour": "expert_parallel",
+                "cores_per_expert": 1,
+                "tree_reduce": False,
+                "expert_parallel_chunk_size": 1,
+            }
+        },
+    )
+    OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+
+    assert qeff_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
 
 
 def test_moe_prefill_transform_does_not_require_enable_chunking():
@@ -3523,6 +3987,46 @@ def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
 
 
 @pytest.mark.llm_model
+def test_dual_qpc_decode_only_continuous_batching_returns_decode_qpc_key(monkeypatch):
+    from QEfficient.transformers.models import modeling_auto
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model.continuous_batching = True
+    model.ccl_enabled = False
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.transform = lambda **kwargs: None
+    model.model = type(
+        "Model",
+        (),
+        {
+            "config": type("Config", (), {"torch_dtype": torch.float32, "model_type": "test"})(),
+            "get_output_names": lambda self, **kwargs: {"vision": [], "lang": []},
+            "get_specializations": lambda self, **kwargs: ({"vision": [], "lang": [{"seq_len": 1}]}, {}),
+        },
+    )()
+    model.lang_model = type(
+        "LanguageModel",
+        (),
+        {"onnx_path": "language.onnx", "_compile": staticmethod(lambda **kwargs: "decode.qpc")},
+    )()
+
+    monkeypatch.setattr(modeling_auto, "_filter_custom_io_for_onnx", lambda custom_io, onnx_path: custom_io)
+
+    result = model.compile(
+        prefill_seq_len=1,
+        ctx_len=16,
+        batch_size=1,
+        full_batch_size=4,
+        skip_vision=True,
+        lang_onnx_path="language.onnx",
+    )
+
+    assert result == {"lang_decode_qpc_path": "decode.qpc"}
+
+
+@pytest.mark.llm_model
 def test_layerwise_compile_rejects_unsupported_model():
     """End-to-end smoke: invoking layerwise=True on llama bubbles the guard error."""
     try:
@@ -4108,3 +4612,42 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
             num_patches=2508,
             kv_offload=True,
         )
+
+
+@pytest.mark.cpu_only
+def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_runner_io_bundle
+
+    input_info = helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "seq_len"])
+    output_info = helper.make_tensor_value_info("output", TensorProto.INT64, ["batch_size", "seq_len"])
+    graph = helper.make_graph(
+        [helper.make_node("Identity", ["input_ids"], ["output"])], "runner", [input_info], [output_info]
+    )
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    inputs = np.arange(4, dtype=np.int64).reshape(1, 4)
+    io_dir = write_runner_io_bundle(
+        onnx_path=onnx_path,
+        compile_dir=compile_dir,
+        specialization={"batch_size": 1, "seq_len": 4},
+        host_inputs={"input_ids": inputs},
+    )
+
+    descriptor = json.loads((io_dir / "aic_batch_io.json").read_text())
+    entries = descriptor["IO-files"][0]
+    assert entries[0] == {
+        "path": "data/input_ids.raw",
+        "io-direction": "in",
+        "elem-size": 8,
+        "map-to": "input_ids",
+        "dims": [1, 4],
+    }
+    assert entries[1]["io-direction"] == "out"
+    assert entries[1]["dims"] == [1, 4]
+    assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
+    assert not (io_dir / "data/output.raw").exists()

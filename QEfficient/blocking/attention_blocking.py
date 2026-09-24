@@ -133,11 +133,120 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    gdn_num_head_blocks: Optional[int] = None
     headpar_split: Optional[int] = None
     batch_fold: Optional[bool] = False
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    num_cores_per_device: Optional[int] = None
+    paged_attention: Optional[bool] = False
+
+
+def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
+    """Resolve the GDN head-block count for folded decode."""
+    if not batch_fold or blocking_config is None:
+        return 1
+    return max(1, int(getattr(blocking_config, "gdn_num_head_blocks", 1) or 1))
+
+
+def blocked_gdn_decode_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_state: torch.Tensor,
+    gdn_num_head_blocks: int = 1,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the one-token GDN update with optional head blocking.
+
+    Folded decode treats the token dimension as static one and folds batch and
+    head dimensions for each block, keeping recurrent-state contractions local.
+    """
+    dtype = query.dtype
+    batch_size, sequence_length, num_heads, key_head_dim = query.shape
+    value_head_dim = value.shape[-1]
+
+    if sequence_length != 1:
+        raise ValueError("blocked_gdn_decode_forward requires sequence_length == 1")
+
+    q = query.float()
+    k = key.float()
+    q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+    k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+    v = value.float()
+    b = beta.float()
+    decay = g.float().exp()
+    state = recurrent_state.float()
+
+    q = q * (1.0 / (key_head_dim**0.5))
+    num_blocks = max(1, min(num_heads, int(gdn_num_head_blocks)))
+    heads_per_block = -(-num_heads // num_blocks)
+
+    output_blocks = []
+    state_blocks = []
+    for block_idx in range(num_blocks):
+        head_start = block_idx * heads_per_block
+        if head_start >= num_heads:
+            break
+        head_end = min(head_start + heads_per_block, num_heads)
+        block_heads = head_end - head_start
+        folded_batch_heads = batch_size * block_heads
+
+        q_block = q[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
+        k_block = k[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, key_head_dim)
+        v_block = v[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, value_head_dim)
+        beta_block = b[:, :, head_start:head_end].reshape(1, folded_batch_heads, sequence_length, 1)
+        decay_block = decay[:, :, head_start:head_end].reshape(1, folded_batch_heads, 1, 1)
+        state_block = state[:, head_start:head_end].reshape(1, folded_batch_heads, key_head_dim, value_head_dim)
+
+        decayed_state = state_block * decay_block
+        kv_memory = torch.matmul(k_block, decayed_state)
+        delta = (v_block - kv_memory) * beta_block
+        updated_state = decayed_state + k_block[:, :, 0].unsqueeze(-1) * delta[:, :, 0].unsqueeze(-2)
+        block_output = torch.matmul(q_block, updated_state)
+
+        output_blocks.append(block_output.reshape(batch_size, block_heads, sequence_length, value_head_dim))
+        state_blocks.append(updated_state.reshape(batch_size, block_heads, key_head_dim, value_head_dim))
+
+    output = torch.cat(output_blocks, dim=1).reshape(batch_size, sequence_length, num_heads, value_head_dim)
+    updated_state = torch.cat(state_blocks, dim=1)
+    return output.to(dtype), updated_state.to(recurrent_state.dtype)
+
+
+def recurrent_gdn_decode_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the original unblocked GDN decode update."""
+    dtype = query.dtype
+    _, _, _, key_head_dim = query.shape
+
+    query = query.float()
+    key = key.float()
+    query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+    key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
+    value = value.float()
+    state = recurrent_state.float()
+
+    query = (query * (1.0 / (key_head_dim**0.5))).transpose(1, 2)
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    beta = beta.transpose(1, 2).float().unsqueeze(-1)
+    decay = g.transpose(1, 2).float().exp().unsqueeze(-1).unsqueeze(-1)
+
+    state_decayed = state * decay[:, :, 0]
+    kv_memory = (state_decayed * key[:, :, 0].unsqueeze(-1)).sum(dim=-2)
+    delta = (value[:, :, 0] - kv_memory) * beta[:, :, 0]
+    state_new = state_decayed + key[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)
+    output = (state_new * query[:, :, 0].unsqueeze(-1)).sum(dim=-2)
+    output = output.unsqueeze(2).transpose(1, 2).to(dtype)
+    return output, state_new.to(recurrent_state.dtype)
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
@@ -165,7 +274,11 @@ BLOCKING_MODE_REQUIRED_PARAMS: Dict[BlockingMode, list] = {
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
+    return past_key_value is not None and hasattr(past_key_value, "read_only_blocked_kv")
+
+
+def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool:
+    return past_key_value is not None and hasattr(past_key_value, "read_only_paged_attention")
 
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
@@ -204,7 +317,10 @@ def past_key_value_update(
     sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
-        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+        }
         if sliding_window is not None:
             cache_kwargs.update(
                 {
@@ -232,6 +348,8 @@ def generic_blocked_attention_interface(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    block_table: Optional[torch.LongTensor] = None,
+    slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Optional[Callable] = None,
     score_mod: Optional[Callable] = None,
@@ -243,16 +361,35 @@ def generic_blocked_attention_interface(
     prefill_only: bool = False,
     **kwargs,
 ):
-    prefill_only = prefill_only or blocking_config.mode.is_prefill
+    blocking_mode = BlockingMode.resolve(blocking_config.mode)
+    prefill_only = prefill_only or blocking_mode.is_prefill
     strategy = _STRATEGIES[
         BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
     ]
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
+    use_paged_kv_blocked = (
+        blocking_config is not None
+        and blocking_config.paged_attention
+        and supports_paged_attention_blocked_kv(past_key_value)
+    )
+
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
-        if prefill_only:
+        if use_paged_kv_blocked and sliding_window is None:
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "block_table": block_table,
+                "slot_id": slot_id,
+            }
+            past_key_value.write_only_paged_attention(key, value, module.layer_idx, cache_kwargs)
+        elif use_paged_kv_blocked and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
+        elif prefill_only:
             if sliding_window is not None:
                 cache_kwargs.update(
                     {
@@ -263,10 +400,14 @@ def generic_blocked_attention_interface(
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
+            if blocking_mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+            elif use_kv_blocked and sliding_window is not None:
+                raise NotImplementedError(
+                    "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+                )
             else:
                 key, value, attention_mask, cache_kwargs = past_key_value_update(
                     module=module,
@@ -305,8 +446,10 @@ def generic_blocked_attention_interface(
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
+        paged_attention=blocking_config.paged_attention,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
+        num_cores_per_device=blocking_config.num_cores_per_device,
         # MLA-specific
         **(mla_kwargs or {}),
         **kwargs,
