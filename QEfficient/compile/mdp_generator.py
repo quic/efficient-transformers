@@ -34,6 +34,14 @@ class MdpStrategy(str, Enum):
     INTERSECTION = "intersection"
 
 
+def _normalize_node_name_for_alias_matching(node_name: str) -> str:
+    """Normalize node names for alias matching between ONNX and compiler dumps."""
+    if not node_name:
+        return node_name
+    # Compiler IR can materialize dotted aliases (e.g. "/Gather_5.").
+    return node_name.rstrip(".")
+
+
 def _is_decoder_layer_callsite(node_name: str) -> bool:
     """Return True for decoder layer callsite names that must never be dropped."""
     return "/language_model/layers." in node_name
@@ -54,6 +62,50 @@ def _drop_mdp_nodes_inplace(mdp_json: Dict[str, Any], nodes_to_drop: Set[str]) -
     return removed
 
 
+def _find_node_occurrence_by_alias(
+    mdp_json: Dict[str, Any], node_name: str
+) -> Optional[Tuple[int, int, str]]:
+    """Return (partition_idx, node_pos, actual_name) for a node or its dotted alias."""
+    normalized = _normalize_node_name_for_alias_matching(node_name)
+    for partition_idx, partition in enumerate(mdp_json.get("partitions", [])):
+        node_list = partition.get("nodeList")
+        if not isinstance(node_list, list):
+            continue
+        for node_pos, actual_name in enumerate(node_list):
+            if not actual_name:
+                continue
+            if actual_name == node_name:
+                return (partition_idx, node_pos, actual_name)
+            if _normalize_node_name_for_alias_matching(actual_name) == normalized:
+                return (partition_idx, node_pos, actual_name)
+    return None
+
+
+def _move_node_to_partition_inplace(
+    mdp_json: Dict[str, Any],
+    node_name: str,
+    target_partition_idx: int,
+) -> bool:
+    """Move a node occurrence (exact or alias-normalized match) to target partition."""
+    hit = _find_node_occurrence_by_alias(mdp_json=mdp_json, node_name=node_name)
+    if hit is None:
+        return False
+    src_partition_idx, src_node_pos, actual_name = hit
+    if src_partition_idx == target_partition_idx:
+        return False
+
+    partitions = mdp_json.get("partitions", [])
+    src_node_list = partitions[src_partition_idx].get("nodeList")
+    dst_node_list = partitions[target_partition_idx].get("nodeList")
+    if not isinstance(src_node_list, list) or not isinstance(dst_node_list, list):
+        return False
+
+    # Remove from source and append to destination to ensure it is not scheduled early.
+    src_node_list.pop(src_node_pos)
+    dst_node_list.append(actual_name)
+    return True
+
+
 def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: Dict[str, Any]) -> List[Tuple[str, str]]:
     """Return (consumer, producer) pairs where MDP order violates ONNX dependencies."""
     model = onnx.load(onnx_path, load_external_data=False)
@@ -71,6 +123,7 @@ def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: Dict[str, Any
                 producer_for_value[out] = node.name
 
     node_rank: Dict[str, Tuple[int, int]] = {}
+    node_rank_by_normalized: Dict[str, Tuple[int, int]] = {}
     for partition_idx, partition in enumerate(mdp_json.get("partitions", [])):
         node_list = partition.get("nodeList")
         if not isinstance(node_list, list):
@@ -78,16 +131,72 @@ def _find_mdp_partition_order_violations(onnx_path: str, mdp_json: Dict[str, Any
         for node_pos, node_name in enumerate(node_list):
             if node_name and node_name not in node_rank:
                 node_rank[node_name] = (partition_idx, node_pos)
+            if node_name:
+                normalized = _normalize_node_name_for_alias_matching(node_name)
+                if normalized not in node_rank_by_normalized:
+                    node_rank_by_normalized[normalized] = (partition_idx, node_pos)
 
     violations: List[Tuple[str, str]] = []
     for producer, consumer in deps:
         producer_rank = node_rank.get(producer)
+        if producer_rank is None:
+            producer_rank = node_rank_by_normalized.get(_normalize_node_name_for_alias_matching(producer))
         consumer_rank = node_rank.get(consumer)
+        if consumer_rank is None:
+            consumer_rank = node_rank_by_normalized.get(_normalize_node_name_for_alias_matching(consumer))
         if producer_rank is None or consumer_rank is None:
             continue
         if consumer_rank < producer_rank:
             violations.append((consumer, producer))
     return violations
+
+
+def rebalance_mdp_partition_order_by_moving_nodes(
+    onnx_path: str,
+    mdp_json: Dict[str, Any],
+    max_rounds: int = 256,
+) -> int:
+    """Resolve producer/consumer partition-order violations by moving nodes, generically.
+
+    For each detected violation, move the consumer node to the producer's partition.
+    This is model/op agnostic and avoids hardcoded op-name rules.
+    """
+    moved_total = 0
+    for _ in range(max_rounds):
+        violations = _find_mdp_partition_order_violations(onnx_path=onnx_path, mdp_json=mdp_json)
+        if not violations:
+            break
+
+        moved_any = False
+        for consumer_node, producer_node in violations:
+            producer_hit = _find_node_occurrence_by_alias(mdp_json=mdp_json, node_name=producer_node)
+            consumer_hit = _find_node_occurrence_by_alias(mdp_json=mdp_json, node_name=consumer_node)
+            if producer_hit is None or consumer_hit is None:
+                continue
+            producer_partition_idx, _, producer_actual = producer_hit
+            consumer_partition_idx, _, consumer_actual = consumer_hit
+            if consumer_partition_idx >= producer_partition_idx:
+                continue
+            moved = _move_node_to_partition_inplace(
+                mdp_json=mdp_json,
+                node_name=consumer_actual,
+                target_partition_idx=producer_partition_idx,
+            )
+            if moved:
+                moved_any = True
+                moved_total += 1
+                logger.warning(
+                    "Rebalanced MDP partition order: moved consumer %r (requested=%r) to partition %d "
+                    "to satisfy producer %r (requested=%r).",
+                    consumer_actual,
+                    consumer_node,
+                    producer_partition_idx,
+                    producer_actual,
+                    producer_node,
+                )
+        if not moved_any:
+            break
+    return moved_total
 
 
 def _drop_alias_prone_top_level_nodes(onnx_path: str, mdp_json: Dict[str, Any], dropped_nodes: Set[str]) -> int:
@@ -284,6 +393,39 @@ def _get_layer_num(node_name: str) -> Optional[int]:
             if suffix.isdigit():
                 return int(suffix)
     return None
+
+
+def _get_onnx_topological_index(model) -> Dict[str, int]:
+    """Return node-name -> topological index map for ONNX graph nodes."""
+    topo: Dict[str, int] = {}
+    for idx, node in enumerate(model.graph.node):
+        if node.name and node.name not in topo:
+            topo[node.name] = idx
+    return topo
+
+
+def _get_compiler_input_preproc_node_names(model) -> List[str]:
+    """Return compiler-generated input-preproc node names for index-like runtime inputs."""
+    initializer_names = {initializer.name for initializer in model.graph.initializer}
+    preproc_elem_types = {
+        onnx.TensorProto.BOOL,
+        onnx.TensorProto.INT8,
+        onnx.TensorProto.INT16,
+        onnx.TensorProto.INT32,
+        onnx.TensorProto.INT64,
+        onnx.TensorProto.UINT8,
+        onnx.TensorProto.UINT16,
+        onnx.TensorProto.UINT32,
+        onnx.TensorProto.UINT64,
+    }
+    preproc_nodes = []
+    for graph_input in model.graph.input:
+        if not graph_input.name or graph_input.name in initializer_names:
+            continue
+        tensor_type = graph_input.type.tensor_type
+        if tensor_type.elem_type in preproc_elem_types:
+            preproc_nodes.append(f"{graph_input.name}_aichostpreproc")
+    return preproc_nodes
 
 
 def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
@@ -489,6 +631,10 @@ def generate_disagg_mdp_partition_config(
     # are expanded in topological position so nodeList order matches the ONNX
     # topsort — required by the compiler's SplitPlanMerge.
     partitions: List[List[str]] = [[] for _ in range(num_partitions)]
+    input_preproc_nodes = _get_compiler_input_preproc_node_names(model)
+    partitions[0].extend(input_preproc_nodes)
+    if input_preproc_nodes:
+        logger.info(f"Added {len(input_preproc_nodes)} compiler input-preproc node name(s) to Partition0")
     current_layer_partition = 0
     seen_first_layer = False
 
@@ -553,12 +699,11 @@ def generate_disagg_mdp_intersection_config(
 ) -> Dict[str, Any]:
     """Generate an MDP config by intersecting the QEff MDP with the compiler dump.
 
-    The QEff MDP (derived from the ONNX graph) is always a superset of the
-    compiler dump: every node the compiler actually processes appears in the
-    QEff MDP, but the QEff MDP also contains nodes the compiler optimises away
-    (constant-folded, etc.).  The intersection keeps only nodes that survive
-    into the compiler IR, while preserving the **QEff MDP node order and
-    partition assignment** as the authoritative source of truth.
+    The QEff MDP (derived from the ONNX graph) is usually a superset of the
+    compiler dump, but the compiler can also materialize additional input-preproc nodes
+    or rename nodes relative to ONNX.  The intersection keeps nodes that
+    survive into the compiler IR and preserves compiler-only nodes in their
+    dumped partition so every compiler IR node remains assigned.
 
     Algorithm
     ---------
@@ -620,43 +765,116 @@ def generate_disagg_mdp_intersection_config(
         for name in part.get("nodeList", []):
             if name:
                 compiler_nodes.add(name)
-
     logger.info(f"Compiler dump: {len(compiler_nodes)} unique node names")
 
     qeff_total = sum(len(p["nodeList"]) for p in qeff_mdp["partitions"])
     logger.info(f"QEff MDP (superset): {qeff_total} nodes across {num_partitions} partitions")
 
+    qeff_nodes = {name for part in qeff_mdp["partitions"] for name in part["nodeList"]}
+    qeff_nodes_normalized = {_normalize_node_name_for_alias_matching(name) for name in qeff_nodes}
+
+    # For intersection, use compiler-dump partition membership/order as source of truth.
+    # This avoids ONNX-vs-IR alias/membership drift (e.g. /Gather_5 vs /Gather_5.).
     partition_objs = []
     total_kept = 0
     total_dropped = 0
-    for part in qeff_mdp["partitions"]:
-        kept = [name for name in part["nodeList"] if name in compiler_nodes]
-        dropped = len(part["nodeList"]) - len(kept)
+    total_remapped = 0
+    total_compiler_only = 0
+    kept_normalized: Set[str] = set()
+    dump_partitions = dump.get("partitions", [])
+    if len(dump_partitions) != len(qeff_mdp["partitions"]):
+        logger.warning(
+            "Compiler dump partition count (%d) differs from QEff MDP (%d); "
+            "aligning by min-count and leaving unmatched partitions empty.",
+            len(dump_partitions),
+            len(qeff_mdp["partitions"]),
+        )
+    for idx, qeff_part in enumerate(qeff_mdp["partitions"]):
+        dump_part = dump_partitions[idx] if idx < len(dump_partitions) else {"nodeList": []}
+        kept = []
+        remapped = 0
+        compiler_only = 0
+        matched_qeff = 0
+        for compiler_name in dump_part.get("nodeList", []):
+            if not compiler_name:
+                continue
+            normalized = _normalize_node_name_for_alias_matching(compiler_name)
+            if normalized in kept_normalized:
+                continue
+            kept.append(compiler_name)
+            kept_normalized.add(normalized)
+            if normalized in qeff_nodes_normalized:
+                matched_qeff += 1
+            else:
+                compiler_only += 1
+            if normalized in qeff_nodes_normalized and compiler_name not in qeff_nodes:
+                remapped += 1
+
+        dropped = len(qeff_part["nodeList"]) - matched_qeff
         total_kept += len(kept)
-        total_dropped += dropped
+        total_dropped += max(dropped, 0)
+        total_remapped += remapped
+        total_compiler_only += compiler_only
         logger.info(
-            f"  {part['name']}: {len(part['nodeList'])} QEff nodes "
-            f"-> {len(kept)} kept, {dropped} dropped (compiler-optimised away)"
+            f"  {qeff_part['name']}: {len(qeff_part['nodeList'])} QEff nodes "
+            f"-> {len(kept)} kept, {max(dropped, 0)} dropped (compiler-optimised away), "
+            f"{remapped} remapped, {compiler_only} compiler-only"
         )
         partition_objs.append(
             {
-                "name": part["name"],
+                "name": qeff_part["name"],
                 "nodeList": kept,
-                "devices": part["devices"],
+                "devices": qeff_part["devices"],
             }
         )
+
+    # Generic post-decoder placement guard:
+    # Any node that appears after the final decoder-layer callsite in ONNX topsort
+    # belongs to post-processing and should execute in the last PP partition.
+    model = onnx.load(onnx_path, load_external_data=False)
+    topo_index = _get_onnx_topological_index(model)
+    normalized_topo_index = {_normalize_node_name_for_alias_matching(name): idx for name, idx in topo_index.items()}
+    decoder_indices = [idx for name, idx in topo_index.items() if _is_decoder_layer_callsite(name)]
+    if decoder_indices and partition_objs:
+        last_decoder_idx = max(decoder_indices)
+        last_partition_idx = len(partition_objs) - 1
+        moved_post_decoder = 0
+        last_seen = set(partition_objs[last_partition_idx]["nodeList"])
+        for partition_idx in range(last_partition_idx):
+            node_list = partition_objs[partition_idx]["nodeList"]
+            kept_node_list = []
+            for name in node_list:
+                idx = topo_index.get(name)
+                if idx is None:
+                    idx = normalized_topo_index.get(_normalize_node_name_for_alias_matching(name))
+                is_top_level = name.startswith("/") and not name.startswith("/language_model/")
+                has_language_model_peer = (
+                    is_top_level
+                    and _normalize_node_name_for_alias_matching(f"/language_model{name}")
+                    in qeff_nodes_normalized
+                )
+                if idx is not None and idx > last_decoder_idx and not has_language_model_peer:
+                    if name not in last_seen:
+                        partition_objs[last_partition_idx]["nodeList"].append(name)
+                        last_seen.add(name)
+                    moved_post_decoder += 1
+                    continue
+                kept_node_list.append(name)
+            partition_objs[partition_idx]["nodeList"] = kept_node_list
+        if moved_post_decoder:
+            logger.info(
+                "Intersection post-decoder placement: moved %d node(s) to last partition by ONNX topology.",
+                moved_post_decoder,
+            )
 
     logger.info(
         f"Intersection: {total_kept} nodes kept, {total_dropped} dropped "
         f"({total_dropped * 100 // max(qeff_total, 1)}% pruned by compiler)"
     )
-
-    in_dump_not_qeff = compiler_nodes - {name for part in qeff_mdp["partitions"] for name in part["nodeList"]}
-    if in_dump_not_qeff:
-        logger.warning(
-            f"{len(in_dump_not_qeff)} compiler-dump nodes not found in QEff MDP "
-            f"(compiler may have renamed them). Examples: {list(in_dump_not_qeff)[:5]}"
-        )
+    if total_remapped:
+        logger.info(f"Intersection alias-remap: {total_remapped} node name(s) normalized to compiler aliases")
+    if total_compiler_only:
+        logger.info(f"Intersection preserved {total_compiler_only} compiler-only node(s)")
 
     return {
         "connections": qeff_mdp["connections"],
@@ -721,6 +939,17 @@ def generate_disagg_mdp_config(
             num_partitions=mdp_num_partitions,
             num_layers=num_layers,
             num_cores=num_cores,
+        )
+
+    # Generic fix-up before pre-check: move violating consumers to later partitions.
+    moved_nodes = rebalance_mdp_partition_order_by_moving_nodes(
+        onnx_path=str(onnx_path),
+        mdp_json=mdp_ts_json,
+    )
+    if moved_nodes:
+        logger.warning(
+            "MDP rebalance moved %d node(s) across partitions to satisfy producer/consumer ordering.",
+            moved_nodes,
         )
 
     # Best-effort pre-check for producer->consumer ordering in nodeList before compile.
