@@ -21,8 +21,10 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import importlib
+from contextlib import nullcontext
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 from onnx import TensorProto, helper
 from transformers import LlamaConfig, LlamaForCausalLM
@@ -35,6 +37,7 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.torch_patches import (
+    _same_export_region,
     preserve_mixed_export_subfunctions,
     preserve_subfunction_source_lines,
     temporarily_enable_nested_compile_regions,
@@ -99,6 +102,59 @@ def make_tiny_llama():
     )
     model = LlamaForCausalLM(cfg).eval()
     return model, cfg
+
+
+def _make_graph_module_with_attribute(attribute):
+    root = torch.nn.Module()
+    root.captured = attribute
+    graph = torch.fx.Graph()
+    captured = graph.get_attr("captured")
+    graph.output(captured)
+    return torch.fx.GraphModule(root, graph)
+
+
+def test_same_export_region_accepts_nested_graphmodule_attributes(monkeypatch):
+    """Nested GraphModules compare recursively, while tensor captures stay unsupported."""
+    comparator = importlib.import_module("torch._dynamo.variables.higher_order_ops")
+    monkeypatch.setattr(comparator, "are_same_graph_modules", lambda *args: True)
+
+    nested_left = _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity()))
+    nested_right = _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity()))
+    assert _same_export_region(nested_left, nested_right, fake_mode=None)
+
+    tensor_left = _make_graph_module_with_attribute(torch.ones(2))
+    tensor_right = _make_graph_module_with_attribute(torch.ones(2))
+    assert not _same_export_region(tensor_left, tensor_right, fake_mode=None)
+
+
+def test_export_wrapper_disables_grad_for_dynamo_subfunction_exports(monkeypatch, tmp_path):
+    """Repeated subfunction bodies see the same inference grad state at every layer."""
+    from QEfficient.utils import export_utils
+
+    grad_states = []
+
+    class DummyQEff:
+        model = torch.nn.Identity()
+
+        @export_utils.export_wrapper
+        def export(self, **kwargs):
+            grad_states.append(torch.is_grad_enabled())
+            return kwargs["export_dir"] / "dummy.onnx"
+
+    monkeypatch.setattr(export_utils, "validate_dynamo_export_requirements", lambda *args: None)
+    monkeypatch.setattr(export_utils, "_setup_onnx_subfunctions", lambda *args, **kwargs: (args[1], args[2], {}))
+    monkeypatch.setattr(
+        export_utils, "temporarily_enable_nested_compile_regions", lambda *args, **kwargs: nullcontext()
+    )
+    monkeypatch.setattr(export_utils, "_prepare_export_directory", lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(export_utils, "_generate_export_hash", lambda *args: ("test-hash", {}))
+    monkeypatch.setattr(export_utils, "_save_export_metadata", lambda *args: None)
+    monkeypatch.setattr(export_utils, "_cleanup_onnx_subfunctions", lambda *args, **kwargs: None)
+
+    with pytest.warns(DeprecationWarning):
+        DummyQEff().export(export_dir=tmp_path, dynamo=True, use_onnx_subfunctions=True)
+
+    assert grad_states == [False]
 
 
 def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_count_per_fn: int = 2):
