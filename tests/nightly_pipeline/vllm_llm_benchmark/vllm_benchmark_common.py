@@ -1699,6 +1699,26 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
         default="ALL",
         help="VLM only: filter rows by blocking_mode column (blocking, non_blocking, or ALL).",
     )
+    parser.add_argument(
+        "--device-group-override",
+        default="",
+        help="Override device_group column value (e.g., '0,1,2,3'). Empty = use CSV values.",
+    )
+    parser.add_argument(
+        "--device-group-encode-override",
+        default="",
+        help="VLM only: override encode_device_group column value. Empty = use CSV values.",
+    )
+    parser.add_argument(
+        "--device-group-prefill-override",
+        default="",
+        help="VLM/disagg only: override prefill_device_group column value. Empty = use CSV values.",
+    )
+    parser.add_argument(
+        "--device-group-decode-override",
+        default="",
+        help="VLM/disagg only: override decode_device_group column value. Empty = use CSV values.",
+    )
     return parser
 
 
@@ -1712,6 +1732,22 @@ def row_matches_filter(row: dict, column: str, filter_value: str) -> bool:
     return row_value.lower() == filter_value.lower()
 
 
+def update_device_group_in_additional_config(row: dict, device_group_override: str) -> None:
+    """Update device_group in additional_config JSON if override is provided."""
+    if not device_group_override:
+        return
+    additional_config_str = value(row, "additional_config")
+    if not additional_config_str:
+        return
+    try:
+        additional_config = parse_json_cell(additional_config_str, "additional_config")
+        if isinstance(additional_config, dict):
+            additional_config["device_group"] = parse_device_group(device_group_override)
+            row["additional_config"] = compact_json(additional_config)
+    except Exception:
+        pass
+
+
 def run_benchmarks(args, latest_models: set[str]) -> int:
     input_csv = Path(args.input_csv)
     output_csv = Path(args.output_csv)
@@ -1721,6 +1757,10 @@ def run_benchmarks(args, latest_models: set[str]) -> int:
     disagg_mode = getattr(args, "disagg_mode", "ALL")
     specialization_mode = getattr(args, "specialization_mode", "ALL")
     blocking_mode = getattr(args, "blocking_mode", "ALL")
+    device_group_override = getattr(args, "device_group_override", "")
+    device_group_encode_override = getattr(args, "device_group_encode_override", "")
+    device_group_prefill_override = getattr(args, "device_group_prefill_override", "")
+    device_group_decode_override = getattr(args, "device_group_decode_override", "")
 
     if output_csv.exists():
         output_csv.unlink()
@@ -1748,6 +1788,21 @@ def run_benchmarks(args, latest_models: set[str]) -> int:
         if not row_matches_filter(row, "blocking_mode", blocking_mode):
             print(f"Skipping row {row['_data_row']} ({model}): blocking_mode does not match filter {blocking_mode!r}.")
             continue
+
+        # Apply device group overrides if provided
+        if device_group_override:
+            # For configs with device_group in additional_config JSON (embedding, audio)
+            update_device_group_in_additional_config(row, device_group_override)
+            # Also update direct device_group column if it exists (LLM configs)
+            if "device_group" in row and value(row, "device_group") is not None:
+                row["device_group"] = device_group_override
+        if device_group_encode_override:
+            row["encode_device_group"] = device_group_encode_override
+        if device_group_prefill_override:
+            row["prefill_device_group"] = device_group_prefill_override
+        if device_group_decode_override:
+            row["decode_device_group"] = device_group_decode_override
+
         ok = run_one(row, args, args.config_name, output_csv)
         if not ok:
             failures += 1

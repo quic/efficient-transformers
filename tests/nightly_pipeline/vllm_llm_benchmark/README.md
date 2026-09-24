@@ -157,6 +157,281 @@ These map to the runner's own `--disagg-mode`/`--specialization-mode`/
 row lacking the corresponding column — so the LLM/embedding/audio CSVs are
 unaffected.
 
+## HuggingFace Cache Configuration
+
+The `HF_HOME` Jenkins parameter controls where HuggingFace model caches are stored:
+
+- **Default (empty):** `${HOME}/.cache/huggingface` on the Jenkins agent
+- **Custom value:** Any path, e.g., `/mnt/fast_storage/hf_cache`
+
+This is useful when:
+- The default cache location has insufficient space
+- You want to use a faster storage device (NVMe, SSD)
+- You want to share a pre-populated cache across multiple builds
+- You need to isolate caches for different benchmark runs
+
+The cache is bind-mounted into the Docker container at the same path, so models
+downloaded during one run are available to subsequent runs without re-downloading.
+
+## Device Group Configuration
+
+Device groups specify which QAIC devices are allocated to each benchmark run. They can be configured in two ways:
+
+### CSV-based Configuration (Default)
+
+Each config CSV includes device group columns that specify which devices to use:
+
+| Category | Single-Device | Disaggregated |
+| --- | --- | --- |
+| **LLM (default/CCL/blocking)** | `device_group` (col 7) | N/A |
+| **LLM (disagg_pd)** | N/A | `prefill_device_group` (col 9), `decode_device_group` (col 10) |
+| **Embedding** | `additional_config` JSON | N/A |
+| **Audio** | `additional_config` JSON | N/A |
+| **VLM** | N/A | `encode_device_group` (col 14), `prefill_device_group` (col 15), `decode_device_group` (col 16) |
+
+Example values:
+- Single device: `0` or `1`
+- Multiple devices: `0,1,2,3` or `2,3`
+- Empty: uses default or falls back to `additional_config`
+
+### Jenkins Parameter Override
+
+Jenkins parameters allow overriding device groups for an entire benchmark run without modifying CSVs:
+
+| Parameter | Applies To | Example |
+| --- | --- | --- |
+| `DEVICE_GROUP_DEFAULT` | LLM default configs | `0,1,2,3` |
+| `DEVICE_GROUP_CCL` | LLM CCL configs | `0,1` |
+| `DEVICE_GROUP_BLOCKING` | LLM blocking configs | `2,3` |
+| `DEVICE_GROUP_DISAGG_PD_PREFILL` | LLM disagg PD prefill stage | `0,1` |
+| `DEVICE_GROUP_DISAGG_PD_DECODE` | LLM disagg PD decode stage | `2,3` |
+| `DEVICE_GROUP_EMBEDDING` | Embedding configs | `0` |
+| `DEVICE_GROUP_AUDIO` | Audio configs | `0` |
+| `DEVICE_GROUP_VLM_ENCODE` | VLM encode stage | `0` |
+| `DEVICE_GROUP_VLM_PREFILL` | VLM prefill stage | `1` |
+| `DEVICE_GROUP_VLM_DECODE` | VLM decode stage | `2,3` |
+
+When a Jenkins parameter is set (non-empty), it **overrides** the corresponding CSV column for all rows in that benchmark run. When empty (default), CSV values are used.
+
+**Use case:** Test the same model configs on different device allocations without creating new CSV rows.
+
+### Device Group Override Implementation
+
+Device group overrides work in two ways:
+
+**Method 1: Direct Column Override** (LLM default/CCL/blocking, VLM)
+- Device group is in a dedicated CSV column
+- Override directly replaces the column value
+- Example: `device_group` column → override value
+
+**Method 2: JSON Override** (Embedding, Audio)
+- Device group is in `additional_config` JSON
+- Override parses JSON, updates field, re-serializes
+- Example: `{"device_group": [0], ...}` → `{"device_group": [1], ...}`
+
+**Method 3: Separate Stage Overrides** (LLM disagg_pd, VLM)
+- Separate device group columns for each stage
+- Each stage can be overridden independently
+- Example: `prefill_device_group` and `decode_device_group` overridden separately
+
+## Dry-Run Testing
+
+A comprehensive dry-run test suite validates device group overrides across all 7 categories:
+
+```bash
+# Run all tests (recommended)
+python3 dry_run_test.py
+
+# Or use bash script
+bash DRY_RUN_TEST.sh
+```
+
+Each test:
+- Runs with a single row from the config CSV
+- Applies specified device group override
+- Runs in dry-run mode (no actual server/client execution)
+- Validates command generation
+- Checks output CSV creation
+
+### Test Coverage
+
+| # | Category | Override | Test |
+|---|----------|----------|------|
+| 1 | LLM Default | `device_group="0,1"` | ✅ |
+| 2 | LLM CCL | `device_group="0,1"` | ✅ |
+| 3 | LLM Blocking | `device_group="2,3"` | ✅ |
+| 4 | LLM Disagg PD | `prefill="0,1"`, `decode="2,3"` | ✅ |
+| 5 | Embedding | `device_group="0"` (JSON) | ✅ |
+| 6 | Audio | `device_group="0"` (JSON) | ✅ |
+| 7 | VLM | `encode="0"`, `prefill="1"`, `decode="2,3"` | ✅ |
+
+### Expected Output
+
+```
+==================================================
+Dry-Run Test: All Categories with Device Group Overrides
+==================================================
+
+Test Results:
+✓ llm_default
+✓ llm_ccl
+✓ llm_blocking
+✓ llm_disagg_pd
+✓ embedding
+✓ audio
+✓ vlm
+
+Passed: 7/7
+Failed: 0/7
+
+✓ No errors found in logs
+```
+
+### Verifying Device Group Overrides
+
+Check generated commands:
+```bash
+grep "Server command" /tmp/vllm_dry_run_test/llm_default_output.log
+# Should include: --additional-config '{"device_group": [0, 1], ...}'
+```
+
+Check output CSV:
+```bash
+head -5 /tmp/vllm_dry_run_test/llm_default_results.csv
+# Should have device_group column with overridden value
+```
+
+Check for errors:
+```bash
+grep -r "ERROR\|FAILED\|Traceback" /tmp/vllm_dry_run_test/*.log
+# Should return nothing if all tests passed
+```
+
+### Manual Testing
+
+Test a single category manually:
+
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_llm_benchmark.py \
+  --config-name default \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_default_configs.csv \
+  --output-csv /tmp/test_llm_default.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-override "0,1" \
+  --dry-run
+```
+
+Test CCL LLM with device group override:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_llm_benchmark.py \
+  --config-name ccl \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_ccl_configs.csv \
+  --output-csv /tmp/test_llm_ccl.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-override "0,1" \
+  --dry-run
+```
+
+Test blocking LLM with device group override:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_llm_benchmark.py \
+  --config-name blocking \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_blocking_configs.csv \
+  --output-csv /tmp/test_llm_blocking.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-override "2,3" \
+  --dry-run
+```
+
+Test disaggregated prefill-decode LLM with separate device group overrides:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_llm_benchmark.py \
+  --config-name disagg_pd \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_disagg_pd_configs.csv \
+  --output-csv /tmp/test_llm_disagg_pd.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-prefill-override "0,1" \
+  --device-group-decode-override "2,3" \
+  --dry-run
+```
+
+Test embedding with device group override:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_embedding_benchmark.py \
+  --config-name embedding \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/embedding_configs.csv \
+  --output-csv /tmp/test_embedding.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-override "0" \
+  --dry-run
+```
+
+Test audio with device group override:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_audio_benchmark.py \
+  --config-name audio \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/audio_configs.csv \
+  --output-csv /tmp/test_audio.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-override "0" \
+  --dry-run
+```
+
+Test VLM with separate device group overrides:
+```bash
+python3 tests/nightly_pipeline/vllm_llm_benchmark/vllm_vlm_benchmark.py \
+  --config-name vlm \
+  --input-csv tests/nightly_pipeline/vllm_llm_benchmark/configs/vlm_configs.csv \
+  --output-csv /tmp/test_vlm.csv \
+  --rows 1 \
+  --latest-models-only false \
+  --results-dir /tmp \
+  --base-dir . \
+  --python-bin python3 \
+  --vllm-qaic-dir . \
+  --server-ready-timeout-s 3600 \
+  --device-group-encode-override "0" \
+  --device-group-prefill-override "1" \
+  --device-group-decode-override "2,3" \
+  --dry-run
+```
+
 ## CSV Notes
 
 Common columns:

@@ -2,7 +2,7 @@ def configCsv(String configName) {
     return "tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_${configName}_configs.csv"
 }
 
-def runLlmConfig(String configName, String rowSpec) {
+def runLlmConfig(String configName, String rowSpec, String deviceGroup = '') {
     def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
     def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
     def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
@@ -17,6 +17,7 @@ def runLlmConfig(String configName, String rowSpec) {
             "DRY_RUN_ARG=${dryRunArg}",
             "FAIL_FAST_ARG=${failFastArg}",
             "LATEST_MODELS_ONLY_ARG=${latestModelsOnlyArg}",
+            "DEVICE_GROUP_OVERRIDE=${deviceGroup ?: ''}",
         ]) {
             // BENCHMARK_SCRIPT/VENV_DIR/etc are already set inside the container via
             // `docker run -e` (Start Container stage); only the per-invocation values are
@@ -33,6 +34,7 @@ def runLlmConfig(String configName, String rowSpec) {
                     -e DRY_RUN_ARG="${DRY_RUN_ARG:-}" \
                     -e FAIL_FAST_ARG="${FAIL_FAST_ARG:-}" \
                     -e LATEST_MODELS_ONLY_ARG="${LATEST_MODELS_ONLY_ARG:-true}" \
+                    -e DEVICE_GROUP_OVERRIDE="${DEVICE_GROUP_OVERRIDE:-}" \
                     ${BUILD_TAG} bash -s <<'SCRIPT'
 set -euo pipefail
 cd /efficient-transformers
@@ -52,6 +54,7 @@ python "${BENCHMARK_SCRIPT}" \
     --qserve-benchmark-script "${QSERVE_BENCHMARK_SCRIPT:-}" \
     --vllm-qaic-dir "${VLLM_QAIC_DIR}" \
     --server-ready-timeout-s "$((SERVER_READY_TIMEOUT_MINUTES * 60))" \
+    --device-group-override "${DEVICE_GROUP_OVERRIDE:-}" \
     ${DRY_RUN_ARG:-} \
     ${FAIL_FAST_ARG:-}
 SCRIPT
@@ -60,7 +63,7 @@ SCRIPT
     }
 }
 
-def runBenchConfig(String scriptEnvVar, String csvBaseName, String rowSpec) {
+def runBenchConfig(String scriptEnvVar, String csvBaseName, String rowSpec, String deviceGroup = '') {
     def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
     def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
     def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
@@ -77,6 +80,7 @@ def runBenchConfig(String scriptEnvVar, String csvBaseName, String rowSpec) {
             "FAIL_FAST_ARG=${failFastArg}",
             "LATEST_MODELS_ONLY_ARG=${latestModelsOnlyArg}",
             "SCRIPT_ENV_VAR=${scriptEnvVar}",
+            "DEVICE_GROUP_OVERRIDE=${deviceGroup ?: ''}",
         ]) {
             // BENCH_SCRIPT is resolved inside the container via bash indirect
             // expansion ("${!SCRIPT_ENV_VAR}") so this single helper can drive
@@ -93,6 +97,7 @@ def runBenchConfig(String scriptEnvVar, String csvBaseName, String rowSpec) {
                     -e FAIL_FAST_ARG="${FAIL_FAST_ARG:-}" \
                     -e LATEST_MODELS_ONLY_ARG="${LATEST_MODELS_ONLY_ARG:-true}" \
                     -e SCRIPT_ENV_VAR="${SCRIPT_ENV_VAR:-}" \
+                    -e DEVICE_GROUP_OVERRIDE="${DEVICE_GROUP_OVERRIDE:-}" \
                     ${BUILD_TAG} bash -s <<'SCRIPT'
 set -euo pipefail
 cd /efficient-transformers
@@ -113,6 +118,7 @@ python "${BENCH_SCRIPT}" \
     --qserve-benchmark-script "${QSERVE_BENCHMARK_SCRIPT:-}" \
     --vllm-qaic-dir "${VLLM_QAIC_DIR}" \
     --server-ready-timeout-s "$((SERVER_READY_TIMEOUT_MINUTES * 60))" \
+    --device-group-override "${DEVICE_GROUP_OVERRIDE:-}" \
     ${DRY_RUN_ARG:-} \
     ${FAIL_FAST_ARG:-}
 SCRIPT
@@ -121,7 +127,7 @@ SCRIPT
     }
 }
 
-def runVlmConfig(String rowSpec, String disaggMode, String specializationMode, String blockingMode) {
+def runVlmConfig(String rowSpec, String disaggMode, String specializationMode, String blockingMode, String deviceGroupEncode = '', String deviceGroupPrefill = '', String deviceGroupDecode = '') {
     def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
     def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
     def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
@@ -140,6 +146,9 @@ def runVlmConfig(String rowSpec, String disaggMode, String specializationMode, S
             "DISAGG_MODE_ARG=${disaggMode ?: 'ALL'}",
             "SPECIALIZATION_MODE_ARG=${specializationMode ?: 'ALL'}",
             "BLOCKING_MODE_ARG=${blockingMode ?: 'ALL'}",
+            "DEVICE_GROUP_ENCODE_OVERRIDE=${deviceGroupEncode ?: ''}",
+            "DEVICE_GROUP_PREFILL_OVERRIDE=${deviceGroupPrefill ?: ''}",
+            "DEVICE_GROUP_DECODE_OVERRIDE=${deviceGroupDecode ?: ''}",
         ]) {
             sh '''#!/bin/bash
                 set -euo pipefail
@@ -154,6 +163,9 @@ def runVlmConfig(String rowSpec, String disaggMode, String specializationMode, S
                     -e DISAGG_MODE_ARG="${DISAGG_MODE_ARG:-ALL}" \
                     -e SPECIALIZATION_MODE_ARG="${SPECIALIZATION_MODE_ARG:-ALL}" \
                     -e BLOCKING_MODE_ARG="${BLOCKING_MODE_ARG:-ALL}" \
+                    -e DEVICE_GROUP_ENCODE_OVERRIDE="${DEVICE_GROUP_ENCODE_OVERRIDE:-}" \
+                    -e DEVICE_GROUP_PREFILL_OVERRIDE="${DEVICE_GROUP_PREFILL_OVERRIDE:-}" \
+                    -e DEVICE_GROUP_DECODE_OVERRIDE="${DEVICE_GROUP_DECODE_OVERRIDE:-}" \
                     ${BUILD_TAG} bash -s <<'SCRIPT'
 set -euo pipefail
 cd /efficient-transformers
@@ -176,6 +188,9 @@ python "${VLM_BENCHMARK_SCRIPT}" \
     --disagg-mode "${DISAGG_MODE_ARG:-ALL}" \
     --specialization-mode "${SPECIALIZATION_MODE_ARG:-ALL}" \
     --blocking-mode "${BLOCKING_MODE_ARG:-ALL}" \
+    --device-group-encode-override "${DEVICE_GROUP_ENCODE_OVERRIDE:-}" \
+    --device-group-prefill-override "${DEVICE_GROUP_PREFILL_OVERRIDE:-}" \
+    --device-group-decode-override "${DEVICE_GROUP_DECODE_OVERRIDE:-}" \
     ${DRY_RUN_ARG:-} \
     ${FAIL_FAST_ARG:-}
 SCRIPT
@@ -207,6 +222,17 @@ pipeline {
         string(name: 'GITHUB_SSH_CREDENTIALS_ID', defaultValue: 'github-ssh-key', description: 'Jenkins "SSH Username with private key" credential ID for GitHub Enterprise (github.qualcomm.com) access to clone qserve. Required unless SKIP_INSTALL=true.')
         string(name: 'QEFF_BRANCH', defaultValue: 'main', description: 'efficient-transformers branch consumed by vllm-qaic scripts/install.sh aot')
         password(name: 'HF_TOKEN', defaultValue: '', description: 'HuggingFace token for gated models. Optional - leave empty to reuse the HF_TOKEN already exported in the Jenkins agent host environment.')
+        string(name: 'HF_HOME', defaultValue: '', description: 'HuggingFace cache directory. Empty = ${HOME}/.cache/huggingface')
+        string(name: 'DEVICE_GROUP_DEFAULT', defaultValue: '', description: 'Device group for default LLM configs (e.g., "0,1,2,3"). Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_CCL', defaultValue: '', description: 'Device group for CCL LLM configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_BLOCKING', defaultValue: '', description: 'Device group for blocking LLM configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_DISAGG_PD_PREFILL', defaultValue: '', description: 'Device group for disagg PD prefill stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_DISAGG_PD_DECODE', defaultValue: '', description: 'Device group for disagg PD decode stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_EMBEDDING', defaultValue: '', description: 'Device group for embedding configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_AUDIO', defaultValue: '', description: 'Device group for audio configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_ENCODE', defaultValue: '', description: 'Device group for VLM encode stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_PREFILL', defaultValue: '', description: 'Device group for VLM prefill stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_DECODE', defaultValue: '', description: 'Device group for VLM decode stage. Empty = use CSV values.')
         string(name: 'QSERVE_BENCHMARK_SCRIPT', defaultValue: '', description: 'Optional benchmark_serving.py path. Empty uses auto/fallback.')
         string(name: 'SERVER_READY_TIMEOUT_MINUTES', defaultValue: '360', description: 'Server compile/load timeout per row')
         string(name: 'ROWS_DEFAULT', defaultValue: 'ALL', description: 'Default config data rows: ALL, 1, 1:4, or 1,3. Row 1 is gpt2 smoke.')
@@ -249,7 +275,7 @@ pipeline {
         AUDIO_BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_audio_benchmark.py"
         VLM_BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_vlm_benchmark.py"
         QEFF_HOME = "/efficient-transformers/vllm_llm_workspace/qeff_models"
-        HF_HOME = "${HOME}/.cache/huggingface"
+        HF_HOME = "${params.HF_HOME ?: '${HOME}/.cache/huggingface'}"
         // Intentionally NOT named HF_TOKEN: declaring HF_TOKEN itself here would force every
         // step's shell env to this value (even ''), shadowing any HF_TOKEN already exported in
         // the Jenkins agent's host environment. Keeping it under a different name lets the
@@ -267,6 +293,16 @@ pipeline {
         SKIP_INSTALL = "${params.SKIP_INSTALL}"
         SERVER_READY_TIMEOUT_MINUTES = "${params.SERVER_READY_TIMEOUT_MINUTES}"
         QSERVE_BENCHMARK_SCRIPT = "${params.QSERVE_BENCHMARK_SCRIPT}"
+        DEVICE_GROUP_DEFAULT = "${params.DEVICE_GROUP_DEFAULT}"
+        DEVICE_GROUP_CCL = "${params.DEVICE_GROUP_CCL}"
+        DEVICE_GROUP_BLOCKING = "${params.DEVICE_GROUP_BLOCKING}"
+        DEVICE_GROUP_DISAGG_PD_PREFILL = "${params.DEVICE_GROUP_DISAGG_PD_PREFILL}"
+        DEVICE_GROUP_DISAGG_PD_DECODE = "${params.DEVICE_GROUP_DISAGG_PD_DECODE}"
+        DEVICE_GROUP_EMBEDDING = "${params.DEVICE_GROUP_EMBEDDING}"
+        DEVICE_GROUP_AUDIO = "${params.DEVICE_GROUP_AUDIO}"
+        DEVICE_GROUP_VLM_ENCODE = "${params.DEVICE_GROUP_VLM_ENCODE}"
+        DEVICE_GROUP_VLM_PREFILL = "${params.DEVICE_GROUP_VLM_PREFILL}"
+        DEVICE_GROUP_VLM_DECODE = "${params.DEVICE_GROUP_VLM_DECODE}"
     }
 
     stages {
@@ -557,7 +593,7 @@ SCRIPT
             when { expression { params.RUN_DEFAULT } }
             steps {
                 script {
-                    runLlmConfig('default', params.ROWS_DEFAULT)
+                    runLlmConfig('default', params.ROWS_DEFAULT, params.DEVICE_GROUP_DEFAULT)
                 }
             }
         }
@@ -566,7 +602,7 @@ SCRIPT
             when { expression { params.RUN_CCL } }
             steps {
                 script {
-                    runLlmConfig('ccl', params.ROWS_CCL)
+                    runLlmConfig('ccl', params.ROWS_CCL, params.DEVICE_GROUP_CCL)
                 }
             }
         }
@@ -575,7 +611,7 @@ SCRIPT
             when { expression { params.RUN_BLOCKING } }
             steps {
                 script {
-                    runLlmConfig('blocking', params.ROWS_BLOCKING)
+                    runLlmConfig('blocking', params.ROWS_BLOCKING, params.DEVICE_GROUP_BLOCKING)
                 }
             }
         }
@@ -584,7 +620,7 @@ SCRIPT
             when { expression { params.RUN_DISAGG_PD } }
             steps {
                 script {
-                    runLlmConfig('disagg_pd', params.ROWS_DISAGG_PD)
+                    runLlmConfig('disagg_pd', params.ROWS_DISAGG_PD, params.DEVICE_GROUP_DISAGG_PD_PREFILL)
                 }
             }
         }
@@ -593,7 +629,7 @@ SCRIPT
             when { expression { params.RUN_EMBEDDING } }
             steps {
                 script {
-                    runBenchConfig('EMBEDDING_BENCHMARK_SCRIPT', 'embedding', params.ROWS_EMBEDDING)
+                    runBenchConfig('EMBEDDING_BENCHMARK_SCRIPT', 'embedding', params.ROWS_EMBEDDING, params.DEVICE_GROUP_EMBEDDING)
                 }
             }
         }
@@ -602,7 +638,7 @@ SCRIPT
             when { expression { params.RUN_AUDIO } }
             steps {
                 script {
-                    runBenchConfig('AUDIO_BENCHMARK_SCRIPT', 'audio', params.ROWS_AUDIO)
+                    runBenchConfig('AUDIO_BENCHMARK_SCRIPT', 'audio', params.ROWS_AUDIO, params.DEVICE_GROUP_AUDIO)
                 }
             }
         }
@@ -611,7 +647,7 @@ SCRIPT
             when { expression { params.RUN_VLM } }
             steps {
                 script {
-                    runVlmConfig(params.ROWS_VLM, params.VLM_DISAGG_MODE, params.VLM_SPECIALIZATION_MODE, params.VLM_BLOCKING_MODE)
+                    runVlmConfig(params.ROWS_VLM, params.VLM_DISAGG_MODE, params.VLM_SPECIALIZATION_MODE, params.VLM_BLOCKING_MODE, params.DEVICE_GROUP_VLM_ENCODE, params.DEVICE_GROUP_VLM_PREFILL, params.DEVICE_GROUP_VLM_DECODE)
                 }
             }
         }
