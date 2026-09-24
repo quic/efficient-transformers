@@ -439,11 +439,11 @@ _MIXED_EXPORT_PATCH_LOCK = threading.RLock()
 def _same_export_region(a, b, fake_mode):
     """Conservatively identify equivalent flat, lifted-input export regions.
 
-    The node-shape checks intentionally reject captured attributes and nested
-    HOPs before delegating semantic comparison to PyTorch. This keeps the
-    QEff-local patch narrower than a general graph canonicalizer.
+    Tensor attributes remain unsupported, while nested GraphModule attributes
+    are compared recursively by PyTorch's graph comparator.
     """
     from torch._dynamo.variables.higher_order_ops import are_same_graph_modules
+    from torch.fx.experimental.proxy_tensor import disable_proxy_modes_tracing
 
     if not isinstance(a, torch.fx.GraphModule) or not isinstance(b, torch.fx.GraphModule):
         return False
@@ -453,9 +453,18 @@ def _same_export_region(a, b, fake_mode):
         return False
 
     for left, right in zip(a.graph.nodes, b.graph.nodes):
-        # Keep captured attributes and nested HOP bodies separate in this first
-        # QEff-local version of the PyTorch candidate.
-        if left.op != right.op or left.op not in {"placeholder", "call_function", "call_method", "output"}:
+        if left.op != right.op or left.op not in {
+            "placeholder",
+            "call_function",
+            "call_method",
+            "get_attr",
+            "output",
+        }:
+            return False
+        if left.op == "get_attr" and not all(
+            isinstance(getattr(module, node.target, None), torch.fx.GraphModule)
+            for module, node in ((a, left), (b, right))
+        ):
             return False
         if left.op == "placeholder" and not all(
             isinstance(node.meta.get("example_value"), (torch.Tensor, torch.SymInt)) for node in (left, right)
@@ -465,7 +474,11 @@ def _same_export_region(a, b, fake_mode):
             return False
 
     try:
-        return are_same_graph_modules("non_strict_export", a, b, fake_mode)
+        # Comparing symbolic tensor metadata can otherwise record SymInt
+        # comparisons in the active export proxy trace and fail on symbols
+        # belonging to the separately compiled region.
+        with disable_proxy_modes_tracing():
+            return are_same_graph_modules("non_strict_export", a, b, fake_mode)
     except (KeyError, NotImplementedError):
         return False
 
