@@ -424,8 +424,9 @@ class DiffusionGemmaSingleQPCGenerator:
             )
             topk_logits = outputs["topk_logits"].astype(np.float32)
             topk_indices = outputs["topk_indices"].astype(np.int64)
-            new_canvas = outputs["new_canvas"].astype(np.int64)
+            denoiser_canvas = outputs["denoiser_canvas"].astype(np.int64)
             newly_accepted = outputs["newly_accepted_mask"].astype(bool)
+            new_canvas = np.where(newly_accepted, denoiser_canvas, canvas)
             mean_entropy = float(outputs["mean_entropy"].mean())
             self_conditioning_topk_logits = topk_logits
             self_conditioning_topk_indices = topk_indices
@@ -682,7 +683,7 @@ def compile_unified_qpc(
     qaic_config_moe = {
         "moe_config": {
             "flavour": "expert_parallel",
-            "expert_parallel_chunk_size": 256,
+            "expert_parallel_chunk_size": 128,
             "tree_reduce": True,
         }
     }

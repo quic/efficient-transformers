@@ -136,12 +136,12 @@ def main():
     canvas_throughput = (
         result.total_steps * result.canvas_length / result.total_canvas_time if result.total_canvas_time > 0 else 0.0
     )
+    print(f"\nOutput:\n{output_text}")
     print(f"\nTTFT: {result.ttft:.2f}s ({result.retained_kv_buffers} KV buffers retained)")
     print(
             f"Average number of steps: {result.total_steps/result.executed_blocks}, "
             f"Tokens per second: {clean_token_count/result.total_canvas_time:.1f}"
     )
-    print(f"\nOutput:\n{output_text}")
     print(f"\nQPC_PATH={qpc_path}")
 
 
