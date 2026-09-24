@@ -112,11 +112,15 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.device = reference_states.device
             self.is_initialized = True
 
-    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
-        return self.get_seq_length() + cache_position.shape[0], 0
+    def get_mask_sizes(self, cache_position: torch.Tensor | int) -> tuple[int, int]:
+        query_length = cache_position if isinstance(cache_position, int) else cache_position.shape[0]
+        return self.get_seq_length() + query_length, 0
 
     def get_seq_length(self) -> int:
         return self.keys.shape[-2] if self.keys is not None else 0
+
+    def get_max_length(self) -> int:
+        return -1
 
     def get_max_cache_shape(self) -> int:
         return -1

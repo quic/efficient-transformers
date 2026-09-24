@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import warnings
 from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
@@ -77,6 +78,13 @@ def main(
         python -m QEfficient.cloud.execute --model-name gpt2 --qpc-path /path/to/qpc/binaries --device-group "[0,1]" --prompt "Hello | Hi"
 
     """
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,
@@ -87,7 +95,7 @@ def main(
     cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_group,
+        device_ids=device_group,
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,

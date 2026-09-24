@@ -32,7 +32,10 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.blocking.blocking_configurator import (
+    build_gated_delta_config_for_transform,
+    build_transformer_blocking_config_for_transform,
+)
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_config,
@@ -43,6 +46,7 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    GatedDeltaConfigTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
@@ -1013,8 +1017,18 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
+        self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
+            self.model, gated_delta_config=gated_delta_config
+        )
+        if gated_delta_transformed and gated_delta_config is not None:
+            self.hash_params["gated_delta_kwargs"] = gated_delta_config
+        else:
+            self.hash_params.pop("gated_delta_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
+        else:
+            self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
