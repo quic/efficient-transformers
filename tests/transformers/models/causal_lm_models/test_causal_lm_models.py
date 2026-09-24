@@ -382,8 +382,6 @@ def test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl(model_config,
 def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual_cleanup):
     if model_config.get("known_ccl_export_or_compile_issue"):
         pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
-    if model_config.get("known_bf16_compile_issue"):
-        pytest.xfail(model_config["known_bf16_compile_issue"])
     _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
