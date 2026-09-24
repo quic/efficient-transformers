@@ -342,6 +342,8 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             ]
 
             scatter_nodes.sort(key=cls._scatter_sort_key)
+            # TODO: Support MLA models such as DeepSeek that expose one shared KV cache by mapping only the first
+            # scatter output to that retained cache.
             # Only the first two scatter outputs map to key / value respectively.
             scatter_outputs = [n.output[0] for n in scatter_nodes[:2]]
 
