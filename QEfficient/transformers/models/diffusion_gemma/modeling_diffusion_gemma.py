@@ -52,11 +52,13 @@ _NPI_SAMPLER_OUTPUTS = {
     "topk_indices",
     "newly_accepted_mask",
     "mean_entropy",
+    "denoiser_canvas",
     "new_canvas",
 }
 _NPI_DISCRETE_SAMPLER_OUTPUTS = {
     "topk_indices",
     "newly_accepted_mask",
+    "denoiser_canvas",
     "new_canvas",
 }
 _NPI_DISCRETE_SAMPLER_OPS = {
@@ -674,11 +676,14 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
                 dtype=temperature_logits.dtype,
                 device=input_ids.device,
             )
-        cumulative_probabilities = log_probs.exp().cumsum(dim=2)
-        denoiser_canvas = (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1)
-        new_canvas = torch.where(newly_accepted_mask.bool(), denoiser_canvas, input_ids)
         is_encode_mask = is_encode.bool().view(1, 1, 1)
         is_encode_mask_2d = is_encode_mask.squeeze(-1)
+        cumulative_probabilities = log_probs.exp().cumsum(dim=2)
+        denoiser_canvas = torch.where(
+            is_encode_mask_2d,
+            input_ids,
+            (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1),
+        )
         topk_logits = torch.where(is_encode_mask, torch.zeros_like(topk_logits), topk_logits)
         topk_indices = torch.where(is_encode_mask, torch.zeros_like(topk_indices), topk_indices)
         newly_accepted_mask = torch.where(
@@ -688,7 +693,6 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         )
         mean_entropy = token_entropy.mean(dim=-1, keepdim=True)
         mean_entropy = torch.where(is_encode_mask_2d, torch.zeros_like(mean_entropy), mean_entropy)
-        new_canvas = torch.where(is_encode_mask_2d, input_ids, new_canvas)
         pkv = [
             (past_key_values.layers[layer_index].keys, past_key_values.layers[layer_index].values)
             for layer_index in range(self.text_config.num_hidden_layers)
@@ -698,7 +702,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             topk_indices,
             newly_accepted_mask,
             mean_entropy,
-            new_canvas,
+            denoiser_canvas,
             next_image_idx,
             pkv,
         )
@@ -807,7 +811,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             "topk_indices",
             "newly_accepted_mask",
             "mean_entropy",
-            "new_canvas",
+            "denoiser_canvas",
             "image_idx_output",
         ]
         for layer_index in range(self.text_config.num_hidden_layers):
