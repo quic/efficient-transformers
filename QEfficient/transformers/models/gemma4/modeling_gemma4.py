@@ -251,18 +251,12 @@ def eager_attention_forward_text(
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
-    def __qeff_init__(self):
-        if (
-            hasattr(self, "norm")
-            and not getattr(self.norm, "with_scale", True)
-            and not hasattr(self.norm, "_qeff_unit_weight")
-        ):
-            self.norm.register_buffer("_qeff_unit_weight", torch.ones(self.hidden_size))
-
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         hidden_states = self.norm(hidden_states)
-        hidden_states = (hidden_states * self.scale * self.scalar_root_size).to(self.config.dtype)
-        router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1).to(hidden_states.dtype)
+        hidden_states = hidden_states * self.scale * self.scalar_root_size
+        router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1, dtype=torch.float).to(
+            hidden_states.dtype
+        )
         top_k_weights, top_k_index = torch.topk(
             router_probabilities,
             k=self.config.top_k_experts,
