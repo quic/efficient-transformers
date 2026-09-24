@@ -252,7 +252,7 @@ def eager_attention_forward_text(
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        hidden_states = self.norm(hidden_states).to(hidden_states.dtype)
+        hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states * self.scale * self.scalar_root_size
         router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1, dtype=torch.float).to(
             hidden_states.dtype
