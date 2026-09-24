@@ -27,8 +27,6 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLSparseMoeBlock,
     MiniMaxM3VLTextModel,
     MiniMaxM3VLTopKRouter,
-    dynamic_rope_update,
-    maybe_autocast,
     repeat_kv,
 )
 
@@ -120,6 +118,8 @@ def qeff_apply_rotary_pos_emb(
     passthrough_q = q[..., rotary_dim:]
     rotated_k = k[..., :rotary_dim]
     passthrough_k = k[..., rotary_dim:]
+    cos = cos[..., :rotary_dim]
+    sin = sin[..., :rotary_dim]
     cos = cos.unsqueeze(1)
     sin = sin.unsqueeze(1)
     rotated_q = rotated_q * cos + rotate_half(rotated_q) * sin
@@ -131,20 +131,48 @@ def _scalar_like(reference: torch.Tensor, value: int | float) -> torch.Tensor:
     return torch.tensor(value, dtype=reference.dtype, device=reference.device)
 
 class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
+    """MiniMax RoPE backed by static cosine and sine lookup tables.
+
+    Keeping the trigonometric operations out of the exported graph avoids
+    cross-core placement conflicts when the shared RoPE outputs fan out to all
+    decoder layers and the sparse-attention indexers.
+    """
+
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+        self.__qeff_init__()
+
+    def __qeff_init__(self):
+        self._set_cos_sin_cache(
+            seq_len=int(self.original_max_seq_len),
+            device=self.inv_freq.device,
+            dtype=torch.get_default_dtype(),
+        )
+
+    def _set_cos_sin_cache(self, seq_len: int, device, dtype):
+        self.max_seq_len_cached = seq_len
+        # Include the -1 padding sentinel as the first row.  Exported graphs
+        # can then use a single offset Gather without runtime sign correction.
+        positions = torch.arange(-1, seq_len, device=device, dtype=torch.int64).to(dtype=self.inv_freq.dtype)
+        freqs = torch.outer(positions, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer(
+            "cos_cached",
+            (emb.cos() * self.attention_scaling).to(dtype),
+            persistent=False,
+        )
+        self.register_buffer(
+            "sin_cached",
+            (emb.sin() * self.attention_scaling).to(dtype),
+            persistent=False,
+        )
+
     @torch.no_grad()
-    @dynamic_rope_update
     def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        inv_freq = self.inv_freq.to(device=x.device, dtype=torch.float32)
-        position_ids_expanded = position_ids[..., None].float()
-
-        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with maybe_autocast(device_type=device_type, enabled=False):
-            freqs = position_ids_expanded.float() * inv_freq.view(1, 1, -1)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * self.attention_scaling
-            sin = emb.sin() * self.attention_scaling
-
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+        cache_indices = position_ids + 1
+        cos = self.cos_cached[cache_indices]
+        sin = self.sin_cached[cache_indices]
+        return cos.to(device=x.device, dtype=x.dtype), sin.to(device=x.device, dtype=x.dtype)
 
 def update_running_softmax(
     current_max: torch.Tensor,
@@ -247,11 +275,15 @@ def _gather_paged_kv_selected_heads(pool: torch.Tensor, physical_ids: torch.Tens
 class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
     @staticmethod
     def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        """Apply RoPE to an indexer tensor whose final dimension is already rotary-sized."""
+        """Apply partial RoPE while preserving the remainder of the index head."""
+        rotary_dim = cos.shape[-1]
+        rotated = x[..., :rotary_dim]
+        passthrough = x[..., rotary_dim:]
         head_axis = x.ndim - 3
         cos = cos.unsqueeze(head_axis)
         sin = sin.unsqueeze(head_axis)
-        return x * cos + rotate_half(x) * sin
+        rotated = rotated * cos + rotate_half(rotated) * sin
+        return torch.cat((rotated, passthrough), dim=-1)
 
     def _project_index_q_prefill(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Project prefill index queries in bounded sequence chunks."""
@@ -863,7 +895,10 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         if num_cores < 1:
             raise ValueError(f"num_cores_per_device must be positive, got {num_cores}.")
 
-        if dp > 1:
+        # The GP selector owns every compact DP/CP cache layout, including
+        # the common dp=1, cp>1 case.  Falling through for cp>1 sends the
+        # rank-3 [rows, ctx_slots, dim] index cache to the rank-4 M3 scatter.
+        if dp > 1 or cp > 1:
             return self._select_blocks_dp(
                 hidden_states, position_ids, past_key_values, layer_idx, cos, sin, blocking_config
             )
@@ -921,6 +956,8 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         """
         rotated = x[..., :rotary_dim]
         passthrough = x[..., rotary_dim:]
+        cos = cos[..., :rotary_dim]
+        sin = sin[..., :rotary_dim]
         head_axis = x.ndim - 3  # insert singleton for H axis
         cos = cos.unsqueeze(head_axis)
         sin = sin.unsqueeze(head_axis)
@@ -1349,13 +1386,13 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             idx_q,
             cos,
             sin,
-            cfg.index_head_dim,
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
         idx_k = self._apply_rope_dp(
             idx_k,
             cos,
             sin,
-            cfg.index_head_dim,
+            int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
 
         k_updates = (
@@ -3065,6 +3102,20 @@ class QEffMiniMaxM3VLDecoderLayer(MiniMaxM3VLDecoderLayer):
 
 
 class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
+    def __qeff_init__(self):
+        # Hoist pre-scaled RoPE tables onto the text model as parameters.  This
+        # exports them as graph initializers, matching the established QEff
+        # Llama/Qwen path, instead of Constant nodes inside rotary_emb.
+        rotary_emb = QEffMiniMaxM3VLRotaryEmbedding(
+            config=self.config,
+            device=self.embed_tokens.weight.device,
+        )
+        self.cos_cached = nn.Parameter(rotary_emb.cos_cached.contiguous(), requires_grad=False)
+        self.sin_cached = nn.Parameter(rotary_emb.sin_cached.contiguous(), requires_grad=False)
+        # The exported forward gathers from the model-level tables directly.
+        # Avoid retaining a duplicate full-context cache under rotary_emb.
+        self.rotary_emb = nn.Identity()
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -3107,7 +3158,10 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
+        rope_indices = position_ids + 1
+        cos = self.cos_cached[rope_indices].to(device=hidden_states.device, dtype=hidden_states.dtype)
+        sin = self.sin_cached[rope_indices].to(device=hidden_states.device, dtype=hidden_states.dtype)
+        position_embeddings = (cos, sin)
         indexer_position_embeddings = None
         indexer = None
         blocking_config = None
@@ -3125,10 +3179,6 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
             rotary_dim = min(cos.shape[-1], indexer_dim)
             indexer_cos = cos[..., :rotary_dim]
             indexer_sin = sin[..., :rotary_dim]
-            if rotary_dim < indexer_dim:
-                pad = indexer_dim - rotary_dim
-                indexer_cos = F.pad(indexer_cos, (0, pad), value=1.0)
-                indexer_sin = F.pad(indexer_sin, (0, pad), value=0.0)
             if inputs_embeds.shape[1] == 1 and indexer_dp > 1:
                 batch_local = inputs_embeds.shape[0] // indexer_dp
                 indexer_cos = indexer_cos.view(indexer_dp, batch_local, indexer_cos.shape[1], indexer_cos.shape[-1]).permute(1, 0, 2, 3)
@@ -3354,12 +3404,11 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
 
     def _uses_context_partitioned_main_kv(self) -> bool:
         qaic_config = self._qaic_config()
-        if int(qaic_config.get("msa_attn_cp", 1) or 1) <= 1:
-            return False
-        try:
-            return BlockingMode.resolve(qaic_config.get("blocking_mode")) == BlockingMode.KV_BATCH_FOLD
-        except ValueError:
-            return False
+        # The sparse cache writer uses the compact GP layout for every
+        # msa_attn_cp > 1 configuration.  Keep export examples and dynamic
+        # cache metadata consistent with that runtime contract regardless of
+        # the selected blocking-mode label.
+        return int(qaic_config.get("msa_attn_cp", 1) or 1) > 1
 
     def get_qeff_vision_encoder(self):
         return QEffMiniMaxM3VLEncoderWrapper(self)
@@ -3487,7 +3536,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         num_images = int(compiler_options.pop("num_images", 1))
         vision_size = int(compiler_options.pop("vision_size", num_image_patches))
 
-        qaic_config = compiler_options.pop("qaic_config", None)
+        qaic_config = compiler_options.pop("qaic_config", None) or {}
         self.qaic_config = qaic_config
         msa_attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
         msa_attn_cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
@@ -3495,6 +3544,13 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         indexer_cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
         indexer_hkv = int(qaic_config.get("indexer_n_head", 1) or 1)
         paged_kv = bool(qaic_config.get("paged_kv", False))
+        if prefill_seq_len > 1 and (
+            indexer_dp != 1 or indexer_cp != 1 or msa_attn_dp != 1 or msa_attn_cp != 1
+        ):
+            raise ValueError(
+                "MiniMax MSA prefill requires indexer DP=CP=1 and attention DP=CP=1; "
+                "pipeline parallelism must be configured with mdp_num_partitions."
+            )
         export_batch_size = self._execution_batch_size(batch_size)
         use_context_kv = self._uses_context_partitioned_main_kv() and not paged_kv
         use_context_indexer_kv = self._uses_context_partitioned_indexer_kv() and not paged_kv
@@ -3630,6 +3686,11 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         lm_config = self.model.language_model.config
         qaic_config = self._qaic_config()
         paged_kv = bool(qaic_config.get("paged_kv", False))
+        # The index-key cache has two possible export layouts:
+        #   prefill / CP=1: [batch, hkv, ctx_len, head_dim]
+        #   decode / CP>1:  [rows, ctx_len / cp, head_dim]
+        # Keep the dynamic axes tied to the same layout choice used by
+        # get_dummy_index_keys above.
         use_context_indexer_kv = int(qaic_config.get("msa_indexer_cp", 1) or 1) > 1 and not paged_kv
         use_context_main_kv = self._uses_context_partitioned_main_kv() and not paged_kv
         past_batch_axis = (
@@ -3638,32 +3699,43 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             else ("full_batch_size" if continuous_batching else "batch_size")
         )
         past_ctx_axis = "main_kv_ctx_len" if use_context_main_kv else "ctx_len"
+        standard_past_batch_axis = "full_batch_size" if continuous_batching else "batch_size"
         indexer_batch_axis = "full_batch_size" if continuous_batching else "batch_size"
         indexer_ctx_axis = "ctx_len"
+
+        def _set_retained_state_axes(name: str, axes: dict[int, str]) -> None:
+            """Keep each retained-state output's split signature identical to its input."""
+            lang_dynamic_axes[name] = axes
+            lang_dynamic_axes[f"{name}_RetainedState"] = axes.copy()
+
         layer_types = getattr(lm_config, "layer_types", None) or ["full_attention"] * lm_config.num_hidden_layers
         for i in range(lm_config.num_hidden_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {
-                0: past_batch_axis,
-                2: past_ctx_axis,
-            }
-            lang_dynamic_axes[f"past_value.{i}"] = {
-                0: past_batch_axis,
-                2: past_ctx_axis,
-            }
-            if i < len(layer_types) and layer_types[i] == "minimax_m3_sparse":
+            is_sparse_layer = i < len(layer_types) and layer_types[i] == "minimax_m3_sparse"
+            # CP-partitioned KV layout is specific to sparse M3 layers. Dense
+            # layers retain standard [batch, Hkv, ctx_len, dim] caches even
+            # when the model's sparse attention uses CP.
+            layer_batch_axis = past_batch_axis if is_sparse_layer else standard_past_batch_axis
+            layer_ctx_axis = past_ctx_axis if is_sparse_layer else "ctx_len"
+            layer_cache_axes = {0: layer_batch_axis, 2: layer_ctx_axis}
+            _set_retained_state_axes(f"past_key.{i}", layer_cache_axes)
+            _set_retained_state_axes(f"past_value.{i}", layer_cache_axes)
+            if is_sparse_layer:
                 if use_context_indexer_kv:
-                    lang_dynamic_axes[f"index_key.{i}"] = {0: "indexer_kv_rows", 1: "indexer_kv_ctx_len"}
+                    # Compact CP index cache: [rows, ctx_len / cp, dim].
+                    index_cache_axes = {0: "indexer_kv_rows", 1: "indexer_kv_ctx_len"}
                 else:
-                    lang_dynamic_axes[f"index_key.{i}"] = {
-                        0: indexer_batch_axis,
-                        2: indexer_ctx_axis,
-                    }
-        qaic_config = self._qaic_config()
+                    # Reference prefill index cache: [batch, hkv, ctx_len, dim].
+                    index_cache_axes = {0: indexer_batch_axis, 2: indexer_ctx_axis}
+                _set_retained_state_axes(f"index_key.{i}", index_cache_axes)
+
         if qaic_config.get("paged_kv", False):
             for i in range(lm_config.num_hidden_layers):
                 if i < len(layer_types) and layer_types[i] == "minimax_m3_sparse":
                     for cache_name in ("past_key", "past_value", "index_key"):
-                        lang_dynamic_axes[f"{cache_name}.{i}"] = {0: "physical_pages", 2: "page_size"}
+                        _set_retained_state_axes(
+                            f"{cache_name}.{i}",
+                            {0: "physical_pages", 2: "page_size"},
+                        )
             lang_dynamic_axes["msa_indexer_block_table"] = {1: "indexer_batch_local", 2: "num_pages"}
             lang_dynamic_axes["msa_attn_block_table"] = {1: "attn_batch_local", 2: "num_pages"}
         if continuous_batching:
@@ -3672,8 +3744,10 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         if kv_offload:
+            lang_dynamic_axes["vision_embeds_RetainedState"] = lang_dynamic_axes["vision_embeds"].copy()
             return {"vision": vision_dynamic_axes, "lang": lang_dynamic_axes}
 
+        lang_dynamic_axes["pixel_values_RetainedState"] = vision_dynamic_axes["pixel_values"].copy()
         dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         dynamic_axes.pop("vision_embeds")
         return dynamic_axes
@@ -3705,6 +3779,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
     ):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32) or torch.float32
         kv_cache_shape = self._main_kv_partition_shape(config=config, batch_size=batch_size, seq_len=seq_len)
+        standard_kv_cache_shape = tuple(
+            get_padding_shape_from_config(config=config, batch_size=batch_size, seq_len=seq_len)
+        )
         layer_types = getattr(config, "layer_types", None) or ["full_attention"] * config.num_hidden_layers
         batch_local = batch_size // dp
         num_pages = (seq_len + page_block_size - 1) // page_block_size
@@ -3722,19 +3799,43 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             elif layer_type == "minimax_m3_sparse":
                 shape = kv_cache_shape
             else:
-                shape = kv_cache_shape
+                # Generic attention layers use CtxScatter and therefore keep
+                # the standard [batch, Hkv, ctx_len, head_dim] layout.  Only
+                # sparse M3 layers use the CP-partitioned GP cache above.
+                shape = standard_kv_cache_shape
             past_key_values.append((torch.zeros(shape, dtype=dtype), torch.zeros(shape, dtype=dtype)))
         return past_key_values
 
     def get_dummy_index_keys(
-        self, config, batch_size, seq_len, dtype=None, *, paged=False, dp=1, page_block_size=128, hkv=None
+        self,
+        config,
+        batch_size,
+        seq_len,
+        dtype=None,
+        *,
+        paged=False,
+        dp=1,
+        page_block_size=128,
+        hkv=None,
+        prefill=False,
     ):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32) or torch.float32
         layer_types = getattr(config, "layer_types", None) or ["full_attention"] * config.num_hidden_layers
         batch_local = batch_size // dp
         num_pages = (seq_len + page_block_size - 1) // page_block_size
         physical_pages = dp * batch_local * num_pages
-        index_key_shape = self._indexer_kv_partition_shape(config, batch_size, seq_len)
+        # MSA prefill uses the reference rank-4 cache layout consumed by
+        # M3CtxScatter: [batch, indexer_kv_heads, ctx_len, head_dim].  The
+        # compact [rows, ctx_len / cp, head_dim] layout is decode-only.
+        if prefill and not paged:
+            index_key_shape = (
+                batch_size,
+                int(hkv or getattr(config, "indexer_n_head", 1) or 1),
+                seq_len,
+                config.index_head_dim,
+            )
+        else:
+            index_key_shape = self._indexer_kv_partition_shape(config, batch_size, seq_len)
         paged_shape = (
             physical_pages,
             dp * (hkv or getattr(config, "indexer_n_head", 1)),
@@ -3763,8 +3864,15 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         past_seq_len = int(kwargs.get("past_seq_len", ctx_len))
         qaic_config = self._qaic_config()
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
+        indexer_cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
         attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
         attn_cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
+        prefill = prefill_seq_len > 1
+        if prefill and (indexer_dp != 1 or indexer_cp != 1 or attn_dp != 1 or attn_cp != 1):
+            raise ValueError(
+                "MiniMax MSA prefill export inputs require indexer DP=CP=1 and attention DP=CP=1; "
+                "compact MSA caches are decode-only."
+            )
         dp_multiplier = lcm(indexer_dp, attn_dp)
         requested_batch_size = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE if kwargs.get("batch_size") is None else int(kwargs["batch_size"])
@@ -3827,6 +3935,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             dp=indexer_dp,
             page_block_size=page_block_size,
             hkv=int(qaic_config.get("indexer_n_head", 1) or 1),
+            prefill=prefill,
         )
         inputs["past_key_values"] = past_key_values
         inputs["index_keys"] = index_keys

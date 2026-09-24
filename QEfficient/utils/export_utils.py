@@ -162,6 +162,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
     index_key_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
+        # ONNX dynamic_axes may include outputs so retained-state pairs share
+        # identical symbolic dimensions. torch.export dynamic_shapes accepts
+        # inputs only, so do not interpret retained outputs as cache inputs.
+        if input_name.endswith(("_RetainedState", "_InternalRetainedState")):
+            continue
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
         if input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
@@ -497,20 +502,29 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     # TorchScript renames _RetainedState → _InternalRetainedState; dynamo keeps _RetainedState for PreserveNestedCacheRetainedStateTransform.
     if not dynamo:
         if "output_names" in kwargs:
-            kwargs["output_names"] = [
-                re.sub("_RetainedState", "_InternalRetainedState", name)
-                if name.endswith("_RetainedState")
-                and (
-                    "key" in name
-                    or "value" in name
-                    or "compressed_kv" in name
-                    or "k_pe" in name
-                    or "conv" in name
-                    or "recurrent" in name
+            output_name_map = {}
+            rewritten_output_names = []
+            for name in kwargs["output_names"]:
+                rewritten_name = (
+                    re.sub("_RetainedState", "_InternalRetainedState", name)
+                    if name.endswith("_RetainedState")
+                    and (
+                        "key" in name
+                        or "value" in name
+                        or "compressed_kv" in name
+                        or "k_pe" in name
+                        or "conv" in name
+                        or "recurrent" in name
+                    )
+                    else name
                 )
-                else name
-                for name in kwargs["output_names"]
-            ]
+                output_name_map[name] = rewritten_name
+                rewritten_output_names.append(rewritten_name)
+            kwargs["output_names"] = rewritten_output_names
+            if "dynamic_axes" in kwargs:
+                kwargs["dynamic_axes"] = {
+                    output_name_map.get(name, name): axes for name, axes in kwargs["dynamic_axes"].items()
+                }
         else:
             warnings.warn(
                 "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "

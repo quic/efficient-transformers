@@ -105,6 +105,23 @@ def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: L
             _rename_graph_value(model.graph, current_name, expected_name)
 
 
+def _align_retained_state_output_shapes(model: onnx.ModelProto) -> None:
+    """Make retained outputs inherit the complete shape contract of their paired inputs."""
+    inputs_by_name = {value.name: value for value in model.graph.input}
+    for output in model.graph.output:
+        state_input_name = output.name
+        for suffix in ("_InternalRetainedState", "_RetainedState"):
+            if state_input_name.endswith(suffix):
+                state_input_name = state_input_name[: -len(suffix)]
+                break
+        else:
+            continue
+        state_input = inputs_by_name.get(state_input_name)
+        if state_input is None:
+            continue
+        output.type.tensor_type.shape.CopyFrom(state_input.type.tensor_type.shape)
+
+
 def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
     """Force graph output names to match ``output_names`` by positional index."""
     for output_idx, expected_name in enumerate(output_names):
@@ -636,6 +653,7 @@ class QEFFBaseModel(ABC):
 
             # Restore retained-state names when exporters or transforms assign numeric aliases.
             _restore_retained_state_output_names(model, output_names)
+            _align_retained_state_output_shapes(model)
 
             transform_names = [transform.__name__ for transform in self._pytorch_transforms + active_transforms]
             model.metadata_props.append(
@@ -963,6 +981,7 @@ class QEFFBaseModel(ABC):
         # Layer windows are stitched by name, so preserve the requested output
         # names after transforms normalize function/custom-op outputs.
         _restore_output_names_exact(model, output_names)
+        _align_retained_state_output_shapes(model)
 
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp

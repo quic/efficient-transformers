@@ -424,11 +424,16 @@ class M3CtxScatterFunc(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
-        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
-        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
-        ctx_idx = position_ids.unsqueeze(1)
-        data[batch_idx, head_idx, ctx_idx] = updates
-        return data
+        # Keep eager/export tracing semantics aligned with the MiniMax M3
+        # reference implementation.  In particular, the cache must be cloned
+        # before the indexed update and position_ids must be expanded across
+        # the cache-head dimension.  The latter is important for prefill,
+        # where updates have shape [B, H, Q, D].
+        batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+        head_idx = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+        out = data.clone()
+        out[batch_idx, head_idx, position_ids.long().unsqueeze(1)] = updates
+        return out
 
     @staticmethod
     def setup_context(ctx, inputs, output):

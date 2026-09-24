@@ -1392,7 +1392,10 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffMiniMaxM3VLForCausalLM.forward,
             "get_submodules_for_export": QEffMiniMaxM3VLForCausalLM.get_submodules_for_export,
         },
-        "MiniMaxM3VLTextModel": {"forward": QEffMiniMaxM3VLTextModel.forward},
+        "MiniMaxM3VLTextModel": {
+            "forward": QEffMiniMaxM3VLTextModel.forward,
+            "__qeff_init__": QEffMiniMaxM3VLTextModel.__qeff_init__,
+        },
         "MiniMaxM3VLDecoderLayer": {"forward": QEffMiniMaxM3VLDecoderLayer.forward},
         "MiniMaxM3VLDenseMLP": {"forward": QEffMiniMaxM3VLDenseMLP.forward},
         "MiniMaxM3VLAttention": {"forward": QEffMiniMaxM3VLAttention.forward},
