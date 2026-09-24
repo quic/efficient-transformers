@@ -35,7 +35,6 @@ from QEfficient.generation.text_generation_inference import (
     TextGeneration,
     calculate_latency,
     get_compilation_dims,
-    write_io_files,
 )
 from QEfficient.utils import LRUCache, constants
 from QEfficient.utils.constants import Constants
@@ -56,7 +55,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         ...     processor=processor,
         ...     lang_qpc_path="path/to/lang.qpc",
         ...     vision_qpc_path="path/to/vision.qpc",
-        ...     device_id=[0]
+        ...     device_ids=[0]
         ... )
         >>> result = vlm.generate(
         ...     images=["image1.jpg"],
@@ -70,7 +69,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         ...     processor=processor,
         ...     lang_qpc_path="path/to/lang.qpc",
         ...     vision_qpc_path="path/to/vision.qpc",
-        ...     device_id=[0],
+        ...     device_ids=[0],
         ...     full_batch_size=8,  # Enable continuous batching
         ...     include_sampler=True,  # Enable on-device sampling
         ...     sampling_params=sampling_config
@@ -84,13 +83,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         processor: AutoImageProcessor,
         lang_qpc_path: str,
         vision_qpc_path: str,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
         num_kv_blocks: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
@@ -109,13 +107,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             processor: Image processor
             lang_qpc_path: Path to language model QPC
             vision_qpc_path: Path to vision encoder QPC
-            device_id: Device IDs for execution (default: [0])
+            device_ids: Device IDs for execution (default: [0])
             ctx_len: Context length
             num_kv_blocks: Number of physical KV blocks for paged attention on the language
                 QPC (optional). When None (default), paged attention is disabled and
                 block_table/slot_id are never populated or sent to the language session.
             enable_debug_logs: Enable debug logging
-            write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
             image_height: Desired image height for resizing
             image_width: Desired image width for resizing
@@ -141,9 +138,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-            device_id=device_id,
+            device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
@@ -180,7 +176,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.image_height = image_height
         self.image_width = image_width
         self._vision_qpc_path = vision_qpc_path
-        self.device_id = device_id  # Store device_id for vision components
+        self.device_ids = device_ids  # Store device_ids for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
         self._vision_outputs_cache = LRUCache(max_size=100)  # LRU cache for vision outputs
         self._vision_cache = {}  # Cache for vision outputs across batches
@@ -200,7 +196,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         """Initialize vision-specific components"""
         # Vision session (separate from base class language session)
         self._vision_session = QAICInferenceSession(
-            self._vision_qpc_path, self.device_id, activate=False, enable_debug_logs=self.enable_debug_logs
+            self._vision_qpc_path, self.device_ids, activate=False, enable_debug_logs=self.enable_debug_logs
         )
 
         # Vision handler with language session coordination
@@ -422,9 +418,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             if "image_idx_output" in outputs:
                 chunk_image_idx = outputs["image_idx_output"]
-
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
         # Prepare decode-time cross_attention_mask
         if "cross_attention_mask" in lang_inputs:
@@ -1116,7 +1109,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             tokenizer=self.tokenizer,
             qpc_path=self._qpc_path,
             ctx_len=self._ctx_len,
-            device_id=self.device_id,
+            device_ids=self.device_ids,
             enable_debug_logs=self.enable_debug_logs,
             is_tlm=self.is_tlm,
             include_sampler=self.include_sampler,

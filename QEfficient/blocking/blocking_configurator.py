@@ -427,3 +427,22 @@ def build_transformer_blocking_config_for_transform(
         blocking_config.num_cores_per_device = compile_options.get("aic_num_cores")
 
     return blocking_config
+
+
+def build_gated_delta_config_for_transform(
+    seq_len: Optional[int] = None, qaic_config: Optional[dict] = None
+) -> Optional[Dict[str, int]]:
+    del seq_len
+    if not qaic_config:
+        return None
+
+    chunk_size = qaic_config.get("gdn_chunk_size")
+
+    if chunk_size is None:
+        return None
+
+    chunk_size = int(chunk_size)
+    if chunk_size <= 0:
+        return None
+
+    return {"chunk_size": chunk_size}

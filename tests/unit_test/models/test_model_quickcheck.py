@@ -2495,6 +2495,32 @@ def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
     assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
+def test_vlm_compile_forwards_gdn_chunk_size_in_qaic_config_to_export_path():
+    """GDN chunk size is configured only through qaic_config."""
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = _QEffAutoModelForImageTextToTextDualQPC.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model._run_layerwise_compile = MagicMock(return_value="qpc_paths")
+
+    result = model.compile(layerwise=True, qaic_config={"gdn_chunk_size": 512})
+
+    assert result == "qpc_paths"
+    compile_kwargs = model._run_layerwise_compile.call_args.kwargs
+    assert compile_kwargs["qaic_config"]["gdn_chunk_size"] == 512
+    assert "gdn_chunk_size" not in compile_kwargs
+    assert "qeff_chunk_size" not in compile_kwargs
+
+    model._run_layerwise_compile.reset_mock()
+    model.compile(layerwise=True, prefill_seq_len=1024)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+    assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+
+    model._run_layerwise_compile.reset_mock()
+    model.compile(layerwise=True)
+    assert "gdn_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+    assert "qeff_chunk_size" not in model._run_layerwise_compile.call_args.kwargs
+
+
 def test_qwen3_vl_moe_get_specializations_decouples_vision_batch_size():
     from types import SimpleNamespace
 
@@ -4586,3 +4612,42 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
             num_patches=2508,
             kv_offload=True,
         )
+
+
+@pytest.mark.cpu_only
+def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_runner_io_bundle
+
+    input_info = helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "seq_len"])
+    output_info = helper.make_tensor_value_info("output", TensorProto.INT64, ["batch_size", "seq_len"])
+    graph = helper.make_graph(
+        [helper.make_node("Identity", ["input_ids"], ["output"])], "runner", [input_info], [output_info]
+    )
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    inputs = np.arange(4, dtype=np.int64).reshape(1, 4)
+    io_dir = write_runner_io_bundle(
+        onnx_path=onnx_path,
+        compile_dir=compile_dir,
+        specialization={"batch_size": 1, "seq_len": 4},
+        host_inputs={"input_ids": inputs},
+    )
+
+    descriptor = json.loads((io_dir / "aic_batch_io.json").read_text())
+    entries = descriptor["IO-files"][0]
+    assert entries[0] == {
+        "path": "data/input_ids.raw",
+        "io-direction": "in",
+        "elem-size": 8,
+        "map-to": "input_ids",
+        "dims": [1, 4],
+    }
+    assert entries[1]["io-direction"] == "out"
+    assert entries[1]["dims"] == [1, 4]
+    assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
+    assert not (io_dir / "data/output.raw").exists()

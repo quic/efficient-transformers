@@ -37,7 +37,7 @@ def test_execute_calls_tokenizer_and_runtime(mocker):
     cloud_ai_100_exec_kv.assert_called_once_with(
         tokenizer=tokenizer,
         qpc_path="/nonexistent/test-qpc",
-        device_id=[0],
+        device_ids=[0],
         prompt=["My name is"],
         prompts_txt_file_path="examples/sample_prompts/prompts.txt",
         generation_len=20,
