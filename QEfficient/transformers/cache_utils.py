@@ -119,8 +119,6 @@ class QEffDynamicLayer(CacheLayerMixin):
         if self.values is not None and self.values.dtype != value_states.dtype:
             self.values = self.values.to(dtype=value_states.dtype)
 
-    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
-        return self.get_seq_length() + cache_position.shape[0], 0
     def get_mask_sizes(self, cache_position: torch.Tensor | int) -> tuple[int, int]:
         query_length = cache_position if isinstance(cache_position, int) else cache_position.shape[0]
         return self.get_seq_length() + query_length, 0
