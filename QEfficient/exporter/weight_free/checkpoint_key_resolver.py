@@ -159,8 +159,8 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         Specification mapping promoted ONNX inputs to checkpoint tensor locations.
     """
     model_ir = onnx_program.model
-    parameter_names = {name for name, _ in qeff_model.model.named_parameters()}
-    buffer_names = {name for name, _ in qeff_model.model.named_buffers()}
+    parameter_names = {name for name, _ in qeff_model.model.named_parameters(remove_duplicate=False)}
+    buffer_names = {name for name, _ in qeff_model.model.named_buffers(remove_duplicate=False)}
     model_names = parameter_names | buffer_names
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias

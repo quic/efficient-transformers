@@ -123,7 +123,6 @@ class QEffFalconAttention(FalconAttention):
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        layer_past: Optional[Cache] = None,
         head_mask: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
@@ -145,8 +144,8 @@ class QEffFalconAttention(FalconAttention):
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached)
 
-        if layer_past is not None:
-            past_seen_tokens = layer_past.get_seq_length()
+        if past_key_values is not None:
+            past_seen_tokens = past_key_values.get_seq_length()
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -155,7 +154,7 @@ class QEffFalconAttention(FalconAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
+            key_layer, value_layer = past_key_values.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
         if attention_mask is not None:
             attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
@@ -192,7 +191,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        past_key_values: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
         head_mask: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
@@ -212,10 +211,9 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         # Self attention.
         attention_output, attn_weights = self.self_attention(
             attention_layernorm_out,
-            layer_past=layer_past,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             alibi=alibi,
@@ -332,7 +330,7 @@ class QEffFalconModel(FalconModel):
 
             outputs = block(
                 hidden_states,
-                layer_past=past_key_values,
+                past_key_values=past_key_values,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
