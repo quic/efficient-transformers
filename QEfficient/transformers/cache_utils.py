@@ -307,18 +307,31 @@ class QEffDynamicLayer(CacheLayerMixin):
             k_out = k_out.reshape(1, cache_bh, ctx_len, head_dim)
         else:
             k_out = folded_cache
-        T_block = end_index - start_index
+        # Batch-folded decode prepares the range/where chain in the owning
+        # attention-layer body and passes it through these private kwargs. Do
+        # not rebuild it here: doing so allows ONNX export to lift the graph
+        # out of the decoder-layer subfunction, creating extra function
+        # variants and preventing compiler range optimization.
+        prepared_ctx_indices = cache_kwargs.get("_qeff_batch_fold_ctx_indices")
+        if prepared_ctx_indices is None:
+            # Preserve the original reader-local path for non-batch-folded
+            # callers and for any legacy invocation that does not provide the
+            # prepared tensors. This fallback is intentionally unchanged in
+            # semantics and continues to use the cache's invalid-index value.
+            T_block = end_index - start_index
+            ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values
+            gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
+            invalid_mask = ctx_indices > gather_limit
 
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values
-        gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
-        invalid_mask = ctx_indices > gather_limit
-
-        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
-
-        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-
-        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+            ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
+        else:
+            # The attention forward already expanded this tensor to the folded
+            # [1, FBS * Hkv, T_block] layout, so no additional reshape or range
+            # construction is needed in the cache reader.
+            ctx_indices = prepared_ctx_indices
         k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
 
         return k_out
@@ -390,17 +403,27 @@ class QEffDynamicLayer(CacheLayerMixin):
             v_out = v_out.reshape(1, cache_bh, ctx_len, head_dim)
         else:
             v_out = folded_cache
-        T_block = end_index - start_index
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values
-        gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
-        invalid_mask = ctx_indices > gather_limit
+        # See read_only_blocked_K_batch above. The precomputed tensors are
+        # shared by the K and V reads so both sides of the attention operation
+        # use the exact same folded-cache selection.
+        prepared_ctx_indices = cache_kwargs.get("_qeff_batch_fold_ctx_indices")
+        if prepared_ctx_indices is None:
+            # Keep the generic fallback for callers outside the optimized
+            # batch-folded decode path.
+            T_block = end_index - start_index
+            ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values
+            gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
+            invalid_mask = ctx_indices > gather_limit
 
-        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
-
-        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-
-        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+            ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
+        else:
+            ctx_indices = prepared_ctx_indices
+            # Unlike the K read, the V read must retain the mask after the
+            # gather so invalid/future positions can be zeroed explicitly.
+            invalid_mask = cache_kwargs["_qeff_batch_fold_invalid_mask"]
         v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)

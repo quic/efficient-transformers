@@ -367,6 +367,24 @@ def generic_blocked_attention_interface(
         BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
     ]
 
+    # Keep a zero-valued, layer-local dependency in the traced graph for
+    # batch-folded decode. The folded-cache index/mask expressions are built
+    # by the layer-specific attention forward below. Without this dependency,
+    # ONNX export can treat those expressions as identical across decoder
+    # layers, lift them out of the subfunction body, and expose them as extra
+    # subfunction inputs/outputs. Besides producing unnecessary subfunction
+    # variants, that prevents the AIC compiler from applying its range
+    # optimizations. The dependency is intentionally numerical no-op: it
+    # preserves position_ids while anchoring the graph to this layer's cache.
+    if blocking_mode == BlockingMode.KV_BATCH_FOLD and past_key_value is not None and position_ids is not None:
+        layers = getattr(past_key_value, "layers", None)
+        layer = layers[layer_idx] if layers is not None else None
+        layer_keys = getattr(layer, "keys", None)
+        if layer_keys is not None:
+            cache_shape = torch._shape_as_tensor(layer_keys)
+            layer_local_zero = (cache_shape[0] - cache_shape[0]).to(dtype=position_ids.dtype)
+            position_ids = position_ids + layer_local_zero
+
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
     use_paged_kv_blocked = (
