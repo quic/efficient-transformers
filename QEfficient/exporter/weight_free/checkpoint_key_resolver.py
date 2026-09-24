@@ -191,7 +191,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
 
     # Identify the active layout transform from the prepared checkpoint manifest.
-    # The manifest stores active_group: TRANSFORM_ID written during pipeline Stage ⑤.
+    # The manifest stores the active layout transform ID during centralized finalization.
     # Reading from the manifest avoids re-running detection on the prepared checkpoint
     # (which would fail — the prepared checkpoint has canonical output keys like
     # moe_weights.gate, not the original per-expert keys that trigger detection).
