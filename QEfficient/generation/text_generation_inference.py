@@ -327,7 +327,7 @@ def cloud_ai_100_exec_kv(
         The dictionary should contain the following keys:
         `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
         `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
-        :profiling_type (str, default=None): One of "latency", "trace", "raw_device_stats". Enables
+        :profiling_type (str, default=None): One of "latency", "trace", "raw_device_stats", "stats". Enables
         runtime device profiling capture (via `QAICInferenceSession`'s profiling API) for this call.
         :profiling_output_dir (Union[Path, str], default=None): Directory to write the profiling report to.
 

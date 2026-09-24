@@ -97,7 +97,7 @@ class QAICInferenceSession:
             selects which exec-object pool this session allocates. Unused otherwise.
         :full_batch_size: int. Number of decode slots; `batch_index` offsets wrap
             modulo this value at prefill handoff. Only used when `kv_dma_share=True`.
-        :profiling_type: Optional[str]. One of "latency", "trace", "raw_device_stats". Selects the
+        :profiling_type: Optional[str]. One of "latency", "trace", "raw_device_stats", "stats". Selects the
             runtime device profiling type (via the `qaicrt.ProfilingHandle` API on this session's `Program`).
             If None (default), profiling support is disabled.
         :profiling_output_dir: Optional[Union[Path, str]]. Directory to write the profiling report to. Defaults to
@@ -132,16 +132,25 @@ class QAICInferenceSession:
         self.cluster_id = cluster_id
         self.full_batch_size = full_batch_size
         self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
-        self.profiling_type_map = {
-            "latency": qaicrt.QAicProfilingTypeEnum.QAIC_PROFILING_INFERENCE_LATENCY_TYPE,
-            "trace": qaicrt.QAicProfilingTypeEnum.QAIC_PROFILING_INFERENCE_TRACE_TYPE,
-            "raw_device_stats": qaicrt.QAicProfilingTypeEnum.QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE,
-            "stats": qaicrt.QAicProfilingTypeEnum.QAIC_PROFILING_INFERENCE_DEV_KPI_TYPE,
-        }
-        if profiling_type is not None and profiling_type not in self.profiling_type_map:
-            raise ValueError(
-                f"Unsupported profiling_type {profiling_type!r}; expected one of {list(self.profiling_type_map)}"
+        if profiling_type is not None:
+            profiling_type_map = {
+                "latency": "QAIC_PROFILING_INFERENCE_LATENCY_TYPE",
+                "trace": "QAIC_PROFILING_INFERENCE_TRACE_TYPE",
+                "raw_device_stats": "QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE",
+                "stats": "QAIC_PROFILING_INFERENCE_DEV_KPI_TYPE",
+            }
+            if profiling_type not in profiling_type_map:
+                raise ValueError(
+                    f"Unsupported profiling_type {profiling_type!r}; expected one of {list(profiling_type_map)}"
+                )
+            profiling_enum = getattr(
+                getattr(qaicrt, "QAicProfilingTypeEnum", None), profiling_type_map[profiling_type], None
             )
+            if profiling_enum is None or not hasattr(qaicrt, "ProfilingHandle"):
+                raise RuntimeError(
+                    f"profiling_type {profiling_type!r} is not supported by the installed QAIC SDK; "
+                    "use a supported profiling mode or disable profiling with profiling_type=None."
+                )
 
         # Load QPC
         if device_ids is not None:
@@ -190,7 +199,7 @@ class QAICInferenceSession:
             output_dir.mkdir(parents=True, exist_ok=True)
             self.profiling_handle = qaicrt.ProfilingHandle(
                 programs=[self.program],
-                type=self.profiling_type_map[profiling_type],
+                type=profiling_enum,
                 fileNamePrefix=profiling_file_prefix,
                 outputDirectory=str(output_dir),
             )
