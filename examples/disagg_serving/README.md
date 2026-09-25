@@ -5,6 +5,9 @@ Text-only causal language models use the canonical
 entry point with `--disaggregated`. Model-specific text KV-handoff scripts are
 intentionally not maintained here; this directory retains manual reference and
 multimodal disaggregated examples.
+The two replaced text KV-handoff scripts are preserved under
+[`../text_generation/archive/disagg_serving/`](../text_generation/archive/disagg_serving/).
+
  - GPT-OSS model has 128/4 for 120b and 32/4 ratio of total_experts/experts_per_tok
  - We use read all experts only once always strategy in prefill-only model
  - And we treat weights activtions meaning read only chosen experts for decode-only model

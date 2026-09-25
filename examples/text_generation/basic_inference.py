@@ -31,13 +31,11 @@ prints the full list.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections import deque
 from pathlib import Path
 from time import perf_counter
-
-import numpy as np
-import torch
 
 # Make `examples._common` importable when this file is run directly, i.e.
 # `python examples/text_generation/basic_inference.py` from the repo root.
@@ -45,11 +43,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from transformers import AutoTokenizer  # noqa: E402
-
 from examples._common import args as A  # noqa: E402
-from QEfficient import QEFFAutoModelForCausalLM  # noqa: E402
-from QEfficient.generation.cloud_infer import QAICInferenceSession  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,10 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
             A.blocking_group(),
             A.speculative_group(),
             A.sampler_group(),
+            A.dflash_group(),
             A.runtime_group(),
             A.meta_group(),
         ],
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
 
 
@@ -109,6 +105,25 @@ def _select_ccl_length(ccl_lengths, required_length: int, ctx_len: int) -> int |
     return next((length for length in candidates if length >= required_length), candidates[-1])
 
 
+def _build_default_sampling_params(ns: argparse.Namespace, batch_size: int, vocab_size: int) -> dict:
+    """Build neutral, deterministic runtime inputs for the on-device sampler."""
+    import numpy as np
+
+    max_top_k_ids = min(ns.max_top_k_ids, vocab_size)
+    params = {
+        "repetition_penalties": np.ones((batch_size, 1), dtype=np.float32),
+        "presence_penalties": np.zeros((batch_size, 1), dtype=np.float32),
+        "temperatures": np.zeros((batch_size, 1), dtype=np.float32),
+        "top_ks": np.ones((batch_size, 1), dtype=np.int32),
+        "top_ps": np.ones((batch_size, 1), dtype=np.float32),
+        "min_ps": np.zeros((batch_size, 1), dtype=np.float32),
+        "random_numbers": np.zeros((batch_size, max_top_k_ids), dtype=np.float32),
+    }
+    if ns.include_guided_decoding:
+        params["token_bitmasks"] = np.ones((batch_size, vocab_size), dtype=np.bool_)
+    return params
+
+
 def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
     """Compile decode and pipeline-parallel prefill QPCs for DMA KV handoff."""
     shared = {
@@ -123,6 +138,7 @@ def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
         "retain_full_kv": True,
         "use_onnx_subfunctions": ns.use_onnx_subfunctions,
         "kv_cache_prefix": ns.kv_cache_prefix,
+        "artifacts": ns.artifacts,
     }
 
     decode_qpc_path = model.compile(
@@ -138,7 +154,8 @@ def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
     )
     if ns.comp_ctx_lengths_decode is not None:
         ns.comp_ctx_lengths_decode = getattr(model, "comp_ctx_lengths_decode", ns.comp_ctx_lengths_decode)
-    print(f"Compiled decode QPC: {decode_qpc_path}")
+    label = "compiler artifacts" if ns.artifacts else "QPC"
+    print(f"Decode {label}: {decode_qpc_path}")
 
     prefill_qpc_path = model.compile(
         compile_dir=_stage_compile_dir(ns, "prefill"),
@@ -156,7 +173,7 @@ def compile_disaggregated(model, ns: argparse.Namespace) -> tuple[str, str]:
     )
     if ns.comp_ctx_lengths_prefill is not None:
         ns.comp_ctx_lengths_prefill = getattr(model, "comp_ctx_lengths_prefill", ns.comp_ctx_lengths_prefill)
-    print(f"Compiled prefill QPC: {prefill_qpc_path}")
+    print(f"Prefill {label}: {prefill_qpc_path}")
     return prefill_qpc_path, decode_qpc_path
 
 
@@ -168,6 +185,13 @@ def run_disaggregated(
     ns: argparse.Namespace,
 ) -> dict:
     """Run continuous-batching text generation with zero-copy host KV handoff."""
+    import numpy as np
+
+    from QEfficient.generation.cloud_infer import QAICInferenceSession
+    from QEfficient.utils import padding_check_and_fix
+
+    padding_check_and_fix(tokenizer)
+
     prefill_session = QAICInferenceSession(
         prefill_qpc_path,
         device_ids=_stage_device_group(ns, "prefill"),
@@ -201,7 +225,9 @@ def run_disaggregated(
             raise ValueError(f"Prompt requires {padded_len} padded tokens, which exceeds --ctx-len {ns.ctx_len}.")
         encoded = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         lang_inputs = {"input_ids": encoded["input_ids"]}
-        lang_inputs["position_ids"] = np.where(encoded["attention_mask"], np.arange(padded_len), -1)
+        attention_mask = encoded["attention_mask"]
+        token_positions = np.cumsum(attention_mask, axis=-1) - 1
+        lang_inputs["position_ids"] = np.where(attention_mask, token_positions, -1)
         return lang_inputs, num_chunks
 
     def prefill_slot(lang_inputs, num_chunks: int, slot: int):
@@ -302,9 +328,9 @@ def run_disaggregated(
             if not ongoing[slot]:
                 continue
             token = int(next_tokens[slot])
+            slot_tokens[slot].append(token)
+            generated_count[slot] += 1
             if token != tokenizer.eos_token_id:
-                slot_tokens[slot].append(token)
-                generated_count[slot] += 1
                 last_token[slot] = token
                 position[slot] += 1
             reached_limit = generated_count[slot] >= generation_len or position[slot] >= ns.ctx_len
@@ -324,12 +350,44 @@ def run_disaggregated(
 def main() -> None:
     parser = build_parser()
     ns = parser.parse_args()
+    A.validate_dflash_args(ns, parser, sys.argv[1:])
     A.validate_args(ns, parser.error)
 
     if ns.print_resolved:
         A.print_namespace(ns)
     if ns.dry_run:
         return
+
+    prompts = A.resolve_prompts(ns)
+    if ns.dflash:
+        from examples.performance.dflash.basic_inference_text import run_text_dflash
+
+        run_text_dflash(
+            model_name=ns.model_name,
+            prompt=prompts[0],
+            ctx_len=ns.ctx_len,
+            prefill_seq_len=ns.prefill_seq_len,
+            generation_len=ns.generation_len or ns.ctx_len,
+            iteration=ns.iteration,
+            tlm_devices=ns.tlm_devices or ns.device_group or [0],
+            dlm_devices=ns.dlm_devices or ns.device_group or [0],
+            tlm_cores=ns.tlm_cores,
+            dlm_cores=ns.dlm_cores,
+            tlm_hf_path=ns.tlm_hf_path,
+            tlm_qpc=ns.tlm_qpc,
+            dlm_qpc=ns.dlm_qpc,
+            category=ns.category,
+            format_prompt=ns.format_prompt,
+            hf_token=os.environ.get("HF_TOKEN"),
+            compile_only=ns.compile_only,
+            compile_dir=ns.compile_dir,
+        )
+        return
+
+    import torch
+    from transformers import AutoTokenizer
+
+    from QEfficient import QEFFAutoModelForCausalLM
 
     tokenizer = AutoTokenizer.from_pretrained(
         ns.tokenizer_name or ns.model_name,
@@ -357,7 +415,6 @@ def main() -> None:
 
     model = QEFFAutoModelForCausalLM.from_pretrained(ns.model_name, **from_pretrained_kwargs)
 
-    prompts = A.resolve_prompts(ns)
     if ns.disaggregated:
         prefill_qpc_path, decode_qpc_path = compile_disaggregated(model, ns)
         if ns.compile_only:
@@ -369,7 +426,7 @@ def main() -> None:
     if ns.stage == "prefill":
         compile_options.update(mdp_num_partitions=ns.mdp_num_partitions, mdp_strategy=ns.mdp_strategy)
 
-    qpc_path = model.compile(
+    compile_path = model.compile(
         onnx_path=ns.onnx_path,
         compile_dir=ns.compile_dir,
         prefill_seq_len=ns.prefill_seq_len,
@@ -399,22 +456,43 @@ def main() -> None:
         layerwise=ns.layerwise,
         layerwise_window_size=ns.layerwise_window_size,
         kv_cache_prefix=ns.kv_cache_prefix,
+        dynamo=ns.dynamo,
+        artifacts=ns.artifacts,
         **compile_options,
     )
-    print(f"Compiled QPC: {qpc_path}")
+    label = "Compiler artifacts written to" if ns.artifacts else "Compiled QPC"
+    print(f"{label}: {compile_path}")
 
     if ns.compile_only or ns.stage == "prefill":
         return
 
+    execution_batch_size = ns.full_batch_size or ns.batch_size
+    sampling_params = (
+        _build_default_sampling_params(ns, execution_batch_size, model.vocab_size) if ns.include_sampler else None
+    )
+    runtime_options = {
+        "include_sampler": ns.include_sampler,
+        "return_pdfs": ns.return_pdfs,
+        "include_guided_decoding": ns.include_guided_decoding,
+        "sampling_params": sampling_params,
+    }
+    if ns.write_io and not ns.artifacts:
+        io_dir = model.generate(tokenizer=tokenizer, prompts=prompts, artifacts=True, **runtime_options)
+        print(f"Runner inputs written to: {io_dir}")
+
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=ns.device_group,
+        device_ids=ns.device_group,
         generation_len=ns.generation_len,
         iteration=ns.iteration,
-        write_io=ns.write_io,
         automation=ns.automation,
+        artifacts=ns.artifacts,
+        **runtime_options,
     )
+    if ns.artifacts:
+        print(f"Runner inputs written to: {exec_info}")
+        return
     for prompt, text in zip(prompts, exec_info.generated_texts):
         print(f"\nPrompt: {prompt}\nGenerated: {text}")
     print(exec_info)

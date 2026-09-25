@@ -34,28 +34,28 @@ Examples:
 import argparse
 import os
 import sys
+from pathlib import Path
 
-from rich.console import Console
-from rich.markup import escape
-from transformers import AutoConfig, AutoTokenizer
-from utils import (
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from rich.console import Console  # noqa: E402
+from rich.markup import escape  # noqa: E402
+from transformers import AutoConfig, AutoTokenizer  # noqa: E402
+
+from examples.performance.dflash.utils import (  # noqa: E402
     MODEL_MAP,
     compile_dlm_qpc,
     compile_tlm_qpc,
-    format_prompt,
     get_spd_prompt_chunk_size,
     load_spd_sessions,
     resolve_model_name,
     validate_spd_decode_specialization,
 )
-
-from QEfficient.generation.dflash_generation import run_spd_inference_single
-from QEfficient.utils.logging_utils import logger
-
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
-sys.path.insert(0, REPO_ROOT)
-sys.path.insert(0, THIS_DIR)
+from examples.performance.dflash.utils import format_prompt as format_prompt_text  # noqa: E402
+from QEfficient.generation.dflash_generation import run_spd_inference_single  # noqa: E402
+from QEfficient.utils.logging_utils import logger  # noqa: E402
 
 console = Console()
 
@@ -140,51 +140,87 @@ def _resolve_batch_size(batch_size):
     return batch_size
 
 
-def main():
-    args = parse_args()
-    batch_size = _resolve_batch_size(args.batch_size)
+def run_text_dflash(
+    *,
+    model_name: str,
+    prompt: str,
+    ctx_len: int,
+    prefill_seq_len: int,
+    generation_len: int,
+    iteration: int,
+    tlm_devices: list[int],
+    dlm_devices: list[int],
+    tlm_cores: int = 8,
+    dlm_cores: int = 8,
+    tlm_hf_path: str | None = None,
+    tlm_qpc: str | None = None,
+    dlm_qpc: str | None = None,
+    category: str = "",
+    format_prompt: bool = False,
+    hf_token: str | None = None,
+    batch_size: int = 1,
+    compile_only: bool = False,
+    compile_dir: str | None = None,
+):
+    """Compile/reuse a text target/draft pair and run the shared DFlash loop.
 
-    tlm_repo_default, dlm_repo = MODEL_MAP[args.model_name]
-    tlm_repo = args.tlm_hf_path or tlm_repo_default
+    The standalone CLI and canonical text example share this orchestration.
+    ``compile_only`` stops before loading the tokenizer or runtime sessions.
+    """
+    model_name = resolve_model_name(model_name)
+    if model_name not in ("Qwen3-4B", "Qwen3-8B", "Llama-3.1-8B-Instruct"):
+        raise ValueError(f"{model_name} requires the vision DFlash example; this runner supports text models only.")
+    batch_size = _resolve_batch_size(batch_size)
+    tlm_repo_default, dlm_repo = MODEL_MAP[model_name]
+    tlm_repo = tlm_hf_path or tlm_repo_default
     if tlm_repo is None:
-        raise SystemExit(f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path.")
+        raise ValueError(f"No default TLM HF path for '{model_name}'. Supply tlm_hf_path.")
 
-    if args.tlm_qpc:
-        logger.info(f"[skip compile] using provided TLM qpc: {args.tlm_qpc}")
-        tlm_qpc = args.tlm_qpc
+    def stage_compile_dir(stage):
+        if compile_dir is None:
+            return None
+        directory = Path(compile_dir) / stage
+        directory.mkdir(parents=True, exist_ok=True)
+        return str(directory)
+
+    if tlm_qpc:
+        logger.info(f"[skip compile] using provided TLM qpc: {tlm_qpc}")
     else:
         tlm_qpc = compile_tlm_qpc(
             tlm_repo,
             dlm_repo,
-            prefill_seq_len=args.prefill_seq_len,
-            ctx_len=args.ctx_len,
-            num_cores=args.tlm_cores,
-            num_devices=len(args.tlm_devices),
-            hf_token=args.hf_token,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            num_cores=tlm_cores,
+            num_devices=len(tlm_devices),
+            hf_token=hf_token,
+            compile_dir=stage_compile_dir("tlm"),
         )
 
-    if args.dlm_qpc:
-        logger.info(f"[skip compile] using provided DLM qpc: {args.dlm_qpc}")
-        dlm_qpc = args.dlm_qpc
+    if dlm_qpc:
+        logger.info(f"[skip compile] using provided DLM qpc: {dlm_qpc}")
     else:
         dlm_qpc = compile_dlm_qpc(
             tlm_repo,
             dlm_repo,
-            ctx_len=args.ctx_len,
-            num_cores=args.dlm_cores,
-            num_devices=len(args.dlm_devices),
-            hf_token=args.hf_token,
+            ctx_len=ctx_len,
+            num_cores=dlm_cores,
+            num_devices=len(dlm_devices),
+            hf_token=hf_token,
+            compile_dir=stage_compile_dir("dlm"),
         )
     logger.info(f"TLM qpc        : {tlm_qpc}")
     logger.info(f"DLM qpc        : {dlm_qpc}")
+    if compile_only:
+        return None
 
-    prompt_text = format_prompt(args.prompt, args.category) if args.format_prompt else args.prompt
-    tokenizer = AutoTokenizer.from_pretrained(tlm_repo, token=args.hf_token, trust_remote_code=True)
-    config = AutoConfig.from_pretrained(dlm_repo, token=args.hf_token, trust_remote_code=True)
+    prompt_text = format_prompt_text(prompt, category) if format_prompt else prompt
+    tokenizer = AutoTokenizer.from_pretrained(tlm_repo, token=hf_token, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(dlm_repo, token=hf_token, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, args.tlm_devices, args.dlm_devices)
+    dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, tlm_devices, dlm_devices)
     prompt_chunk_size = get_spd_prompt_chunk_size(tlm_session)
     validate_spd_decode_specialization(tlm_session, config.block_size)
 
@@ -202,11 +238,11 @@ def main():
         mask_token_id=mask_token_id,
         vocab_size=config.vocab_size,
         prompt_chunk_size=prompt_chunk_size,
-        ctx_len=args.ctx_len,
+        ctx_len=ctx_len,
         block_size=config.block_size,
-        max_iterations=args.iteration,
+        max_iterations=iteration,
         hidden_size=config.hidden_size,
-        generation_len=args.generation_len,
+        generation_len=generation_len,
         batch_size=batch_size,
     )
 
@@ -236,6 +272,11 @@ def main():
     print(f"  {'Iterations':<30} {metrics.num_total_iters:>6}")
     print(f"  {'Prefill time (s)':<30} {metrics.total_prefill_time:>6.3f}")
     print("=" * w + "\n")
+    return metrics
+
+
+def main():
+    run_text_dflash(**vars(parse_args()))
 
 
 if __name__ == "__main__":

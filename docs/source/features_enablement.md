@@ -145,4 +145,18 @@ io_dir = model.generate(
 
 The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` and node precision info (NPI) files when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
 
+The canonical text example exposes this behavior as `--artifacts`:
+
+```bash
+python examples/text_generation/basic_inference.py \
+    --model-name Qwen/Qwen2-1.5B-Instruct --prompt "Hello" --artifacts
+```
+
+Add `--compile-only` for compiler bundles without runner inputs. This is
+required for disaggregated, paged-attention, and decode-only recipes. QNN,
+DFlash, and MDP `intersection` partitioning are not supported in this example's
+artifact mode. See the [text-generation recipes](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/README.md)
+for replay instructions and the new `kv_paged`/`qkv_paged`/`hqkv_paged`,
+`--gdn-chunk-size`, and `--dflash` controls.
+
 Image-text-to-text generation also requires an example `processor`, `images`, and `prompts`. For dual-QPC models, set exactly one of `skip_vision=True` or `skip_lang=True` to emit one independently replayable stage.

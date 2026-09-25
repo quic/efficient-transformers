@@ -170,9 +170,18 @@ def compile_group() -> argparse.ArgumentParser:
     basic.add_argument("--device-group", type=_device_group, default=None, help="Device IDs, e.g. [0,1,2,3].")
     basic.add_argument("--mxfp6-matmul", action="store_true", help="Compress matmul weights to MXFP6.")
     basic.add_argument("--mxint8-kv-cache", action="store_true", help="Compress KV cache to MXINT8.")
+    basic.add_argument("--dynamo", action="store_true", help="Export the standard inference model via Dynamo.")
+    basic.add_argument(
+        "--artifacts",
+        action="store_true",
+        help="Export and write compiler/first-prefill runner bundles without executing the compiler or runtime.",
+    )
 
     adv = p.add_argument_group("compile-advanced")
     adv.add_argument("--kv-cache-batch-size", type=int, default=None, help=_adv("KV cache batch size."))
+    adv.add_argument(
+        "--gdn-chunk-size", type=int, default=None, help=_adv("Gated-delta chunk size for Qwen3.5 models.")
+    )
     adv.add_argument(
         "--use-onnx-subfunctions",
         action="store_true",
@@ -347,6 +356,9 @@ def blocking_group() -> argparse.ArgumentParser:
         "hq",
         "hkv",
         "hqkv",
+        "kv_paged",
+        "qkv_paged",
+        "hqkv_paged",
         "bhqkv",
         "prefill_q",
         "prefill_kv",
@@ -417,6 +429,29 @@ def sampler_group() -> argparse.ArgumentParser:
     return p
 
 
+def dflash_group() -> argparse.ArgumentParser:
+    """Text DFlash target/draft compilation and single-prompt inference."""
+    p = _parent()
+    g = p.add_argument_group("DFlash")
+    g.add_argument(
+        "--dflash", action="store_true", help="Run text DFlash speculative decoding with a target/draft pair."
+    )
+    g.add_argument("--tlm-hf-path", default=None, help=_adv("Override the target repository in the DFlash model map."))
+    g.add_argument("--tlm-qpc", default=None, help=_adv("Reuse a target QPC, skipping its compilation."))
+    g.add_argument("--dlm-qpc", default=None, help=_adv("Reuse a draft QPC, skipping its compilation."))
+    g.add_argument(
+        "--tlm-devices", type=_device_group, default=None, help=_adv("Target devices; default: --device-group or [0].")
+    )
+    g.add_argument(
+        "--dlm-devices", type=_device_group, default=None, help=_adv("Draft devices; default: --device-group or [0].")
+    )
+    g.add_argument("--tlm-cores", type=int, default=8, help=_adv("Compute cores per target device."))
+    g.add_argument("--dlm-cores", type=int, default=8, help=_adv("Compute cores per draft device."))
+    g.add_argument("--category", default="", help=_adv("DFlash prompt-format category, e.g. math or coding."))
+    g.add_argument("--format-prompt", action="store_true", help=_adv("Apply the DFlash category prompt template."))
+    return p
+
+
 def runtime_group() -> argparse.ArgumentParser:
     """Runtime knobs consumed by ``.generate()``."""
     p = _parent()
@@ -427,7 +462,9 @@ def runtime_group() -> argparse.ArgumentParser:
     )
     g.add_argument("--prompts-file", default=None, help="Text file, one prompt per line.")
     g.add_argument("--iteration", type=int, default=1, help="Number of runtime iterations.")
-    g.add_argument("--write-io", action="store_true", help="Persist IO tensors for debugging.")
+    g.add_argument(
+        "--write-io", action="store_true", help="Write first-prefill runner inputs alongside the QPC before inference."
+    )
     g.add_argument("--automation", action="store_true")
     return p
 
@@ -448,9 +485,10 @@ def meta_group() -> argparse.ArgumentParser:
     g.add_argument("--compile-only", action="store_true", help="Compile requested QPCs without running inference.")
     g.add_argument(
         "--num-hidden-layers-override",
+        "--num-hidden-layers",
         type=int,
         default=None,
-        help=_adv("CI/testing only: truncate the HF config's num_hidden_layers before load."),
+        help=_adv("CI/testing only: use this many layers when positive; otherwise keep the checkpoint's layer count."),
     )
     return p
 
@@ -505,6 +543,31 @@ def validate_args(ns: argparse.Namespace, error_fn) -> None:
         error_fn("--generation-len must be >= 1.")
     if getattr(ns, "layerwise", False) and ns.layerwise_window_size < 1:
         error_fn("--layerwise-window-size must be >= 1.")
+    if ns.gdn_chunk_size is not None and ns.gdn_chunk_size < 1:
+        error_fn("--gdn-chunk-size must be >= 1.")
+    if ns.dynamo and (ns.disaggregated or ns.layerwise):
+        error_fn(
+            "--dynamo supports the standard inference path; it cannot be combined with --disaggregated/--layerwise."
+        )
+    paged = any(
+        mode and mode.endswith("_paged")
+        for mode in (ns.blocking_mode, ns.prefill_blocking_mode, ns.decode_blocking_mode)
+    )
+    if paged and not ns.enable_blocking:
+        error_fn("Paged attention requires --enable-blocking.")
+    if paged and ns.disaggregated and not ns.compile_only:
+        error_fn(
+            "Paged attention with --disaggregated requires --compile-only; the DMA runner has no block-table input."
+        )
+    if ns.write_io and (ns.disaggregated or paged or ns.stage == "decode" or ns.enable_qnn):
+        error_fn("--write-io requires standard prefill/generation with the QAIC backend.")
+    if ns.artifacts:
+        if ns.enable_qnn:
+            error_fn("--artifacts is not supported with --enable-qnn.")
+        if ns.mdp_num_partitions > 1 and ns.mdp_strategy == "intersection":
+            error_fn("--artifacts requires --mdp-strategy onnx; intersection executes the compiler to obtain a dump.")
+        if (ns.disaggregated or paged or ns.stage == "decode") and not ns.compile_only:
+            error_fn("--artifacts with disaggregated, paged, or decode-only compilation requires --compile-only.")
     if ns.mdp_num_partitions < 1:
         error_fn("--mdp-num-partitions must be >= 1.")
     if ns.moe_expert_parallel_chunk_size is not None and ns.moe_expert_parallel_chunk_size < 1:
@@ -531,6 +594,49 @@ def validate_args(ns: argparse.Namespace, error_fn) -> None:
         error_fn("len(--prefill-device-group) must match the resolved prefill device count.")
     if ns.decode_device_group is not None and len(ns.decode_device_group) != decode_num_devices:
         error_fn("len(--decode-device-group) must match the resolved decode device count.")
+
+
+def validate_dflash_args(ns: argparse.Namespace, parser: argparse.ArgumentParser, argv: Sequence[str]) -> None:
+    """Reject explicitly supplied options that the separate DFlash runner cannot consume.
+
+    Inspect option spellings so even an explicit default (e.g. --dtype float32)
+    cannot silently be ignored. The canonical parser disables abbreviations.
+    """
+    dflash_destinations = {action.dest for action in dflash_group()._actions}
+    supported = dflash_destinations | {
+        "model_name",
+        "prompt",
+        "prompts",
+        "prompts_file",
+        "device_group",
+        "ctx_len",
+        "prefill_seq_len",
+        "generation_len",
+        "iteration",
+        "batch_size",
+        "compile_dir",
+        "compile_only",
+        "dry_run",
+        "print_resolved",
+    }
+    for token in argv:
+        if token == "--":
+            break
+        option = token.partition("=")[0]
+        action = parser._option_string_actions.get(option)
+        if action is None:
+            continue
+        if ns.dflash and action.dest not in supported:
+            parser.error(f"{option} is not supported with --dflash; use the DFlash target/draft controls.")
+        if not ns.dflash and action.dest in dflash_destinations and action.dest != "dflash":
+            parser.error(f"{option} requires --dflash.")
+    if ns.dflash:
+        if ns.batch_size != 1:
+            parser.error("--dflash supports --batch-size 1 only.")
+        if ns.iteration < 1 or ns.tlm_cores < 1 or ns.dlm_cores < 1:
+            parser.error("DFlash iteration and target/draft core counts must be >= 1.")
+        if len(resolve_prompts(ns)) != 1:
+            parser.error("--dflash requires exactly one prompt.")
 
 
 def resolve_prefill_only(ns: argparse.Namespace) -> Optional[bool]:
@@ -565,6 +671,8 @@ def build_qaic_config(ns: argparse.Namespace, stage: Optional[str] = None) -> Op
     behave differently on ``None`` vs an empty dict.
     """
     cfg: Dict[str, Any] = {}
+    if ns.gdn_chunk_size is not None:
+        cfg["gdn_chunk_size"] = ns.gdn_chunk_size
 
     # KV-head replication (DeepSeek-V3 / Kimi MLA) is driven by
     # ReplicateKVHeadTransform, which fires whenever
@@ -654,9 +762,10 @@ def print_namespace(ns: argparse.Namespace) -> None:
 
 
 def apply_num_layers_override(from_pretrained_kwargs: Dict[str, Any], ns: argparse.Namespace) -> None:
-    """CI-only: forward ``--num-hidden-layers-override`` into ``from_pretrained``."""
-    if getattr(ns, "num_hidden_layers_override", None) is not None:
-        from_pretrained_kwargs["num_hidden_layers"] = ns.num_hidden_layers_override
+    """Forward positive layer counts while preserving the legacy no-override values."""
+    num_layers = getattr(ns, "num_hidden_layers_override", None)
+    if num_layers is not None and num_layers > 0:
+        from_pretrained_kwargs["num_hidden_layers"] = num_layers
 
 
 __all__: Sequence[str] = (
@@ -669,6 +778,7 @@ __all__: Sequence[str] = (
     "compile_group",
     "compiler_options",
     "disagg_group",
+    "dflash_group",
     "meta_group",
     "model_group",
     "num_speculative_tokens",
@@ -682,4 +792,5 @@ __all__: Sequence[str] = (
     "sampler_group",
     "speculative_group",
     "validate_args",
+    "validate_dflash_args",
 )

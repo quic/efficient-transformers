@@ -25,6 +25,12 @@ Models: GPT2, Llama, Mistral, Qwen2, Phi3, Gemma
 All tests run on CPU only.
 """
 
+import json
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock, create_autospec
+
+import numpy as np
 import pytest
 import torch
 from transformers import (
@@ -707,3 +713,438 @@ def test_disaggregated_text_example_uses_compiler_normalized_ccl_lengths():
 
     assert namespace.comp_ctx_lengths_prefill == [256]
     assert namespace.comp_ctx_lengths_decode == [256]
+
+
+@pytest.fixture
+def text_example_dependencies(monkeypatch, tmp_path):
+    """Keep CLI orchestration tests offline while recording public API calls."""
+    tokenizer = MagicMock()
+    model = MagicMock()
+    model.vocab_size = 1024
+    model.compile.return_value = tmp_path / "compile"
+    model.generate.return_value = SimpleNamespace(generated_texts=["generated"])
+    load_model = MagicMock(return_value=model)
+    load_tokenizer = MagicMock(return_value=tokenizer)
+    monkeypatch.setattr(QEFFAutoModelForCausalLM, "from_pretrained", load_model)
+    monkeypatch.setattr("transformers.AutoTokenizer.from_pretrained", load_tokenizer)
+    return SimpleNamespace(model=model, load_model=load_model, load_tokenizer=load_tokenizer)
+
+
+def test_continuous_batching_refill_writes_to_request_row():
+    from QEfficient.generation.text_generation_inference import QEffTextGenerationBase
+
+    generator = QEffTextGenerationBase.__new__(QEffTextGenerationBase)
+    generator.include_sampler = False
+    generator.return_pdfs = False
+    generator.decode_input_ids = np.zeros((2, 1), dtype=np.int64)
+    generator.decode_pos_ids = np.zeros((2, 1), dtype=np.int64)
+    generator.generation_len = np.zeros((2, 1), dtype=np.int64)
+    generator.generated_ids = np.array([[11, 12], [21, 22], [0, 0]], dtype=np.int64)
+
+    generator.update_decode_input(
+        {"logits": np.array([[[0.0, 0.0, 0.0, 1.0]]], dtype=np.float32)},
+        position_ids=np.array([[7]], dtype=np.int64),
+        generation_len=2,
+        decode_batch_id=0,
+        generated_batch_id=2,
+    )
+
+    assert generator.generated_ids[0].tolist() == [11, 12]
+    assert generator.generated_ids[2].tolist() == [3, 0]
+    assert generator.decode_input_ids[0].tolist() == [3]
+    assert generator.decode_pos_ids[0].tolist() == [7]
+
+
+def test_text_example_forwards_sampler_runtime_arguments(monkeypatch, text_example_dependencies):
+    _run_text_example(
+        monkeypatch,
+        "--include-sampler",
+        "--return-pdfs",
+        "--include-guided-decoding",
+        "--full-batch-size",
+        "2",
+    )
+
+    generate_kwargs = text_example_dependencies.model.generate.call_args.kwargs
+    assert generate_kwargs["include_sampler"] is True
+    assert generate_kwargs["return_pdfs"] is True
+    assert generate_kwargs["include_guided_decoding"] is True
+    params = generate_kwargs["sampling_params"]
+    expected = {
+        "repetition_penalties": ((2, 1), np.float32),
+        "presence_penalties": ((2, 1), np.float32),
+        "temperatures": ((2, 1), np.float32),
+        "top_ks": ((2, 1), np.int32),
+        "top_ps": ((2, 1), np.float32),
+        "min_ps": ((2, 1), np.float32),
+        "random_numbers": ((2, 512), np.float32),
+        "token_bitmasks": ((2, 1024), np.bool_),
+    }
+    assert set(params) == set(expected)
+    for name, (shape, dtype) in expected.items():
+        assert params[name].shape == shape
+        assert params[name].dtype == dtype
+
+
+def test_disaggregated_runtime_normalizes_padding_positions_and_keeps_decode_eos(monkeypatch):
+    from examples.text_generation.basic_inference import run_disaggregated
+
+    class Tokenizer:
+        padding_side = "left"
+        pad_token_id = None
+        eos_token_id = 2
+        vocab_size = 16
+
+        def __call__(self, prompt, return_tensors, padding, max_length=None):
+            del prompt, return_tensors
+            input_ids = np.array([[7, 8, 9]], dtype=np.int64)
+            attention_mask = np.ones_like(input_ids)
+            if padding == "max_length":
+                pad_width = max_length - input_ids.shape[1]
+                input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)), constant_values=self.pad_token_id)
+                attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+        def decode(self, tokens):
+            return " ".join(map(str, tokens))
+
+    class PrefillSession:
+        recorded_inputs = []
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def np_run_pipeline(self, inputs, **kwargs):
+            del kwargs
+            self.recorded_inputs.append({name: value.copy() for name, value in inputs.items()})
+            return 0
+
+        def complete_inf(self, *args, **kwargs):
+            pass
+
+        def get_outputs(self, **kwargs):
+            return {"logits": np.array([[[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]], dtype=np.float32)}
+
+    class DecodeSession:
+        binding_index_map = {"batch_index": 0}
+        kv_cache_info = [((1, 1, 8, 1), np.float32)]
+        decode_buff_map = []
+        decode_rs_kv_only_buff_map = []
+        decode_execObj_idx = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def set_data_for_kv_handoff(self, *args, **kwargs):
+            pass
+
+        def np_run(self, inputs, **kwargs):
+            self.inputs = inputs
+            return 0
+
+        def complete_inf(self, *args, **kwargs):
+            pass
+
+        def get_outputs(self, **kwargs):
+            logits = np.zeros((1, 1, 6), dtype=np.float32)
+            logits[..., 2] = 1.0
+            return {"logits": logits}
+
+    sessions = iter([PrefillSession, DecodeSession])
+
+    def make_session(*args, **kwargs):
+        return next(sessions)(*args, **kwargs)
+
+    monkeypatch.setattr("QEfficient.generation.cloud_infer.QAICInferenceSession", make_session)
+    namespace = _parse_text_example_args(
+        "--disaggregated",
+        "--full-batch-size",
+        "1",
+        "--prefill-seq-len",
+        "4",
+        "--ctx-len",
+        "8",
+        "--generation-len",
+        "4",
+    )
+    tokenizer = Tokenizer()
+
+    result = run_disaggregated(tokenizer, "prefill-qpc", "decode-qpc", ["hello"], namespace)
+
+    assert tokenizer.padding_side == "right"
+    assert tokenizer.pad_token_id == tokenizer.eos_token_id
+    assert PrefillSession.recorded_inputs[0]["position_ids"].tolist() == [[0, 1, 2, -1]]
+    assert result["tokens"] == [[5, 2]]
+
+
+def _run_text_example(monkeypatch, *args):
+    from examples.text_generation.basic_inference import main
+
+    monkeypatch.setattr(sys, "argv", ["basic_inference.py", *args])
+    main()
+
+
+@pytest.mark.parametrize("artifacts", [False, True])
+@pytest.mark.parametrize("continuous_batching", [False, True])
+def test_text_example_runs_standard_api(
+    monkeypatch, text_example_dependencies, tmp_path, capsys, artifacts, continuous_batching
+):
+    deps = text_example_dependencies
+    options = ["--device-group", "2,3", "--prompt", "hello"]
+    if artifacts:
+        options.append("--artifacts")
+        deps.model.generate.return_value = tmp_path / "compile" / "io"
+    if continuous_batching:
+        options += ["--continuous-batching", "--full-batch-size", "2"]
+    _run_text_example(monkeypatch, *options)
+
+    assert deps.load_model.call_args.kwargs["continuous_batching"] is continuous_batching
+    assert deps.model.compile.call_args.kwargs["artifacts"] is artifacts
+    assert deps.model.compile.call_args.kwargs["num_devices"] == 2
+    assert deps.model.generate.call_args.kwargs["artifacts"] is artifacts
+    assert deps.model.generate.call_args.kwargs["device_ids"] == [2, 3]
+    assert "device_id" not in deps.model.generate.call_args.kwargs
+    output = capsys.readouterr().out
+    assert ("Runner inputs written to:" in output) is artifacts
+    assert ("Generated: generated" in output) is not artifacts
+
+
+@pytest.mark.parametrize("stage", ["both", "prefill", "decode"])
+def test_text_example_compile_only_skips_generation(monkeypatch, text_example_dependencies, stage):
+    _run_text_example(monkeypatch, "--artifacts", "--compile-only", "--stage", stage)
+    text_example_dependencies.model.compile.assert_called_once()
+    text_example_dependencies.model.generate.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", ["--num-hidden-layers", "--num-hidden-layers-override"])
+@pytest.mark.parametrize("num_layers", [-1, 0, 2])
+def test_text_example_preserves_layer_override_options(monkeypatch, text_example_dependencies, flag, num_layers):
+    _run_text_example(monkeypatch, flag, str(num_layers), "--compile-only")
+    load_kwargs = text_example_dependencies.load_model.call_args.kwargs
+    if num_layers > 0:
+        assert load_kwargs["num_hidden_layers"] == num_layers
+    else:
+        assert "num_hidden_layers" not in load_kwargs
+
+
+@pytest.mark.parametrize("write_io", [False, True])
+@pytest.mark.parametrize("include_sampler", [False, True])
+def test_text_example_real_generate_accepts_runtime_kwargs(
+    monkeypatch, text_example_dependencies, tmp_path, write_io, include_sampler
+):
+    """Use the real wrapper and enforce the downstream runtime signature."""
+    import QEfficient
+
+    model = text_example_dependencies.model
+    model.qpc_path = tmp_path / "qpc"
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.is_tlm = False
+    model.generate.side_effect = lambda **kwargs: QEFFAutoModelForCausalLM.generate(model, **kwargs)
+    runtime = create_autospec(QEfficient.cloud_ai_100_exec_kv, return_value=SimpleNamespace(generated_texts=["ok"]))
+    bundle = MagicMock(return_value=tmp_path / "io")
+    monkeypatch.setattr(QEfficient, "cloud_ai_100_exec_kv", runtime)
+    monkeypatch.setattr("QEfficient.transformers.models.modeling_auto.write_causal_lm_runner_bundle", bundle)
+    options = []
+    if write_io:
+        options.append("--write-io")
+    if include_sampler:
+        options.append("--include-sampler")
+    _run_text_example(monkeypatch, *options)
+    runtime.assert_called_once()
+    assert bundle.call_count == int(write_io)
+    assert "write_io" not in runtime.call_args.kwargs
+    assert runtime.call_args.kwargs["include_sampler"] is include_sampler
+    if write_io:
+        bundle_kwargs = bundle.call_args.kwargs
+        assert (bundle_kwargs["sampling_params"] is not None) is include_sampler
+
+
+@pytest.mark.parametrize("mode", ["kv_paged", "qkv_paged", "hqkv_paged"])
+def test_text_example_forwards_paged_config(monkeypatch, text_example_dependencies, mode):
+    _run_text_example(
+        monkeypatch,
+        "--enable-blocking",
+        "--blocking-mode",
+        mode,
+        "--num-kv-blocks",
+        "2",
+        "--num-q-blocks",
+        "2",
+        "--head-block-size",
+        "4",
+    )
+    expected = {"blocking_mode": mode, "num_kv_blocks": 2, "num_q_blocks": 2, "head_block_size": 4}
+    assert text_example_dependencies.load_model.call_args.kwargs["qaic_config"] == expected
+    assert text_example_dependencies.model.compile.call_args.kwargs["qaic_config"] == expected
+    text_example_dependencies.model.generate.assert_called_once()
+
+
+def test_text_example_forwards_gdn_and_dynamo(monkeypatch, text_example_dependencies):
+    _run_text_example(monkeypatch, "--gdn-chunk-size", "64", "--dynamo", "--compile-only")
+    deps = text_example_dependencies
+    assert deps.load_model.call_args.kwargs["qaic_config"] == {"gdn_chunk_size": 64}
+    assert deps.model.compile.call_args.kwargs["qaic_config"] == {"gdn_chunk_size": 64}
+    assert deps.model.compile.call_args.kwargs["dynamo"] is True
+
+
+def test_disaggregated_text_example_artifacts_preserve_gdn_and_skip_runtime(monkeypatch, text_example_dependencies):
+    run = MagicMock(side_effect=AssertionError("artifacts must not create DMA sessions"))
+    monkeypatch.setattr("examples.text_generation.basic_inference.run_disaggregated", run)
+    _run_text_example(
+        monkeypatch,
+        "--disaggregated",
+        "--full-batch-size",
+        "2",
+        "--compile-only",
+        "--artifacts",
+        "--gdn-chunk-size",
+        "64",
+    )
+    calls = text_example_dependencies.model.compile.call_args_list
+    assert len(calls) == 2
+    for call in calls:
+        assert call.kwargs["artifacts"] is True
+        assert call.kwargs["qaic_config"]["gdn_chunk_size"] == 64
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        (["--artifacts", "--enable-qnn"], "--enable-qnn"),
+        (["--artifacts", "--disaggregated", "--full-batch-size", "2"], "--compile-only"),
+        (["--artifacts", "--stage", "decode"], "--compile-only"),
+        (["--artifacts", "--enable-blocking", "--blocking-mode", "kv_paged"], "--compile-only"),
+        (["--blocking-mode", "hqkv_paged"], "--enable-blocking"),
+        (["--gdn-chunk-size", "0"], "--gdn-chunk-size"),
+        (["--gdn-chunk-size", "-4"], "--gdn-chunk-size"),
+        (["--dynamo", "--layerwise"], "--dynamo"),
+        (
+            [
+                "--artifacts",
+                "--stage",
+                "prefill",
+                "--num-devices",
+                "2",
+                "--mdp-num-partitions",
+                "2",
+                "--mdp-strategy",
+                "intersection",
+            ],
+            "intersection executes the compiler",
+        ),
+        (["--dflash", "--artifacts"], "--artifacts is not supported"),
+        (["--dflash", "--dtype=float32"], "--dtype is not supported"),
+        (["--dflash", "--no-layerwise"], "--no-layerwise is not supported"),
+        (["--dflash", "--disaggregated"], "--disaggregated is not supported"),
+        (["--dflash", "--continuous-batching"], "--continuous-batching is not supported"),
+        (["--dflash", "--include-sampler"], "--include-sampler is not supported"),
+        (["--dflash", "--speculative-model-type", "target"], "--speculative-model-type is not supported"),
+        (["--dflash", "--batch-size", "2"], "--batch-size 1"),
+        (["--dflash", "--prompt", "one", "two"], "exactly one prompt"),
+        (["--dflash", "--tlm-cores", "0"], "core counts must be >= 1"),
+        (["--tlm-qpc", "/unused/qpc"], "requires --dflash"),
+    ],
+)
+def test_text_example_rejects_unsupported_options_before_loading(
+    monkeypatch, text_example_dependencies, capsys, options, message
+):
+    with pytest.raises(SystemExit) as error:
+        _run_text_example(monkeypatch, *options)
+    assert error.value.code == 2
+    assert message in capsys.readouterr().err
+    text_example_dependencies.load_model.assert_not_called()
+    text_example_dependencies.load_tokenizer.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", ["--help", "--help-advanced", "--dry-run"])
+def test_text_example_cli_does_not_import_runtime(monkeypatch, flag):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def forbid_runtime(name, *args, **kwargs):
+        if name.split(".")[0] in {"torch", "numpy", "transformers", "QEfficient"} or name.startswith(
+            "examples.performance.dflash"
+        ):
+            raise AssertionError(f"CLI imported {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", forbid_runtime)
+    if flag.startswith("--help"):
+        with pytest.raises(SystemExit) as error:
+            _run_text_example(monkeypatch, flag)
+        assert error.value.code == 0
+    else:
+        _run_text_example(monkeypatch, "--dflash", "--model-name", "Qwen3-4B", flag)
+
+
+def test_text_example_help_exposes_mainline_flags(monkeypatch, capsys):
+    with pytest.raises(SystemExit):
+        _run_text_example(monkeypatch, "--help")
+    help_text = capsys.readouterr().out
+    for flag in ("--artifacts", "--dynamo", "--dflash"):
+        assert flag in help_text
+    assert "--gdn-chunk-size" not in help_text
+    with pytest.raises(SystemExit):
+        _run_text_example(monkeypatch, "--help-advanced")
+    advanced_help = capsys.readouterr().out
+    for flag in ("--gdn-chunk-size", "--tlm-qpc", "--dlm-devices"):
+        assert flag in advanced_help
+
+
+@pytest.mark.parametrize("continuous_batching", [False, True])
+def test_text_example_writes_real_artifact_bundle(monkeypatch, tmp_path, continuous_batching):
+    """Exercise CLI -> real export/compile/generate, substituting only HF loaders."""
+
+    class Tokenizer:
+        padding_side = "right"
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def __call__(self, prompts, return_tensors, padding, max_length=None):
+            ids = np.tile(np.array([[1, 2]], dtype=np.int64), (len(prompts), 1))
+            mask = np.ones_like(ids)
+            if padding == "max_length":
+                ids = np.pad(ids, ((0, 0), (0, max_length - 2)))
+                mask = np.pad(mask, ((0, 0), (0, max_length - 2)))
+            return {"input_ids": ids, "attention_mask": mask}
+
+    model, _ = make_tiny_gpt2()
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=continuous_batching)
+    monkeypatch.setattr(QEFFAutoModelForCausalLM, "from_pretrained", lambda *a, **kw: qeff)
+    monkeypatch.setattr("transformers.AutoTokenizer.from_pretrained", lambda *a, **kw: Tokenizer())
+    compiler = MagicMock(side_effect=AssertionError("artifacts invoked the compiler"))
+    runtime = MagicMock(side_effect=AssertionError("artifacts invoked the runtime"))
+    monkeypatch.setattr("QEfficient.base.modeling_qeff.subprocess.run", compiler)
+    monkeypatch.setattr("QEfficient.cloud_ai_100_exec_kv", runtime)
+    options = [
+        "--artifacts",
+        "--compile-dir",
+        str(tmp_path),
+        "--prefill-seq-len",
+        "8",
+        "--ctx-len",
+        "32",
+        "--prompt",
+        "hello",
+        "--no-offload-pt-weights",
+    ]
+    if continuous_batching:
+        options += ["--continuous-batching", "--full-batch-size", "2"]
+    _run_text_example(monkeypatch, *options)
+
+    compiler.assert_not_called()
+    runtime.assert_not_called()
+    assert qeff.qpc_path is None
+    compile_dir = qeff.compile_artifacts_path
+    assert (compile_dir / "qaic-compile.sh").is_file()
+    assert (compile_dir / "specializations.json").is_file()
+    io_dir = compile_dir / "io"
+    entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
+    inputs = {entry["map-to"]: entry for entry in entries if entry["io-direction"] == "in"}
+    assert {"input_ids", "position_ids"} <= inputs.keys()
+    assert ("batch_index" in inputs) is continuous_batching
+    for entry in inputs.values():
+        assert (io_dir / entry["path"]).stat().st_size == np.prod(entry["dims"]) * entry["elem-size"]

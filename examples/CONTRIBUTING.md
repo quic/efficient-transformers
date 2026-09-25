@@ -32,10 +32,17 @@ new model or recipe:
   stays on one entry point.
 - Only genuinely bespoke, one-off surgery that does not fit the canonical API
   belongs under `text_generation/advanced/`, with a README noting its
-  scratchpad nature (see the existing GLM4 / Kimi-K2 recipes).
+  scratchpad nature. Historical GLM4 and Kimi-K2 recipes are available in the
+  [text-generation archive](text_generation/archive/advanced/).
 
 A reviewer will ask any new text-generation script to justify why it cannot be a
 flag or config on `basic_inference.py`.
+
+Replaced scripts are retained in the
+[`text_generation/archive/`](text_generation/archive/README.md) directory as
+historical references. Add new capabilities to the canonical entry point; do
+not add recipes to the archive. Text DFlash shares its existing callable runner
+with `basic_inference.py --dflash`.
 
 ## Directory Structure
 

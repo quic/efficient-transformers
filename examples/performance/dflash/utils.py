@@ -176,6 +176,7 @@ def compile_tlm_qpc(
     num_cores: int,
     num_devices: int,
     hf_token: str | None = None,
+    compile_dir: str | None = None,
 ) -> str:
     """Build the TLM and compile it to a QPC. fc/hidden_norm are injected by
     QEfficient's DFlashTLMTransform (weights from dflash_dlm_repo)."""
@@ -192,6 +193,7 @@ def compile_tlm_qpc(
         qaic_config={"target_layer_ids": tlm_target_ids, "dflash_dlm_repo": dlm_repo},
     )
     qpc = tlm_qeff.compile(
+        compile_dir=compile_dir,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         num_cores=num_cores,
@@ -214,6 +216,7 @@ def compile_dlm_qpc(
     num_cores: int,
     num_devices: int,
     hf_token: str | None = None,
+    compile_dir: str | None = None,
 ) -> str:
     """Build the DLM and compile it to a QPC. lm_head/embed_tokens are injected
     by QEfficient's DFlashDLMTransform (weights from dflash_tlm_repo)."""
@@ -229,6 +232,7 @@ def compile_dlm_qpc(
         qaic_config={"dflash_dlm": True, "dflash_tlm_repo": tlm_repo},
     )
     qpc = dlm_qeff.compile(
+        compile_dir=compile_dir,
         prefill_seq_len=block_size,
         ctx_len=ctx_len,
         num_cores=num_cores,

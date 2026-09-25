@@ -17,15 +17,17 @@ pip install onnx_ir==0.2.1
 
 ### Text Generation
 Language model inference. One canonical entry point covers dense,
-continuous-batching, MoE, GGUF, blocked attention, disaggregated, and
-MDP workloads via flags — see the recipes in
+continuous-batching, MoE, GGUF, blocked/paged attention, artifacts, text DFlash,
+GDN chunking, disaggregated, and MDP workloads via flags — see the recipes in
 [`text_generation/README.md`](text_generation/README.md).
 
 | Example | Description | Script |
 |---------|-------------|--------|
-| Basic Inference | Canonical entry point (dense / CB / MoE / GGUF / blocked / disagg / MDP via flags) | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
+| Basic Inference | Canonical text recipes, compiler/runner artifacts, and text DFlash | [text_generation/basic_inference.py](text_generation/basic_inference.py) |
 
 [See all text generation examples →](text_generation/)
+
+Replaced scripts remain available in the [text-generation archive](text_generation/archive/README.md).
 
 ### Dynamo
 `torch.export` based export examples.
