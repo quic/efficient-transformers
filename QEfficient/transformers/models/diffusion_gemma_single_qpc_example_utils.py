@@ -699,6 +699,7 @@ def compile_unified_qpc(
         qaic_config=qaic_config_moe,
         aic_num_cores=num_cores,
     )
+    # npi_file_path = '/home/jsaisaga//home/jsaisaga/.cache/qeff_models/DiffusionGemmaForBlockDiffusion/DiffusionGemmaUnifiedWrapper-9c317201f1a690a7/npi_fp32_unified_accum.yaml'
     npi_file_path = qeff_model.generate_npi_file(onnx_path)
 
     custom_io = {"vision_embeds": "float16"}
