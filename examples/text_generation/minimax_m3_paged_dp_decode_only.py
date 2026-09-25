@@ -63,6 +63,8 @@ def main() -> None:
     parser.add_argument("--msa-attn-dp", type=int, default=2)
     parser.add_argument("--msa-attn-cp", type=int, default=1)
     parser.add_argument("--num-kv-blocks", type=int, default=2)
+    parser.add_argument("--indexer-num-blocks", type=int, default=None)
+    parser.add_argument("--msa-num-kv-blocks", type=int, default=None)
     parser.add_argument("--indexer-n-head", type=int, default=1)
     parser.add_argument("--num-cores-per-device", type=int, default=8)
     parser.add_argument("--num-devices", type=int, default=16)
@@ -80,6 +82,10 @@ def main() -> None:
         parser.error("All MSA DP/CP factors must be positive")
     if args.num_kv_blocks < 1:
         parser.error("--num-kv-blocks must be positive")
+    if args.indexer_num_blocks is not None and args.indexer_num_blocks < 1:
+        parser.error("--indexer-num-blocks must be positive")
+    if args.msa_num_kv_blocks is not None and args.msa_num_kv_blocks < 1:
+        parser.error("--msa-num-kv-blocks must be positive")
     if args.ctx_len % args.page_block_size:
         parser.error("--ctx-len must be divisible by --page-block-size")
     if (args.ctx_len // args.page_block_size) % args.msa_attn_cp:
@@ -103,6 +109,8 @@ def main() -> None:
     qaic_config = {
         "blocking_mode": "kv_headpar",
         "num_kv_blocks": args.num_kv_blocks,
+        "indexer_num_blocks": args.indexer_num_blocks,
+        "msa_num_kv_blocks": args.msa_num_kv_blocks,
         "msa_indexer_dp": args.msa_indexer_dp,
         "msa_indexer_cp": args.msa_indexer_cp,
         "msa_attn_dp": args.msa_attn_dp,
