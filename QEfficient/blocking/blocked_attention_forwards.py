@@ -772,6 +772,7 @@ def blocked_qkv_attention_forward_prefill_online(
     n_rep_per_core = NQH // num_cores
     skip_kv = kwargs.get("skip_kv", False)
     num_kv_blocks = max(1, num_kv_blocks)
+    n_rep_chunk = n_rep_chunk or 1
     kv_block_size = -(-ctx_len // num_kv_blocks)
     ql_chunk = -(-QL // num_q_blocks)
     position_ids = cache_kwargs.get("position_ids")
@@ -1302,7 +1303,7 @@ def blocked_hqkv_attention_forward(
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks or 1)
     block_table = None
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
