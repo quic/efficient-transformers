@@ -4026,6 +4026,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ############################################
 
+        if qaic_config is not None and qaic_config.get("blocking_mode") is not None:
+            current_blocking_config = self.hash_params.get("blocking_kwargs")
+            requested_mode = qaic_config.get("blocking_mode")
+            current_mode = getattr(getattr(current_blocking_config, "mode", None), "value", None)
+            if current_blocking_config is None or current_mode != requested_mode:
+                export_ctx_len = kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
+                self._apply_attention_blocking_from_qaic(
+                    ctx_len=export_ctx_len,
+                    seq_len=seq_len,
+                    bs=bs,
+                    num_devices=int(kwargs.get("mdp_ts_num_devices", kwargs.get("num_devices", 1))),
+                    qaic_config=qaic_config,
+                    aic_num_cores=num_cores,
+                )
+
         ############################################
         # Handle seq_len for export to succeed based on expert-parallel and blocking for loop requirements
         ############################################

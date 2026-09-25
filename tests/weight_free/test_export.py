@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 from transformers import AutoConfig
 
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free import resolve_weight_spec_path
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
@@ -32,6 +33,7 @@ from ._helpers import (
     CTX_LEN,
     PROMPT_LEN,
     WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
+    assert_blocked_kv_ops_for_mode,
     assert_has_subfunctions,
     assert_no_int64_kv_cache_inputs,
     assert_retained_state_outputs,
@@ -88,6 +90,44 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
     # Weight-free-specific regression guards
     assert_unique_graph_input_names(onnx_path)
     assert_no_int64_kv_cache_inputs(onnx_path)
+
+
+_BLOCKING_MODE_CASES = {
+    "kv": {"blocking_mode": "kv", "num_kv_blocks": 2},
+    "qkv": {"blocking_mode": "qkv", "num_kv_blocks": 2, "num_q_blocks": 2},
+    "hqkv": {"blocking_mode": "hqkv", "head_block_size": 1, "num_kv_blocks": 2, "num_q_blocks": 2},
+    "kv_headpar": {"blocking_mode": "kv_headpar", "num_kv_blocks": 2, "headpar_split": 2},
+}
+
+
+@pytest.mark.weight_free
+@pytest.mark.weight_free_export
+@pytest.mark.parametrize("blocking_key", list(_BLOCKING_MODE_CASES))
+def test_weight_free_export_applies_causal_lm_blocking_from_qaic_config(blocking_key, tmp_export_dir):
+    """Direct CausalLM weight-free export honors qaic_config blocking modes."""
+    model_id = WEIGHT_FREE_CAUSAL_LM_MODEL_IDS["llama"]
+    qaic_config = dict(_BLOCKING_MODE_CASES[blocking_key])
+    try:
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = 2
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, config=config, weight_free=True, qaic_config=qaic_config
+        )
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    onnx_path = exported_onnx_path(
+        qeff_model.export(
+            tmp_export_dir,
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+
+    blocking_config = qeff_model.hash_params.get("blocking_kwargs")
+    assert blocking_config is not None
+    assert blocking_config.mode == BlockingMode(qaic_config["blocking_mode"])
+    assert_blocked_kv_ops_for_mode(onnx_path, qeff_model, blocking_key)
 
 
 @pytest.mark.weight_free
