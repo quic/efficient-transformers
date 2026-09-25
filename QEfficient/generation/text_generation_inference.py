@@ -17,6 +17,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
+from QEfficient.generation.generation_helpers import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -78,56 +79,12 @@ class CloudAI100ExecInfoNew:
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
-io_files = []
-
-
-def write_io_files(
-    inputs: Dict[str, np.ndarray],
-    outputs: Dict[str, np.ndarray],
-    write_io_dir: str,
-    write_io_subdir: str,
-    write_io_name: str,
-    include_dims: bool = False,
-    reset: bool = False,
-):
-    global io_files
-    if reset:
-        io_files = []
-    io = []
-    os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
-    for iname, i_array in inputs.items():
-        i_array.tofile(f"{write_io_dir}/{write_io_subdir}/{iname}.raw")
-        i_spec = {
-            "path": f"{write_io_subdir}/{iname}.raw",
-            "io-direction": "in",
-            "elem-size": i_array.itemsize,
-            "map-to": iname,
-        }
-        if include_dims:
-            i_spec["dims"] = i_array.shape
-        io.append(i_spec)
-    for o_name, o_array in outputs.items():
-        o_array.tofile(f"{write_io_dir}/{write_io_subdir}/{o_name}.raw")
-        o_spec = {
-            "path": f"{write_io_subdir}/{o_name}.raw",
-            "io-direction": "out",
-            "elem-size": o_array.itemsize,
-            "map-to": o_name,
-        }
-        if include_dims or o_name.endswith("_RetainedState"):
-            o_spec["dims"] = o_array.shape
-        io.append(o_spec)
-    io_files.append(io)
-    with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
-        json.dump({"IO-files": io_files}, fp, indent=True)
-
-
 def latency_stats_bertstyle(
     model_name: str,
     qpc_path: str,
     seq_len: int,
     prompt: str,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
@@ -137,9 +94,9 @@ def latency_stats_bertstyle(
         :qpc_path (str): Path to save generated binary file after compilation.
         :seq_len (int): Sequence length.
         :prompt (str): Sample prompt for the model text generation.
-        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
+        :device_ids (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
     """
-    session = QAICInferenceSession(qpc_path, device_id)
+    session = QAICInferenceSession(qpc_path, device_ids)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
@@ -195,7 +152,9 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     compilation_ctx_len = int(spec["ctx_len"])
     if compilation_fbs := spec.get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
-    return compilation_batch_size, compilation_ctx_len, compilation_fbs
+    if compilation_num_kv_blocks := spec.get("num_kv_blocks", None):
+        compilation_num_kv_blocks = int(compilation_num_kv_blocks)
+    return compilation_batch_size, compilation_ctx_len, compilation_fbs, compilation_num_kv_blocks
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
@@ -319,13 +278,12 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     comp_ctx_lengths_prefill: Optional[List[int]] = None,
     comp_ctx_lengths_decode: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
-    write_io_dir: Optional[str] = None,
     automation=False,
     iteration: int = 1,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
@@ -348,10 +306,9 @@ def cloud_ai_100_exec_kv(
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.
         :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.
         :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
-        :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
+        :device_ids (List[int]): Device IDs to be used for execution. If ``len(device_ids) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
         :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
-        :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
@@ -377,10 +334,10 @@ def cloud_ai_100_exec_kv(
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
         qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_ids=[0])
 
     """
-    batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
+    batch_size, ctx_len, full_batch_size, num_kv_blocks = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
     if prompt_to_lora_id_mapping is not None:
@@ -390,13 +347,13 @@ def cloud_ai_100_exec_kv(
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_id,
+        device_ids=device_ids,
         ctx_len=ctx_len,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         enable_debug_logs=enable_debug_logs,
-        write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
+        num_kv_blocks=num_kv_blocks,
         is_tlm=is_tlm,
         include_sampler=include_sampler,
         return_pdfs=return_pdfs,
@@ -440,12 +397,12 @@ class QEffTextGenerationBase:
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
         qpc_path: str,
         full_batch_size: Optional[int] = None,
+        num_kv_blocks: Optional[int] = None,
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -456,7 +413,6 @@ class QEffTextGenerationBase:
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
         self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
-        self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
         self.include_guided_decoding = include_guided_decoding
@@ -465,7 +421,7 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(
-            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+            qpc_path, device_ids, activate=activate, enable_debug_logs=enable_debug_logs
         )
 
         # Validate sampler inputs for On-Device Sampling
@@ -482,6 +438,8 @@ class QEffTextGenerationBase:
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
+        self.num_kv_blocks = num_kv_blocks
+        self.kv_block_size = -(-self._ctx_len // self.num_kv_blocks) if num_kv_blocks else 1
 
         # Initialize the storage variables.
         self.batch_index = None
@@ -507,11 +465,7 @@ class QEffTextGenerationBase:
         """
         Sets the tokenizer parameters for the model.
         """
-        if self.tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            self.tokenizer.padding_side = "right"
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        prepare_tokenizer(self.tokenizer)
 
     def _fetch_full_batch_size(
         self,
@@ -624,6 +578,11 @@ class QEffTextGenerationBase:
         """
         batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
         decode_inputs = {}
+        if self.num_kv_blocks:
+            decode_inputs["block_table"] = np.arange(batch_size * self.num_kv_blocks, dtype=np.int64).reshape(
+                batch_size, self.num_kv_blocks
+            )
+            decode_inputs["slot_id"] = (self.decode_pos_ids % self.kv_block_size).reshape(batch_size)
         if self.is_tlm:
             position_ids = np.full((batch_size, self._decode_seq_len), -1, dtype=np.int64)
             position_ids[:, -1] = self.decode_pos_ids.flatten()
@@ -739,10 +698,14 @@ class QEffTextGenerationBase:
         """
         for decode_batch_id in range(self.full_batch_size):
             next_prompt = prompt_queue.popleft()
+            block_table = self.block_table[decode_batch_id].reshape(1, -1) if self.num_kv_blocks else None
 
             # run prefill for num_chunks
             outputs, position_ids, generation_len = self.run_prefill(
-                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
+                next_prompt,
+                generation_len,
+                decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
+                block_table=block_table,
             )
 
             _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
@@ -764,7 +727,7 @@ class QEffTextGenerationBase:
             logits_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
             self._session.set_buffers({"logits": logits_out_placeholder})
 
-    def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
+    def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None, block_table=None):
         """
         Runs prefill for a given prompt and generation length.
 
@@ -782,11 +745,7 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
         """
         # Run prefill
-        inputs = self.tokenizer(prompt, return_tensors="np", padding=True)
-        position_ids = inputs["attention_mask"].sum(1, keepdims=True)
-        padded_len = inputs["input_ids"].shape[1]
-        num_chunks = -(padded_len // -self._prefill_seq_len)  # ceil divide without float
-        padded_len = num_chunks * self._prefill_seq_len  # Convert to a multiple of prompt_len
+        inputs, position_ids, num_chunks = build_prefill_inputs(self.tokenizer, prompt, self._prefill_seq_len)
 
         # Initialize variables specific to request
         # Calculate the max generation length.
@@ -796,9 +755,9 @@ class QEffTextGenerationBase:
         # Set the prefill output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
 
-        inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs.pop("token_type_ids", None)
+        if block_table is not None:
+            inputs["block_table"] = block_table
+            inputs["slot_id"] = np.zeros((prefill_logit_bs), dtype=np.int64)
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
@@ -835,20 +794,17 @@ class QEffTextGenerationBase:
                     prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
-            chunk_inputs = inputs.copy()
-            chunk_inputs["input_ids"] = inputs["input_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
-            chunk_inputs["position_ids"] = inputs["position_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
+            chunk_inputs = slice_prefill_inputs(inputs, i, self._prefill_seq_len)
+            if block_table is not None:
+                chunk_start_position_id = i * self._prefill_seq_len
+                chunk_inputs["slot_id"] = np.full(
+                    (prefill_logit_bs,), chunk_start_position_id % self.kv_block_size, dtype=np.int64
+                )
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
 
             outputs = self._session.run(chunk_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
         return (
             outputs,
             position_ids,
@@ -962,6 +918,9 @@ class QEffTextGenerationBase:
                     # If the generated sequence is valid and within generation len prepare for next decode
                     decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
                     decode_inputs["position_ids"][decode_batch_id][..., -1] += 1
+                    if self.num_kv_blocks:
+                        decode_inputs["slot_id"][decode_batch_id] += 1
+                        decode_inputs["slot_id"][decode_batch_id] %= self.kv_block_size
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )
@@ -1019,13 +978,12 @@ class QEffTextGenerationBase:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
             decode_inputs["position_ids"][:, -1] += 1
+            if self.num_kv_blocks:
+                decode_inputs["slot_id"][:] += 1
+                decode_inputs["slot_id"][:] %= self.kv_block_size
             cache_index += 1
             self.generated_ids[:, num_token] = decode_inputs["input_ids"][:, -1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
@@ -1054,10 +1012,6 @@ class QEffTextGenerationBase:
             yield decode_inputs["input_ids"]
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
             decode_inputs["position_ids"] += 1
@@ -1075,12 +1029,12 @@ class TextGeneration:
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
         qpc_path: str,
         full_batch_size: Optional[int] = None,
+        num_kv_blocks: Optional[int] = None,
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -1091,12 +1045,12 @@ class TextGeneration:
             tokenizer=tokenizer,
             qpc_path=qpc_path,
             full_batch_size=full_batch_size,
+            num_kv_blocks=num_kv_blocks,
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-            device_id=device_id,
+            device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
@@ -1104,6 +1058,7 @@ class TextGeneration:
             sampling_params=sampling_params,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
+        self._num_kv_blocks = self._qaic_model.num_kv_blocks
         self._tokenizer = self._qaic_model.tokenizer
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
@@ -1133,6 +1088,13 @@ class TextGeneration:
             self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
         )
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
+        self._qaic_model.block_table = (
+            np.arange(execution_batch_size * self._num_kv_blocks, dtype=np.int64).reshape(
+                execution_batch_size, self._num_kv_blocks
+            )
+            if self._num_kv_blocks
+            else None
+        )
 
         # Create a prompt queue.
         self._prompt_queue = deque(prompt)

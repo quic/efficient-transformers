@@ -972,6 +972,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         max_num_tiles = compiler_options.pop("max_num_tiles", None)

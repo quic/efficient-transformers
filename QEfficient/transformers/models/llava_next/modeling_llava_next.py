@@ -289,9 +289,12 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         num_patches = compiler_options.pop("num_patches", None)
         image_size_height = compiler_options.pop("image_size_height", None)
         image_size_width = compiler_options.pop("image_size_width", None)
@@ -339,7 +342,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             vision_size = constants.GRANITEVISION_FEATURE_SIZE
         vision = [
             {
-                "batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "image_size_height": image_size_height,
                 "image_size_width": image_size_width,
                 "num_patches": num_patches,
@@ -362,7 +365,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                     "max_num_images": max_num_images,
                     "img_size": img_size,
                     "vision_size": vision_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -385,7 +388,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                     "max_num_images": max_num_images,
                     "img_size": img_size,
                     "vision_size": vision_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_decode["full_batch_size"] = kv_cache_batch_size
@@ -403,7 +406,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "max_num_images": max_num_images,
                 "img_size": img_size,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
             if continuous_batching:
                 lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -422,7 +425,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "max_num_images": max_num_images,
                 "img_size": img_size,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
             if continuous_batching:
                 lang_decode["full_batch_size"] = kv_cache_batch_size
@@ -447,8 +450,8 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "num_patches", 3: "img_size", 4: "img_size"},
-            "image_sizes": {0: "image_size_height", 1: "image_size_width"},
+            "pixel_values": {0: "vision_batch_size", 1: "num_patches", 3: "img_size", 4: "img_size"},
+            "image_sizes": {0: "vision_batch_size", 1: "image_size_width"},
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},

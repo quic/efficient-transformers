@@ -21,10 +21,10 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3ForConditionalGeneration,
     Gemma3TextConfig,
     Gemma3TextModel,
-    logger,
     repeat_kv,
     rotate_half,
 )
+from transformers.utils import logging
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
@@ -32,6 +32,8 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+logger = logging.get_logger(__name__)
 
 
 class GemmaRMSNormFunc(torch.autograd.Function):
@@ -799,8 +801,11 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+        # Preserve the legacy shape when callers do not request a separate vision batch.
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
@@ -823,7 +828,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
 
         vision = [
             {
-                "batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
                 "img_size": img_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
@@ -841,7 +846,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
                     "vision_size": vision_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -860,7 +865,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
                     "vision_size": vision_size,
-                    "vision_batch_size": batch_size,
+                    "vision_batch_size": vision_batch_size,
                 }
                 if continuous_batching:
                     lang_decode["full_batch_size"] = kv_cache_batch_size
@@ -876,7 +881,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
             if continuous_batching:
                 lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -892,7 +897,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
             if continuous_batching:
                 lang_decode["full_batch_size"] = kv_cache_batch_size
@@ -920,7 +925,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "vision_size"}
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
-        vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
+        vision_dynamic_axes["pixel_values"] = {0: "vision_batch_size", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
         pkv_dynamic_sliding_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}

@@ -126,6 +126,48 @@ class TestInternalVLMClassesStructure:
         assert hasattr(_QEffAutoModelForImageTextToTextDualQPC, "export")
         assert callable(_QEffAutoModelForImageTextToTextDualQPC.export)
 
+    def test_sampler_export_uses_decoder_vocab_size_for_nested_vlm(self):
+        """Dual-QPC sampler export must use the decoder config for nested VLMs."""
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        class _QwenLikeVLM:
+            config = SimpleNamespace(model_type="qwen2_5_vl")
+
+            def get_dummy_inputs(self, **kwargs):
+                return {"vision": {}, "lang": {"input_ids": torch.zeros((1, 1), dtype=torch.long)}}
+
+            def get_onnx_dynamic_axes(self, **kwargs):
+                return {"vision": {}, "lang": {}}
+
+            def get_output_names(self, kv_offload=False):
+                assert kv_offload
+                return {"vision": ["vision"], "lang": ["logits"]}
+
+        class _Decoder:
+            def __init__(self):
+                self.qaic_config = {"include_sampler": True, "max_top_k_ids": 16}
+                self.model = SimpleNamespace(qaic_config=self.qaic_config)
+                self.get_model_config = {"vocab_size": 97}
+                self.onnx_path = "lang.onnx"
+                self.exported_inputs = None
+
+            def export(self, inputs, output_names, dynamic_axes, **kwargs):
+                self.exported_inputs = inputs
+
+        class _Vision:
+            onnx_path = "vision.onnx"
+
+        qeff_model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+        qeff_model.model = _QwenLikeVLM()
+        qeff_model.lang_model = _Decoder()
+        qeff_model.vision_model = _Vision()
+        qeff_model.continuous_batching = False
+        qeff_model.comp_ctx_lengths_decode = None
+
+        qeff_model.export(skip_vision=True)
+
+        assert qeff_model.lang_model.exported_inputs["past_repetition_penalty_buffer"].shape == (1, 97)
+
     def test_single_qpc_class_has_compile_method(self):
         """_QEFFAutoModelForImageTextToTextSingleQPC must have compile method."""
         from QEfficient.transformers.models.modeling_auto import _QEFFAutoModelForImageTextToTextSingleQPC

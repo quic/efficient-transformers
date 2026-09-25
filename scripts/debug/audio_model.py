@@ -38,7 +38,7 @@ print(model_seq2seq)
 model_seq2seq.compile(num_cores=16)
 
 inputs = processor_seq2seq(audio_data, sampling_rate=sample_rate, return_tensors="pt")
-result = model_seq2seq.generate(inputs=inputs, generation_len=25, write_io=True)
+result = model_seq2seq.generate(inputs=inputs, generation_len=25)
 transcription = processor_seq2seq.batch_decode(result.generated_ids)[0]
 print(f"Transcription: {transcription}\n")
 
@@ -61,5 +61,5 @@ print(model_ctc)
 model_ctc.compile(num_cores=16)
 
 # Generate with IO files
-transcription = model_ctc.generate(processor_ctc, inputs=audio_data, write_io=True)
+transcription = model_ctc.generate(processor_ctc, inputs=audio_data)
 print(f"Transcription: {transcription}\n")
