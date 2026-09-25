@@ -12,6 +12,7 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxGather3D,
     CtxGatherBlockedKV,
     CtxGatherBlockedKVDP,
+    CtxGatherBlockRangeKVDP,
     CtxPagedScatterDP,
     CtxScatter,
     CtxScatter3D,
@@ -428,6 +429,24 @@ def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
     )
 
 
+@torch.library.custom_op("qefficient::ctx_gather_block_range_kv_dp", mutates_args=())
+def ctx_gather_block_range_kv_dp_op(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    """Gather full KV blocks from a 5-D DP/CP-layout cache."""
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    row_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, 0, block_ids)
+    return data[batch_indices, row_indices, block_ids.long()]
+
+
+@ctx_gather_block_range_kv_dp_op.register_fake
+def _(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+    return torch.empty(
+        (*data.shape[:2], block_ids.shape[-1], data.shape[3], data.shape[4]),
+        dtype=data.dtype,
+        device=data.device,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
@@ -449,6 +468,7 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
     torch.ops.qefficient.ctx_paged_scatter_dp.default: get_dynamo_onnxscript_func(CtxPagedScatterDP),
     torch.ops.qefficient.ctx_gather_blocked_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVDP),
+    torch.ops.qefficient.ctx_gather_block_range_kv_dp.default: get_dynamo_onnxscript_func(CtxGatherBlockRangeKVDP),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
 }

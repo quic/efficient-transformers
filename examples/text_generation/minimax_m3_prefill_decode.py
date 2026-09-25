@@ -44,6 +44,8 @@ def _build_qaic_config(
     msa_attn_cp: int,
     indexer_n_head: int,
     indexer_prefill_parallel: bool,
+    indexer_q_chunk: int | None,
+    indexer_q_size: int | None,
     num_cores_per_device: int,
     msa_q_chunk: int,
     expert_parallel_chunk_size: int,
@@ -69,6 +71,10 @@ def _build_qaic_config(
             "tree_reduce": tree_reduce,
         },
     }
+    if indexer_q_chunk is not None:
+        qaic_config["indexer_q_chunk"] = indexer_q_chunk
+    if indexer_q_size is not None:
+        qaic_config["indexer_q_size"] = indexer_q_size
     return qaic_config
 
 
@@ -184,6 +190,18 @@ def main():
         help="Use the parallel indexer prefill selector.",
     )
     parser.add_argument(
+        "--indexer-q-chunk",
+        type=int,
+        default=None,
+        help="Outer query chunk size for MSA indexer prefill; defaults to the indexer query block size.",
+    )
+    parser.add_argument(
+        "--indexer-q-size",
+        type=int,
+        default=None,
+        help="Query micro-block size for MSA indexer prefill; defaults to the model index block size.",
+    )
+    parser.add_argument(
         "--msa-q-chunk",
         type=int,
         default=64,
@@ -206,6 +224,19 @@ def main():
         parser.error("--mdp-num-partitions must not exceed --num-devices")
     if args.num_devices % args.prefill_mdp_num_partitions:
         parser.error("--num-devices must be divisible by --mdp-num-partitions")
+    if args.indexer_q_chunk is not None and args.indexer_q_chunk < 1:
+        parser.error("--indexer-q-chunk must be positive")
+    if args.indexer_q_size is not None and args.indexer_q_size < 1:
+        parser.error("--indexer-q-size must be positive")
+    if (
+        args.indexer_q_chunk is not None
+        and args.indexer_q_size is not None
+        and (
+            args.indexer_q_chunk < args.indexer_q_size
+            or args.indexer_q_chunk % args.indexer_q_size
+        )
+    ):
+        parser.error("--indexer-q-chunk must be at least and divisible by --indexer-q-size")
     phase_values = (
         args.prefill_msa_indexer_dp,
         args.prefill_msa_indexer_cp,
@@ -250,7 +281,7 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
         skip_vision=True,
         offload_pt_weights=False,
         node_precision_info=True,
@@ -268,6 +299,8 @@ def main():
             msa_attn_cp=args.prefill_msa_attn_cp,
             indexer_n_head=args.indexer_n_head,
             indexer_prefill_parallel=args.indexer_prefill_parallel,
+            indexer_q_chunk=args.indexer_q_chunk,
+            indexer_q_size=args.indexer_q_size,
             num_cores_per_device=args.num_cores_per_device,
             msa_q_chunk=args.msa_q_chunk,
             expert_parallel_chunk_size=args.expert_parallel_chunk_size,
@@ -284,6 +317,8 @@ def main():
             msa_attn_cp=args.decode_msa_attn_cp,
             indexer_n_head=args.indexer_n_head,
             indexer_prefill_parallel=False,
+            indexer_q_chunk=None,
+            indexer_q_size=None,
             num_cores_per_device=args.num_cores_per_device,
             msa_q_chunk=args.msa_q_chunk,
             expert_parallel_chunk_size=args.expert_parallel_chunk_size,
