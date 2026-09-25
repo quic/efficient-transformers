@@ -654,7 +654,7 @@ class CtxGatherFuncPagedKVDP(torch.autograd.Function):
         return _set_paged_gather_output_type(output, data, block_ids)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CtxGatherBlockRangeKVDP(data: onnxscript.FLOAT, block_ids: onnxscript.INT32) -> onnxscript.FLOAT:
     # data: [B_local, rows, cache_blocks, block_size, D]
     # ids:  [B_local, rows, selected_blocks]

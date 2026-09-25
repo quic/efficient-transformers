@@ -61,6 +61,8 @@ def main() -> None:
     parser.add_argument("--msa-indexer-dp", type=int, default=2)
     parser.add_argument("--msa-indexer-cp", type=int, default=1)
     parser.add_argument("--msa-attn-dp", type=int, default=2)
+    parser.add_argument("--msa-attn-cp", type=int, default=1)
+    parser.add_argument("--num-kv-blocks", type=int, default=2)
     parser.add_argument("--indexer-n-head", type=int, default=1)
     parser.add_argument("--num-cores-per-device", type=int, default=8)
     parser.add_argument("--num-devices", type=int, default=16)
@@ -69,11 +71,19 @@ def main() -> None:
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--enable-proxy", action="store_true", help="Enable QEff proxy transforms during model loading.")
+    parser.add_argument(
+        "--enable-proxy", action="store_true", help="Enable QEff proxy transforms during model loading."
+    )
     args = parser.parse_args()
 
+    if any(value < 1 for value in (args.msa_indexer_dp, args.msa_indexer_cp, args.msa_attn_dp, args.msa_attn_cp)):
+        parser.error("All MSA DP/CP factors must be positive")
+    if args.num_kv_blocks < 1:
+        parser.error("--num-kv-blocks must be positive")
     if args.ctx_len % args.page_block_size:
         parser.error("--ctx-len must be divisible by --page-block-size")
+    if (args.ctx_len // args.page_block_size) % args.msa_attn_cp:
+        parser.error("The number of attention pages must be divisible by --msa-attn-cp")
     dp_lcm = math.lcm(args.msa_indexer_dp, args.msa_attn_dp)
     execution_batch_size = args.batch_size * dp_lcm
     if execution_batch_size % args.msa_indexer_dp or execution_batch_size % args.msa_attn_dp:
@@ -92,10 +102,11 @@ def main() -> None:
     )
     qaic_config = {
         "blocking_mode": "kv_headpar",
-        "num_kv_blocks": 2,
+        "num_kv_blocks": args.num_kv_blocks,
         "msa_indexer_dp": args.msa_indexer_dp,
         "msa_indexer_cp": args.msa_indexer_cp,
         "msa_attn_dp": args.msa_attn_dp,
+        "msa_attn_cp": args.msa_attn_cp,
         "indexer_n_head": args.indexer_n_head,
         "num_cores_per_device": args.num_cores_per_device,
         "paged_kv": True,
@@ -134,12 +145,8 @@ def main() -> None:
     inputs = expand_batch(inputs, execution_batch_size)
 
     # Tables are DP-major even though input_ids are flattened as [DP * B_local, ...].
-    indexer_table = build_block_table(
-        args.msa_indexer_dp, execution_batch_size, args.ctx_len, args.page_block_size
-    )
-    attention_table = build_block_table(
-        args.msa_attn_dp, execution_batch_size, args.ctx_len, args.page_block_size
-    )
+    indexer_table = build_block_table(args.msa_indexer_dp, execution_batch_size, args.ctx_len, args.page_block_size)
+    attention_table = build_block_table(args.msa_attn_dp, execution_batch_size, args.ctx_len, args.page_block_size)
     inputs["msa_indexer_block_table"] = indexer_table
     inputs["msa_attn_block_table"] = attention_table
 
