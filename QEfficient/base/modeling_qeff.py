@@ -24,6 +24,7 @@ from QEfficient.base.checkpoint_transforms import BaseCheckpointTransform
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
+    DynamoSemanticNodeNameTransform,
     FP16ClipTransform,
     LocalizeFunctionReduceSumAxesTransform,
     OnnxTransformPipeline,
@@ -767,6 +768,7 @@ class QEFFBaseModel(ABC):
         try:
             if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
+
                 export_start_time = time.perf_counter()
                 export_result = export_via_weightfree(
                     self,
@@ -832,12 +834,20 @@ class QEFFBaseModel(ABC):
             onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
+            # Dynamo records module paths in node metadata but uses generic node
+            # names. The compiler and MDP tooling consume node names, so expose
+            # that metadata after all graph rewrites have completed.
+            if dynamo:
+                transformed |= DynamoSemanticNodeNameTransform.apply(model)
+
             # Keep this strictly layerwise-scoped so regular non-layerwise export
             # remains backward compatible.
             if QEFFBaseModel._layerwise_active:
                 _restore_retained_state_output_names(model, output_names)
 
             transform_names = [transform.__name__ for transform in self._pytorch_transforms + active_transforms]
+            if dynamo:
+                transform_names.append(DynamoSemanticNodeNameTransform.__name__)
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(transform_names))
             )
