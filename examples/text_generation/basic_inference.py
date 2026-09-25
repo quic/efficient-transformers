@@ -6,11 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+from pathlib import Path
 
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 
 def main():
@@ -41,6 +43,29 @@ def main():
         default=None,
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
+    parser.add_argument(
+        "--stats-level",
+        dest="stats_level",
+        type=int,
+        default=None,
+        help="Level of statistics to collect. Default: None",
+    )
+    parser.add_argument(
+        "--profiling-type",
+        dest="profiling_type",
+        type=str,
+        default=None,
+        choices=["latency", "trace", "raw_device_stats", "stats"],
+        help="Enable QAIC device profiling via the runtime Program/ExecObj profiling API and capture a "
+        "report for the generate() call. Default: disabled",
+    )
+    parser.add_argument(
+        "--profiling-output-dir",
+        dest="profiling_output_dir",
+        type=str,
+        default=None,
+        help="Directory to write the profiling report to. Default: <qpc dir>/profiling_output",
+    )
     args = parser.parse_args()
 
     # Load tokenizer and model
@@ -60,32 +85,47 @@ def main():
 
     model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
 
+    if args.profiling_type is not None:
+        if args.stats_level is None:
+            logger.warning("Need to set --stats-level to enable profiling. Setting stats_level=100.")
+            args.stats_level = 100
+
+    compile_kwargs = {
+        "prefill_seq_len": args.prefill_seq_len,
+        "ctx_len": args.ctx_len,
+        "num_cores": args.num_cores,
+        "aic_hw_version": args.aic_hw_version,
+        "num_devices": (1 if args.device_group is None else len(args.device_group)),
+        "dynamo": args.dynamo,
+        "use_onnx_subfunctions": args.use_onnx_subfunctions,
+        "artifacts": args.artifacts,
+    }
+
+    if args.stats_level is not None:
+        compile_kwargs["stats_level"] = args.stats_level
+
     # Compile the model
-    compile_path = model.compile(
-        prefill_seq_len=args.prefill_seq_len,
-        ctx_len=args.ctx_len,
-        num_cores=args.num_cores,
-        aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
-        dynamo=args.dynamo,
-        use_onnx_subfunctions=args.use_onnx_subfunctions,
-        artifacts=args.artifacts,
-    )
+    qpc_path = model.compile(**compile_kwargs)
     if args.artifacts:
-        print(f"Compiler artifacts written to: {compile_path}")
+        print(f"Compiler artifacts written to: {qpc_path}")
     else:
-        print(f"Model compiled to: {compile_path}")
+        print(f"Model compiled to: {qpc_path}")
     if args.compile_only:
         return
 
     # Generate text
-    exec_info = model.generate(
-        tokenizer=tokenizer,
-        prompts=[args.prompt],
-        device_ids=args.device_group,
-        generation_len=args.generation_len,
-        artifacts=args.artifacts,
-    )
+    generate_kwargs = {
+        "tokenizer": tokenizer,
+        "prompts": [args.prompt],
+        "device_ids": args.device_group,
+        "generation_len": args.generation_len,
+        "artifacts": args.artifacts,
+    }
+    if args.profiling_type is not None:
+        generate_kwargs["profiling_type"] = args.profiling_type
+        if args.profiling_output_dir is not None:
+            generate_kwargs["profiling_output_dir"] = args.profiling_output_dir
+    exec_info = model.generate(**generate_kwargs)
 
     if args.artifacts:
         print(f"Runner inputs written to: {exec_info}")
@@ -93,6 +133,17 @@ def main():
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info.generated_texts[0]}")
+
+    if args.profiling_type is not None:
+        output_dir = (
+            Path(args.profiling_output_dir)
+            if args.profiling_output_dir
+            else (Path(qpc_path) if Path(qpc_path).is_dir() else Path(qpc_path).parent) / "profiling_output"
+        )
+        report_files = sorted(p.name for p in output_dir.glob("*") if p.is_file())
+        print(f"\nProfiling type: {args.profiling_type}")
+        print(f"Profiling report directory: {output_dir}")
+        print(f"Profiling report files: {report_files if report_files else '(none found)'}")
 
 
 if __name__ == "__main__":
