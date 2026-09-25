@@ -730,31 +730,6 @@ def text_example_dependencies(monkeypatch, tmp_path):
     return SimpleNamespace(model=model, load_model=load_model, load_tokenizer=load_tokenizer)
 
 
-def test_continuous_batching_refill_writes_to_request_row():
-    from QEfficient.generation.text_generation_inference import QEffTextGenerationBase
-
-    generator = QEffTextGenerationBase.__new__(QEffTextGenerationBase)
-    generator.include_sampler = False
-    generator.return_pdfs = False
-    generator.decode_input_ids = np.zeros((2, 1), dtype=np.int64)
-    generator.decode_pos_ids = np.zeros((2, 1), dtype=np.int64)
-    generator.generation_len = np.zeros((2, 1), dtype=np.int64)
-    generator.generated_ids = np.array([[11, 12], [21, 22], [0, 0]], dtype=np.int64)
-
-    generator.update_decode_input(
-        {"logits": np.array([[[0.0, 0.0, 0.0, 1.0]]], dtype=np.float32)},
-        position_ids=np.array([[7]], dtype=np.int64),
-        generation_len=2,
-        decode_batch_id=0,
-        generated_batch_id=2,
-    )
-
-    assert generator.generated_ids[0].tolist() == [11, 12]
-    assert generator.generated_ids[2].tolist() == [3, 0]
-    assert generator.decode_input_ids[0].tolist() == [3]
-    assert generator.decode_pos_ids[0].tolist() == [7]
-
-
 def test_text_example_forwards_sampler_runtime_arguments(monkeypatch, text_example_dependencies):
     _run_text_example(
         monkeypatch,

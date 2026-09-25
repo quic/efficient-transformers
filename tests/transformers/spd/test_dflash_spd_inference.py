@@ -28,7 +28,6 @@ from QEfficient.generation.dflash_generation import (
     run_spd_inference_gemma4,
     run_spd_inference_single,
 )
-from QEfficient.utils.constants import ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
 VOCAB_SIZE = 64
 HIDDEN_SIZE = 64
@@ -210,8 +209,7 @@ def _make_tiny_qwen3_config():
         hidden_size=HIDDEN_SIZE,
         intermediate_size=128,
         vocab_size=VOCAB_SIZE,
-        # Draft export traces context and noise at consecutive position ranges.
-        max_position_embeddings=max(CTX_LEN, 2 * ONNX_EXPORT_EXAMPLE_SEQ_LEN),
+        max_position_embeddings=CTX_LEN,
         head_dim=32,
     )
 
