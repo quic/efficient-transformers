@@ -15,6 +15,7 @@ both suites exercise the same model families.
 from __future__ import annotations
 
 import copy
+from collections import Counter
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -210,6 +211,33 @@ def assert_no_int64_kv_cache_inputs(onnx_path: Path) -> None:
                 f"Graph input '{inp.name}' has dtype int64 — this is position_ids mislabeled "
                 "as a KV cache tensor due to a weight-free export input-naming mismatch."
             )
+
+
+def assert_blocked_kv_ops_for_mode(onnx_path: Path, qeff_model: QEFFAutoModelForCausalLM, blocking_key: str) -> None:
+    """Assert stable blocked-KV custom op markers for KV-bearing blocking modes."""
+    expected_ops = {"CtxGatherBlockedKV"}
+    model = onnx.load(str(onnx_path), load_external_data=False)
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    decoder_names = set()
+    if callable(get_submodules):
+        submodule_classes = get_submodules()
+        decoder_names = {
+            cls.__name__
+            for cls in (submodule_classes if isinstance(submodule_classes, (set, list, tuple)) else [submodule_classes])
+        }
+
+    function_nodes = [
+        node
+        for fn in model.functions
+        if not decoder_names or any(decoder_name in fn.name for decoder_name in decoder_names)
+        for node in fn.node
+    ]
+    op_counts = Counter(node.op_type for node in list(model.graph.node) + function_nodes)
+    missing_ops = sorted(op_name for op_name in expected_ops if not op_counts[op_name])
+    assert not missing_ops, (
+        f"Expected blocked KV custom op marker(s) {sorted(expected_ops)} for mode {blocking_key!r} "
+        f"in {onnx_path.name}, but missing {missing_ops}. Ops present: {dict(op_counts)}"
+    )
 
 
 # ---------------------------------------------------------------------------
