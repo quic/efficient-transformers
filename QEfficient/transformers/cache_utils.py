@@ -58,7 +58,7 @@ class InvalidIndexProvider:
         Returns:
             int: Invalid index value (0 for ONNX functions, INT32_MAX otherwise)
         """
-        if torch.onnx.is_in_onnx_export() :
+        if torch.onnx.is_in_onnx_export():
             if cls.SUBFUNC_ENABLED or torch._dynamo.is_compiling():
                 # TODO: should not return 0 remove this if condition, it can hurt perf
                 return 0
