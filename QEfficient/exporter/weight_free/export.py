@@ -21,7 +21,11 @@ from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolv
 from QEfficient.utils import load_json, resolve_torch_dtype
 from QEfficient.utils.checkpoint_utils import read_weight_map, resolve_checkpoint_dir
 from QEfficient.utils.logging_utils import QEFFLogger
-from QEfficient.utils.torch_patches import dynamo_invoke_subgraph_fallback_env, preserve_subfunction_source_lines
+from QEfficient.utils.torch_patches import (
+    dynamo_invoke_subgraph_fallback_env,
+    isolate_invoke_subgraph_cache,
+    preserve_subfunction_source_lines,
+)
 
 logger = QEFFLogger.get_logger("INFRA")
 
@@ -306,7 +310,7 @@ def export_weight_free_onnx(
 
     meta_qeff_model.model.requires_grad_(False)
     export_start_time = time.perf_counter()
-    with dynamo_invoke_subgraph_fallback_env(), preserve_subfunction_source_lines():
+    with dynamo_invoke_subgraph_fallback_env(), isolate_invoke_subgraph_cache(), preserve_subfunction_source_lines():
         onnx_program = torch.onnx.export(
             meta_qeff_model.model,
             args=(),

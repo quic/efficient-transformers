@@ -3420,6 +3420,8 @@ def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
         QEffQwen3_5MoeDecoderLayer,
         QEffQwen3_5MoeDecoderWrapper,
         QEffQwen3_5MoeForCausalLM,
+        QEffQwen3_5MoeFullAttentionDecoderLayer,
+        QEffQwen3_5MoeLinearDecoderLayer,
     )
 
     causal_lm = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
@@ -3451,6 +3453,35 @@ def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
         headpar_split=4,
     )
     assert headpar_model.get_submodules_for_export() == [QEffQwen3_5MoeDecoderLayer]
+
+    mixed_model = QEffQwen3_5MoeForCausalLM(
+        Qwen3_5MoeTextConfig(
+            vocab_size=128,
+            hidden_size=128,
+            num_hidden_layers=4,
+            num_attention_heads=4,
+            num_key_value_heads=1,
+            head_dim=32,
+            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+            linear_conv_kernel_dim=4,
+            linear_key_head_dim=8,
+            linear_value_head_dim=8,
+            linear_num_key_heads=2,
+            linear_num_value_heads=2,
+            moe_intermediate_size=16,
+            shared_expert_intermediate_size=16,
+            num_experts=2,
+            num_experts_per_tok=1,
+            max_position_embeddings=128,
+        )
+    )
+    for layer in mixed_model.model.layers:
+        layer.__class__ = QEffQwen3_5MoeDecoderLayer
+        layer.__qeff_init__()
+    assert mixed_model.get_submodules_for_export() == [
+        QEffQwen3_5MoeLinearDecoderLayer,
+        QEffQwen3_5MoeFullAttentionDecoderLayer,
+    ]
 
 
 def test_qwen3_5_moe_decode_export_uses_static_token_axis():

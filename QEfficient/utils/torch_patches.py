@@ -19,6 +19,8 @@ Patches kept here:
     patch that preserves nested regions and reuses only equivalent FX bodies,
     plus a post-decomposition hook that shares equivalent region bodies
     before ONNX translation (QEfficient/utils/export_subfunctions.py).
+  - isolate_invoke_subgraph_cache: avoid stale invoke_subgraph bodies when
+    repeated nested GraphModules reuse local identifiers during export.
   - preserve_subfunction_source_lines: preserve FX source metadata while Dynamo
     retraces GraphModule subfunctions.
 
@@ -439,6 +441,7 @@ _DYNAMO_ENV_LOCK = threading.RLock()
 _SUBFUNCTION_SOURCE_PATCH_LOCK = threading.RLock()
 _MIXED_EXPORT_PATCH_LOCK = threading.RLock()
 _MISSING_META = object()
+_INVOKE_SUBGRAPH_CACHE_PATCH_LOCK = threading.RLock()
 
 
 def _same_export_region(a, b, fake_mode, a_operands=None, b_operands=None):
@@ -651,6 +654,41 @@ def preserve_subfunction_source_lines():
             yield
         finally:
             module.reenter_make_fx = original
+
+
+@contextmanager
+def isolate_invoke_subgraph_cache():
+    """Avoid reusing invoke_subgraph cache entries across independent ONNX function bodies.
+
+    PyTorch names nested GraphModule bodies locally, so different parent graphs can
+    each contain an identifier like subgraph_0. During export, the invoke_subgraph
+    cache is process-global for the tracing context and is keyed by that identifier,
+    which can make a later function call a stale body with an incompatible lifted-input
+    signature.
+    """
+    with _INVOKE_SUBGRAPH_CACHE_PATCH_LOCK:
+        try:
+            from torch._guards import InvokeSubgraphCache
+        except ImportError:
+            yield
+            return
+
+        original_get_proxy = InvokeSubgraphCache.get_proxy_dispatch_entry
+        original_get_autograd = InvokeSubgraphCache.get_autograd_key_entry
+        original_get_functionalize_schema = InvokeSubgraphCache.get_functionalize_schema_entry
+
+        def _no_cached_entry(*args, **kwargs):
+            return None
+
+        InvokeSubgraphCache.get_proxy_dispatch_entry = _no_cached_entry
+        InvokeSubgraphCache.get_autograd_key_entry = _no_cached_entry
+        InvokeSubgraphCache.get_functionalize_schema_entry = _no_cached_entry
+        try:
+            yield
+        finally:
+            InvokeSubgraphCache.get_proxy_dispatch_entry = original_get_proxy
+            InvokeSubgraphCache.get_autograd_key_entry = original_get_autograd
+            InvokeSubgraphCache.get_functionalize_schema_entry = original_get_functionalize_schema
 
 
 @contextmanager

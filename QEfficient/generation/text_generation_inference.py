@@ -900,6 +900,9 @@ class QEffTextGenerationBase:
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
             chunk_inputs = slice_prefill_inputs(inputs, i, self._prefill_seq_len)
+            chunk_inputs["position_ids"] = self._format_position_ids_for_session(
+                chunk_inputs["position_ids"], expected_seq_len=self._prefill_seq_len
+            )
             if block_table is not None:
                 chunk_start_position_id = i * self._prefill_seq_len
                 chunk_inputs["slot_id"] = np.full(

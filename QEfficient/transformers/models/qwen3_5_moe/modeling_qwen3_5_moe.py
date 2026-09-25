@@ -563,10 +563,10 @@ def qeff_torch_causal_conv1d_update(
         conv_state_flat = conv_state
 
     state_len = conv_state_flat.shape[-1]
-    pos_ids = position_ids[0]
+    pos_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
     hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    is_decode = seq_len == torch.tensor(1)
+    is_decode = (pos_ids[:, :1] == pos_ids[:, -1:]).reshape(-1, 1, 1)
 
     # Decode is a fixed shift. Keep this branch tensor-only so the compiler can
     # select it for both BS1 and folded decode graphs.
@@ -1184,7 +1184,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     ones_lower=self._ones_lower,
                     eye=self._eye,
                 )
-                is_decode = hidden_states.shape[1] == torch.tensor(1)
+                text_position_ids = (
+                    position_ids[0] if position_ids is not None and position_ids.ndim == 3 else position_ids
+                )
+                is_decode = (text_position_ids[:, :1] == text_position_ids[:, -1:]).view(batch_size, 1, 1, 1)
                 core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
                 last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
@@ -1243,9 +1246,11 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         if not hasattr(self, "layer_type") and hasattr(self, "block_type"):
             self.layer_type = self.block_type
         if self.layer_type == "linear_attention":
+            self.__class__ = QEffQwen3_5MoeLinearDecoderLayer
             self.linear_attn.__class__ = QEffQwen3_5MoeGatedDeltaNet
             self.linear_attn.__qeff_init__()
         elif self.layer_type == "full_attention":
+            self.__class__ = QEffQwen3_5MoeFullAttentionDecoderLayer
             self.self_attn.__class__ = QEffQwen3_5MoeAttention
             self.self_attn.__qeff_init__()
 
@@ -1262,8 +1267,9 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         gdn_num_head_blocks: int = 1,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        return_cache_state: bool = False,
         **kwargs,
-    ) -> torch.FloatTensor:
+    ) -> Union[torch.FloatTensor, Tuple[torch.FloatTensor, torch.Tensor, torch.Tensor]]:
         del use_cache
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -1281,10 +1287,10 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 return_cache_state=past_key_values is not None,
             )
             if isinstance(hidden_states, tuple):
-                # Write returned linear-attention cache state at layer scope so nested function outputs stay explicit.
                 hidden_states, conv_state, recurrent_state = hidden_states
-                past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state.clone()
-                past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state.clone()
+                if not return_cache_state:
+                    past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state.clone()
+                    past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state.clone()
         else:
             hidden_states, _ = self.self_attn(
                 hidden_states=hidden_states,
@@ -1306,12 +1312,117 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         if isinstance(hidden_states, tuple):
             hidden_states, _ = hidden_states
         hidden_states = residual + hidden_states
+        if return_cache_state:
+            return hidden_states, conv_state, recurrent_state
+        return hidden_states
+
+
+class QEffQwen3_5MoeLinearDecoderLayer(QEffQwen3_5MoeDecoderLayer):
+    """Decoder-layer subfunction identity for Qwen3.5 linear-attention layers."""
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[QEffQwen3_5MoeDynamicCache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        return_cache_state: bool = False,
+        **kwargs,
+    ) -> Union[torch.FloatTensor, Tuple[torch.FloatTensor, torch.Tensor, torch.Tensor]]:
+        del position_embeddings, comp_ctx_lengths, use_cache, kwargs
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self.linear_attn(
+            hidden_states=hidden_states,
+            cache_params=past_key_values,
+            cache_position=cache_position,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            batch_index=batch_index,
+            batch_fold=batch_fold,
+            gdn_num_head_blocks=gdn_num_head_blocks,
+            return_cache_state=past_key_values is not None,
+        )
+        if isinstance(hidden_states, tuple):
+            hidden_states, conv_state, recurrent_state = hidden_states
+            if not return_cache_state:
+                past_key_values.conv_states[self.linear_attn.layer_idx] = conv_state.clone()
+                past_key_values.recurrent_states[self.linear_attn.layer_idx] = recurrent_state.clone()
+
+        hidden_states = residual + hidden_states
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        if isinstance(hidden_states, tuple):
+            hidden_states, _ = hidden_states
+        hidden_states = residual + hidden_states
+        if return_cache_state:
+            return hidden_states, conv_state, recurrent_state
+        return hidden_states
+
+
+class QEffQwen3_5MoeFullAttentionDecoderLayer(QEffQwen3_5MoeDecoderLayer):
+    """Decoder-layer subfunction identity for Qwen3.5 full-attention layers."""
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[QEffQwen3_5MoeDynamicCache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        batch_fold: bool = False,
+        gdn_num_head_blocks: int = 1,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> torch.FloatTensor:
+        del batch_fold, gdn_num_head_blocks, use_cache
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states, _ = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+
+        hidden_states = residual + hidden_states
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        if isinstance(hidden_states, tuple):
+            hidden_states, _ = hidden_states
+        hidden_states = residual + hidden_states
         return hidden_states
 
 
 def _qwen3_5_moe_submodules_for_export(model: nn.Module) -> List[Type[nn.Module]]:
-    # Keep one decoder function per layer so weight-free export can deduplicate repeated layer bodies.
-    return [QEffQwen3_5MoeDecoderLayer]
+    # Linear and full-attention decoder layers have different retained-state signatures.
+    # Keep them as decoder-level subfunctions, but give Dynamo separate callable identities.
+    submodules = []
+    if getattr(model, "_modules", None) is not None:
+        for module in model.modules():
+            if not isinstance(module, QEffQwen3_5MoeDecoderLayer):
+                continue
+            module_cls = module.__class__
+            if module_cls not in submodules:
+                submodules.append(module_cls)
+    return submodules or [QEffQwen3_5MoeDecoderLayer]
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
@@ -1422,20 +1533,29 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 all_hidden_states += (hidden_states,)
 
             layer_mask = linear_attn_mask if decoder_layer.layer_type == "linear_attention" else causal_mask
-            hidden_states = decoder_layer(
+            decoder_args = (
                 hidden_states,
-                position_embeddings=position_embeddings,
-                attention_mask=layer_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                batch_fold=batch_fold,
-                gdn_num_head_blocks=gdn_num_head_blocks,
-                use_cache=use_cache,
-                cache_position=cache_position,
-                **kwargs,
+                position_embeddings,
+                layer_mask,
+                position_ids,
+                past_key_values,
+                comp_ctx_lengths,
+                batch_index,
+                batch_fold,
+                gdn_num_head_blocks,
+                use_cache,
+                cache_position,
             )
+            if decoder_layer.layer_type == "linear_attention" and past_key_values is not None:
+                # Nested decoder functions cannot retain cache mutations. Return the
+                # two linear-attention states so the text model owns their update.
+                hidden_states, conv_state, recurrent_state = decoder_layer(
+                    *decoder_args, return_cache_state=True, **kwargs
+                )
+                past_key_values.conv_states[layer_idx] = conv_state.clone()
+                past_key_values.recurrent_states[layer_idx] = recurrent_state.clone()
+            else:
+                hidden_states = decoder_layer(*decoder_args, **kwargs)
 
             # break
 
