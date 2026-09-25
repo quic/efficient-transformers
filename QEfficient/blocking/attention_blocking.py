@@ -147,10 +147,13 @@ class AttentionBlockingConfig:
     indexer_n_head: Optional[int] = None
     indexer_q_size: Optional[int] = None
     indexer_q_chunk: Optional[int] = None
+    indexer_q_proj_num_chunks: Optional[int] = None
     indexer_prefill_parallel: Optional[bool] = None
     indexer_num_blocks: Optional[int] = None
     msa_num_kv_blocks: Optional[int] = None
     msa_q_chunk: Optional[int] = None
+    prefill_compile_seq_len: Optional[int] = None
+    prefill_export_seq_len: Optional[int] = None
     page_block_size: Optional[int] = None
     num_cores_per_device: Optional[int] = None
 

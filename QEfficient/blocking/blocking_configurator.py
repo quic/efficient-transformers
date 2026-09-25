@@ -25,11 +25,15 @@ from QEfficient.utils.constants import (
     DEFAULT_NUM_HEADS,
     FP16_BYTES,
     KV_LORA_RANK,
+    ONNX_EXPORT_EXAMPLE_SEQ_LEN,
     ROPE_DIM,
     VTCM_SIZE_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
+
+
+_MINIMAX_INDEX_Q_PROJ_CHUNK = 512
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -66,6 +70,123 @@ def _get_valid_num_blocks(config: Dict, requested_key: str) -> int:
     if config.get(requested_key) < 1:
         raise ValueError(f"Invalid value {requested_key} passed in qaic_config: {config.get(requested_key)}")
     return config.get(requested_key)
+
+
+def _is_minimax_m3_config(model_config: Any) -> bool:
+    text_config = getattr(model_config, "text_config", model_config)
+    model_types = {
+        str(getattr(model_config, "model_type", "")).lower(),
+        str(getattr(text_config, "model_type", "")).lower(),
+    }
+    layer_types = getattr(text_config, "layer_types", None) or []
+    return any("minimax_m3" in model_type for model_type in model_types) or "minimax_m3_sparse" in layer_types
+
+
+def _chunk_lengths(seq_len: int, chunk_size: int) -> tuple[int, ...]:
+    return tuple(min(chunk_size, seq_len - start) for start in range(0, seq_len, chunk_size))
+
+
+def _configure_minimax_prefill_export(
+    model_config: Any,
+    seq_len: Optional[int],
+    blocking_config: AttentionBlockingConfig,
+) -> None:
+    """Scale Minimax prefill chunks for a smaller ONNX example without changing loop structure."""
+    if seq_len is None or not _is_minimax_m3_config(model_config):
+        return
+
+    compile_seq_len = int(seq_len)
+    if compile_seq_len <= 1:
+        return
+    blocking_config.prefill_compile_seq_len = compile_seq_len
+    if compile_seq_len <= ONNX_EXPORT_EXAMPLE_SEQ_LEN:
+        logger.info(
+            "Exporting MiniMax M3 prefill ONNX with seq_len=%d (compiled prefill seq_len=%d).",
+            compile_seq_len,
+            compile_seq_len,
+        )
+        return
+
+    text_config = getattr(model_config, "text_config", model_config)
+    index_block_size = require_value(getattr(text_config, "index_block_size", None), "index block size")
+    indexer_q_size = int(blocking_config.indexer_q_size or index_block_size)
+    indexer_q_chunk = int(blocking_config.indexer_q_chunk or indexer_q_size)
+    msa_q_chunk = int(blocking_config.msa_q_chunk or compile_seq_len)
+    num_cores = int(blocking_config.num_cores_per_device or 1)
+    num_kv_heads = int(require_value(getattr(text_config, "num_key_value_heads", None), "num KV heads"))
+
+    if msa_q_chunk <= 0:
+        raise ValueError("MiniMax MSA prefill requires msa_q_chunk to be positive.")
+    if num_cores <= 0 or num_kv_heads <= 0:
+        raise ValueError("MiniMax MSA prefill requires positive core and KV-head counts.")
+    if indexer_q_size <= 0 or indexer_q_chunk < indexer_q_size or indexer_q_chunk % indexer_q_size:
+        raise ValueError(
+            "MiniMax MSA prefill requires indexer_q_size > 0 and indexer_q_chunk to be at least and "
+            "divisible by indexer_q_size."
+        )
+    if compile_seq_len % indexer_q_chunk:
+        raise ValueError("MiniMax MSA prefill requires compile seq_len divisible by indexer_q_chunk.")
+    if compile_seq_len % msa_q_chunk:
+        raise ValueError("MiniMax MSA prefill requires compile seq_len divisible by msa_q_chunk.")
+    full_index_chunks = _chunk_lengths(compile_seq_len, indexer_q_chunk)
+    if any(chunk_len % indexer_q_size for chunk_len in full_index_chunks):
+        raise ValueError(
+            "MiniMax MSA prefill compile sequence length must produce indexer query chunks divisible by indexer_q_size."
+        )
+    if not blocking_config.indexer_prefill_parallel and indexer_q_size % num_cores:
+        raise ValueError("MiniMax serial indexer prefill requires indexer_q_size divisible by num_cores_per_device.")
+    if num_cores % num_kv_heads:
+        raise ValueError("MiniMax MSA prefill requires num_cores_per_device divisible by num_key_value_heads.")
+
+    cores_per_kv_head = num_cores // num_kv_heads
+    full_msa_chunks = _chunk_lengths(compile_seq_len, msa_q_chunk)
+    if any(chunk_len % cores_per_kv_head for chunk_len in full_msa_chunks):
+        raise ValueError(
+            "MiniMax MSA prefill compile sequence must produce msa_q_chunk segments divisible by the cores "
+            "assigned to each KV head."
+        )
+
+    scale_denominator = math.lcm(
+        compile_seq_len // math.gcd(compile_seq_len, indexer_q_size),
+        compile_seq_len // math.gcd(compile_seq_len, indexer_q_chunk),
+        compile_seq_len // math.gcd(compile_seq_len, msa_q_chunk),
+    )
+    indexer_q_proj_num_chunks = math.ceil(compile_seq_len / _MINIMAX_INDEX_Q_PROJ_CHUNK)
+    minimum_export_seq_len = max(ONNX_EXPORT_EXAMPLE_SEQ_LEN, indexer_q_proj_num_chunks)
+    export_seq_len = ((minimum_export_seq_len + scale_denominator - 1) // scale_denominator) * scale_denominator
+    full_index_signature = tuple(chunk_len // indexer_q_size for chunk_len in full_index_chunks)
+
+    while export_seq_len <= compile_seq_len:
+        export_indexer_q_size = export_seq_len * indexer_q_size // compile_seq_len
+        export_indexer_q_chunk = export_seq_len * indexer_q_chunk // compile_seq_len
+        export_msa_q_chunk = export_seq_len * msa_q_chunk // compile_seq_len
+        export_index_chunks = _chunk_lengths(export_seq_len, export_indexer_q_chunk)
+        export_msa_chunks = _chunk_lengths(export_seq_len, export_msa_q_chunk)
+        index_signature = tuple(chunk_len // export_indexer_q_size for chunk_len in export_index_chunks)
+        indexer_core_compatible = blocking_config.indexer_prefill_parallel or export_indexer_q_size % num_cores == 0
+        msa_core_compatible = all(chunk_len % cores_per_kv_head == 0 for chunk_len in export_msa_chunks)
+        if (
+            index_signature == full_index_signature
+            and len(export_msa_chunks) == len(full_msa_chunks)
+            and indexer_core_compatible
+            and msa_core_compatible
+        ):
+            blocking_config.indexer_q_size = export_indexer_q_size
+            blocking_config.indexer_q_chunk = export_indexer_q_chunk
+            blocking_config.msa_q_chunk = export_msa_q_chunk
+            blocking_config.indexer_q_proj_num_chunks = indexer_q_proj_num_chunks
+            blocking_config.prefill_export_seq_len = export_seq_len
+            logger.info(
+                "Exporting MiniMax M3 prefill ONNX with seq_len=%d (compiled prefill seq_len=%d).",
+                export_seq_len,
+                compile_seq_len,
+            )
+            return
+        export_seq_len += scale_denominator
+
+    raise ValueError(
+        "Unable to derive a MiniMax MSA prefill export sequence length that preserves the full-length loop structure."
+    )
 
 
 def block_candidates_generator(max_length: int) -> List[int]:
@@ -383,6 +504,8 @@ def build_transformer_blocking_config_for_transform(
     ):
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))
+
+    _configure_minimax_prefill_export(model_config, seq_len, blocking_config)
 
     if qaic_config.get("ctx_len") is None:
         blocking_config.ctx_len = ctx_len
