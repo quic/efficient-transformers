@@ -16,7 +16,6 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 
 from ._helpers import skip_on_model_fetch_error
 
-
 DISAGG_MODEL_PARAMS = [
     pytest.param("glm4_moe", "tiny-random/glm-4-moe", id="glm4-moe"),
     pytest.param("qwen3_moe", "tiny-random/qwen3-moe", id="qwen3-moe"),
