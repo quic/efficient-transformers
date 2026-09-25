@@ -174,7 +174,7 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
     tensors = []
     seen_tensors = set()
     for node in keep_nodes:
-        if is_moe_node(node) or is_excluded_npi_node(node):
+        if is_moe_node(node) or is_excluded_npi_node(node) or node.op_type in {"ReduceSum"}:
             continue
         for output_index, output_name in enumerate(node.output):
             if (
