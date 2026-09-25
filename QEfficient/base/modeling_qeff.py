@@ -308,7 +308,7 @@ class QEFFBaseModel(ABC):
                 "milestone",
                 "INFRA",
                 f"Applied PyTorch transforms to model: {self.model_name}.",
-                milestone="load_complete",
+                milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE,
             )
 
         if self.config.torch_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
@@ -1358,7 +1358,7 @@ class QEFFBaseModel(ABC):
                         "milestone",
                         "INFRA",
                         "ONNX export skipped (cached QPC).",
-                        milestone="export_skipped",
+                        milestone=QEFFLogger.MILESTONE_EXPORT_SKIPPED,
                     )
                 log_api_arguments(
                     "compile",
@@ -1370,7 +1370,7 @@ class QEFFBaseModel(ABC):
                     self.__class__.__name__,
                     "Compilation skipped (cached QPC).",
                     api="compile",
-                    milestone="compile_skipped",
+                    milestone=QEFFLogger.MILESTONE_COMPILE_SKIPPED,
                 )
                 logger.info(f"QPC path: {qpc_path}")
                 return qpc_path
@@ -1480,7 +1480,7 @@ class QEFFBaseModel(ABC):
             self.__class__.__name__,
             "Compilation completed.",
             api="compile",
-            milestone="compile_complete",
+            milestone=QEFFLogger.MILESTONE_COMPILE_COMPLETE,
         )
         logger.info(f"QPC path: {qpc_path}")
         return qpc_path

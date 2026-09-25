@@ -379,7 +379,7 @@ def export_wrapper(func):
                 self.__class__.__name__,
                 "ONNX export skipped (cached ONNX).",
                 api="export",
-                milestone="export_skipped",
+                milestone=QEFFLogger.MILESTONE_EXPORT_SKIPPED,
             )
         else:
             QEFFLogger.log_event(
@@ -387,7 +387,7 @@ def export_wrapper(func):
                 self.__class__.__name__,
                 "ONNX export completed.",
                 api="export",
-                milestone="export_complete",
+                milestone=QEFFLogger.MILESTONE_EXPORT_COMPLETE,
             )
         return onnx_path
 

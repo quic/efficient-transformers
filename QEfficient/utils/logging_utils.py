@@ -10,18 +10,40 @@ import inspect
 import json
 import logging
 import os
+import reprlib
 import threading
+import warnings
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
+from itertools import islice
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from tabulate import tabulate
+from QEfficient.utils.logging_timing import RunState, build_timing_table
 
 # Import centralized config
-from QEfficient.utils.constants import LoggerConfig
+
+
+@dataclass(frozen=True)
+class LoggerConfig:
+    """Configuration for QEFFLogger."""
+
+    log_path_env: str = "QEFF_LOG_PATH"
+    log_level_env: str = "QEFF_LOG_LEVEL"
+    default_log_dir: str = os.path.expanduser("~/.cache/qefficient_logs")
+    default_level: str = "INFO"
+    max_bytes: int = 5 * 1024 * 1024
+    backup_count: int = 10
+    milestone_load_start: str = "load_start"
+    milestone_load_complete: str = "load_complete"
+    milestone_export_complete: str = "export_complete"
+    milestone_export_skipped: str = "export_skipped"
+    milestone_compile_complete: str = "compile_complete"
+    milestone_compile_skipped: str = "compile_skipped"
+    milestone_generation_complete: str = "generation_complete"
 
 
 class JSONNamespaceFormatter(logging.Formatter):
@@ -48,7 +70,7 @@ class JSONNamespaceFormatter(logging.Formatter):
             value = getattr(record, field, None)
             if value is not None:
                 log_record[field] = value
-        return json.dumps(log_record)
+        return json.dumps(log_record, default=str)
 
 
 _SENSITIVE_ARGUMENT_NAMES = {
@@ -61,20 +83,32 @@ _SENSITIVE_ARGUMENT_NAMES = {
     "token",
     "use_auth_token",
 }
+_MAX_SERIALIZED_ITEMS = 64
+_MAX_SERIALIZED_DEPTH = 3
 
 
-def _serialize_argument(value: Any, name: Optional[str] = None) -> Any:
+def _serialize_argument(value: Any, name: Optional[str] = None, *, _depth: int = 0) -> Any:
     """Return a compact JSON-safe representation of an API argument."""
     if name and name.lower() in _SENSITIVE_ARGUMENT_NAMES:
         return "<redacted>"
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if _depth >= _MAX_SERIALIZED_DEPTH:
+        return {"type": type(value).__name__, "repr": "<nested value omitted>"}
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): _serialize_argument(item, str(key)) for key, item in value.items()}
+        items = list(islice(value.items(), _MAX_SERIALIZED_ITEMS))
+        result = {str(key): _serialize_argument(item, str(key), _depth=_depth + 1) for key, item in items}
+        if len(value) > len(items):
+            result["__truncated__"] = len(value) - len(items)
+        return result
     if isinstance(value, (list, tuple, set)):
-        return [_serialize_argument(item) for item in value]
+        items = list(islice(iter(value), _MAX_SERIALIZED_ITEMS))
+        result = [_serialize_argument(item, _depth=_depth + 1) for item in items]
+        if len(value) > len(items):
+            result.append(f"<truncated {len(value) - len(items)} items>")
+        return result
     if hasattr(value, "shape") and hasattr(value, "dtype"):
         result = {"type": type(value).__name__, "shape": list(value.shape), "dtype": str(value.dtype)}
         if hasattr(value, "device"):
@@ -82,15 +116,17 @@ def _serialize_argument(value: Any, name: Optional[str] = None) -> Any:
         return result
     if hasattr(value, "to_dict") and callable(value.to_dict):
         try:
+            config = value.to_dict()
             return {
                 "type": f"{type(value).__module__}.{type(value).__name__}",
-                "config": _serialize_argument(value.to_dict()),
+                "config_keys": [str(key) for key in islice(config, _MAX_SERIALIZED_ITEMS)],
+                "config_key_count": len(config),
             }
         except Exception:
             pass
     return {
         "type": f"{type(value).__module__}.{type(value).__name__}",
-        "repr": " ".join(str(value).split())[:200],
+        "repr": reprlib.repr(value),
     }
 
 
@@ -129,7 +165,7 @@ def log_generate_call(func):
             namespace,
             "Generation completed.",
             api="generate",
-            milestone="generation_complete",
+            milestone=QEFFLogger.MILESTONE_GENERATION_COMPLETE,
         )
         return result
 
@@ -165,7 +201,7 @@ def log_pipeline_api(
             namespace = receiver.__name__ if isinstance(receiver, type) else type(receiver).__name__
             if api == "from_pretrained":
                 QEFFLogger.start_run(str(arguments.get("pretrained_model_name_or_path", "unknown")))
-            elif start_run and not QEFFLogger._run_active:
+            elif start_run and not QEFFLogger.has_active_run():
                 QEFFLogger.start_run(namespace)
 
             log_api_arguments(api, namespace, arguments)
@@ -177,6 +213,8 @@ def log_pipeline_api(
                     result = func(*args, **kwargs)
             except Exception as exc:
                 QEFFLogger.log_api_failure(api, namespace, exc)
+                if api == "from_pretrained":
+                    QEFFLogger.finish_run()
                 raise
             else:
                 QEFFLogger.log_event(
@@ -216,15 +254,17 @@ def log_from_pretrained_call(func):
             result = func(cls, *args, **kwargs)
         except Exception as exc:
             QEFFLogger.log_api_failure("from_pretrained", cls.__name__, exc)
+            QEFFLogger.finish_run()
             raise
-        QEFFLogger.log_event(
-            "milestone",
-            cls.__name__,
-            "Model loading completed.",
-            api="from_pretrained",
-            milestone="load_complete",
-        )
-        return result
+        else:
+            QEFFLogger.log_event(
+                "milestone",
+                cls.__name__,
+                "Model loading completed.",
+                api="from_pretrained",
+                milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE,
+            )
+            return result
 
     wrapper._qeff_api_dump = True
     return wrapper
@@ -242,16 +282,23 @@ class QEFFLogger:
     _instance: Optional[logging.Logger] = None
     _logfile: Optional[str] = None
     _init_lock = threading.Lock()
-    _table_written = False
     _summary_printed = False
     _atexit_registered = False
-    _run_active = False
+    _print_logfile_at_exit = True
+    _fallback_warning_emitted = False
     _run_counter = 0
-    _current_run_id: Optional[int] = None
-    _current_model: Optional[str] = None
-    _api_logging_suppressed = 0
-    _run_owner_thread: Optional[int] = None
+    _runs: Dict[int, RunState] = {}
+    _run_local = threading.local()
+    _api_logging_local = threading.local()
     _run_lock = threading.RLock()
+
+    MILESTONE_LOAD_START = LoggerConfig.milestone_load_start
+    MILESTONE_LOAD_COMPLETE = LoggerConfig.milestone_load_complete
+    MILESTONE_EXPORT_COMPLETE = LoggerConfig.milestone_export_complete
+    MILESTONE_EXPORT_SKIPPED = LoggerConfig.milestone_export_skipped
+    MILESTONE_COMPILE_COMPLETE = LoggerConfig.milestone_compile_complete
+    MILESTONE_COMPILE_SKIPPED = LoggerConfig.milestone_compile_skipped
+    MILESTONE_GENERATION_COMPLETE = LoggerConfig.milestone_generation_complete
 
     def __init__(self, loglevel: Optional[str] = None, log_path: Optional[str] = None):
         """
@@ -273,14 +320,18 @@ class QEFFLogger:
                 raise ValueError(f"Invalid log level: {effective_level_name}")
             self.loglevel = effective_level_name
 
-            # Resolve log path (arg > env > default dir + timestamp)
+            # Resolve log path (arg > env > default dir + timestamp). Logging
+            # must never make importing or using QEfficient fail.
             env_path = os.environ.get(LoggerConfig.log_path_env)
-            self.log_path = self._resolve_log_path(log_path or env_path)
+            try:
+                self.log_path = self._resolve_log_path(log_path or env_path)
+            except Exception as exc:
+                self.log_path = None
+                self._warn_file_logging_fallback(exc)
 
             # Initialize the base logger
             self.logger = self._initialize_logger()
             QEFFLogger._instance = self.logger
-            QEFFLogger._table_written = False
             QEFFLogger._summary_printed = False
             if not QEFFLogger._atexit_registered:
                 atexit.register(QEFFLogger._finalize)
@@ -299,10 +350,22 @@ class QEFFLogger:
         path = Path(requested_path).expanduser()
         if path.suffix.lower() == ".log":
             path.parent.mkdir(parents=True, exist_ok=True)
-            return str(path)
+            return str(path.with_name(f"{path.stem}_{os.getpid()}{path.suffix}"))
 
         path.mkdir(parents=True, exist_ok=True)
         return str(path / f"QEFF_{timestamp}{process_suffix}.log")
+
+    @classmethod
+    def _warn_file_logging_fallback(cls, error: Exception) -> None:
+        """Warn once when file logging is unavailable."""
+        if cls._fallback_warning_emitted:
+            return
+        cls._fallback_warning_emitted = True
+        warnings.warn(
+            f"QEfficient file logging is unavailable; using console logging instead: {error}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     def _initialize_logger(self) -> logging.Logger:
         """
@@ -319,18 +382,26 @@ class QEFFLogger:
             handler.close()
             logger.removeHandler(handler)
 
-        handler = RotatingFileHandler(
-            self.log_path,
-            maxBytes=LoggerConfig.max_bytes,
-            backupCount=LoggerConfig.backup_count,
-            delay=True,
-        )
+        try:
+            if self.log_path is None:
+                raise OSError("log path resolution failed")
+            handler: logging.Handler = RotatingFileHandler(
+                self.log_path,
+                maxBytes=LoggerConfig.max_bytes,
+                backupCount=LoggerConfig.backup_count,
+                delay=True,
+            )
+        except Exception as exc:
+            QEFFLogger._logfile = None
+            self._warn_file_logging_fallback(exc)
+            handler = logging.StreamHandler()
 
         class RunContextFilter(logging.Filter):
             def filter(self, record):
-                if QEFFLogger._run_active:
-                    record.run_id = QEFFLogger._current_run_id
-                    record.model = QEFFLogger._current_model
+                state = QEFFLogger._get_run_state()
+                if state is not None:
+                    record.run_id = state.run_id
+                    record.model = state.model
                 return True
 
         handler.addFilter(RunContextFilter())
@@ -354,12 +425,36 @@ class QEFFLogger:
     @classmethod
     def log_event(cls, event: str, namespace: str, message: str, **fields: Any) -> None:
         """Write one structured event record."""
-        if cls._api_logging_suppressed and event in {"api_call", "milestone", "api_failure"}:
-            return
-        if cls._instance is None:
-            cls.get_logger(namespace)
-        extra = {"namespace": namespace, "event": event, **fields}
-        logging.LoggerAdapter(cls._instance, extra).info(message, stacklevel=2)
+        with cls._run_lock:
+            if cls._is_api_logging_suppressed() and event in {"api_call", "milestone", "api_failure"}:
+                return
+            if cls._instance is None:
+                cls.get_logger(namespace)
+            state = cls._get_run_state()
+            if state is not None:
+                now = datetime.now().timestamp()
+                milestone = fields.get("milestone")
+                if event == "milestone" and milestone:
+                    if milestone == cls.MILESTONE_LOAD_START:
+                        state.milestones.setdefault(milestone, now)
+                    else:
+                        state.milestones[milestone] = now
+                if event == "api_call" and fields.get("api") == "generate":
+                    state.milestones.setdefault("generate_start", now)
+                if event == "api_failure" and fields.get("api") == "compile":
+                    state.milestones["compile_failed"] = now
+            extra = {"namespace": namespace, "event": event, **fields}
+            logging.LoggerAdapter(cls._instance, extra).info(message, stacklevel=2)
+
+    @classmethod
+    def _get_run_state(cls) -> Optional[RunState]:
+        with cls._run_lock:
+            run_id = getattr(cls._run_local, "run_id", None)
+            return cls._runs.get(run_id) if run_id is not None else None
+
+    @classmethod
+    def has_active_run(cls) -> bool:
+        return cls._get_run_state() is not None
 
     @classmethod
     def log_api_failure(cls, api: str, namespace: str, error: Exception) -> None:
@@ -375,18 +470,23 @@ class QEFFLogger:
     @classmethod
     @contextmanager
     def suppress_api_logging(cls):
-        cls._api_logging_suppressed += 1
+        depth = getattr(cls._api_logging_local, "depth", 0)
+        cls._api_logging_local.depth = depth + 1
         try:
             yield
         finally:
-            cls._api_logging_suppressed -= 1
+            cls._api_logging_local.depth = max(0, getattr(cls._api_logging_local, "depth", 1) - 1)
 
     @classmethod
     def is_api_logging_suppressed(cls) -> bool:
-        return cls._api_logging_suppressed > 0
+        return cls._is_api_logging_suppressed()
 
     @classmethod
-    def log(cls, level: str, namespace: str, msg: str, fn: str = "", lno: int = 0, func: str = ""):
+    def _is_api_logging_suppressed(cls) -> bool:
+        return getattr(cls._api_logging_local, "depth", 0) > 0
+
+    @classmethod
+    def log(cls, level: str, namespace: str, msg: str):
         """
         Log a message with specified level and metadata.
         """
@@ -425,12 +525,10 @@ class QEFFLogger:
         """
         with cls._run_lock:
             if cls._instance:
-                cls._finalize()
+                cls._finalize(print_log_path=False)
                 cls._close_handlers()
-                cls._run_active = False
-                cls._current_run_id = None
-                cls._current_model = None
-                cls._run_owner_thread = None
+            cls._runs.clear()
+            cls._run_local.__dict__.clear()
 
     @classmethod
     def _close_handlers(cls) -> None:
@@ -445,271 +543,113 @@ class QEFFLogger:
 
     @classmethod
     def start_run(cls, model_name: str) -> None:
-        """Start a model run inside the current process log file."""
+        """Start an independent model run for the calling thread."""
         with cls._run_lock:
             if cls._instance is None:
                 cls()
-            current_thread = threading.get_ident()
-            if cls._run_active and cls._run_owner_thread not in (None, current_thread):
-                raise RuntimeError("QEFFLogger supports one active model run per process.")
-            if cls._run_active:
-                cls._append_final_table()
-
+            previous_state = cls._get_run_state()
+            if previous_state is not None:
+                # Do not silently orphan a run when callers load another model
+                # without explicitly finishing the previous one.
+                cls._finish_state(previous_state)
             cls._run_counter += 1
-            cls._current_run_id = cls._run_counter
-            cls._current_model = model_name
-            cls._run_active = True
-            cls._run_owner_thread = current_thread
-            cls._table_written = False
+            state = RunState(cls._run_counter, model_name)
+            cls._runs[state.run_id] = state
+            cls._run_local.run_id = state.run_id
             cls._summary_printed = False
             cls.log_event(
                 "milestone",
                 "MODEL",
                 f"Starting model weight loading: {model_name}.",
-                milestone="load_start",
+                milestone=cls.MILESTONE_LOAD_START,
             )
 
     @classmethod
     def finish_run(cls) -> None:
-        """Write the current run's timing table and release its run state."""
-        if cls._instance is None or not cls._run_active:
-            return
-        if cls._append_final_table():
-            cls._run_active = False
-            cls._run_owner_thread = None
+        """Best-effort finalization; instrumentation must never affect callers."""
+        with cls._run_lock:
+            state = cls._get_run_state()
+            if state is None:
+                return
+            cls._finish_state(state)
+
+    @classmethod
+    def _finish_state(cls, state: RunState) -> None:
+        """Finalize and detach one run, without relying on thread-local context."""
+        try:
+            cls._append_final_table(state)
+        except Exception:
+            logging.getLogger(__name__).debug("Unable to write QEfficient timing summary", exc_info=True)
+        finally:
+            cls._runs.pop(state.run_id, None)
+            if getattr(cls._run_local, "run_id", None) == state.run_id:
+                cls._run_local.__dict__.clear()
 
     @classmethod
     def _build_timing_table(cls, run_id: Optional[int] = None) -> Optional[str]:
-        """Build the timing table for one model run from the process log."""
-        path = cls._logfile
-        if not path or not os.path.exists(path):
-            return None
-
-        times = cls._extract_milestone_times(path, run_id=run_id)
-        required_milestones = ("START_LOAD", "LOAD_DONE")
-        if any(key not in times for key in required_milestones):
-            return None
-        if "COMPILE_DONE" not in times and "COMPILE_FAIL" not in times:
-            return None
-
-        records = [record for record in cls._iter_log_records(path) if run_id is None or record.get("run_id") == run_id]
-        messages = [str(record.get("message", "")).lower() for record in records]
-        milestones = {record.get("milestone") for record in records}
-        export_completed = any(milestone in milestones for milestone in {"export_complete"}) or any(
-            "onnx export completed" in message
-            or "transformed onnx saved" in message
-            or "model export is finished and saved" in message
-            for message in messages
-        )
-        compile_completed = "compile_complete" in milestones or any(
-            "compilation completed" in message and "cached qpc" not in message for message in messages
-        )
-        export_skipped = not export_completed and (
-            "export_skipped" in milestones or any("onnx export skipped" in message for message in messages)
-        )
-        compile_skipped = not compile_completed and (
-            "compile_skipped" in milestones
-            or any(
-                "compilation skipped" in message or "compilation completed (cached qpc)" in message
-                for message in messages
+        """Build a partial timing table from in-memory structured milestones."""
+        with cls._run_lock:
+            if run_id is None:
+                state = cls._get_run_state()
+            else:
+                state = cls._runs.get(run_id)
+            return build_timing_table(
+                state,
+                {
+                    "load_start": cls.MILESTONE_LOAD_START,
+                    "load_complete": cls.MILESTONE_LOAD_COMPLETE,
+                    "export_complete": cls.MILESTONE_EXPORT_COMPLETE,
+                    "export_skipped": cls.MILESTONE_EXPORT_SKIPPED,
+                    "compile_complete": cls.MILESTONE_COMPILE_COMPLETE,
+                    "compile_skipped": cls.MILESTONE_COMPILE_SKIPPED,
+                    "generation_complete": cls.MILESTONE_GENERATION_COMPLETE,
+                },
             )
-        )
-
-        t_start = times.get("START_LOAD", min(times.values()))
-        t_load_done = max(times.get("LOAD_DONE", t_start), t_start)
-        t_export_done = max(times.get("ONNX_SAVED", t_load_done), t_load_done)
-        t_compile_done = max(
-            times.get("COMPILE_DONE", times.get("COMPILE_FAIL", t_export_done)),
-            t_export_done,
-        )
-
-        loading = max(0.0, (t_load_done - t_start).total_seconds())
-        exporting = 0.0 if export_skipped else max(0.0, (t_export_done - t_load_done).total_seconds())
-        compiling = 0.0 if compile_skipped else max(0.0, (t_compile_done - t_export_done).total_seconds())
-
-        if times.get("GENERATE_START") and times.get("TEXT_DONE"):
-            # Diffusers pipelines log the public __call__ API before their
-            # internal export/compile work. Do not count that setup time as
-            # generation or double-count it in the total.
-            generation_start = max(times["GENERATE_START"], t_compile_done)
-            generation = max(0.0, (times["TEXT_DONE"] - generation_start).total_seconds())
-        elif times.get("TEXT_DONE"):
-            generation = max(0.0, (times["TEXT_DONE"] - t_compile_done).total_seconds())
-        else:
-            generation = 0.0
-
-        total = loading + exporting + compiling + generation
-        timing_data: List[List[Any]] = [
-            ["Model Loading", loading],
-            ["Model Exporting", exporting],
-            ["Model Compilation", compiling],
-            ["Text Generation", generation],
-            ["Total Time", total],
-        ]
-        return tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f")
 
     @classmethod
-    def _append_final_table(cls, table: Optional[str] = None) -> bool:
-        """Append the current model's timing table to the shared process log."""
-        if cls._table_written or cls._instance is None:
-            return False
-        table = table or cls._build_timing_table(cls._current_run_id)
-        if table is None or cls._logfile is None:
-            return False
-
-        for handler in cls._instance.handlers:
-            handler.flush()
-        with open(cls._logfile, "a", encoding="utf-8") as handle:
-            model_label = cls._current_model or "process"
-            # The JSON handler already leaves the cursor after a newline. Keep
-            # exactly one blank line before and after the human-readable table.
-            handle.write(f"\n===== QEfficient Timing Summary: {model_label} =====\n")
-            handle.write(table)
-            handle.write("\n\n")
-        cls._table_written = True
-        return True
-
-    @classmethod
-    def _finalize(cls) -> None:
-        """Write the final table and print the run summary once."""
-        if cls._instance is None or cls._summary_printed:
-            return
-        cls._append_final_table()
-        if cls._logfile:
-            print(f"Log file: {cls._logfile}")
-        cls._summary_printed = True
+    def _append_final_table(cls, state: RunState, table: Optional[str] = None) -> bool:
+        """Append one human-readable timing summary to the active log file."""
+        with cls._run_lock:
+            if state.table_written or cls._instance is None:
+                return False
+            table = table or cls._build_timing_table(state.run_id)
+            if table is None:
+                return False
+            if cls._logfile is None:
+                return False
+            for handler in cls._instance.handlers:
+                handler.flush()
+            with open(cls._logfile, "a", encoding="utf-8") as handle:
+                handle.write(f"\n===== QEfficient Timing Summary: {state.model} =====\n")
+                handle.write(table)
+                handle.write("\n\n")
+            state.table_written = True
+            return True
 
     @classmethod
-    def _parse_dt(cls, date_str: str, time_str: str) -> datetime:
-        """Parse 'YYYY-MM-DD' and 'HH:MM:SS' into a datetime."""
-        return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+    def _finalize(cls, *, print_log_path: bool = True) -> None:
+        """Finalize all remaining runs once at process shutdown."""
+        with cls._run_lock:
+            if cls._instance is None or cls._summary_printed:
+                return
+            states = list(cls._runs.values())
+            for state in states:
+                try:
+                    cls._append_final_table(state)
+                except Exception:
+                    logging.getLogger(__name__).debug("Unable to finalize QEfficient logging", exc_info=True)
+            cls._runs.clear()
+            cls._summary_printed = True
+            # This terminal output is intentional: standalone scripts need a
+            # discoverable path after completion. Pytest suppresses it for its
+            # controller and prints worker paths separately.
+            if print_log_path and cls._print_logfile_at_exit and cls._logfile:
+                print(f"Log file: {cls._logfile}", flush=True)
 
     @classmethod
     def get_logfile_path(cls) -> Optional[str]:
         """Return active log file path, if logger is initialized."""
         return cls._logfile
-
-    @classmethod
-    def _iter_log_records(cls, path: str) -> Iterable[Dict[str, Any]]:
-        with open(path, "r", encoding="utf-8") as handle:
-            for raw in handle:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(record, dict):
-                    yield record
-
-    @classmethod
-    def _records_for_run(cls, path: str, run_id: Optional[int]) -> List[Dict[str, Any]]:
-        """Return run records plus unscoped setup records immediately before the run."""
-        records = list(cls._iter_log_records(path))
-        if run_id is None:
-            return records
-
-        run_records = [record for record in records if record.get("run_id") == run_id]
-        run_timestamps = [cls._get_record_timestamp(record) for record in run_records]
-        run_timestamps = [timestamp for timestamp in run_timestamps if timestamp is not None]
-        if not run_timestamps:
-            return run_records
-
-        run_start = min(run_timestamps)
-        return [
-            record
-            for record in records
-            if record.get("run_id") == run_id
-            or (
-                record.get("run_id") is None
-                and (timestamp := cls._get_record_timestamp(record)) is not None
-                and timestamp <= run_start
-            )
-        ]
-
-    @classmethod
-    def _get_record_timestamp(cls, record: Dict[str, Any]) -> Optional[datetime]:
-        created = record.get("created")
-        if isinstance(created, (float, int)):
-            return datetime.fromtimestamp(float(created))
-
-        date_str = record.get("date")
-        time_str = record.get("time")
-        if not date_str or not time_str:
-            return None
-        try:
-            return cls._parse_dt(str(date_str), str(time_str))
-        except ValueError:
-            return None
-
-    @classmethod
-    def _extract_milestone_times(cls, path: str, run_id: Optional[int] = None) -> Dict[str, datetime]:
-        """
-        Extract first occurrence timestamp for each milestone key from JSON log lines.
-        """
-        milestone_patterns: Dict[str, Tuple[str, ...]] = {
-            "START_LOAD": ("starting model weight loading", "initiating the model weight loading"),
-            "LOAD_DONE": (
-                "applied pytorch transforms to model",
-                "pytorch transforms applied to model",
-            ),
-            "ONNX_SAVED": (
-                "model export is finished and saved",
-                "transformed onnx saved",
-                "onnx export completed",
-                "onnx export skipped",
-            ),
-            "COMPILE_DONE": (
-                "model compilation is finished and saved",
-                "compilation completed",
-                "compilation skipped",
-            ),
-            "TEXT_DONE": (
-                "text generation finished",
-                "generation completed",
-            ),
-        }
-
-        times: Dict[str, datetime] = {}
-        structured_milestones = {
-            "load_start": "START_LOAD",
-            "load_complete": "LOAD_DONE",
-            "export_complete": "ONNX_SAVED",
-            "export_skipped": "ONNX_SAVED",
-            "compile_complete": "COMPILE_DONE",
-            "compile_skipped": "COMPILE_DONE",
-            "generation_complete": "TEXT_DONE",
-        }
-        for record in cls._records_for_run(path, run_id):
-            message = str(record.get("message", "")).lower()
-            timestamp = cls._get_record_timestamp(record)
-            if not timestamp:
-                continue
-
-            if record.get("event") == "api_call" and record.get("api") == "generate":
-                times.setdefault("GENERATE_START", timestamp)
-
-            milestone = structured_milestones.get(record.get("milestone"))
-            if milestone:
-                if milestone == "START_LOAD":
-                    times.setdefault(milestone, timestamp)
-                else:
-                    times[milestone] = timestamp
-                continue
-
-            if record.get("event") == "api_failure" and record.get("api") == "compile":
-                times["COMPILE_FAIL"] = timestamp
-                continue
-
-            for key, patterns in milestone_patterns.items():
-                if run_id is not None and record.get("run_id") is None and key != "LOAD_DONE":
-                    continue
-                if key in times and key not in {"ONNX_SAVED", "COMPILE_DONE", "TEXT_DONE"}:
-                    continue
-                if any(pattern in message for pattern in patterns):
-                    times[key] = timestamp
-        return times
 
     @classmethod
     def print_table(cls) -> bool:
@@ -719,7 +659,11 @@ class QEFFLogger:
         table = cls._build_timing_table()
         if table is None:
             return False
-        cls._append_final_table(table)
-        print("\n")
-        print(table)
+        state = cls._get_run_state()
+        if state is not None:
+            try:
+                cls._append_final_table(state, table)
+            except Exception:
+                logging.getLogger(__name__).debug("Unable to write QEfficient timing summary", exc_info=True)
+        print("\n" + table)
         return True
