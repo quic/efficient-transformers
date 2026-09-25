@@ -56,6 +56,15 @@ _FP16_CLAMP_MAX = 65504.0
 _DISABLE_EXPORT_FP16_CLAMP = False
 
 
+def _resolve_cache_dtype(config) -> torch.dtype:
+    dtype = getattr(config, "torch_dtype", None)
+    if dtype is None:
+        dtype = getattr(config, "dtype", None)
+    if isinstance(dtype, str):
+        dtype = getattr(torch, dtype, None)
+    return dtype if isinstance(dtype, torch.dtype) else torch.float32
+
+
 def _is_onnx_export() -> bool:
     return torch.onnx.is_in_onnx_export()
 
@@ -242,19 +251,12 @@ def eager_attention_forward_text(
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
-    def __qeff_init__(self):
-        if (
-            hasattr(self, "norm")
-            and not getattr(self.norm, "with_scale", True)
-            and not hasattr(self.norm, "_qeff_unit_weight")
-        ):
-            self.norm.register_buffer("_qeff_unit_weight", torch.ones(self.hidden_size))
-
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states * self.scale * self.scalar_root_size
-
-        router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1)
+        router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1, dtype=torch.float).to(
+            hidden_states.dtype
+        )
         top_k_weights, top_k_index = torch.topk(
             router_probabilities,
             k=self.config.top_k_experts,
@@ -519,8 +521,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             key_states = self.k_norm(key_states)
             key_states = qeff_apply_rotary_pos_emb(key_states, cos, sin)
             key_states = key_states.transpose(1, 2)
-
-            value_states = self.v_norm(value_states)
+            value_states = self.v_norm(value_states).to(key_states.dtype)
             value_states = value_states.transpose(1, 2)
             token_key_states, token_value_states = key_states, value_states
 
@@ -717,8 +718,8 @@ class QEffGemma4TextModel(Gemma4TextModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if input_ids is not None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
+            inputs_embeds = self.embed_tokens(input_ids.to(self.config.dtype))
+        inputs_embeds = inputs_embeds.to(self.config.dtype)
         if self.hidden_size_per_layer_input:
             if per_layer_inputs is None:
                 per_layer_inputs = self.get_per_layer_inputs(input_ids, inputs_embeds)
@@ -1070,6 +1071,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         return {QEffGemma4TextDecoderLayer}
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        cache_dtype = _resolve_cache_dtype(config)
         past_key_values = []
         for layer_type in config.layer_types:
             if layer_type == "sliding_attention":
@@ -1088,8 +1090,8 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
                 (
-                    torch.zeros(cache_shape, dtype=torch.float32),
-                    torch.zeros(cache_shape, dtype=torch.float32),
+                    torch.zeros(cache_shape, dtype=cache_dtype),
+                    torch.zeros(cache_shape, dtype=cache_dtype),
                 )
             )
         return past_key_values
@@ -1468,6 +1470,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return lang_output_names
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        cache_dtype = _resolve_cache_dtype(config)
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
             if layer_type == "sliding_attention":
@@ -1486,8 +1489,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
                 (
-                    torch.zeros(cache_shape, dtype=torch.float32),
-                    torch.zeros(cache_shape, dtype=torch.float32),
+                    torch.zeros(cache_shape, dtype=cache_dtype),
+                    torch.zeros(cache_shape, dtype=cache_dtype),
                 )
             )
         return past_key_values
