@@ -551,6 +551,11 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "dynamo": all_args.get("dynamo", False),
         }
     )
+    if all_args.get("dynamo", False):
+        # Dynamo node names are compiler/MDP-facing artifacts. Bump this when
+        # their post-export normalization changes so cached generic-name ONNX
+        # files are not reused.
+        copy_of_hash_params["dynamo_node_name_version"] = 1
     if getattr(qeff_model, "_weight_free", False):
         copy_of_hash_params["weight_free"] = True
         copy_of_hash_params["weight_free_checkpoint_layout_version"] = CHECKPOINT_LAYOUT_VERSION
