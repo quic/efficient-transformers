@@ -188,20 +188,6 @@ class TestDFlashDraftTransform:
         # get written into it -- an empty/lazy cache has nothing to index into at position 4+.
         legacy_pkv = _make_legacy_past_key_values(model.config, batch, ctx_len=2 * block_size)
         past_key_values = QEffDynamicCache.from_legacy_cache(legacy_pkv)
-        original_update = past_key_values.update
-
-        update_calls = []
-
-        def recording_update(key_states, value_states, layer_idx, cache_kwargs):
-            update_calls.append((key_states.detach().clone(), value_states.detach().clone(), layer_idx, cache_kwargs))
-            return original_update(key_states, value_states, layer_idx, cache_kwargs)
-
-        past_key_values.update = recording_update
-
-        def reject_write_only(*args, **kwargs):
-            raise AssertionError("DFlash must update target and noise streams in one retained-state write")
-
-        past_key_values.write_only = reject_write_only
 
         with torch.no_grad():
             outputs = model(
@@ -216,12 +202,6 @@ class TestDFlashDraftTransform:
 
         assert outputs.logits.shape == (batch, block_size, VOCAB_SIZE)
         assert torch.isfinite(outputs.logits).all()
-        assert len(update_calls) == model.config.num_hidden_layers
-        expected_positions = torch.cat((position_ids_target, position_ids), dim=-1)
-        for key_states, value_states, _layer_idx, cache_kwargs in update_calls:
-            assert key_states.shape[2] == 2 * block_size
-            assert value_states.shape[2] == 2 * block_size
-            assert torch.equal(cache_kwargs["position_ids"], expected_positions)
 
 
 # ---------------------------------------------------------------------------

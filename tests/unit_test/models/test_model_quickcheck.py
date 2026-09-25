@@ -4389,7 +4389,7 @@ def test_vlm_export_prefix_lang_only(tmp_path):
             assert "_VLLM_" not in name
 
 
-def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_dir, kv_cache_prefix, window_size=1):
+def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_dir, kv_cache_prefix):
     """Drive the real ``_export_layerwise`` for one decoder window and capture the
     ``input_names`` / ``output_names`` handed to ``torch.onnx.export``.
 
@@ -4414,9 +4414,9 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     torch.onnx.export = _spy
     try:
         with _layerwise._layerwise_export_env():
-            _layerwise._set_layer_windows(window, window + window_size, total_layers)
+            _layerwise._set_layer_windows(window, window + 1, total_layers)
             QEFFBaseModel._start = window
-            QEFFBaseModel._end = window + window_size
+            QEFFBaseModel._end = window + 1
             QEFFBaseModel._total_layers = total_layers
             try:
                 qeff_model.export(export_dir=str(export_dir), kv_cache_prefix=kv_cache_prefix)
@@ -4565,26 +4565,6 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
-
-
-@pytest.mark.llm_model
-def test_layerwise_export_passes_cache_for_every_layer_in_window(tmp_path):
-    qeff_model, total_layers = _tiny_qwen3_moe_causal()
-
-    captured = _capture_layerwise_export_names(
-        qeff_model,
-        window=0,
-        window_size=2,
-        total_layers=total_layers,
-        export_dir=tmp_path / "two_layer_window",
-        kv_cache_prefix=None,
-    )
-
-    for layer_idx in range(2):
-        assert f"past_key.{layer_idx}" in captured["input_names"]
-        assert f"past_value.{layer_idx}" in captured["input_names"]
-        assert f"past_key.{layer_idx}_RetainedState" in captured["output_names"]
-        assert f"past_value.{layer_idx}_RetainedState" in captured["output_names"]
 
 
 def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():

@@ -663,7 +663,7 @@ class QEffTextGenerationBase:
         else:
             self._prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
 
-    def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None, generated_batch_id=None):
+    def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
         Args:
@@ -671,8 +671,6 @@ class QEffTextGenerationBase:
             position_ids (array): The position IDs.
             generation_len (int): The generation length.
             decode_batch_id (int, optional): The decode batch ID. If None, all values are updated. Defaults to None.
-            generated_batch_id (int, optional): The request row in ``generated_ids``. This differs from
-                ``decode_batch_id`` when a continuous-batching slot is reused. Defaults to ``decode_batch_id``.
 
         Returns:
             next_token_id (array): The next token ID.
@@ -681,10 +679,9 @@ class QEffTextGenerationBase:
 
         # Store the generated values.
         decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
-        generated_batch = generated_batch_id if generated_batch_id is not None else decode_batch
         self.decode_input_ids[decode_batch] = next_token_id
         self.decode_pos_ids[decode_batch] = position_ids
-        self.generated_ids[generated_batch, 0] = next_token_id.squeeze()
+        self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
         self.generation_len[decode_batch] = generation_len
         return next_token_id
 
@@ -884,16 +881,10 @@ class QEffTextGenerationBase:
                             decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                         )
 
-                        request_id = max(batch_id_map.values()) + 1
-                        _ = self.update_decode_input(
-                            outputs,
-                            position_ids,
-                            generation_len,
-                            decode_batch_id=decode_batch_id,
-                            generated_batch_id=request_id,
-                        )
+                        new_token_id = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
-                        batch_id_map[decode_batch_id] = request_id
+                        batch_id_map[decode_batch_id] = max(batch_id_map.values()) + 1
+                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze()
                         generated_id_current_index[decode_batch_id] = 1
 
                         self._set_output_buffers(

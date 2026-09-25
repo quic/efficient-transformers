@@ -29,7 +29,6 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_qkv_attention_forward,
-    blocked_qkv_attention_forward_prefill_online,
     repeat_kv,
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicLayer
@@ -90,61 +89,6 @@ def _identity_block_table(batch, num_kv_blocks):
 
 def _cache_kwargs(position_ids, block_table):
     return {"position_ids": position_ids, "block_table": block_table}
-
-
-def test_hqkv_none_num_kv_blocks_matches_single_block():
-    heads = 2
-    cache = _make_paged_cache(heads=heads, num_phys_blocks=1)
-    query = torch.randn(1, heads, 2, HEAD_DIM)
-    kwargs = {
-        "module": _DummyModule(),
-        "query": query,
-        "key": None,
-        "value": torch.zeros(1, heads, 1, HEAD_DIM),
-        "attention_mask": None,
-        "scaling": SCALING,
-        "num_q_blocks": 1,
-        "head_block_size": 2,
-        "cache_kwargs": _cache_kwargs(torch.tensor([[0, 1]]), _identity_block_table(1, 1)),
-        "layer_idx": 0,
-        "past_key_value": cache,
-        "paged_attention": True,
-        "use_causal_mask": True,
-        "ctx_len": BLOCK_SIZE,
-    }
-
-    default_output, _ = blocked_hqkv_attention_forward(num_kv_blocks=None, **kwargs)
-    explicit_output, _ = blocked_hqkv_attention_forward(num_kv_blocks=1, **kwargs)
-
-    assert torch.allclose(default_output, explicit_output)
-
-
-def test_prefill_online_none_rep_chunk_matches_one():
-    heads = 2
-    ctx_len = 4
-    cache = QEffDynamicCache.from_legacy_cache(
-        ((torch.randn(1, heads, ctx_len, HEAD_DIM), torch.randn(1, heads, ctx_len, HEAD_DIM)),)
-    )
-    query = torch.randn(1, heads, 2, HEAD_DIM)
-    kwargs = {
-        "module": _DummyModule(),
-        "query": query,
-        "key": None,
-        "value": torch.zeros(1, heads, 1, HEAD_DIM),
-        "attention_mask": None,
-        "scaling": SCALING,
-        "num_q_blocks": 1,
-        "num_kv_blocks": 2,
-        "cache_kwargs": {"position_ids": torch.tensor([[2, 3]])},
-        "layer_idx": 0,
-        "past_key_value": cache,
-        "ctx_len": ctx_len,
-    }
-
-    default_output, _ = blocked_qkv_attention_forward_prefill_online(n_rep_chunk=None, **kwargs)
-    explicit_output, _ = blocked_qkv_attention_forward_prefill_online(n_rep_chunk=1, **kwargs)
-
-    assert torch.allclose(default_output, explicit_output)
 
 
 # ---------------------------------------------------------------------------

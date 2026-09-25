@@ -911,12 +911,7 @@ class QEFFBaseModel(ABC):
                     raise ValueError(
                         f"Invalid past_key_values index {idx} for length {len(pkv_layers)} in layerwise export"
                     )
-                if end_idx > len(pkv_layers):
-                    raise ValueError(
-                        f"Invalid past_key_values window [{idx}, {end_idx}) for length {len(pkv_layers)} "
-                        "in layerwise export"
-                    )
-                example_inputs["past_key_values"] = list(pkv_layers[idx:end_idx])
+                example_inputs["past_key_values"] = [pkv_layers[idx]]
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
