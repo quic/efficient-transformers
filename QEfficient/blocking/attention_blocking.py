@@ -304,6 +304,12 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 }
 
 
+def _get_sliding_window_len(past_key_value: Cache, layer_idx: Optional[int] = None) -> int:
+    if hasattr(past_key_value, "sliding_window_len"):
+        return past_key_value.sliding_window_len
+    return past_key_value.get_sliding_window_len(layer_idx)
+
+
 # helper function needed both in generic blocked approach and in other modeling files for non-blocked approach
 def past_key_value_update(
     module,
@@ -315,6 +321,7 @@ def past_key_value_update(
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
     sliding_window: Optional[int] = None,
+    sliding_window_len: Optional[int] = None,
 ):
     if past_key_value is not None:
         cache_kwargs = {
@@ -325,7 +332,9 @@ def past_key_value_update(
             cache_kwargs.update(
                 {
                     "is_sliding": sliding_window is not None,
-                    "sliding_window": past_key_value.get_sliding_window_len(),
+                    "sliding_window": sliding_window_len
+                    if sliding_window_len is not None
+                    else _get_sliding_window_len(past_key_value, module.layer_idx),
                 }
             )
         if comp_ctx_lengths is not None:
@@ -394,7 +403,7 @@ def generic_blocked_attention_interface(
                 cache_kwargs.update(
                     {
                         "is_sliding": sliding_window is not None,
-                        "sliding_window": past_key_value.get_sliding_window_len(),
+                        "sliding_window": _get_sliding_window_len(past_key_value, module.layer_idx),
                     }
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)

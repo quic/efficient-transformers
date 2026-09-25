@@ -262,6 +262,14 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
+        if getattr(self, "_enable_proxy", False):
+            language_config = self.config
+            for config_name in ("text_config", "llm_config", "language_config"):
+                if nested_config := getattr(self.config, config_name, None):
+                    language_config = nested_config
+                    break
+            if (proxy_num_hidden_layers := getattr(language_config, "num_hidden_layers", None)) is not None:
+                self.hash_params["proxy_num_hidden_layers"] = proxy_num_hidden_layers
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.compile_artifacts_path: Optional[Path] = None
@@ -1265,6 +1273,7 @@ class QEFFBaseModel(ABC):
             mdp_ts_json = load_json(str(mdp_ts_json_path))
         elif mdp_num_partitions > 1:
             # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
+            compile_dir.mkdir(parents=True, exist_ok=True)
             num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             num_layers = getattr(self, "num_layers", None)
             if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
@@ -1365,6 +1374,7 @@ class QEFFBaseModel(ABC):
 
         if artifacts:
             _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
+            _copy_existing_compiler_input(command, "-mdp-load-partition-config", compile_dir)
             path_flags = {
                 "-aic-binary-dir",
                 "-custom-IO-list-file",
