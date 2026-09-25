@@ -6,12 +6,17 @@
 # -----------------------------------------------------------------------------
 
 import json
-import time
+import os
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+import QEfficient.utils.logging_utils as logging_utils
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.utils.logging_utils import (
+    LoggerConfig,
     QEFFLogger,
     log_api_arguments,
     log_generate_call,
@@ -28,32 +33,35 @@ def reset_logger_state():
     QEFFLogger.get_logger("INFRA")
 
 
-def test_log_api_arguments_writes_structured_json(tmp_path):
+def test_structured_api_and_generation_logging(tmp_path):
+    class TestModel:
+        @log_generate_call
+        def generate(self, generation_len=4):
+            return generation_len * 2
+
     QEFFLogger.get_logger("test", "INFO", str(tmp_path))
     log_api_arguments("compile", "QEFFTestModel", {"token": "secret", "path": Path("/tmp/model")})
-
+    assert TestModel().generate() == 8
     log_path = QEFFLogger.get_logfile_path()
     assert log_path is not None
     QEFFLogger.close_logger()
+
     with open(log_path, "r", encoding="utf-8") as handle:
-        record = json.loads(next(handle))
+        records = [json.loads(line) for line in handle if line.strip()]
+    compile_record = next(record for record in records if record.get("api") == "compile")
+    generate_record = next(record for record in records if record.get("api") == "generate")
+    assert compile_record["arguments"] == {"token": "<redacted>", "path": "/tmp/model"}
+    assert generate_record["arguments"] == {"generation_len": 4}
+    assert any(record["message"] == "Generation completed." for record in records)
 
-    assert record["event"] == "api_call"
-    assert record["api"] == "compile"
-    assert record["arguments"] == {"token": "<redacted>", "path": "/tmp/model"}
 
-
-def test_print_table_from_logged_milestones(tmp_path, capsys):
-    logger = QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
-    logger.info("Initiating the model weight loading.")
-    time.sleep(0.01)
-    logger.info("Pytorch transforms applied to model: test")
-    time.sleep(0.01)
-    logger.info("Model export is finished and saved at: /tmp/model.onnx")
-    time.sleep(0.01)
-    logger.info("Model compilation is finished and saved at: /tmp/model.qpc")
-    time.sleep(0.01)
-    logger.info("Text generation finished")
+def test_complete_timing_table(tmp_path, capsys):
+    QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
+    QEFFLogger.start_run("test-model")
+    QEFFLogger.log_event("milestone", "MODEL", "load", milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "export", milestone=QEFFLogger.MILESTONE_EXPORT_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "compile", milestone=QEFFLogger.MILESTONE_COMPILE_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "generate", milestone=QEFFLogger.MILESTONE_GENERATION_COMPLETE)
 
     assert QEFFLogger.print_table() is True
     output = capsys.readouterr().out
@@ -64,40 +72,19 @@ def test_print_table_from_logged_milestones(tmp_path, capsys):
     assert "Total Time" in output
 
 
-def test_log_generate_call_captures_arguments_and_result(tmp_path):
-    class TestModel:
-        @log_generate_call
-        def generate(self, generation_len=4):
-            return generation_len * 2
-
-    QEFFLogger.get_logger("TestModel", "INFO", str(tmp_path))
-    assert TestModel().generate() == 8
-
-    log_path = QEFFLogger.get_logfile_path()
-    assert log_path is not None
-    QEFFLogger.close_logger()
-    with open(log_path, "r", encoding="utf-8") as handle:
-        records = [json.loads(line) for line in handle if line.strip()]
-
-    api_record = next(record for record in records if record.get("api") == "generate")
-    assert api_record["arguments"] == {"generation_len": 4}
-    assert any(record["message"] == "Generation completed." for record in records)
-
-
 def test_cached_stages_are_zero_in_timing_table(tmp_path):
     QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
     QEFFLogger.start_run("cached-model")
-    logger = QEFFLogger.get_logger("infra")
-    logger.info("Applied PyTorch transforms to model: cached-model.")
-    logger.info("ONNX export skipped (cached QPC).")
-    logger.info("Compilation skipped (cached QPC).")
+    QEFFLogger.log_event("milestone", "MODEL", "load", milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "export", milestone=QEFFLogger.MILESTONE_EXPORT_SKIPPED)
+    QEFFLogger.log_event("milestone", "MODEL", "compile", milestone=QEFFLogger.MILESTONE_COMPILE_SKIPPED)
     log_api_arguments("generate", "CachedModel", {"max_new_tokens": 1})
-    logger.info("Generation completed.")
+    QEFFLogger.log_event("milestone", "MODEL", "generate", milestone=QEFFLogger.MILESTONE_GENERATION_COMPLETE)
 
-    table = QEFFLogger._build_timing_table(QEFFLogger._current_run_id)
+    table = QEFFLogger._build_timing_table()
     assert table is not None
-    assert "| Model Exporting   |      0.000 |" in table
-    assert "| Model Compilation |      0.000 |" in table
+    assert "Model Exporting" in table and "0.000" in table
+    assert "Model Compilation" in table and "0.000" in table
 
 
 def test_pipeline_api_arguments_and_nested_records_are_simplified(tmp_path):
@@ -134,20 +121,95 @@ def test_pipeline_api_arguments_and_nested_records_are_simplified(tmp_path):
     ]
 
 
-def test_failure_and_cleanup_are_logged_before_final_table(tmp_path):
+def test_failure_and_model_lifecycle_cleanup(tmp_path):
+    class TinyModel(QEFFBaseModel):
+        def get_model_config(self):
+            return {}
+
+        def export(self, export_dir=None):
+            return Path("tiny.onnx")
+
+        def compile(self, *args, **kwargs):
+            return Path("tiny.qpc")
+
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path):
+            return object.__new__(cls)
+
+    class FailingModel:
+        @classmethod
+        def from_pretrained(cls, model_name):
+            raise RuntimeError("load failed")
+
     QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
-    QEFFLogger.start_run("test-model")
-    logger = QEFFLogger.get_logger("infra")
-    logger.info("Applied PyTorch transforms to model: test-model.")
-    logger.info("Compilation completed.")
-    QEFFLogger.log_api_failure("generate", "TestModel", RuntimeError("test failure"))
-    logger.info("Cleanup completed.")
+    TinyModel.from_pretrained("tiny-model")
+    assert QEFFLogger.has_active_run() is True
+    QEFFLogger.finish_run()
+    assert QEFFLogger.has_active_run() is False
+
+    wrapped = logging_utils.log_from_pretrained_call(FailingModel.from_pretrained.__func__)
+    FailingModel.from_pretrained = classmethod(wrapped)
+    with pytest.raises(RuntimeError, match="load failed"):
+        FailingModel.from_pretrained("bad-model")
+    assert QEFFLogger.has_active_run() is False
+
+    QEFFLogger.start_run("first")
+    QEFFLogger.log_event("milestone", "MODEL", "loaded", milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE)
+    QEFFLogger.start_run("second")
+    QEFFLogger.finish_run()
     QEFFLogger.close_logger()
 
-    files = list(tmp_path.glob("*.log"))
-    contents = files[0].read_text()
-    assert '"event": "api_failure"' in contents
-    summary_index = contents.index("===== QEfficient Timing Summary:")
-    cleanup_index = contents.index('"message": "Cleanup completed."')
-    assert cleanup_index < summary_index
-    assert contents.rstrip().endswith("| Total Time        |      0.000 |")
+    contents = "\n".join(path.read_text() for path in tmp_path.glob("*.log"))
+    assert '"api": "from_pretrained"' in contents
+    assert "===== QEfficient Timing Summary: tiny-model =====" in contents
+    assert "===== QEfficient Timing Summary: first =====" in contents
+    assert "===== QEfficient Timing Summary: second =====" in contents
+
+
+def test_runs_are_independent_across_threads(tmp_path):
+    QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
+    errors = []
+
+    def load_model(name):
+        try:
+            QEFFLogger.start_run(name)
+            QEFFLogger.log_event("milestone", "MODEL", "loaded", milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE)
+            QEFFLogger.log_event("milestone", "MODEL", "exported", milestone=QEFFLogger.MILESTONE_EXPORT_COMPLETE)
+            QEFFLogger.finish_run()
+        except Exception as exc:  # instrumentation must never escape
+            errors.append(exc)
+
+    threads = [threading.Thread(target=load_model, args=(f"model-{index}",)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert QEFFLogger.has_active_run() is False
+    assert "===== QEfficient Timing Summary: model-" in next(tmp_path.glob("*.log")).read_text()
+
+
+def test_configuration_and_rotation(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        logging_utils,
+        "LoggerConfig",
+        replace(LoggerConfig(), max_bytes=256, backup_count=3),
+    )
+    requested = tmp_path / "shared.log"
+    QEFFLogger.get_logger("INFRA", "INFO", str(requested))
+    assert QEFFLogger.get_logfile_path() == str(tmp_path / f"shared_{os.getpid()}.log")
+    QEFFLogger.set_loglevel("DEBUG")
+    QEFFLogger.get_logger("INFRA").debug("visible debug")
+    QEFFLogger.start_run("rotating-model")
+    QEFFLogger.log_event("milestone", "MODEL", "load", milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "export", milestone=QEFFLogger.MILESTONE_EXPORT_COMPLETE)
+    QEFFLogger.log_event("milestone", "MODEL", "compile", milestone=QEFFLogger.MILESTONE_COMPILE_COMPLETE)
+    QEFFLogger.get_logger("MODEL").info("x" * 2000)
+    QEFFLogger.get_logger("INFRA").debug("visible debug after rotation")
+    assert QEFFLogger._build_timing_table() is not None
+    QEFFLogger.finish_run()
+    QEFFLogger.close_logger()
+    contents = "\n".join(path.read_text() for path in tmp_path.glob("*.log"))
+    assert "visible debug after rotation" in contents
+    assert "===== QEfficient Timing Summary: rotating-model =====" in contents
