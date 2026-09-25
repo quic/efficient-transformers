@@ -1,0 +1,7 @@
+enabled,model,server_type,client_type,host,port,device_group,max_num_seqs,CL,long_prefill_token_threshold,quantization,seed,trust_remote_code,additional_config,backend,endpoint,dataset_name,dataset_path,hf_subset,hf_split,hf_output_len,num_prompts,server_extra_args,client_extra_args
+true,openai/whisper-tiny,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,
+true,openai/whisper-base,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,
+true,openai/whisper-small,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,
+true,openai/whisper-medium,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,
+true,openai/whisper-large,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,
+true,openai/whisper-large-v3-turbo,api_server,vllm_bench,127.0.0.1,8080,,1,448,1,mxfp6,,,"{""device_group"":[0]}",openai-audio,/v1/audio/transcriptions,hf,openslr/librispeech_asr,clean,train.100,200,1,,

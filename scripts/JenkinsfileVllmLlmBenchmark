@@ -1,0 +1,767 @@
+def configCsv(String configName) {
+    return "tests/nightly_pipeline/vllm_llm_benchmark/configs/llm_${configName}_configs.csv"
+}
+
+def runLlmConfig(String configName, String rowSpec, String deviceGroup = '') {
+    def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
+    def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
+    def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
+    def outputCsv = "${env.VLLM_LLM_RESULTS_DIR}/llm_${configName}_results.csv"
+
+    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+        withEnv([
+            "CONFIG_NAME=${configName}",
+            "INPUT_CSV=${configCsv(configName)}",
+            "OUTPUT_CSV=${outputCsv}",
+            "ROWS_TO_RUN=${rowSpec ?: 'ALL'}",
+            "DRY_RUN_ARG=${dryRunArg}",
+            "FAIL_FAST_ARG=${failFastArg}",
+            "LATEST_MODELS_ONLY_ARG=${latestModelsOnlyArg}",
+            "DEVICE_GROUP_OVERRIDE=${deviceGroup ?: ''}",
+        ]) {
+            // BENCHMARK_SCRIPT/VENV_DIR/etc are already set inside the container via
+            // `docker run -e` (Start Container stage); only the per-invocation values are
+            // passed explicitly here. The heredoc uses a quoted delimiter so none of the
+            // ${...} references below are expanded by the host shell - they are expanded
+            // by bash running inside the container, against the container's own env.
+            sh '''#!/bin/bash
+                set -euo pipefail
+                sudo docker exec -i \
+                    -e CONFIG_NAME="${CONFIG_NAME:-}" \
+                    -e INPUT_CSV="${INPUT_CSV:-}" \
+                    -e OUTPUT_CSV="${OUTPUT_CSV:-}" \
+                    -e ROWS_TO_RUN="${ROWS_TO_RUN:-ALL}" \
+                    -e DRY_RUN_ARG="${DRY_RUN_ARG:-}" \
+                    -e FAIL_FAST_ARG="${FAIL_FAST_ARG:-}" \
+                    -e LATEST_MODELS_ONLY_ARG="${LATEST_MODELS_ONLY_ARG:-true}" \
+                    -e DEVICE_GROUP_OVERRIDE="${DEVICE_GROUP_OVERRIDE:-}" \
+                    ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+cd /efficient-transformers
+. "${VENV_DIR}/bin/activate"
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM=false
+
+python "${BENCHMARK_SCRIPT}" \
+    --config-name "${CONFIG_NAME}" \
+    --input-csv "${INPUT_CSV}" \
+    --output-csv "${OUTPUT_CSV}" \
+    --rows "${ROWS_TO_RUN}" \
+    --latest-models-only "${LATEST_MODELS_ONLY_ARG:-true}" \
+    --results-dir "${VLLM_LLM_RESULTS_DIR}" \
+    --base-dir "${BENCH_ROOT}" \
+    --python-bin python \
+    --qserve-benchmark-script "${QSERVE_BENCHMARK_SCRIPT:-}" \
+    --vllm-qaic-dir "${VLLM_QAIC_DIR}" \
+    --server-ready-timeout-s "$((SERVER_READY_TIMEOUT_MINUTES * 60))" \
+    --device-group-override "${DEVICE_GROUP_OVERRIDE:-}" \
+    ${DRY_RUN_ARG:-} \
+    ${FAIL_FAST_ARG:-}
+SCRIPT
+            '''
+        }
+    }
+}
+
+def runBenchConfig(String scriptEnvVar, String csvBaseName, String rowSpec, String deviceGroup = '') {
+    def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
+    def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
+    def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
+    def inputCsv = "tests/nightly_pipeline/vllm_llm_benchmark/configs/${csvBaseName}_configs.csv"
+    def outputCsv = "${env.VLLM_LLM_RESULTS_DIR}/${csvBaseName}_results.csv"
+
+    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+        withEnv([
+            "CONFIG_NAME=${csvBaseName}",
+            "INPUT_CSV=${inputCsv}",
+            "OUTPUT_CSV=${outputCsv}",
+            "ROWS_TO_RUN=${rowSpec ?: 'ALL'}",
+            "DRY_RUN_ARG=${dryRunArg}",
+            "FAIL_FAST_ARG=${failFastArg}",
+            "LATEST_MODELS_ONLY_ARG=${latestModelsOnlyArg}",
+            "SCRIPT_ENV_VAR=${scriptEnvVar}",
+            "DEVICE_GROUP_OVERRIDE=${deviceGroup ?: ''}",
+        ]) {
+            // BENCH_SCRIPT is resolved inside the container via bash indirect
+            // expansion ("${!SCRIPT_ENV_VAR}") so this single helper can drive
+            // either EMBEDDING_BENCHMARK_SCRIPT or AUDIO_BENCHMARK_SCRIPT
+            // without a third near-duplicate docker exec heredoc.
+            sh '''#!/bin/bash
+                set -euo pipefail
+                sudo docker exec -i \
+                    -e CONFIG_NAME="${CONFIG_NAME:-}" \
+                    -e INPUT_CSV="${INPUT_CSV:-}" \
+                    -e OUTPUT_CSV="${OUTPUT_CSV:-}" \
+                    -e ROWS_TO_RUN="${ROWS_TO_RUN:-ALL}" \
+                    -e DRY_RUN_ARG="${DRY_RUN_ARG:-}" \
+                    -e FAIL_FAST_ARG="${FAIL_FAST_ARG:-}" \
+                    -e LATEST_MODELS_ONLY_ARG="${LATEST_MODELS_ONLY_ARG:-true}" \
+                    -e SCRIPT_ENV_VAR="${SCRIPT_ENV_VAR:-}" \
+                    -e DEVICE_GROUP_OVERRIDE="${DEVICE_GROUP_OVERRIDE:-}" \
+                    ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+cd /efficient-transformers
+. "${VENV_DIR}/bin/activate"
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM=false
+BENCH_SCRIPT="${!SCRIPT_ENV_VAR}"
+
+python "${BENCH_SCRIPT}" \
+    --config-name "${CONFIG_NAME}" \
+    --input-csv "${INPUT_CSV}" \
+    --output-csv "${OUTPUT_CSV}" \
+    --rows "${ROWS_TO_RUN}" \
+    --latest-models-only "${LATEST_MODELS_ONLY_ARG:-true}" \
+    --results-dir "${VLLM_LLM_RESULTS_DIR}" \
+    --base-dir "${BENCH_ROOT}" \
+    --python-bin python \
+    --qserve-benchmark-script "${QSERVE_BENCHMARK_SCRIPT:-}" \
+    --vllm-qaic-dir "${VLLM_QAIC_DIR}" \
+    --server-ready-timeout-s "$((SERVER_READY_TIMEOUT_MINUTES * 60))" \
+    --device-group-override "${DEVICE_GROUP_OVERRIDE:-}" \
+    ${DRY_RUN_ARG:-} \
+    ${FAIL_FAST_ARG:-}
+SCRIPT
+            '''
+        }
+    }
+}
+
+def runVlmConfig(String rowSpec, String disaggMode, String specializationMode, String blockingMode, String deviceGroupEncode = '', String deviceGroupPrefill = '', String deviceGroupDecode = '') {
+    def dryRunArg = params.DRY_RUN ? '--dry-run' : ''
+    def failFastArg = params.FAIL_FAST ? '--fail-fast' : ''
+    def latestModelsOnlyArg = params.LATEST_MODELS_ONLY ? 'true' : 'false'
+    def inputCsv = "tests/nightly_pipeline/vllm_llm_benchmark/configs/vlm_configs.csv"
+    def outputCsv = "${env.VLLM_LLM_RESULTS_DIR}/vlm_results.csv"
+
+    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+        withEnv([
+            "CONFIG_NAME=vlm",
+            "INPUT_CSV=${inputCsv}",
+            "OUTPUT_CSV=${outputCsv}",
+            "ROWS_TO_RUN=${rowSpec ?: 'ALL'}",
+            "DRY_RUN_ARG=${dryRunArg}",
+            "FAIL_FAST_ARG=${failFastArg}",
+            "LATEST_MODELS_ONLY_ARG=${latestModelsOnlyArg}",
+            "DISAGG_MODE_ARG=${disaggMode ?: 'ALL'}",
+            "SPECIALIZATION_MODE_ARG=${specializationMode ?: 'ALL'}",
+            "BLOCKING_MODE_ARG=${blockingMode ?: 'ALL'}",
+            "DEVICE_GROUP_ENCODE_OVERRIDE=${deviceGroupEncode ?: ''}",
+            "DEVICE_GROUP_PREFILL_OVERRIDE=${deviceGroupPrefill ?: ''}",
+            "DEVICE_GROUP_DECODE_OVERRIDE=${deviceGroupDecode ?: ''}",
+        ]) {
+            sh '''#!/bin/bash
+                set -euo pipefail
+                sudo docker exec -i \
+                    -e CONFIG_NAME="${CONFIG_NAME:-}" \
+                    -e INPUT_CSV="${INPUT_CSV:-}" \
+                    -e OUTPUT_CSV="${OUTPUT_CSV:-}" \
+                    -e ROWS_TO_RUN="${ROWS_TO_RUN:-ALL}" \
+                    -e DRY_RUN_ARG="${DRY_RUN_ARG:-}" \
+                    -e FAIL_FAST_ARG="${FAIL_FAST_ARG:-}" \
+                    -e LATEST_MODELS_ONLY_ARG="${LATEST_MODELS_ONLY_ARG:-true}" \
+                    -e DISAGG_MODE_ARG="${DISAGG_MODE_ARG:-ALL}" \
+                    -e SPECIALIZATION_MODE_ARG="${SPECIALIZATION_MODE_ARG:-ALL}" \
+                    -e BLOCKING_MODE_ARG="${BLOCKING_MODE_ARG:-ALL}" \
+                    -e DEVICE_GROUP_ENCODE_OVERRIDE="${DEVICE_GROUP_ENCODE_OVERRIDE:-}" \
+                    -e DEVICE_GROUP_PREFILL_OVERRIDE="${DEVICE_GROUP_PREFILL_OVERRIDE:-}" \
+                    -e DEVICE_GROUP_DECODE_OVERRIDE="${DEVICE_GROUP_DECODE_OVERRIDE:-}" \
+                    ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+cd /efficient-transformers
+. "${VENV_DIR}/bin/activate"
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM=false
+
+python "${VLM_BENCHMARK_SCRIPT}" \
+    --config-name "${CONFIG_NAME}" \
+    --input-csv "${INPUT_CSV}" \
+    --output-csv "${OUTPUT_CSV}" \
+    --rows "${ROWS_TO_RUN}" \
+    --latest-models-only "${LATEST_MODELS_ONLY_ARG:-true}" \
+    --results-dir "${VLLM_LLM_RESULTS_DIR}" \
+    --base-dir "${BENCH_ROOT}" \
+    --python-bin python \
+    --qserve-benchmark-script "${QSERVE_BENCHMARK_SCRIPT:-}" \
+    --vllm-qaic-dir "${VLLM_QAIC_DIR}" \
+    --server-ready-timeout-s "$((SERVER_READY_TIMEOUT_MINUTES * 60))" \
+    --disagg-mode "${DISAGG_MODE_ARG:-ALL}" \
+    --specialization-mode "${SPECIALIZATION_MODE_ARG:-ALL}" \
+    --blocking-mode "${BLOCKING_MODE_ARG:-ALL}" \
+    --device-group-encode-override "${DEVICE_GROUP_ENCODE_OVERRIDE:-}" \
+    --device-group-prefill-override "${DEVICE_GROUP_PREFILL_OVERRIDE:-}" \
+    --device-group-decode-override "${DEVICE_GROUP_DECODE_OVERRIDE:-}" \
+    ${DRY_RUN_ARG:-} \
+    ${FAIL_FAST_ARG:-}
+SCRIPT
+            '''
+        }
+    }
+}
+
+pipeline {
+    agent { node { label params.NODE_LABEL } }
+
+    options {
+        ansiColor('xterm')
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'NODE_LABEL', defaultValue: 'qeff_nightly_node', description: 'Jenkins agent/node label')
+        string(name: 'REF_SPEC', defaultValue: '', description: 'Branch name or PR number to build. Empty = use the branch configured in this job\'s SCM.')
+        string(name: 'PYTHON_BIN', defaultValue: 'python3.12', description: 'Python used to create the benchmark venv')
+        string(name: 'VLLM_QAIC_REPO', defaultValue: 'https://github.com/qualcomm/vllm-qaic.git', description: 'vllm-qaic git clone URL')
+        string(name: 'VLLM_QAIC_BRANCH', defaultValue: 'main', description: 'vllm-qaic branch/tag to install')
+        string(name: 'QAIC_DISAGG_REPO', defaultValue: 'ssh://review.qualcomm.com:29418/qranium/qaic-disagg', description: 'qaic-disagg Gerrit SSH clone URL (internal repo, requires GERRIT_SSH_CREDENTIALS_ID)')
+        string(name: 'QAIC_DISAGG_BRANCH', defaultValue: 'master', description: 'qaic-disagg branch/tag to install')
+        string(name: 'QSERVE_REPO', defaultValue: 'ssh://git@github.qualcomm.com/abukhoye/qserve.git', description: 'qserve git clone URL (internal repo, requires GITHUB_SSH_CREDENTIALS_ID)')
+        string(name: 'QSERVE_BRANCH', defaultValue: 'main', description: 'qserve branch/tag to install')
+        string(name: 'GERRIT_SSH_CREDENTIALS_ID', defaultValue: 'gerrit-ssh-key', description: 'Jenkins "SSH Username with private key" credential ID for Gerrit (review.qualcomm.com:29418) access to clone qaic-disagg. Required unless SKIP_INSTALL=true.')
+        string(name: 'GITHUB_SSH_CREDENTIALS_ID', defaultValue: 'github-ssh-key', description: 'Jenkins "SSH Username with private key" credential ID for GitHub Enterprise (github.qualcomm.com) access to clone qserve. Required unless SKIP_INSTALL=true.')
+        string(name: 'QEFF_BRANCH', defaultValue: 'main', description: 'efficient-transformers branch consumed by vllm-qaic scripts/install.sh aot')
+        password(name: 'HF_TOKEN', defaultValue: '', description: 'HuggingFace token for gated models. Optional - leave empty to reuse the HF_TOKEN already exported in the Jenkins agent host environment.')
+        string(name: 'HF_HOME', defaultValue: '', description: 'HuggingFace cache directory. Empty = ${HOME}/.cache/huggingface')
+        string(name: 'DEVICE_GROUP_DEFAULT', defaultValue: '', description: 'Device group for default LLM configs (e.g., "0,1,2,3"). Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_CCL', defaultValue: '', description: 'Device group for CCL LLM configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_BLOCKING', defaultValue: '', description: 'Device group for blocking LLM configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_DISAGG_PD_PREFILL', defaultValue: '', description: 'Device group for disagg PD prefill stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_DISAGG_PD_DECODE', defaultValue: '', description: 'Device group for disagg PD decode stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_EMBEDDING', defaultValue: '', description: 'Device group for embedding configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_AUDIO', defaultValue: '', description: 'Device group for audio configs. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_ENCODE', defaultValue: '', description: 'Device group for VLM encode stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_PREFILL', defaultValue: '', description: 'Device group for VLM prefill stage. Empty = use CSV values.')
+        string(name: 'DEVICE_GROUP_VLM_DECODE', defaultValue: '', description: 'Device group for VLM decode stage. Empty = use CSV values.')
+        string(name: 'QSERVE_BENCHMARK_SCRIPT', defaultValue: '', description: 'Optional benchmark_serving.py path. Empty uses auto/fallback.')
+        string(name: 'SERVER_READY_TIMEOUT_MINUTES', defaultValue: '360', description: 'Server compile/load timeout per row')
+        string(name: 'ROWS_DEFAULT', defaultValue: 'ALL', description: 'Default config data rows: ALL, 1, 1:4, or 1,3. Row 1 is gpt2 smoke.')
+        string(name: 'ROWS_CCL', defaultValue: 'ALL', description: 'CCL config data rows')
+        string(name: 'ROWS_BLOCKING', defaultValue: 'ALL', description: 'Blocking config data rows')
+        string(name: 'ROWS_DISAGG_PD', defaultValue: 'ALL', description: 'Disagg PD config data rows')
+        string(name: 'ROWS_EMBEDDING', defaultValue: 'ALL', description: 'Embedding config data rows')
+        string(name: 'ROWS_AUDIO', defaultValue: 'ALL', description: 'Audio config data rows')
+        string(name: 'ROWS_VLM', defaultValue: 'ALL', description: 'VLM config data rows')
+        choice(name: 'VLM_DISAGG_MODE', choices: ['ALL', 'ED', 'PD', 'EPD'], description: 'VLM disagg layout filter: encode-decode, prefill-decode, or encode-prefill-decode')
+        choice(name: 'VLM_SPECIALIZATION_MODE', choices: ['ALL', 'single', 'multi'], description: 'VLM specialization filter: single vs multi resolution/image-count buckets')
+        choice(name: 'VLM_BLOCKING_MODE', choices: ['ALL', 'blocking', 'non_blocking'], description: 'VLM blocking filter')
+        booleanParam(name: 'RUN_DEFAULT', defaultValue: true, description: 'Run default CB + subfunction LLM configs')
+        booleanParam(name: 'RUN_CCL', defaultValue: true, description: 'Run CCL-enabled LLM configs')
+        booleanParam(name: 'RUN_BLOCKING', defaultValue: true, description: 'Run blocking LLM configs')
+        booleanParam(name: 'RUN_DISAGG_PD', defaultValue: true, description: 'Run PD disaggregated LLM configs')
+        booleanParam(name: 'RUN_EMBEDDING', defaultValue: true, description: 'Run embedding model configs')
+        booleanParam(name: 'RUN_AUDIO', defaultValue: true, description: 'Run audio model configs')
+        booleanParam(name: 'RUN_VLM', defaultValue: true, description: 'Run VLM model configs')
+        booleanParam(name: 'SKIP_INSTALL', defaultValue: false, description: 'Reuse an already installed venv/repos in BENCH_ROOT')
+        booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Only build commands/log stubs/output CSV rows')
+        booleanParam(name: 'FAIL_FAST', defaultValue: false, description: 'Stop within a config after the first failing row')
+        booleanParam(name: 'LATEST_MODELS_ONLY', defaultValue: true, description: 'Restrict runs to the curated LATEST_MODELS list (models >70B are always skipped regardless of this flag)')
+        booleanParam(name: 'CLEAN_WORKSPACE_AFTER_RUN', defaultValue: false, description: 'Delete the Jenkins workspace after the build finishes (does not affect the persistent HF/results caches under ${HOME}/.cache)')
+        string(name: 'EMAIL_RECIPIENTS', defaultValue: 'abukhoye@qti.qualcomm.com', description: 'Email recipients for benchmark report (comma-separated). Empty = no email sent.')
+    }
+
+    environment {
+        // All paths below are inside the container (bind-mounted at /efficient-transformers
+        // by the Start Container stage), except VLLM_LLM_RESULTS_DIR/HF_HOME which live under
+        // the host's ${HOME}/.cache and are bind-mounted into the container at the same path.
+        BENCH_ROOT = "/efficient-transformers/vllm_llm_workspace"
+        VENV_DIR = "/efficient-transformers/vllm_llm_workspace/venv"
+        VLLM_QAIC_DIR = "/efficient-transformers/vllm_llm_workspace/vllm-qaic"
+        QAIC_DISAGG_DIR = "/efficient-transformers/vllm_llm_workspace/qaic-disagg"
+        QSERVE_DIR = "/efficient-transformers/vllm_llm_workspace/qserve"
+        VLLM_LLM_RESULTS_DIR = "${HOME}/.cache/vllm_llm_results/${BUILD_NUMBER}"
+        BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_llm_benchmark.py"
+        EMBEDDING_BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_embedding_benchmark.py"
+        AUDIO_BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_audio_benchmark.py"
+        VLM_BENCHMARK_SCRIPT = "/efficient-transformers/tests/nightly_pipeline/vllm_llm_benchmark/vllm_vlm_benchmark.py"
+        QEFF_HOME = "/efficient-transformers/vllm_llm_workspace/qeff_models"
+        HF_HOME = "${params.HF_HOME ?: '${HOME}/.cache/huggingface'}"
+        // Intentionally NOT named HF_TOKEN: declaring HF_TOKEN itself here would force every
+        // step's shell env to this value (even ''), shadowing any HF_TOKEN already exported in
+        // the Jenkins agent's host environment. Keeping it under a different name lets the
+        // Start Container stage fall back to the ambient host HF_TOKEN via shell `${HF_TOKEN:-}`
+        // when the param is left empty.
+        HF_TOKEN_PARAM = "${params.HF_TOKEN}"
+        HF_HUB_ENABLE_HF_TRANSFER = '1'
+        TMPDIR = "/efficient-transformers/vllm_llm_workspace/tmp"
+        PYTHON_BIN = "${params.PYTHON_BIN}"
+        VLLM_QAIC_REPO = "${params.VLLM_QAIC_REPO}"
+        VLLM_QAIC_BRANCH = "${params.VLLM_QAIC_BRANCH}"
+        QAIC_DISAGG_REPO = "${params.QAIC_DISAGG_REPO}"
+        QAIC_DISAGG_BRANCH = "${params.QAIC_DISAGG_BRANCH}"
+        QEFF_BRANCH = "${params.QEFF_BRANCH}"
+        SKIP_INSTALL = "${params.SKIP_INSTALL}"
+        SERVER_READY_TIMEOUT_MINUTES = "${params.SERVER_READY_TIMEOUT_MINUTES}"
+        QSERVE_BENCHMARK_SCRIPT = "${params.QSERVE_BENCHMARK_SCRIPT}"
+        DEVICE_GROUP_DEFAULT = "${params.DEVICE_GROUP_DEFAULT}"
+        DEVICE_GROUP_CCL = "${params.DEVICE_GROUP_CCL}"
+        DEVICE_GROUP_BLOCKING = "${params.DEVICE_GROUP_BLOCKING}"
+        DEVICE_GROUP_DISAGG_PD_PREFILL = "${params.DEVICE_GROUP_DISAGG_PD_PREFILL}"
+        DEVICE_GROUP_DISAGG_PD_DECODE = "${params.DEVICE_GROUP_DISAGG_PD_DECODE}"
+        DEVICE_GROUP_EMBEDDING = "${params.DEVICE_GROUP_EMBEDDING}"
+        DEVICE_GROUP_AUDIO = "${params.DEVICE_GROUP_AUDIO}"
+        DEVICE_GROUP_VLM_ENCODE = "${params.DEVICE_GROUP_VLM_ENCODE}"
+        DEVICE_GROUP_VLM_PREFILL = "${params.DEVICE_GROUP_VLM_PREFILL}"
+        DEVICE_GROUP_VLM_DECODE = "${params.DEVICE_GROUP_VLM_DECODE}"
+    }
+
+    stages {
+        stage('Checkout Ref') {
+            when { expression { params.REF_SPEC?.trim() } }
+            steps {
+                script {
+                    def refSpec = params.REF_SPEC.trim()
+                    def targetRef
+                    if (refSpec ==~ /[1-9][0-9]*/) {
+                        targetRef = "refs/remotes/origin/pr-${refSpec}"
+                        sh "git fetch --no-tags origin '+refs/pull/${refSpec}/head:${targetRef}'"
+                        echo "Building PR-${refSpec} at ${targetRef}"
+                    } else {
+                        if (!(refSpec ==~ /[A-Za-z0-9._\/-]+/)) {
+                            error("Unsafe REF_SPEC: ${refSpec}")
+                        }
+                        targetRef = "refs/remotes/origin/${refSpec}"
+                        sh "git fetch --no-tags origin '+refs/heads/${refSpec}:${targetRef}'"
+                        echo "Building branch '${refSpec}' at ${targetRef}"
+                    }
+                    sh "git switch --detach '${targetRef}'"
+                }
+            }
+        }
+
+        stage('Start Container') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    . ~/.bashrc
+                    sudo docker rm -f ${BUILD_TAG} >/dev/null 2>&1 || true
+                    mkdir -p "${HOME}/.cache/huggingface" "${HOME}/.cache/vllm_llm_results"
+                    # HF_TOKEN_PARAM comes from the HF_TOKEN Jenkins param (may be empty). When
+                    # empty, fall back to HF_TOKEN already exported in this agent's host shell env.
+                    RESOLVED_HF_TOKEN="${HF_TOKEN_PARAM:-${HF_TOKEN:-}}"
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                        -e HF_TOKEN="${RESOLVED_HF_TOKEN}" \
+                        -e HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER}" \
+                        -e TMPDIR="${TMPDIR}" \
+                        -e VENV_DIR="${VENV_DIR}" \
+                        -e BENCH_ROOT="${BENCH_ROOT}" \
+                        -e VLLM_QAIC_DIR="${VLLM_QAIC_DIR}" \
+                        -e QAIC_DISAGG_DIR="${QAIC_DISAGG_DIR}" \
+                        -e VLLM_LLM_RESULTS_DIR="${VLLM_LLM_RESULTS_DIR}" \
+                        -e BENCHMARK_SCRIPT="${BENCHMARK_SCRIPT}" \
+                        -e EMBEDDING_BENCHMARK_SCRIPT="${EMBEDDING_BENCHMARK_SCRIPT}" \
+                        -e AUDIO_BENCHMARK_SCRIPT="${AUDIO_BENCHMARK_SCRIPT}" \
+                        -e VLM_BENCHMARK_SCRIPT="${VLM_BENCHMARK_SCRIPT}" \
+                        -e QEFF_HOME="${QEFF_HOME}" \
+                        -e HF_HOME="${HF_HOME}" \
+                        -e PYTHON_BIN="${PYTHON_BIN}" \
+                        -e VLLM_QAIC_REPO="${VLLM_QAIC_REPO}" \
+                        -e VLLM_QAIC_BRANCH="${VLLM_QAIC_BRANCH}" \
+                        -e QAIC_DISAGG_REPO="${QAIC_DISAGG_REPO}" \
+                        -e QAIC_DISAGG_BRANCH="${QAIC_DISAGG_BRANCH}" \
+                        -e QSERVE_DIR="${QSERVE_DIR}" \
+                        -e QSERVE_REPO="${QSERVE_REPO}" \
+                        -e QSERVE_BRANCH="${QSERVE_BRANCH}" \
+                        -e QEFF_BRANCH="${QEFF_BRANCH}" \
+                        -e SKIP_INSTALL="${SKIP_INSTALL}" \
+                        -e SERVER_READY_TIMEOUT_MINUTES="${SERVER_READY_TIMEOUT_MINUTES}" \
+                        -e QSERVE_BENCHMARK_SCRIPT="${QSERVE_BENCHMARK_SCRIPT:-}" \
+                        -v ./:/efficient-transformers \
+                        -v ${HOME}/.cache:${HOME}/.cache \
+                        ${DOCKER_LATEST}:master_latest
+                '''
+            }
+        }
+
+        stage('Prepare Environment') {
+            steps {
+                script {
+                    def prepareSh = {
+                        sh '''#!/bin/bash
+                            set -euo pipefail
+                            sudo docker exec -i ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+mkdir -p "${BENCH_ROOT}" "${VLLM_LLM_RESULTS_DIR}" "${QEFF_HOME}" "${HF_HOME}" "${TMPDIR}"
+ln -sfn "$(dirname "${VLLM_LLM_RESULTS_DIR}")" "/efficient-transformers/vllm_llm_results"
+
+if [[ ! -d "${VENV_DIR}" ]]; then
+    apt update
+    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+fi
+. "${VENV_DIR}/bin/activate"
+python -m pip install --upgrade pip setuptools wheel
+
+if [[ "${SKIP_INSTALL}" == "true" ]]; then
+    echo "SKIP_INSTALL=true; reusing existing venv and repo checkouts."
+    . "${VENV_DIR}/bin/activate"
+    python "${BENCHMARK_SCRIPT}" --help >/dev/null
+    python "${EMBEDDING_BENCHMARK_SCRIPT}" --help >/dev/null
+    python "${AUDIO_BENCHMARK_SCRIPT}" --help >/dev/null
+    python "${VLM_BENCHMARK_SCRIPT}" --help >/dev/null
+    exit 0
+fi
+
+clone_or_update() {
+    local repo="$1"
+    local dest="$2"
+    local branch="$3"
+    if [[ -d "${dest}/.git" ]]; then
+        git -C "${dest}" fetch --all --tags
+        git -C "${dest}" checkout "${branch}"
+        git -C "${dest}" pull --ff-only origin "${branch}" || true
+    else
+        git clone --branch "${branch}" "${repo}" "${dest}"
+    fi
+}
+
+clone_or_update "${VLLM_QAIC_REPO}" "${VLLM_QAIC_DIR}" "${VLLM_QAIC_BRANCH}"
+
+# Clone qserve repo (optional, for embedding/audio client support)
+# Note: qserve is an internal Qualcomm repo; requires SSH credentials (GERRIT_SSH_CREDENTIALS_ID)
+# Skipping in this branch since SSH credentials are not available
+# If qserve is not cloned, embedding/audio clients will gracefully fall back to vllm_bench
+echo "Skipping qserve clone (SSH credentials not available in this branch)"
+SCRIPT
+                        '''
+                    }
+
+                    def installQaicDisagg = {
+                        sh '''#!/bin/bash
+                            set -euo pipefail
+                            sudo docker exec -i ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+
+clone_or_update() {
+    local repo="$1"
+    local dest="$2"
+    local branch="$3"
+    if [[ -d "${dest}/.git" ]]; then
+        git -C "${dest}" fetch --all --tags
+        git -C "${dest}" checkout "${branch}"
+        git -C "${dest}" pull --ff-only origin "${branch}" || true
+    else
+        git clone --branch "${branch}" "${repo}" "${dest}"
+    fi
+}
+
+clone_or_update "${VLLM_QAIC_REPO}" "${VLLM_QAIC_DIR}" "${VLLM_QAIC_BRANCH}"
+(
+    cd "${VLLM_QAIC_DIR}"
+    # Create Python 3.12 venv and run install.sh aot with it
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+    . "${VENV_DIR}/bin/activate"
+    python -m pip install --upgrade pip setuptools wheel
+    QEFF_BRANCH="${QEFF_BRANCH}" scripts/install.sh aot
+)
+
+clone_or_update "${QAIC_DISAGG_REPO}" "${QAIC_DISAGG_DIR}" "${QAIC_DISAGG_BRANCH}"
+. "${VENV_DIR}/bin/activate"
+python -m pip install -e "${QAIC_DISAGG_DIR}"
+python "${BENCHMARK_SCRIPT}" --help >/dev/null
+python "${EMBEDDING_BENCHMARK_SCRIPT}" --help >/dev/null
+python "${AUDIO_BENCHMARK_SCRIPT}" --help >/dev/null
+python "${VLM_BENCHMARK_SCRIPT}" --help >/dev/null
+
+# Clone qserve repo (optional, for embedding/audio client support)
+# Note: qserve is an internal Qualcomm repo; requires SSH credentials (GERRIT_SSH_CREDENTIALS_ID)
+# Skipping in this branch since SSH credentials are not available
+# If qserve is not cloned, embedding/audio clients will gracefully fall back to vllm_bench
+echo "Skipping qserve clone (SSH credentials not available in this branch)"
+SCRIPT
+                        '''
+                    }
+
+                    if (!params.SKIP_INSTALL && params.GERRIT_SSH_CREDENTIALS_ID?.trim()) {
+                        withCredentials([
+                            sshUserPrivateKey(
+                                credentialsId: params.GERRIT_SSH_CREDENTIALS_ID,
+                                keyFileVariable: 'GERRIT_SSH_KEY',
+                                usernameVariable: 'GERRIT_SSH_USER'
+                            ),
+                            sshUserPrivateKey(
+                                credentialsId: params.GITHUB_SSH_CREDENTIALS_ID,
+                                keyFileVariable: 'GITHUB_SSH_KEY',
+                                usernameVariable: 'GITHUB_SSH_USER'
+                            )
+                        ]) {
+                            prepareSh()
+                            sh '''#!/bin/bash
+                                set -euo pipefail
+                                sudo docker cp "${GERRIT_SSH_KEY}" ${BUILD_TAG}:/tmp/gerrit_ssh_key
+                                sudo docker cp "${GITHUB_SSH_KEY}" ${BUILD_TAG}:/tmp/github_ssh_key
+                                sudo docker exec ${BUILD_TAG} chmod 600 /tmp/gerrit_ssh_key /tmp/github_ssh_key
+                                sudo docker exec ${BUILD_TAG} chown root:root /tmp/gerrit_ssh_key /tmp/github_ssh_key
+                                sudo docker exec -e GERRIT_SSH_KEY=/tmp/gerrit_ssh_key -e GERRIT_SSH_USER="${GERRIT_SSH_USER}" -e GITHUB_SSH_KEY=/tmp/github_ssh_key -e GITHUB_SSH_USER="${GITHUB_SSH_USER}" -i ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+
+# Create SSH config for both Gerrit and GitHub Enterprise
+# Note: variables are already expanded by the outer shell via docker exec -e
+mkdir -p ~/.ssh
+cat > ~/.ssh/config <<EOF
+Host review.qualcomm.com
+    HostName review.qualcomm.com
+    Port 29418
+    User ${GERRIT_SSH_USER}
+    IdentityFile ${GERRIT_SSH_KEY}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Host github.qualcomm.com
+    HostName github.qualcomm.com
+    Port 22
+    User ${GITHUB_SSH_USER}
+    IdentityFile ${GITHUB_SSH_KEY}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+EOF
+chmod 600 ~/.ssh/config
+
+# Use SSH config for all git operations
+export GIT_SSH_COMMAND="ssh -F ~/.ssh/config"
+
+# Pre-accept host keys to avoid "Host key verification failed" errors
+ssh-keyscan -p 29418 review.qualcomm.com >> ~/.ssh/known_hosts 2>/dev/null || true
+ssh-keyscan github.qualcomm.com >> ~/.ssh/known_hosts 2>/dev/null || true
+
+clone_or_update() {
+    local repo="$1"
+    local dest="$2"
+    local branch="$3"
+    if [[ -d "${dest}/.git" ]]; then
+        git -C "${dest}" fetch --all --tags
+        git -C "${dest}" checkout "${branch}"
+        git -C "${dest}" pull --ff-only origin "${branch}" || true
+    else
+        git clone --branch "${branch}" "${repo}" "${dest}"
+    fi
+}
+
+# Clone qaic-disagg first
+clone_or_update "${QAIC_DISAGG_REPO}" "${QAIC_DISAGG_DIR}" "${QAIC_DISAGG_BRANCH}"
+
+# Clone qserve second (optional, for embedding/audio client support)
+# Note: qserve is an internal Qualcomm repo; clone may fail if SSH key not configured
+# If clone fails, embedding/audio clients will gracefully fall back to vllm_bench
+if clone_or_update "${QSERVE_REPO}" "${QSERVE_DIR}" "${QSERVE_BRANCH}" 2>&1; then
+    echo "qserve cloned successfully"
+else
+    echo "Warning: qserve clone failed (SSH key may not be configured); embedding/audio clients will fall back to vllm_bench"
+fi
+
+# Clone vllm-qaic third
+clone_or_update "${VLLM_QAIC_REPO}" "${VLLM_QAIC_DIR}" "${VLLM_QAIC_BRANCH}"
+(
+    cd "${VLLM_QAIC_DIR}"
+    # Create Python 3.12 venv and run install.sh aot with it
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+    . "${VENV_DIR}/bin/activate"
+    python -m pip install --upgrade pip setuptools wheel
+    QEFF_BRANCH="${QEFF_BRANCH}" scripts/install.sh aot
+)
+
+. "${VENV_DIR}/bin/activate"
+python -m pip install -e "${QAIC_DISAGG_DIR}"
+python "${BENCHMARK_SCRIPT}" --help >/dev/null
+python "${EMBEDDING_BENCHMARK_SCRIPT}" --help >/dev/null
+python "${AUDIO_BENCHMARK_SCRIPT}" --help >/dev/null
+python "${VLM_BENCHMARK_SCRIPT}" --help >/dev/null
+
+# Detect qserve presence and set QSERVE_BENCHMARK_SCRIPT if found
+if [[ -f "${QSERVE_DIR}/qserve/benchmarks/benchmark_serving.py" ]]; then
+    export QSERVE_BENCHMARK_SCRIPT="${QSERVE_DIR}/qserve/benchmarks/benchmark_serving.py"
+    echo "qserve detected at: ${QSERVE_BENCHMARK_SCRIPT}"
+else
+    echo "qserve not found; embedding/audio clients will fall back to vllm_bench"
+fi
+rm -f /tmp/gerrit_ssh_key /tmp/github_ssh_key ~/.ssh/config
+SCRIPT
+                            '''
+                            sh 'sudo docker exec ${BUILD_TAG} rm -f /tmp/gerrit_ssh_key /tmp/github_ssh_key ~/.ssh/config || true'
+                        }
+                    } else {
+                        prepareSh()
+                        if (!params.SKIP_INSTALL) {
+                            installQaicDisagg()
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Run Default LLM') {
+            when { expression { params.RUN_DEFAULT } }
+            steps {
+                script {
+                    runLlmConfig('default', params.ROWS_DEFAULT, params.DEVICE_GROUP_DEFAULT)
+                }
+            }
+        }
+
+        stage('Run CCL LLM') {
+            when { expression { params.RUN_CCL } }
+            steps {
+                script {
+                    runLlmConfig('ccl', params.ROWS_CCL, params.DEVICE_GROUP_CCL)
+                }
+            }
+        }
+
+        stage('Run Blocking LLM') {
+            when { expression { params.RUN_BLOCKING } }
+            steps {
+                script {
+                    runLlmConfig('blocking', params.ROWS_BLOCKING, params.DEVICE_GROUP_BLOCKING)
+                }
+            }
+        }
+
+        stage('Run Disagg PD LLM') {
+            when { expression { params.RUN_DISAGG_PD } }
+            steps {
+                script {
+                    runLlmConfig('disagg_pd', params.ROWS_DISAGG_PD, params.DEVICE_GROUP_DISAGG_PD_PREFILL)
+                }
+            }
+        }
+
+        stage('Run Embedding') {
+            when { expression { params.RUN_EMBEDDING } }
+            steps {
+                script {
+                    runBenchConfig('EMBEDDING_BENCHMARK_SCRIPT', 'embedding', params.ROWS_EMBEDDING, params.DEVICE_GROUP_EMBEDDING)
+                }
+            }
+        }
+
+        stage('Run Audio') {
+            when { expression { params.RUN_AUDIO } }
+            steps {
+                script {
+                    runBenchConfig('AUDIO_BENCHMARK_SCRIPT', 'audio', params.ROWS_AUDIO, params.DEVICE_GROUP_AUDIO)
+                }
+            }
+        }
+
+        stage('Run VLM') {
+            when { expression { params.RUN_VLM } }
+            steps {
+                script {
+                    runVlmConfig(params.ROWS_VLM, params.VLM_DISAGG_MODE, params.VLM_SPECIALIZATION_MODE, params.VLM_BLOCKING_MODE, params.DEVICE_GROUP_VLM_ENCODE, params.DEVICE_GROUP_VLM_PREFILL, params.DEVICE_GROUP_VLM_DECODE)
+                }
+            }
+        }
+
+        stage('Generate Report') {
+            steps {
+                script {
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        sudo docker exec -i \
+                            -e BUILD_URL="${BUILD_URL}" \
+                            ${BUILD_TAG} bash -s <<'SCRIPT'
+set -euo pipefail
+cd /efficient-transformers
+. "${VENV_DIR}/bin/activate"
+export PYTHONUNBUFFERED=1
+
+# Generate consolidated published CSV
+python tests/nightly_pipeline/vllm_llm_benchmark/merge_published_results.py \
+    --results-dir "${VLLM_LLM_RESULTS_DIR}" \
+    --output "${VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv"
+
+# Generate HTML report with build URL
+python tests/nightly_pipeline/vllm_llm_benchmark/generate_html_report.py \
+    --csv "${VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv" \
+    --output "${VLLM_LLM_RESULTS_DIR}/benchmark_report.html" \
+    --build-url "${BUILD_URL}"
+
+echo "Report generation completed successfully"
+SCRIPT
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                try {
+                    sh '''
+                        sudo docker inspect --format 'status={{.State.Status}} oom_killed={{.State.OOMKilled}} exit_code={{.State.ExitCode}} error={{json .State.Error}} memory_limit={{.HostConfig.Memory}}' ${BUILD_TAG} || true
+                        sudo docker stats --no-stream --format 'container={{.Name}} memory={{.MemUsage}} memory_percent={{.MemPerc}}' ${BUILD_TAG} || true
+                        sudo journalctl -k --since '-20 minutes' --no-pager 2>/dev/null | grep -Ei 'oom|out of memory|killed process|memory cgroup' | tail -100 || true
+                    '''
+                } catch (error) {
+                    echo "Failed to collect container diagnostics: ${error}"
+                }
+                try {
+                    sh 'sudo docker rm -f ${BUILD_TAG}'
+                } catch (error) {
+                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+                try {
+                    // The container runs as root (apt install requires it), so files it wrote
+                    // into the bind-mounted workspace are root-owned on the host; fix that up
+                    // before Jenkins (running as a non-root agent user) touches the workspace.
+                    sh 'sudo chown -R $(id -un) .'
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
+                }
+            }
+            archiveArtifacts(
+                artifacts: "vllm_llm_results/${env.BUILD_NUMBER}/*.csv,vllm_llm_results/${env.BUILD_NUMBER}/*.html",
+                allowEmptyArchive: true
+            )
+            script {
+                if (params.EMAIL_RECIPIENTS?.trim()) {
+                    def buildStatus = currentBuild.result ?: 'SUCCESS'
+                    def reportPath = "${env.VLLM_LLM_RESULTS_DIR}/benchmark_report.html"
+                    def csvPath = "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv"
+
+                    if (fileExists(reportPath)) {
+                        // The HTML report was generated regardless of overall build
+                        // status, so always email the rendered report rather than
+                        // gating on pass/fail.
+                        def htmlContent = readFile(file: reportPath).replaceAll('\\$', '\\\\$')
+                        emailext(
+                            subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER} [${buildStatus}]",
+                            body: htmlContent,
+                            to: params.EMAIL_RECIPIENTS,
+                            attachmentsPattern: fileExists(csvPath) ? "${env.VLLM_LLM_RESULTS_DIR}/consolidated_published_results.csv" : '',
+                            mimeType: 'text/html'
+                        )
+                        echo "Report email (status=${buildStatus}) sent to: ${params.EMAIL_RECIPIENTS}"
+                    } else {
+                        emailext(
+                            subject: "vLLM QAIC Benchmark Report - Build #${env.BUILD_NUMBER} [${buildStatus}] - NO REPORT",
+                            body: """
+                                <html>
+                                    <body>
+                                        <p>vLLM QAIC Benchmark Report for Build #${env.BUILD_NUMBER}</p>
+                                        <p>Status: <b>${buildStatus}</b></p>
+                                        <p>The HTML report could not be generated for this build.</p>
+                                        <p>
+                                            <a href="${env.BUILD_URL}">View Build Details</a>
+                                        </p>
+                                        <p>Please check the build logs for more information.</p>
+                                    </body>
+                                </html>
+                            """,
+                            to: params.EMAIL_RECIPIENTS,
+                            mimeType: 'text/html'
+                        )
+                        echo "No HTML report found; fallback notification email sent to: ${params.EMAIL_RECIPIENTS}"
+                    }
+                }
+            }
+            script {
+                if (params.CLEAN_WORKSPACE_AFTER_RUN) {
+                    echo 'CLEAN_WORKSPACE_AFTER_RUN=true; deleting workspace.'
+                    deleteDir()
+                }
+            }
+        }
+    }
+}
