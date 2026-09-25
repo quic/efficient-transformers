@@ -851,11 +851,13 @@ class TestMdpCompileIntegration:
             subprocess.run(["bash", "-n", replay_script], check=True)
             assert (compile_dir / "specializations.json").is_file()
             assert (compile_dir / "custom_io.yaml").is_file()
+            assert (compile_dir / onnx_path.name).read_bytes() == onnx_path.read_bytes()
             assert (compile_dir / "hashed_compile_params.json").is_file()
             assert (compile_dir / npi_path.name).read_text() == npi_path.read_text()
             replay_command = replay_script.read_text()
             assert 'cd -- "$(dirname -- "$0")"' in replay_command
             assert "-aic-binary-dir=qpc" in replay_command
+            assert f"-m={onnx_path.name}" in replay_command
             assert f"-node-precision-info={npi_path.name}" in replay_command
             assert "-artifacts" not in replay_command
             assert str(tmp_path) not in replay_command
@@ -866,6 +868,55 @@ class TestMdpCompileIntegration:
             shutil.rmtree(compile_root, ignore_errors=True)
             onnx_path.unlink(missing_ok=True)
             npi_path.unlink(missing_ok=True)
+
+    def test_compile_artifacts_copies_weight_free_export_inputs(self, tmp_path):
+        onnx_path = tmp_path / "model.onnx"
+        checkpoint_root = tmp_path / "checkpoint_root"
+        checkpoint_path = checkpoint_root / "prepared" / "model.safetensors"
+        compile_root = tmp_path / "compile"
+        compile_dir = None
+
+        try:
+            _build_synthetic_gpt2_onnx(num_layers=2, out_path=onnx_path)
+            checkpoint_path.parent.mkdir(parents=True)
+            checkpoint_path.write_bytes(b"FAKE_SAFE_TENSORS")
+            weight_spec_path = tmp_path / "weight_spec.json"
+            weight_spec_path.write_text(
+                json.dumps(
+                    {
+                        "files": [{"format": "safetensors", "path": "prepared/model.safetensors"}],
+                        "inputs": [{"name": "transformer.wte.weight", "location": {"file": 0, "key": "wte.weight"}}],
+                        "model_id": str(checkpoint_root / "prepared"),
+                        "model_name": "GPT2LMHeadModel",
+                        "version": 5,
+                    }
+                )
+            )
+            model_hf, _ = make_tiny_gpt2()
+            qeff = QEFFAutoModelForCausalLM(model_hf, weight_free=True)
+            qeff.weight_spec_path = str(weight_spec_path)
+
+            with patch("QEfficient.base.modeling_qeff.subprocess.run") as compiler_run:
+                compile_dir = qeff._compile(
+                    onnx_path=str(onnx_path),
+                    compile_dir=str(compile_root),
+                    specializations=[{"batch_size": 1, "seq_len": 8, "ctx_len": 32}],
+                    custom_io={"input_ids": "int64"},
+                    artifacts=True,
+                )
+
+            compiler_run.assert_not_called()
+            assert (compile_dir / onnx_path.name).read_bytes() == onnx_path.read_bytes()
+            assert (compile_dir / weight_spec_path.name).read_text() == weight_spec_path.read_text()
+            assert (compile_dir / "prepared" / "model.safetensors").read_bytes() == checkpoint_path.read_bytes()
+            replay_command = (compile_dir / "qaic-compile.sh").read_text()
+            assert f"-m={onnx_path.name}" in replay_command
+            assert str(tmp_path) not in replay_command
+        finally:
+            if compile_dir is not None:
+                shutil.rmtree(compile_dir, ignore_errors=True)
+            shutil.rmtree(compile_root, ignore_errors=True)
+            onnx_path.unlink(missing_ok=True)
 
     def test_user_mdp_compiler_dump_path_is_deprecated(self, compile_workspace):
         """User-provided compiler dumps are deprecated and ignored in favor of auto-generation."""

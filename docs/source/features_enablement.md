@@ -145,4 +145,22 @@ io_dir = model.generate(
 
 The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` and node precision info (NPI) files when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
 
+For weight-free CausalLM export, instantiate the model with `weight_free=True` and pass `artifacts=True` to `compile()`. The returned compile directory is self-contained for compiler replay: it includes the ONNX model, `weight_spec.json`, and the safetensors checkpoint files referenced by the weight spec, in addition to the replay script and compile configuration files.
+
+```python
+model = QEFFAutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2-1.5B-Instruct",
+    weight_free=True,
+)
+
+compile_dir = model.compile(
+    prefill_seq_len=32,
+    ctx_len=128,
+    use_onnx_subfunctions=True,
+    artifacts=True,
+)
+```
+
+The same path is exposed by the text-generation examples with `--weight-free --artifacts`.
+
 Image-text-to-text generation also requires an example `processor`, `images`, and `prompts`. For dual-QPC models, set exactly one of `skip_vision=True` or `skip_lang=True` to emit one independently replayable stage.
