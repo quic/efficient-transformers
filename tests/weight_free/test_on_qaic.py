@@ -21,24 +21,53 @@ Covers:
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
 from transformers import AutoConfig
 
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
+from QEfficient.utils.device_utils import get_qaic_mdp_device_groups
 
 from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
+    FULL_BATCH_SIZE,
     PROMPT_LEN,
+    WEIGHT_FREE_BLOCKING_MODE_CASES,
+    WEIGHT_FREE_BLOCKING_QAIC_CASES,
     WEIGHT_FREE_QAIC_MODEL_PARAMS,
+    assert_blocked_kv_ops_for_mode,
+    assert_has_subfunctions,
     exported_onnx_path,
+    load_causal_lm_config,
     load_hf_model,
     load_tokenizer,
     skip_on_model_fetch_error,
 )
+
+BLOCKING_PARITY_PROMPT = "Hello world"
+CB_BLOCKING_PARITY_PROMPTS = ["hello world", "quick brown fox", "machine learning", "open source"]
+HEAD_BLOCKING_NUM_DEVICES = 4
+
+
+def _directory_size_bytes(path: Path) -> int:
+    return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+
+
+def _blocking_runtime_options(blocking_key: str) -> tuple[dict, list[int] | None]:
+    if blocking_key != "h":
+        return {}, None
+
+    device_groups = get_qaic_mdp_device_groups(devices_per_group=HEAD_BLOCKING_NUM_DEVICES)
+    if not device_groups:
+        pytest.skip(f"No available QAIC MDP device group with {HEAD_BLOCKING_NUM_DEVICES} devices")
+    return {"num_devices": HEAD_BLOCKING_NUM_DEVICES, "user_tiled": True}, device_groups[0]
 
 
 @pytest.mark.weight_free
@@ -226,3 +255,140 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
             f"Weight-free vs legacy QAIC parity failed for {model_id}: "
             f"legacy={legacy_tokens.tolist()}, weight_free={weight_free_tokens.tolist()}"
         )
+
+
+@pytest.mark.weight_free
+@pytest.mark.weight_free_blocking
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_type,model_id,blocking_key", WEIGHT_FREE_BLOCKING_QAIC_CASES)
+def test_weight_free_blocked_hw_hf_parity_and_artifact_metrics(
+    model_type,
+    model_id,
+    blocking_key,
+    tmp_export_dir,
+    record_property,
+):
+    """HF PT tokens == blocked weight-free QAIC tokens, with export/compile artifact metrics."""
+    from QEfficient.utils.run_utils import ApiRunner
+
+    use_onnx_subfunctions = True
+    qaic_config = dict(WEIGHT_FREE_BLOCKING_MODE_CASES[blocking_key])
+    batch_fold = blocking_key == "kv_batch_fold"
+    prompts = CB_BLOCKING_PARITY_PROMPTS if batch_fold else [BLOCKING_PARITY_PROMPT]
+    compile_prefill_seq_len = 1 if batch_fold else PROMPT_LEN
+
+    try:
+        tokenizer = load_tokenizer(model_id)
+        model_hf = load_hf_model(model_id)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    api_runner = ApiRunner(
+        batch_size=BATCH_SIZE,
+        tokenizer=tokenizer,
+        config=model_hf.config,
+        prompt=prompts,
+        prompt_len=PROMPT_LEN,
+        ctx_len=CTX_LEN,
+        full_batch_size=FULL_BATCH_SIZE if batch_fold else None,
+    )
+    hf_tokens = (
+        api_runner.run_hf_model_on_pytorch_CB(model_hf)
+        if batch_fold
+        else api_runner.run_hf_model_on_pytorch(model_hf)
+    )
+    assert hf_tokens is not None, "HF PT inference returned None"
+
+    config = load_causal_lm_config(model_id)
+    config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_id,
+        config=config,
+        weight_free=True,
+        qaic_config=qaic_config,
+        continuous_batching=batch_fold,
+    )
+
+    export_start = time.perf_counter()
+    onnx_path = exported_onnx_path(
+        qeff_model.export(
+            tmp_export_dir / f"wf_blocking_{model_type}_{blocking_key}_{use_onnx_subfunctions}_export",
+            qaic_config=qaic_config,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            offload_pt_weights=False,
+        )
+    )
+    export_seconds = time.perf_counter() - export_start
+    onnx_size_bytes = onnx_path.stat().st_size
+
+    blocking_config = qeff_model.hash_params.get("blocking_kwargs")
+    assert blocking_config is not None
+    assert blocking_config.mode == BlockingMode(qaic_config["blocking_mode"])
+    if use_onnx_subfunctions:
+        assert_has_subfunctions(onnx_path, qeff_model)
+    assert_blocked_kv_ops_for_mode(onnx_path, qeff_model, blocking_key)
+
+    compile_start = time.perf_counter()
+    compile_kwargs = {"full_batch_size": FULL_BATCH_SIZE} if batch_fold else {}
+    compile_options, device_ids = _blocking_runtime_options(blocking_key)
+    qpc_path = Path(
+        qeff_model.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(
+                tmp_export_dir / f"wf_blocking_{model_type}_{blocking_key}_{use_onnx_subfunctions}_compile"
+            ),
+            prefill_seq_len=compile_prefill_seq_len,
+            ctx_len=CTX_LEN,
+            num_cores=16,
+            batch_size=FULL_BATCH_SIZE if batch_fold else BATCH_SIZE,
+            qaic_config=qaic_config,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            **compile_kwargs,
+            **compile_options,
+        )
+    )
+    compile_seconds = time.perf_counter() - compile_start
+    qpc_size_bytes = _directory_size_bytes(qpc_path)
+
+    for name, value in {
+        "onnx_export_seconds": export_seconds,
+        "onnx_size_bytes": onnx_size_bytes,
+        "qpc_compile_seconds": compile_seconds,
+        "qpc_size_bytes": qpc_size_bytes,
+    }.items():
+        record_property(name, value)
+    print(
+        f"weight_free_blocking_metrics model={model_type} mode={blocking_key} "
+        f"use_onnx_subfunctions={use_onnx_subfunctions} "
+        f"onnx_export_seconds={export_seconds:.3f} onnx_size_bytes={onnx_size_bytes} "
+        f"qpc_compile_seconds={compile_seconds:.3f} qpc_size_bytes={qpc_size_bytes}"
+    )
+
+    qaic_output = qeff_model.generate(
+        tokenizer=tokenizer,
+        prompts=prompts,
+        device_ids=device_ids,
+    )
+    assert qaic_output is not None, "Blocked weight-free QAIC generate returned None"
+    assert hasattr(qaic_output, "generated_ids") and qaic_output.generated_ids is not None
+
+    gen_len = CTX_LEN - PROMPT_LEN
+    qaic_tokens = (
+        qaic_output.generated_ids[:, :gen_len] if batch_fold else qaic_output.generated_ids[0].flatten()[:gen_len]
+    )
+    qaic_text = getattr(qaic_output, "generated_texts", None)
+    print("Blocked weight-free QAIC output:")
+    print("Prompt:", repr(prompts))
+    print("Completion:", repr(qaic_text))
+    hf_tokens_for_compare = (
+        np.asarray(hf_tokens).reshape(len(prompts), -1)[:, :gen_len]
+        if batch_fold
+        else np.asarray(hf_tokens).flatten()[:gen_len]
+    )
+    print("HF token IDs:", hf_tokens_for_compare.tolist())
+    print("QAIC token IDs:", qaic_tokens.tolist())
+    assert np.array_equal(hf_tokens_for_compare, qaic_tokens), (
+        f"Blocked weight-free HW/HF parity failed for {model_id} mode={blocking_key}: "
+        f"HF={hf_tokens_for_compare.tolist()}, QAIC={qaic_tokens.tolist()}"
+    )

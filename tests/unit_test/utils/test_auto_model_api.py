@@ -49,6 +49,22 @@ def make_tiny_llama():
     return LlamaForCausalLM(cfg).eval()
 
 
+def make_tiny_qwen3_5():
+    from transformers import Qwen3_5ForCausalLM, Qwen3_5TextConfig
+
+    cfg = Qwen3_5TextConfig(
+        vocab_size=500,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=32,
+        max_position_embeddings=32,
+    )
+    return Qwen3_5ForCausalLM(cfg).eval()
+
+
 def make_tiny_bert():
     from transformers import BertConfig, BertModel
 
@@ -175,6 +191,49 @@ class TestQEFFAutoModelForCausalLMSpecializations:
         qeff = self._make_qeff()
         result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=64, batch_size=1, full_batch_size=None)
         assert result["ctx_len"] == 64, f"Expected ctx_len=64, got {result['ctx_len']}"
+
+    def test_qwen3_5_kv_batch_fold_prefill_specialization_uses_full_batch(self):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_qwen3_5())
+        qeff.continuous_batching = True
+        qeff.model.qaic_config = {"blocking_mode": "kv_batch_fold", "num_kv_blocks": 2}
+
+        result = qeff.build_prefill_specialization(
+            prefill_seq_len=8,
+            ctx_len=16,
+            batch_size=4,
+            kv_cache_batch_size=4,
+            full_batch_size=4,
+        )
+
+        assert result["batch_size"] == 4
+        assert result["full_batch_size"] == 4
+        assert result["full_batch_exec_size"] == 4
+        assert result["num_kv_blocks"] == 2
+        assert result["total_num_kv_blocks"] == 8
+        assert result["kv_block_size"] == 8
+
+    def test_qwen3_5_kv_batch_fold_decode_specialization_includes_block_metadata(self):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_qwen3_5())
+        qeff.continuous_batching = True
+        qeff.model.qaic_config = {"blocking_mode": "kv_batch_fold", "num_kv_blocks": 2}
+
+        result = qeff.build_decode_specialization(
+            prefill_seq_len=8,
+            ctx_len=16,
+            batch_size=1,
+            kv_cache_batch_size=4,
+            full_batch_size=4,
+        )
+
+        assert result["batch_size"] == 4
+        assert result["full_batch_size"] == 4
+        assert result["num_kv_blocks"] == 2
+        assert result["total_num_kv_blocks"] == 8
+        assert result["kv_block_size"] == 8
 
     def test_build_decode_specialization_returns_dict(self):
         """build_decode_specialization must return a dict."""

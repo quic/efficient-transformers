@@ -384,6 +384,8 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 
 
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
+    cos = cos.to(device=position_ids.device)
+    sin = sin.to(device=position_ids.device)
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
     flat_pos = safe_position_ids.reshape(-1)
@@ -872,7 +874,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal
+        mask = mask_causal.to(device=g.device) if mask_causal is not None else None
+        mask_strict = mask_strict.to(device=g.device) if mask_strict is not None else None
+        eye = eye.to(device=g.device) if eye is not None else None
 
         # chunk decay
         # g = g.cumsum(dim=-1)
@@ -1289,6 +1293,8 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
+        elif torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
+            target_length = past_seen_tokens
         else:
             pos_max = 0
             if position_ids is not None:
@@ -1322,16 +1328,16 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
             layer_mask = linear_attn_mask if decoder_layer.layer_type == "linear_attention" else causal_mask
             hidden_states = decoder_layer(
                 hidden_states,
-                position_embeddings=position_embeddings,
-                attention_mask=layer_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                batch_fold=batch_fold,
-                gdn_num_head_blocks=gdn_num_head_blocks,
-                use_cache=use_cache,
-                cache_position=cache_position,
+                position_embeddings,
+                layer_mask,
+                position_ids,
+                past_key_values,
+                comp_ctx_lengths,
+                batch_index,
+                batch_fold,
+                gdn_num_head_blocks,
+                use_cache,
+                cache_position,
                 **kwargs,
             )
 

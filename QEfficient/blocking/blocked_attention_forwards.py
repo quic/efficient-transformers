@@ -185,7 +185,7 @@ def blocked_kv_attention_forward(
     )
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
 
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -249,11 +249,7 @@ def blocked_kv_attention_forward(
                 mask_block = None
 
         if use_causal_mask or mask_block is None:
-            target_length = torch.where(
-                torch.tensor(ctx_len, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                torch.tensor(ctx_len, dtype=torch.int),
-                torch.tensor(end_index, dtype=torch.int),
-            )
+            target_length = min(ctx_len, end_index)
             causal_mask_block = _create_causal_mask(
                 position_ids=position_ids,
                 target_length=target_length,
@@ -1144,7 +1140,7 @@ def blocked_qkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked QKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1238,11 +1234,7 @@ def blocked_qkv_attention_forward(
 
             if use_causal_mask or mask_block is None:
                 # target_length = min(total_seen_tokens, end_index)
-                target_length = torch.where(
-                    torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                    torch.tensor(past_seen_tokens, dtype=torch.int),
-                    torch.tensor(end_index, dtype=torch.int),
-                )
+                target_length = min(past_seen_tokens, end_index)
                 causal_mask_block = _create_causal_mask(
                     position_ids=position_ids,
                     target_length=target_length,
@@ -1273,7 +1265,10 @@ def blocked_qkv_attention_forward(
 
         # If present, apply Attention Sinks, needed for GPT-OSS
         if sinks is not None:
-            _, _, output_blocks = update_running_softmax(current_max, sinks, current_denominator, output_blocks, None)
+            sinks_block = sinks[:, :, q_start : q_start + q_len_block, :]
+            _, _, output_blocks = update_running_softmax(
+                current_max, sinks_block, current_denominator, output_blocks, None
+            )
         q_output_blocks.append(output_blocks)
         q_attn_blocks.append(attn_weights_block)
 
@@ -1312,7 +1307,7 @@ def blocked_hqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked HQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1425,11 +1420,7 @@ def blocked_hqkv_attention_forward(
 
                 if use_causal_mask or mask_block is None:
                     # target_length = min(total_seen_tokens, end_index)
-                    target_length = torch.where(
-                        torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                        torch.tensor(past_seen_tokens, dtype=torch.int),
-                        torch.tensor(end_index, dtype=torch.int),
-                    )
+                    target_length = min(past_seen_tokens, end_index)
                     causal_mask_block = _create_causal_mask(
                         position_ids=position_ids,
                         target_length=target_length,
@@ -1453,8 +1444,9 @@ def blocked_hqkv_attention_forward(
                 )
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
+                sinks_block = sinks[:, h_start:h_end, q_start : q_start + q_len_block, :]
                 _, _, output_blocks = update_running_softmax(
-                    current_max, sinks, current_denominator, output_blocks, None
+                    current_max, sinks_block, current_denominator, output_blocks, None
                 )
             q_output_blocks.append(output_blocks)
             q_attn_blocks.append(attn_weights_block)
@@ -1501,7 +1493,7 @@ def blocked_bhqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1633,11 +1625,7 @@ def blocked_bhqkv_attention_forward(
 
                     if use_causal_mask or mask_block is None:
                         # target_length = min(total_seen_tokens, end_index)
-                        target_length = torch.where(
-                            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                            torch.tensor(past_seen_tokens, dtype=torch.int),
-                            torch.tensor(end_index, dtype=torch.int),
-                        )
+                        target_length = min(past_seen_tokens, end_index)
                         causal_mask_block = _create_causal_mask(
                             position_ids=position_ids,
                             target_length=target_length,
@@ -1661,13 +1649,19 @@ def blocked_bhqkv_attention_forward(
                     current_max, current_denominator, output_blocks = update_running_softmax(
                         current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
                     )
+                # If present, apply Attention Sinks, needed for GPT-OSS
+                if sinks is not None:
+                    sinks_block = sinks[
+                        batch_start : batch_start + batch_len,
+                        h_start:h_end,
+                        q_start : q_start + q_len_block,
+                        :,
+                    ]
+                    _, _, output_blocks = update_running_softmax(
+                        current_max, sinks_block, current_denominator, output_blocks, None
+                    )
                 batch_output_blocks.append(output_blocks)
                 batch_attn_blocks.append(attn_weights_block)
-            # If present, apply Attention Sinks, needed for GPT-OSS
-            if sinks is not None:
-                _, _, batch_output_blocks = update_running_softmax(
-                    current_max, sinks, current_denominator, batch_output_blocks, None
-                )
             q_output_blocks.append(torch.cat(batch_output_blocks, dim=0))
             q_attn_blocks.append(torch.cat(batch_attn_blocks, dim=0))
 

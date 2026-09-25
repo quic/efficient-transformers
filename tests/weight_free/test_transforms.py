@@ -810,6 +810,18 @@ class TestWeightFreeCheckpointTransforms:
         with pytest.raises(ValueError, match="Ambiguous checkpoint key"):
             find_checkpoint_key("base_model.model.embed_tokens.weight", checkpoint_index, backbone)
 
+    def test_resolver_accepts_language_model_prefix_alias(self):
+        checkpoint_index = {
+            "model.language_model.embed_tokens.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.embed_tokens.weight", checkpoint_index, backbone)
+            == "model.language_model.embed_tokens.weight"
+        )
+
     @pytest.mark.parametrize(
         "state_kind,state_name",
         [
@@ -853,6 +865,7 @@ class TestWeightFreeCheckpointTransforms:
             ("buffer", "rotary_emb.inv_freq"),
             ("buffer", "transformer.h.0.attn.embed_positions"),
             ("buffer", "model.embed_tokens.embed_scale"),
+            ("buffer", "model.layers.0.linear_attn._mask_causal"),
             ("parameter", "model.sin_cached"),
             ("parameter", "model.cos_cached"),
         ],
