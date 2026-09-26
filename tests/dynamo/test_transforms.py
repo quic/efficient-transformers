@@ -21,6 +21,7 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import importlib
+import operator
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
@@ -36,6 +37,7 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils import export_subfunctions
 from QEfficient.utils.torch_patches import (
     _same_export_region,
     preserve_mixed_export_subfunctions,
@@ -80,14 +82,32 @@ def test_preserve_subfunction_source_lines_interprets_graph_modules(monkeypatch)
 
 def test_preserve_mixed_export_subfunctions_is_scoped_to_supported_pytorch_hook():
     utils = importlib.import_module("torch._higher_order_ops.utils")
+    onnx_core = importlib.import_module("torch.onnx._internal.exporter._core")
     original_hop_compile_and_call = getattr(utils, "_hop_compile_and_call", None)
+    original_prepare = getattr(onnx_core, "_prepare_exported_program_for_export", None)
 
     with preserve_mixed_export_subfunctions():
         if original_hop_compile_and_call is not None:
             assert utils._hop_compile_and_call is not original_hop_compile_and_call
+        if original_prepare is not None:
+            assert onnx_core._prepare_exported_program_for_export is not original_prepare
 
     if original_hop_compile_and_call is not None:
         assert utils._hop_compile_and_call is original_hop_compile_and_call
+    assert getattr(onnx_core, "_prepare_exported_program_for_export", None) is original_prepare
+
+
+def test_preserve_mixed_export_subfunctions_tolerates_missing_onnx_hook(monkeypatch):
+    """A missing private ONNX hook disables reuse without breaking export setup."""
+    utils = importlib.import_module("torch._higher_order_ops.utils")
+    if getattr(utils, "_hop_compile_and_call", None) is None:
+        pytest.skip("PyTorch build has no _hop_compile_and_call hook")
+    onnx_core = importlib.import_module("torch.onnx._internal.exporter._core")
+    monkeypatch.delattr(onnx_core, "_prepare_exported_program_for_export", raising=False)
+
+    with preserve_mixed_export_subfunctions():
+        assert not hasattr(onnx_core, "_prepare_exported_program_for_export")
+    assert not hasattr(onnx_core, "_prepare_exported_program_for_export")
 
 
 def make_tiny_llama():
@@ -125,6 +145,86 @@ def test_same_export_region_accepts_nested_graphmodule_attributes(monkeypatch):
     tensor_left = _make_graph_module_with_attribute(torch.ones(2))
     tensor_right = _make_graph_module_with_attribute(torch.ones(2))
     assert not _same_export_region(tensor_left, tensor_right, fake_mode=None)
+
+
+def _make_identity_region(example_value):
+    graph = torch.fx.Graph()
+    x = graph.placeholder("x")
+    x.meta["example_value"] = example_value
+    graph.output(x)
+    return torch.fx.GraphModule(torch.nn.Module(), graph)
+
+
+def test_same_export_region_compares_call_operands_and_restores_metadata(monkeypatch):
+    comparator = importlib.import_module("torch._dynamo.variables.higher_order_ops")
+    seen = []
+
+    def fake_are_same(_name, left, right, _fake_mode):
+        seen.extend(next(iter(gm.graph.nodes)).meta["example_value"] for gm in (left, right))
+        return True
+
+    monkeypatch.setattr(comparator, "are_same_graph_modules", fake_are_same)
+    original_left, original_right = torch.zeros(1), torch.zeros(1)
+    left, right = _make_identity_region(original_left), _make_identity_region(original_right)
+    operand_left, operand_right = torch.ones(2), torch.ones(2)
+
+    assert _same_export_region(left, right, None, (operand_left,), (operand_right,))
+    assert seen == [operand_left, operand_right]
+    assert next(iter(left.graph.nodes)).meta["example_value"] is original_left
+    assert next(iter(right.graph.nodes)).meta["example_value"] is original_right
+
+
+def _make_sized_region(size_input_index):
+    graph = torch.fx.Graph()
+    a, b = graph.placeholder("a"), graph.placeholder("b")
+    size = graph.call_function(torch.ops.aten.sym_size.int, ((a, b)[size_input_index], 0))
+    graph.call_function(operator.eq, (size, 2))
+    graph.output(graph.call_function(torch.ops.aten.add.Tensor, (a, b)))
+    return torch.fx.GraphModule(torch.nn.Module(), graph)
+
+
+def test_canonical_region_normalizes_dead_size_reads():
+    operands = (torch.zeros(2, 3), torch.zeros(2, 3))
+    left = export_subfunctions._canonical_region(_make_sized_region(0), operands)
+    right = export_subfunctions._canonical_region(_make_sized_region(1), operands)
+
+    targets = lambda gm: [node.target for node in gm.graph.nodes if node.op == "call_function"]  # noqa: E731
+    assert targets(left) == targets(right) == [torch.ops.aten.add.Tensor]
+
+
+def test_apply_region_merges_prunes_orphaned_root_region():
+    root_module = torch.nn.Module()
+    for index in range(2):
+        setattr(
+            root_module,
+            f"region_{index}",
+            _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity())),
+        )
+    graph = torch.fx.Graph()
+    x = graph.placeholder("x")
+    calls = [
+        graph.call_function(
+            torch.ops.higher_order.invoke_subgraph,
+            (graph.get_attr(f"region_{index}"), f"subgraph_{index}", x),
+        )
+        for index in range(2)
+    ]
+    graph.output(tuple(calls))
+    root = torch.fx.GraphModule(root_module, graph)
+    representative = export_subfunctions._RegionCall(None, calls[0].args[0], "subgraph_0", ())
+
+    export_subfunctions._apply_region_merges(root, [(calls[1], representative)])
+
+    assert calls[1].args[:2] == (calls[0].args[0], "subgraph_0")
+    assert "region_1" not in dict(root.named_modules())
+    assert "region_0" in dict(root.named_modules())
+
+
+def test_reuse_exported_subfunctions_leaves_program_untouched_when_planning_fails(monkeypatch):
+    monkeypatch.setattr(export_subfunctions, "_plan_region_merges", lambda _root: (_ for _ in ()).throw(RuntimeError()))
+    program = MagicMock()
+    assert export_subfunctions.reuse_exported_subfunctions(program) is program
+    program.validate.assert_not_called()
 
 
 def test_export_wrapper_disables_grad_for_dynamo_subfunction_exports(monkeypatch, tmp_path):
