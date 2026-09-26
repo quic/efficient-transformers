@@ -7,6 +7,7 @@
 
 import argparse
 import math
+import os
 import time
 
 import numpy as np
@@ -17,6 +18,10 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 MODEL_ID = "MiniMaxAI/MiniMax-M3"
+Q_HEAD_BLOCK_CHUNK = int(os.environ.get("Q_HEAD_BLOCK_CHUNK", "1"))
+Q_BLOCK_SIZE = int(os.environ.get("Q_BLOCK_SIZE", "1024"))
+Q_BLOCK_CHUNK = int(os.environ.get("Q_BLOCK_CHUNK", "256"))
+NUM_KV_BLOCKS = int(os.environ.get("NUM_KV_BLOCKS", "2"))
 
 
 def _expand_batch(inputs, batch_size: int):
@@ -45,11 +50,20 @@ def _build_qaic_config(
     expert_parallel_chunk_size: int,
     cores_per_expert: int,
     tree_reduce: bool,
+    head_block_size: int,
+    num_kv_blocks: int,
+    num_q_blocks: int,
+    n_rep_chunk: int,
+    ctx_len: int,
 ) -> dict:
     """Build the MiniMax blocking config for prefill."""
     qaic_config = {
-        "blocking_mode": "kv_headpar",
-        "num_kv_blocks": 2,
+        "blocking_mode": "prefill_online",
+        "head_block_size": head_block_size,
+        "num_kv_blocks": num_kv_blocks,
+        "num_q_blocks": num_q_blocks,
+        "n_rep_chunk": n_rep_chunk,
+        "ctx_len": ctx_len,
         "msa_indexer_dp": msa_indexer_dp,
         "msa_indexer_cp": msa_indexer_cp,
         "msa_attn_dp": msa_attn_dp,
@@ -158,6 +172,30 @@ def main():
     )
     parser.add_argument("--msa-q-chunk", type=int, default=64, help="MSA prefill attention query chunk size.")
     parser.add_argument(
+        "--q-head-block-chunk",
+        type=int,
+        default=Q_HEAD_BLOCK_CHUNK,
+        help="Prefill attention head block size (default: Q_HEAD_BLOCK_CHUNK or 1).",
+    )
+    parser.add_argument(
+        "--num-kv-blocks",
+        type=int,
+        default=NUM_KV_BLOCKS,
+        help="Number of prefill KV blocks (default: NUM_KV_BLOCKS or 2).",
+    )
+    parser.add_argument(
+        "--q-block-size",
+        type=int,
+        default=Q_BLOCK_SIZE,
+        help="Prefill query block size (default: Q_BLOCK_SIZE or 1024).",
+    )
+    parser.add_argument(
+        "--q-block-chunk",
+        type=int,
+        default=Q_BLOCK_CHUNK,
+        help="Prefill query sub-block size used to derive n_rep_chunk (default: Q_BLOCK_CHUNK or 256).",
+    )
+    parser.add_argument(
         "--num-cores-per-device",
         type=int,
         default=8,
@@ -169,6 +207,16 @@ def main():
         parser.error("--batch-size must be positive")
     if args.prefill_seq_len <= 1:
         parser.error("--prefill-seq-len must be greater than 1")
+    if args.q_head_block_chunk < 1:
+        parser.error("--q-head-block-chunk must be positive")
+    if args.num_kv_blocks < 1:
+        parser.error("--num-kv-blocks must be positive")
+    if args.q_block_size < 1:
+        parser.error("--q-block-size must be positive")
+    if args.q_block_chunk < 1:
+        parser.error("--q-block-chunk must be positive")
+    if args.q_block_size % args.q_block_chunk:
+        parser.error("--q-block-size must be divisible by --q-block-chunk")
     if args.mdp_num_partitions < 1:
         parser.error("--mdp-num-partitions must be positive")
     if args.mdp_num_partitions > args.num_devices:
@@ -193,6 +241,8 @@ def main():
         parser.error("MiniMax MSA prefill currently requires attention DP=1 and CP=1")
 
     execution_batch_size = args.batch_size * math.lcm(args.msa_indexer_dp, args.msa_attn_dp)
+    num_q_blocks = max(1, math.ceil(args.prefill_seq_len / args.q_block_size))
+    n_rep_chunk = args.q_block_size // args.q_block_chunk
     config = AutoConfig.from_pretrained(args.model_id)
     if args.num_layers is not None:
         config.text_config.num_hidden_layers = args.num_layers
@@ -239,6 +289,11 @@ def main():
             expert_parallel_chunk_size=args.expert_parallel_chunk_size,
             cores_per_expert=args.cores_per_expert,
             tree_reduce=args.tree_reduce,
+            head_block_size=args.q_head_block_chunk,
+            num_kv_blocks=args.num_kv_blocks,
+            num_q_blocks=num_q_blocks,
+            n_rep_chunk=n_rep_chunk,
+            ctx_len=args.ctx_len,
         ),
     )
     prefill_qpc_path = qpc_paths["lang_prefill_qpc_path"]
