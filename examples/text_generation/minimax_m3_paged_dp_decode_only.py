@@ -74,6 +74,25 @@ def main() -> None:
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
+        "--expert-parallel-chunk-size",
+        type=int,
+        default=256,
+        help="MoE expert-parallel chunk size (expert_parallel_chunk_size in moe_config).",
+    )
+    parser.add_argument(
+        "--cores-per-expert",
+        type=int,
+        default=2,
+        help="Number of NSP cores assigned to each expert during decode.",
+    )
+    parser.add_argument(
+        "--no-tree-reduce",
+        dest="tree_reduce",
+        action="store_false",
+        default=True,
+        help="Disable tree-reduce for MoE expert-parallel dispatch.",
+    )
+    parser.add_argument(
         "--enable-proxy", action="store_true", help="Enable QEff proxy transforms during model loading."
     )
     args = parser.parse_args()
@@ -119,7 +138,12 @@ def main() -> None:
         "num_cores_per_device": args.num_cores_per_device,
         "paged_kv": True,
         "page_block_size": args.page_block_size,
-        "moe_config": {"flavour": "expert_parallel"},
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
+            "cores_per_expert": args.cores_per_expert,
+            "tree_reduce": args.tree_reduce,
+        },
     }
 
     t0 = time.perf_counter()

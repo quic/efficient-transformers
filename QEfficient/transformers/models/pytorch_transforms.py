@@ -1780,6 +1780,8 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         # Mixtral
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+        # MiniMax M3
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
     }
 
     @classmethod

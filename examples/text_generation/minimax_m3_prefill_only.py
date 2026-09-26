@@ -358,7 +358,7 @@ def main():
 
     first_token_ids = np.argmax(prefill_output["logits"], axis=-1).astype(np_inputs["input_ids"].dtype)
     print(f"First token: {tokenizer.batch_decode(first_token_ids, skip_special_tokens=True)}")
-    print(f"[performance] TTFT: {ttft_seconds * 1000.0:.2f} ms")
+    print(f"[performance] TTFT: {ttft_seconds * 1000.0:.3f} ms")
 
 
 if __name__ == "__main__":

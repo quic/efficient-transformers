@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 from math import lcm
 from pathlib import Path
 from typing import List, Optional, Tuple, Type, Union
@@ -52,12 +53,22 @@ from QEfficient.customop.utils import (
 )
 from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP, M3CtxScatterFunc
 
-MASKED_ATTENTION_LOGIT = -3.0e4
-_FP16_MAX_VALUE = 65504.0
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    minimax_m3_clamped_glu_mlp,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+MASKED_ATTENTION_LOGIT = -3.0e4
+_FP16_MAX_VALUE = 65504.0
 
 
 _MINIMAX_NPI_OUTPUT_SUFFIXES = (
@@ -3283,34 +3294,49 @@ class QEffMiniMaxM3VLTopKRouter(MiniMaxM3VLTopKRouter):
         return router_logits, top_k_weights, top_k_index
 
 
-class QEffMiniMaxM3VLSparseMoeBlock(MiniMaxM3VLSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        tokens = batch_size * sequence_length
-        hidden_states = hidden_states.view(tokens, hidden_dim)
+class QEffMiniMaxM3VLSparseMoeBlock(QEffMoEBlockMixin, MiniMaxM3VLSparseMoeBlock):
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
 
-        shared_output = self.shared_experts(hidden_states)
-        _, top_k_weights, top_k_index = self.gate(hidden_states)
-        top_k = self.gate.top_k
+    def __qeff_init__(self) -> None:
+        super().__qeff_init__()
+        self.num_experts = self.experts.num_experts
 
-        expert_indices = top_k_index.flatten()
-        gate_up_proj = self.experts.gate_up_proj.transpose(1, 2).index_select(0, expert_indices)
-        down_proj = self.experts.down_proj.transpose(1, 2).index_select(0, expert_indices)
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
+        )
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
 
-        expert_in = hidden_states.unsqueeze(1).expand(-1, top_k, -1).contiguous().view(-1, 1, hidden_dim)
-        gate_up = torch.bmm(expert_in, gate_up_proj)
-        gate, up = gate_up.chunk(2, dim=-1)
-        gate = _qeff_minimax_clamp(gate, max_value=self.experts.swiglu_limit)
-        up = _qeff_minimax_clamp(up, min_value=-self.experts.swiglu_limit, max_value=self.experts.swiglu_limit)
-        intermediate = (up + 1.0) * (gate * torch.sigmoid(gate * self.experts.swiglu_alpha))
-        experts_out = torch.bmm(intermediate, down_proj)
-        experts_out = experts_out.view(tokens, top_k, hidden_dim)
-        experts_out = experts_out * top_k_weights.unsqueeze(-1).to(experts_out.dtype)
-        experts_out = torch.einsum("tkh->th", experts_out)
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(
+            expert_mlp=partial(
+                minimax_m3_clamped_glu_mlp,
+                limit=self.experts.swiglu_limit,
+                alpha=self.experts.swiglu_alpha,
+            )
+        )
 
-        hidden_states = experts_out * self.routed_scaling_factor
-        hidden_states = hidden_states + shared_output
-        return hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+    def route(self, x: torch.Tensor):
+        router_logits, top_k_weights, top_k_index = self.gate(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_logits
+
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return out * self.routed_scaling_factor + self.shared_experts(residual)
 
 
 class QEffMiniMaxM3VLDecoderLayer(MiniMaxM3VLDecoderLayer):
