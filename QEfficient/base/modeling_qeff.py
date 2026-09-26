@@ -7,7 +7,6 @@
 
 import gc
 import inspect
-import logging
 import os
 import shlex
 import shutil
@@ -65,9 +64,15 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.export_utils import export_from_compile, export_wrapper
+from QEfficient.utils.logging_utils import (
+    QEFFLogger,
+    log_api_arguments,
+    log_from_pretrained_call,
+    log_generate_call,
+)
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
-logger = logging.getLogger(__name__)
+logger = QEFFLogger.get_logger("INFRA")
 
 
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
@@ -223,6 +228,18 @@ class QEFFBaseModel(ABC):
     _onnx_transforms = [BaseOnnxTransform]
     _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = []
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        from_pretrained = cls.__dict__.get("from_pretrained")
+        if isinstance(from_pretrained, classmethod):
+            function = from_pretrained.__func__
+            if not getattr(function, "_qeff_api_dump", False):
+                setattr(cls, "from_pretrained", classmethod(log_from_pretrained_call(function)))
+        generate = cls.__dict__.get("generate")
+        if generate is not None and callable(generate):
+            if not getattr(generate, "_qeff_api_dump", False):
+                setattr(cls, "generate", log_generate_call(generate))
+
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
@@ -295,7 +312,12 @@ class QEFFBaseModel(ABC):
         if not any_transformed:
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
-            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+            QEFFLogger.log_event(
+                "milestone",
+                "INFRA",
+                f"Applied PyTorch transforms to model: {self.model_name}.",
+                milestone=QEFFLogger.MILESTONE_LOAD_COMPLETE,
+            )
 
         if self.config.torch_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
             logger.warning(
@@ -530,6 +552,7 @@ class QEFFBaseModel(ABC):
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
+            self._export_cache_hit = True
             return onnx_path
 
         export_dir.mkdir(parents=True, exist_ok=True)
@@ -796,6 +819,7 @@ class QEFFBaseModel(ABC):
         # Return early if ONNX already exists
         if onnx_path.is_file():
             self.onnx_path = onnx_path
+            self._export_cache_hit = True
             return onnx_path
 
         # Layer-wise reuse: if the merged final ONNX from a prior run exists
@@ -814,6 +838,7 @@ class QEFFBaseModel(ABC):
         for cached_merged in cached_merged_paths:
             if cached_merged.is_file():
                 self.onnx_path = cached_merged
+                self._export_cache_hit = True
                 return self.onnx_path
         if cache_probe:
             return None
@@ -1332,7 +1357,38 @@ class QEFFBaseModel(ABC):
             if (qpc_path / "programqpc.bin").is_file():
                 self.qpc_path = qpc_path
                 self.compile_artifacts_path = compile_dir
+
+                # If export() already ran, its cache-hit message is the single
+                # ONNX skip record for this run. Otherwise compilation returned
+                # directly from a cached QPC and must report that export was
+                # skipped as part of the QPC cache path.
+                if not getattr(self, "_export_cache_hit", False):
+                    QEFFLogger.log_event(
+                        "milestone",
+                        "INFRA",
+                        "ONNX export skipped (cached QPC).",
+                        milestone=QEFFLogger.MILESTONE_EXPORT_SKIPPED,
+                    )
+                log_api_arguments(
+                    "compile",
+                    self.__class__.__name__,
+                    {"compile_hash_params": compile_hash_params},
+                )
+                QEFFLogger.log_event(
+                    "milestone",
+                    self.__class__.__name__,
+                    "Compilation skipped (cached QPC).",
+                    api="compile",
+                    milestone=QEFFLogger.MILESTONE_COMPILE_SKIPPED,
+                )
+                logger.info(f"QPC path: {qpc_path}")
                 return qpc_path
+
+            log_api_arguments(
+                "compile",
+                self.__class__.__name__,
+                {"compile_hash_params": compile_hash_params},
+            )
             if qpc_path.is_dir():
                 # Probably compilation failure last time, delete directory to start over.
                 shutil.rmtree(qpc_path)
@@ -1411,6 +1467,7 @@ class QEFFBaseModel(ABC):
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
+            QEFFLogger.log_api_failure("compile", self.__class__.__name__, e)
             raise RuntimeError(
                 "\n".join(
                     [
@@ -1428,4 +1485,12 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
+        QEFFLogger.log_event(
+            "milestone",
+            self.__class__.__name__,
+            "Compilation completed.",
+            api="compile",
+            milestone=QEFFLogger.MILESTONE_COMPILE_COMPLETE,
+        )
+        logger.info(f"QPC path: {qpc_path}")
         return qpc_path

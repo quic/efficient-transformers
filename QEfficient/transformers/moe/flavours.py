@@ -26,7 +26,9 @@ from QEfficient.customop import (
 )
 from QEfficient.transformers.moe.profiles import MoEProfile
 from QEfficient.transformers.moe.weights import MoEWeights, validate_expert_parallel_moe_weights
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class MoEFlavour(str, Enum):
