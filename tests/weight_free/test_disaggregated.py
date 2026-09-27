@@ -25,11 +25,22 @@ DISAGG_MODEL_PARAMS = [
 CTX_LEN = 128
 PREFILL_SEQ_LEN = 32
 MOE_PREFILL_PACKED_CHUNK_SIZE = 16
+MDP_NUM_PARTITIONS = 2
+
+def _compile_dir(tmp_export_dir, name):
+    """Create compile directories explicitly, matching the legacy test pattern."""
+    compile_dir = tmp_export_dir / name
+    compile_dir.mkdir(parents=True, exist_ok=True)
+    return str(compile_dir)
 
 
-def _load_weight_free_model(model_id: str, continuous_batching: bool = False):
+PREFILL_NUM_DEVICES = 2
+
+
+def _load_weight_free_model(model_id: str, continuous_batching: bool = False, num_hidden_layers: int | None = 2):
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    config.num_hidden_layers = 2
+    if num_hidden_layers is not None:
+        config.num_hidden_layers = num_hidden_layers
     return QEFFAutoModelForCausalLM.from_pretrained(
         model_id,
         config=config,
@@ -54,24 +65,25 @@ def test_weight_free_disaggregated_prefill_and_decode(model_type, model_id, tmp_
     common = {
         "ctx_len": CTX_LEN,
         "num_cores": 4,
-        "num_devices": 1,
-        "mxfp6_matmul": True,
-        "mxint8_kv_cache": True,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
         "use_onnx_subfunctions": True,
         "offload_pt_weights": False,
         "retain_full_kv": True,
     }
 
     decode_qpc = qeff_model.compile(
-        compile_dir=str(tmp_export_dir / f"{model_type}_decode"),
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_decode"),
         prefill_seq_len=1,
         **common,
     )
     prefill_qpc = qeff_model.compile(
-        compile_dir=str(tmp_export_dir / f"{model_type}_prefill"),
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_prefill_mdp"),
         prefill_seq_len=PREFILL_SEQ_LEN,
         prefill_only=True,
         enable_chunking=True,
+        num_devices=PREFILL_NUM_DEVICES,
+        mdp_num_partitions=MDP_NUM_PARTITIONS,
         qaic_config=moe_config,
         **common,
     )
@@ -96,25 +108,26 @@ def test_weight_free_disaggregated_continuous_batching(model_type, model_id, tmp
         "ctx_len": CTX_LEN,
         "full_batch_size": full_batch_size,
         "num_cores": 4,
-        "num_devices": 1,
-        "mxfp6_matmul": True,
-        "mxint8_kv_cache": True,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
         "split_retained_state_io": True,
         "retain_full_kv": True,
         "use_onnx_subfunctions": True,
-        "offload_pt_weights": False,
+        "offload_pt_weights": True,
     }
 
     decode_qpc = qeff_model.compile(
-        compile_dir=str(tmp_export_dir / f"{model_type}_cb_decode"),
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_cb_decode"),
         prefill_seq_len=1,
         **common,
     )
     prefill_qpc = qeff_model.compile(
-        compile_dir=str(tmp_export_dir / f"{model_type}_cb_prefill"),
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_cb_prefill"),
         prefill_seq_len=PREFILL_SEQ_LEN,
         prefill_only=True,
         enable_chunking=True,
+        num_devices=PREFILL_NUM_DEVICES,
+        mdp_num_partitions=MDP_NUM_PARTITIONS,
         qaic_config={"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}},
         **common,
     )
