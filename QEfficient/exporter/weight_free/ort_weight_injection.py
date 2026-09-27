@@ -95,6 +95,11 @@ def load_weight_free_ort_inputs(
     """
     weight_spec_path = Path(weight_spec_path)
     spec = load_weight_spec(weight_spec_path)
+    if any(spec_input.role.startswith("mxfp6") for spec_input in spec.inputs):
+        raise NotImplementedError(
+            "ONNX Runtime weight injection for QEff-owned MXFP6 weight-free exports is not supported. "
+            "Use the QAIC compile/runtime path with an ONNX build that supports FLOAT6E2M3 and DequantizeLinear-28."
+        )
     candidate_roots = []
     if weights_root is not None:
         candidate_roots.append(Path(weights_root).expanduser().resolve())

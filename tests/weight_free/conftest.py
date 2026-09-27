@@ -34,6 +34,7 @@ def _parse_torch_version() -> tuple:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "weight_free: mark a test as part of the weight-free export test suite")
+    config.addinivalue_line("markers", "weight_free_unit: mark weight-free unit tests that do not run Dynamo export")
     config.addinivalue_line("markers", "weight_free_export: CPU-only weight-free export smoke and parity tests")
 
 
@@ -50,7 +51,7 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if not (item.fspath.parts and "weight_free" in str(item.fspath)):
             continue
-        if torch_version < (2, 13):
+        if torch_version < (2, 13) and not item.get_closest_marker("weight_free_unit"):
             item.add_marker(
                 pytest.mark.skip(reason=f"Weight-free tests require torch >= 2.13; running {torch.__version__}")
             )

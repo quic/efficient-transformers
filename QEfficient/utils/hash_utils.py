@@ -20,7 +20,7 @@ def json_serializable(obj):
     if is_dataclass(obj):
         # Convert dataclass to dict for serialization
         return asdict(obj)
-    if obj.__class__.__name__ == "Dim":
+    if obj.__class__.__name__ in {"Dim", "_Dim"}:
         return str(obj)
     if obj.__class__.__name__ == "_DimHint":
         return str(obj)

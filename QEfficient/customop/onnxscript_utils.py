@@ -68,6 +68,6 @@ def get_dynamo_onnxscript_func(onnxscript_func):
 
 def get_onnxscript_func(onnxscript_func, onnx_export_opset: int):
     """Return the ONNXScript variant matching the requested export opset."""
-    if onnx_export_opset == constants.ONNX_DYNAMO_EXPORT_OPSET:
+    if onnx_export_opset >= constants.ONNX_DYNAMO_EXPORT_OPSET:
         return get_dynamo_onnxscript_func(onnxscript_func)
     return onnxscript_func
