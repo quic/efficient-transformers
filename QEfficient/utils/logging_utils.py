@@ -109,24 +109,37 @@ def _serialize_argument(value: Any, name: Optional[str] = None, *, _depth: int =
         if len(value) > len(items):
             result.append(f"<truncated {len(value) - len(items)} items>")
         return result
-    if hasattr(value, "shape") and hasattr(value, "dtype"):
-        result = {"type": type(value).__name__, "shape": list(value.shape), "dtype": str(value.dtype)}
-        if hasattr(value, "device"):
-            result["device"] = str(value.device)
-        return result
-    if hasattr(value, "to_dict") and callable(value.to_dict):
+    try:
+        shape = getattr(value, "shape")
+        dtype = getattr(value, "dtype")
+        result = {"type": type(value).__name__, "shape": list(shape), "dtype": str(dtype)}
         try:
-            config = value.to_dict()
+            result["device"] = str(getattr(value, "device"))
+        except Exception:
+            pass
+        return result
+    except Exception:
+        # Some tensor-like or lazy objects expose properties that can raise
+        # arbitrary exceptions. Logging must not interrupt the API call.
+        pass
+    try:
+        to_dict = getattr(value, "to_dict")
+        if callable(to_dict):
+            config = to_dict()
             return {
                 "type": f"{type(value).__module__}.{type(value).__name__}",
                 "config_keys": [str(key) for key in islice(config, _MAX_SERIALIZED_ITEMS)],
                 "config_key_count": len(config),
             }
-        except Exception:
-            pass
+    except Exception:
+        pass
+    try:
+        safe_repr = reprlib.repr(value)
+    except Exception:
+        safe_repr = "<unrepresentable value>"
     return {
         "type": f"{type(value).__module__}.{type(value).__name__}",
-        "repr": reprlib.repr(value),
+        "repr": safe_repr,
     }
 
 

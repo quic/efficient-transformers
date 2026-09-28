@@ -353,7 +353,8 @@ def pytest_configure(config):
     # When using multiple workers, pytest creates one controller process and
     # one process for each worker. Suppress logging in the controller and keep
     # real QEfficient log files only for worker processes.
-    if getattr(config.option, "numprocesses", None) and getattr(config, "workerinput", None) is None:
+    config_option = getattr(config, "option", None)
+    if getattr(config_option, "numprocesses", None) and getattr(config, "workerinput", None) is None:
         logger = _NoOpLogger()
     else:
         logger = QEFFLogger.get_logger("INFRA")

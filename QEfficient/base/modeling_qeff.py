@@ -277,6 +277,8 @@ class QEFFBaseModel(ABC):
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
+        if not QEFFLogger.has_active_run():
+            QEFFLogger.start_run(self.model_name)
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
         if getattr(self, "_enable_proxy", False):
