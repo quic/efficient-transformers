@@ -1542,16 +1542,26 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.lang_model.model.qaic_config = qaic_config
 
     def _resolve_qaic_config(self, qaic_config: Optional[dict]) -> Optional[dict]:
-        if hasattr(self.lang_model, "_resolve_qaic_config"):
-            qaic_config = self.lang_model._resolve_qaic_config(qaic_config)
+        lang_model = getattr(self, "lang_model", None)
+        if lang_model is not None and hasattr(lang_model, "_resolve_qaic_config"):
+            qaic_config = lang_model._resolve_qaic_config(qaic_config)
         else:
             if qaic_config is None:
                 qaic_config = getattr(self, "_qaic_config", None)
+                if qaic_config is None and lang_model is not None:
+                    qaic_config = getattr(lang_model, "_qaic_config", None)
+                if qaic_config is None and lang_model is not None:
+                    language_model = getattr(lang_model, "model", None)
+                    qaic_config = getattr(language_model, "qaic_config", None)
             elif not isinstance(qaic_config, dict):
                 raise TypeError(f"`qaic_config` must be a dictionary, got {type(qaic_config).__name__}.")
             else:
                 qaic_config = deepcopy(qaic_config)
-            setattr(self.lang_model, "_qaic_config", qaic_config)
+            if lang_model is not None:
+                setattr(lang_model, "_qaic_config", qaic_config)
+                language_model = getattr(lang_model, "model", None)
+                if language_model is not None:
+                    setattr(language_model, "qaic_config", qaic_config)
         self._qaic_config = qaic_config
         self.ccl_enabled = bool(qaic_config and qaic_config.get("ccl_enabled", False))
         return qaic_config
@@ -1682,6 +1692,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 num_devices=kwargs.get("num_devices", 1),
                 qaic_config=qaic_config,
                 num_cores=num_cores,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
                 prefill_only=prefill_only,
                 prefill_seq_len=prefill_seq_len,
                 enable_chunking=enable_chunking,
@@ -1782,23 +1794,30 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         qaic_config: dict | None = None,
         **compiler_options,
     ):
-        self.vision_model.transform(
-            ctx_len=ctx_len,
-            seq_len=seq_len,
-            bs=bs,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-            **compiler_options,
-        )
+        skip_vision = compiler_options.pop("skip_vision", False)
+        skip_lang = compiler_options.pop("skip_lang", False)
+        vision_model = getattr(self, "vision_model", None)
+        lang_model = getattr(self, "lang_model", None)
 
-        self.lang_model.transform(
-            ctx_len=ctx_len,
-            seq_len=seq_len,
-            bs=bs,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-            **compiler_options,
-        )
+        if not skip_vision and hasattr(vision_model, "transform"):
+            vision_model.transform(
+                ctx_len=ctx_len,
+                seq_len=seq_len,
+                bs=bs,
+                num_devices=num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
+            )
+
+        if not skip_lang and hasattr(lang_model, "transform"):
+            lang_model.transform(
+                ctx_len=ctx_len,
+                seq_len=seq_len,
+                bs=bs,
+                num_devices=num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
+            )
 
     def _layerwise_factory_kwargs(self):
         """Reproduce the from_pretrained kwargs needed to rebuild this wrapper per window."""
