@@ -50,7 +50,13 @@ IGNORED_FILES = {
     "README.md",
 }
 IGNORED_PREFIXES = (".github/", "docs/", "skills_studio/")
-OUT_OF_SCOPE_TEST_PREFIXES = ("tests/unit_test/", "tests/nightly_pipeline/", "tests/vllm/")
+OUT_OF_SCOPE_TEST_PREFIXES = (
+    "tests/unit_test/",
+    "tests/nightly_pipeline/",
+    "tests/vllm/",
+    # Reproducer configs run in their own final Jenkins stage.
+    "tests/reproducer_configs/",
+)
 SELECTIVE_OMITTED_MARKERS = {"full_layers"}
 
 _MODEL_WRAPPER_RE = re.compile(r"^QEfficient/transformers/models/([^/]+)/")
@@ -485,7 +491,7 @@ def _closure(roots: set[str], reverse: Mapping[str, set[str]]) -> set[str]:
 def _stages_for(path: str, markers: set[str]) -> set[str]:
     if markers & SELECTIVE_OMITTED_MARKERS:
         return set()
-    if path.startswith(OUT_OF_SCOPE_TEST_PREFIXES) or "qnn" in markers or "finetune" in markers:
+    if path.startswith(OUT_OF_SCOPE_TEST_PREFIXES) or "finetune" in markers:
         return set()
     if path.startswith("tests/dynamo/"):
         return {"dynamo_qaic"} if "on_qaic" in markers and "nightly" not in markers else set()

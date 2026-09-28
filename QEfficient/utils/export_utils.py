@@ -9,11 +9,13 @@ import copy
 import inspect
 import re
 import warnings
+from collections import Counter
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict
 
+import onnx
 import torch
 import torch.nn as nn
 from torch.export import Dim
@@ -158,6 +160,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
     dynamic_shapes: Dict[str, Any] = {}
     past_keys: Dict[int, Any] = {}
     past_values: Dict[int, Any] = {}
+    conv_states: Dict[int, Any] = {}
+    recurrent_states: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
 
@@ -167,6 +171,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            conv_states[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("recurrent_state."):
+            recurrent_states[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("compressed_kv."):
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
@@ -174,10 +182,19 @@ def convert_dynamic_axes_to_dynamic_shapes(
         else:
             dynamic_shapes[input_name] = resolved
 
-    if past_keys or past_values:
-        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+    if past_keys or past_values or conv_states or recurrent_states:
+        max_layer = max(
+            list(past_keys.keys())
+            + list(past_values.keys())
+            + list(conv_states.keys())
+            + list(recurrent_states.keys())
+        )
         dynamic_shapes["past_key_values"] = [
-            [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+            [
+                past_keys.get(i, conv_states.get(i, {})),
+                past_values.get(i, recurrent_states.get(i, {})),
+            ]
+            for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -260,6 +277,80 @@ def get_decoder_layer_classes_for_export(model):
         )
         return discovered
     return []
+
+
+def _iter_onnx_nodes(nodes):
+    """Yield graph nodes recursively, including nodes inside nested ONNX subgraphs."""
+    for node in nodes:
+        yield node
+        for attr in node.attribute:
+            if attr.HasField("g"):
+                yield from _iter_onnx_nodes(attr.g.node)
+
+
+def _function_call_counts(onnx_model, function_names: set[str]) -> Counter:
+    """Count call sites for the selected local function names in an ONNX model."""
+    nodes = list(_iter_onnx_nodes(onnx_model.graph.node))
+    for function_proto in onnx_model.functions:
+        nodes.extend(_iter_onnx_nodes(function_proto.node))
+    return Counter(node.op_type for node in nodes if node.op_type in function_names)
+
+
+def _proxy_subfunction_validation_classes(qeff_model) -> set[type[nn.Module]]:
+    """Return language-layer classes that need repeated proxy subfunction calls."""
+    if qeff_model.__class__.__name__ == "QEffVisionEncoderForTextImageToTextModel":
+        return set()
+
+    model = qeff_model.model
+    get_language_decoder = getattr(model, "get_qeff_language_decoder", None)
+    if callable(get_language_decoder):
+        try:
+            language_decoder = get_language_decoder()
+            language_classes = get_decoder_layer_classes_for_export(language_decoder)
+            if language_classes:
+                return set(language_classes)
+        except Exception as exc:
+            logger.warning(
+                f"get_qeff_language_decoder failed for {model.__class__.__name__}: "
+                f"{type(exc).__name__}: {exc}. Falling back to model-level subfunction validation."
+            )
+
+    submodule_classes = get_decoder_layer_classes_for_export(model)
+    return {cls for cls in submodule_classes if "vision" not in cls.__name__.lower()}
+
+
+def _validate_proxy_subfunction_calls(qeff_model, onnx_path) -> None:
+    """Ensure proxy decoder subfunctions are repeated enough to be useful performance proxies."""
+    if not getattr(qeff_model, "_enable_proxy", False):
+        return
+
+    decoder_layer_classes = _proxy_subfunction_validation_classes(qeff_model)
+    if not decoder_layer_classes:
+        return
+
+    target_classnames = {cls.__name__ for cls in decoder_layer_classes}
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    function_names = {
+        function_proto.name
+        for function_proto in onnx_model.functions
+        if any(classname in function_proto.name for classname in target_classnames)
+    }
+    if not function_names:
+        raise RuntimeError(
+            "Proxy ONNX subfunction validation failed: no decoder-layer subfunctions were found "
+            f"for expected classes {sorted(target_classnames)}."
+        )
+
+    call_counts = _function_call_counts(onnx_model, function_names)
+    single_call_functions = {
+        name: call_counts.get(name, 0) for name in sorted(function_names) if call_counts.get(name, 0) <= 1
+    }
+    if single_call_functions:
+        raise RuntimeError(
+            "Proxy ONNX subfunction validation failed: each decoder-layer subfunction must be invoked more "
+            "than once for a faithful compiler performance proxy. "
+            f"Observed call counts: {single_call_functions}."
+        )
 
 
 def export_wrapper(func):
@@ -355,6 +446,9 @@ def export_wrapper(func):
                         "Retry export with use_onnx_subfunctions=False for this model/runtime."
                     ) from export_exc
                 raise
+
+            if use_onnx_subfunctions:
+                _validate_proxy_subfunction_calls(self, onnx_path)
 
             # 5. Save export metadata (skip when running cache probe)
             if not cache_probe:

@@ -95,6 +95,8 @@ qeff_models
 .agents/
 .claude/
 
+# Generated reproducer config verdict report
+tests/reproducer_configs/reproducer_config_results.md
 # Runtime Files
 .locks/
 docs/hub/

@@ -330,6 +330,15 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
     use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
     skip_hf_reference = dma_config.get("skip_hf_reference", False)
     mdp_strategy = dma_config.get("mdp_strategy", "onnx")
+    blocking_mode = dma_config.get("blocking_mode")
+    prefill_qaic_config = None
+    if blocking_mode == "kv":
+        prefill_qaic_config = {
+            "enable_blocking": True,
+            "blocking_mode": blocking_mode,
+            "num_kv_blocks": 4,
+            "skip_kv": True,
+        }
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -411,6 +420,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config
             skip_vision=True,
             use_onnx_subfunctions=use_onnx_subfunctions,
             layerwise=False,
+            qaic_config=prefill_qaic_config,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
         _assert_distinct_onnx_paths(compiled_onnx_paths)

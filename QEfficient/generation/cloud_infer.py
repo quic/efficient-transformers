@@ -5,8 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import platform
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from warnings import warn
@@ -26,6 +28,23 @@ def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -
     """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
     for binding in bindings:
         binding_index_map.setdefault(binding.name.rsplit("/", 1)[-1], binding.index)
+
+
+def _retained_state_name_aliases(name: str) -> set[str]:
+    """Return public/internal retained-state aliases for a binding name."""
+    aliases = {name}
+    basename = name.rsplit("/", 1)[-1]
+    aliases.add(basename)
+    for candidate in (name, basename):
+        public_name = _public_retained_state_name(candidate)
+        if public_name is not None:
+            aliases.add(public_name)
+            aliases.add(public_name.rsplit("/", 1)[-1])
+        elif candidate.endswith("_RetainedState"):
+            internal_name = candidate[: -len("_RetainedState")] + "_InternalRetainedState"
+            aliases.add(internal_name)
+            aliases.add(internal_name.rsplit("/", 1)[-1])
+    return aliases
 
 
 try:
@@ -73,6 +92,9 @@ class QAICInferenceSession:
         stages: Optional[int] = 1,
         cluster_id: Optional[str] = None,
         full_batch_size: int = 1,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
+        profiling_file_prefix: str = "aic-profiling-python",
     ):
         """
         Initialise for QAIC inference Session
@@ -93,6 +115,12 @@ class QAICInferenceSession:
             selects which exec-object pool this session allocates. Unused otherwise.
         :full_batch_size: int. Number of decode slots; `batch_index` offsets wrap
             modulo this value at prefill handoff. Only used when `kv_dma_share=True`.
+        :profiling_type: Optional[str]. One of "latency", "trace", "raw_device_stats", "stats". Selects the
+            runtime device profiling type (via the `qaicrt.ProfilingHandle` API on this session's `Program`).
+            If None (default), profiling support is disabled.
+        :profiling_output_dir: Optional[Union[Path, str]]. Directory to write the profiling report to. Defaults to
+            a "profiling_output" directory alongside `qpc_path`. Only used when `profiling_type` is set.
+        :profiling_file_prefix: str. Filename prefix for the profiling report. Default="aic-profiling-python".
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError(
@@ -122,6 +150,25 @@ class QAICInferenceSession:
         self.cluster_id = cluster_id
         self.full_batch_size = full_batch_size
         self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
+        if profiling_type is not None:
+            profiling_type_map = {
+                "latency": "QAIC_PROFILING_INFERENCE_LATENCY_TYPE",
+                "trace": "QAIC_PROFILING_INFERENCE_TRACE_TYPE",
+                "raw_device_stats": "QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE",
+                "stats": "QAIC_PROFILING_INFERENCE_DEV_KPI_TYPE",
+            }
+            if profiling_type not in profiling_type_map:
+                raise ValueError(
+                    f"Unsupported profiling_type {profiling_type!r}; expected one of {list(profiling_type_map)}"
+                )
+            profiling_enum = getattr(
+                getattr(qaicrt, "QAicProfilingTypeEnum", None), profiling_type_map[profiling_type], None
+            )
+            if profiling_enum is None or not hasattr(qaicrt, "ProfilingHandle"):
+                raise RuntimeError(
+                    f"profiling_type {profiling_type!r} is not supported by the installed QAIC SDK; "
+                    "use a supported profiling mode or disable profiling with profiling_type=None."
+                )
 
         # Load QPC
         if device_ids is not None:
@@ -148,6 +195,7 @@ class QAICInferenceSession:
         self.bindings = iodesc.selected_set.bindings
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
         _add_basename_binding_aliases(self.binding_index_map, self.bindings)
+        self._skipped_buffer_names = set()
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.dataPathTimeoutMs = data_path_timeout_ms
@@ -160,6 +208,20 @@ class QAICInferenceSession:
         self.program = qaicrt.Program(self.context, dev_id_non_mq, qpc, prog_properties)
         if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
+        self.profiling_handle = None
+        if profiling_type is not None:
+            output_dir = (
+                Path(profiling_output_dir)
+                if profiling_output_dir
+                else (Path(qpc_path) if Path(qpc_path).is_dir() else Path(qpc_path).parent) / "profiling_output"
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.profiling_handle = qaicrt.ProfilingHandle(
+                programs=[self.program],
+                type=profiling_enum,
+                fileNamePrefix=profiling_file_prefix,
+                outputDirectory=str(output_dir),
+            )
         self.is_active = False
         if activate:
             self.activate()
@@ -214,6 +276,21 @@ class QAICInferenceSession:
     def output_names(self) -> List[str]:
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
 
+    def binding_is_bfloat16(self, name: str) -> bool:
+        """
+        True if the named binding's on-device dtype is bfloat16.
+
+        numpy has no native bfloat16 dtype, so `aic_to_np_dtype_mapping` maps
+        BFLOAT16_TYPE to `np.float16` purely to get a matching 2-byte itemsize;
+        the bytes carried in such a buffer are real bfloat16 bit patterns, not
+        numeric float16 values. Callers that build/consume these buffers must
+        bit-cast rather than numerically cast, and can use this to decide which
+        conversion applies.
+        """
+        if name not in self.binding_index_map:
+            return False
+        return self.bindings[self.binding_index_map[name]].type == getattr(aicapi, "BFLOAT16_TYPE", 11)
+
     def activate(self):
         """Activate qpc"""
         if not self.is_active:
@@ -230,6 +307,33 @@ class QAICInferenceSession:
             del self.execObj
             self.program.deactivate()
             self.is_active = False
+
+    def start_profiling(self):
+        """Start capturing a profiling report for this session's program(s)."""
+        if self.profiling_handle is None:
+            raise RuntimeError("Profiling is not enabled for this session; pass `profiling_type` to the constructor.")
+
+        status = self.profiling_handle.start()
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError(f"Failed to start profiling. Status {status}")
+
+    def stop_profiling(self):
+        """Stop profiling and flush the report to `profiling_output_dir`."""
+        if self.profiling_handle is None:
+            raise RuntimeError("Profiling is not enabled for this session; pass `profiling_type` to the constructor.")
+        status = self.profiling_handle.stop()
+
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError(f"Failed to stop profiling. Status {status}")
+
+    @contextmanager
+    def profile(self):
+        """Context manager that brackets a block of `run()` calls with start/stop profiling."""
+        self.start_profiling()
+        try:
+            yield
+        finally:
+            self.stop_profiling()
 
     def _release_program_after_run_failure(self) -> None:
         """Release device resources while preserving the original execution error."""
@@ -271,6 +375,12 @@ class QAICInferenceSession:
             :skipped_buffer_name: List[str]. List of buffer name to be skipped.
         """
 
+        for buffer_name in skipped_buffer_names:
+            if buffer_name not in self.binding_index_map:
+                continue
+            actual_name = self.bindings[self.binding_index_map[buffer_name]].name
+            self._skipped_buffer_names.update(_retained_state_name_aliases(buffer_name))
+            self._skipped_buffer_names.update(_retained_state_name_aliases(actual_name))
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -331,17 +441,31 @@ class QAICInferenceSession:
         """Decode device output buffers into a name-keyed dict of numpy arrays."""
         outputs = {}
         for output_name in self.output_names:
+            output_basename = output_name.rsplit("/", 1)[-1]
             buffer_index = self.binding_index_map[output_name]
+            skipped_buffer_names = getattr(self, "_skipped_buffer_names", set())
+            if _retained_state_name_aliases(output_name) & skipped_buffer_names:
+                continue
             # Skip unmapped outputs and DMA-wired RetainedState buffers, whose data
             # goes straight to the caller's host arrays so getData returns empty.
             if qbuffers[buffer_index].size == 0 or output_qbuffers[buffer_index].size == 0:
                 continue
+            if os.getenv("QEFF_DEBUG_QAIC_OUTPUTS"):
+                dtype = self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type]
+                expected_size = int(np.prod(buf_dims[buffer_index][1])) * np.dtype(dtype).itemsize
+                print(
+                    "QEFF_DEBUG_QAIC_OUTPUT "
+                    f"name={output_name!r} index={buffer_index} "
+                    f"qbuffer_size={qbuffers[buffer_index].size} "
+                    f"output_qbuffer_size={output_qbuffers[buffer_index].size} "
+                    f"expected_size={expected_size} dims={buf_dims[buffer_index][1]}",
+                    flush=True,
+                )
             output = np.frombuffer(
                 bytes(output_qbuffers[buffer_index]),
                 self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
             ).reshape(buf_dims[buffer_index][1])
             outputs[output_name] = output
-            output_basename = output_name.rsplit("/", 1)[-1]
             outputs.setdefault(output_basename, output)
             public_name = _public_retained_state_name(output_name)
             if public_name is not None:

@@ -35,9 +35,8 @@ from QEfficient.generation.text_generation_inference import (
     TextGeneration,
     calculate_latency,
     get_compilation_dims,
-    write_io_files,
 )
-from QEfficient.utils import LRUCache
+from QEfficient.utils import LRUCache, constants
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -56,7 +55,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         ...     processor=processor,
         ...     lang_qpc_path="path/to/lang.qpc",
         ...     vision_qpc_path="path/to/vision.qpc",
-        ...     device_id=[0]
+        ...     device_ids=[0]
         ... )
         >>> result = vlm.generate(
         ...     images=["image1.jpg"],
@@ -70,7 +69,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         ...     processor=processor,
         ...     lang_qpc_path="path/to/lang.qpc",
         ...     vision_qpc_path="path/to/vision.qpc",
-        ...     device_id=[0],
+        ...     device_ids=[0],
         ...     full_batch_size=8,  # Enable continuous batching
         ...     include_sampler=True,  # Enable on-device sampling
         ...     sampling_params=sampling_config
@@ -84,12 +83,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         processor: AutoImageProcessor,
         lang_qpc_path: str,
         vision_qpc_path: str,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
+        num_kv_blocks: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
@@ -108,10 +107,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             processor: Image processor
             lang_qpc_path: Path to language model QPC
             vision_qpc_path: Path to vision encoder QPC
-            device_id: Device IDs for execution (default: [0])
+            device_ids: Device IDs for execution (default: [0])
             ctx_len: Context length
+            num_kv_blocks: Number of physical KV blocks for paged attention on the language
+                QPC (optional). When None (default), paged attention is disabled and
+                block_table/slot_id are never populated or sent to the language session.
             enable_debug_logs: Enable debug logging
-            write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
             image_height: Desired image height for resizing
             image_width: Desired image width for resizing
@@ -133,18 +134,31 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             tokenizer=tokenizer,
             qpc_path=lang_qpc_path,
             full_batch_size=full_batch_size,
+            num_kv_blocks=num_kv_blocks,
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-            device_id=device_id,
+            device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
             activate=False,  # vision components need to be initialized first
+        )
+
+        # Physical KV block table for paged attention on the language QPC. None (default)
+        # when num_kv_blocks isn't supplied, matching the non-VLM TextGeneration path
+        # (_setup_model_execution_inputs) -- every paged-attention code path below is
+        # already gated on self.block_table/self.num_kv_blocks being non-None.
+        execution_batch_size = full_batch_size if full_batch_size else self.batch_size
+        self.block_table = (
+            np.arange(execution_batch_size * self.num_kv_blocks, dtype=np.int64).reshape(
+                execution_batch_size, self.num_kv_blocks
+            )
+            if self.num_kv_blocks
+            else None
         )
 
         # Vision-specific initialization
@@ -162,7 +176,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.image_height = image_height
         self.image_width = image_width
         self._vision_qpc_path = vision_qpc_path
-        self.device_id = device_id  # Store device_id for vision components
+        self.device_ids = device_ids  # Store device_ids for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
         self._vision_outputs_cache = LRUCache(max_size=100)  # LRU cache for vision outputs
         self._vision_cache = {}  # Cache for vision outputs across batches
@@ -182,7 +196,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         """Initialize vision-specific components"""
         # Vision session (separate from base class language session)
         self._vision_session = QAICInferenceSession(
-            self._vision_qpc_path, self.device_id, activate=False, enable_debug_logs=self.enable_debug_logs
+            self._vision_qpc_path, self.device_ids, activate=False, enable_debug_logs=self.enable_debug_logs
         )
 
         # Vision handler with language session coordination
@@ -298,6 +312,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         num_chunks: int,
         decode_batch_id: Optional[np.ndarray] = None,
         prefill_logit_bs: int = 1,
+        block_table: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """
         Execute chunked prefill with language inputs
@@ -307,6 +322,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             num_chunks: Number of chunks to process
             decode_batch_id: Batch ID for continuous batching (optional)
             prefill_logit_bs: Batch size for prefill logits
+            block_table: Physical KV block table for paged attention (optional)
 
         Returns:
             Final prefill outputs
@@ -368,6 +384,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
             }
 
+            if block_table is not None:
+                chunk_inputs["block_table"] = block_table
+                chunk_start_position_id = i * self._prefill_seq_len
+                chunk_inputs["slot_id"] = np.full(
+                    (prefill_logit_bs,), chunk_start_position_id % self.kv_block_size, dtype=np.int64
+                )
+
             if "mm_token_type_ids" in lang_inputs:
                 chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
                     :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
@@ -395,9 +418,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             if "image_idx_output" in outputs:
                 chunk_image_idx = outputs["image_idx_output"]
-
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
         # Prepare decode-time cross_attention_mask
         if "cross_attention_mask" in lang_inputs:
@@ -467,7 +487,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
             # Execute chunked prefill
-            outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs)
+            outputs = self._execute_chunked_prefill(
+                lang_inputs, num_chunks, decode_batch_id, prefill_logit_bs, self.block_table
+            )
 
             self._session.skip_buffers(vision_outputs)
 
@@ -584,7 +606,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             logger.warning("num_frames not specified, defaulting to 1")
             num_frames = 1
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self._qpc_path)
+        batch_size, ctx_len, fbs, _ = get_compilation_dims(self._qpc_path)
 
         pad_token_id = 1
 
@@ -631,8 +653,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in constants.VISION_FP16_INPUTS:
+            if k not in vision_inputs:
+                continue
+            if self._vision_session.binding_is_bfloat16(k):
+                vision_inputs[k] = (
+                    torch.from_numpy(vision_inputs[k]).to(torch.bfloat16).view(torch.int16).numpy().view(np.float16)
+                )
+            else:
+                vision_inputs[k] = vision_inputs[k].astype(np.float16)
 
         vision_outputs = {}
         if vision_inputs:
@@ -721,7 +750,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
         # Execute chunked prefill
-        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks)
+        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks, block_table=self.block_table)
 
         self._session.skip_buffers(vision_outputs)
 
@@ -945,11 +974,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 logger.debug(f"Set vision buffers for batch_id {decode_batch_id} prefill")
 
                 # Run prefill with cached inputs
+                block_table = self.block_table[decode_batch_id].reshape(1, -1) if self.block_table is not None else None
                 outputs = self._execute_chunked_prefill(
                     lang_inputs,
                     num_chunks,
                     decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                     prefill_logit_bs=1,
+                    block_table=block_table,
                 )
 
                 self._session.skip_buffers(vision_outputs.keys())
@@ -1078,7 +1109,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             tokenizer=self.tokenizer,
             qpc_path=self._qpc_path,
             ctx_len=self._ctx_len,
-            device_id=self.device_id,
+            device_ids=self.device_ids,
             enable_debug_logs=self.enable_debug_logs,
             is_tlm=self.is_tlm,
             include_sampler=self.include_sampler,

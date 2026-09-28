@@ -194,7 +194,7 @@ class TestSeqClassORTAccuracy:
         ort_inputs = {k: v.numpy() for k, v in inputs.items()}
         output_names = [o.name for o in session.get_outputs()]
         ort_out = dict(zip(output_names, session.run(output_names, ort_inputs)))
-        ort_class = int(ort_out["logits"].argmax(-1))
+        ort_class = ort_out["logits"].argmax(-1).item()
         assert qeff_class == ort_class, f"Class mismatch QEff vs ORT: QEff={qeff_class}, ORT={ort_class}"
 
     def test_bert_ort_predicts_same_class_as_hf(self, tmp_export_dir):
@@ -210,7 +210,7 @@ class TestSeqClassORTAccuracy:
         ort_inputs = {k: v.numpy() for k, v in inputs.items()}
         output_names = [o.name for o in session.get_outputs()]
         ort_out = dict(zip(output_names, session.run(output_names, ort_inputs)))
-        ort_class = int(ort_out["logits"].argmax(-1))
+        ort_class = ort_out["logits"].argmax(-1).item()
         assert hf_class == ort_class, f"Full pipeline class mismatch: HF={hf_class}, ORT={ort_class}"
 
     def test_bert_ort_logits_numerically_close_to_qeff(self, tmp_export_dir):
@@ -295,7 +295,7 @@ class TestSeqClassORTAccuracy:
             ort_inputs = {k: v.numpy() for k, v in inputs.items()}
             output_names = [o.name for o in session.get_outputs()]
             ort_out = dict(zip(output_names, session.run(output_names, ort_inputs)))
-            ort_class = int(ort_out["logits"].argmax(-1))
+            ort_class = ort_out["logits"].argmax(-1).item()
             assert hf_class == ort_class, f"DeBERTa pipeline mismatch: HF={hf_class}, ORT={ort_class}"
         except Exception as e:
             pytest.skip(f"DeBERTa-v2 not available or export failed: {e}")

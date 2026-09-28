@@ -266,6 +266,17 @@ When a PR onboards a new model, "it exports and a token matches" is not the bar.
 
 A clean onboarding PR either ships all applicable items above, or names the ones it intentionally omits with a one-line reason. The reviewer's job is to check each item and call out silent omissions.
 
+## Bug-fix testing contract
+
+Treat a PR as a bug fix when its title says bug fix/regression fix/hotfix, a label marks it as a bug, or the diff repairs existing incorrect behavior. The diff is authoritative: missing or misleading PR metadata does not waive this contract.
+
+Every bug-fix PR needs both of these:
+
+1. **Reported-reproducer coverage.** Add or update one `RegressionScenario` in `tests/reproducer_configs/test_reported_reproducer_configs.py`. Preserve the reported failure stage and relevant options. Use a tiny-random checkpoint or faithful 2/4-layer reduction of the affected architecture by default. If only the official model reproduces the problem, retain it behind `QEFF_REPRODUCER_RUN_FULL_MODELS=1` and explain why a reduction is not faithful. A default-skipped scenario is acceptable only for a real external constraint such as unavailable hardware, private artifacts, services, or full-memory measurement; the skip must remain visible and explain the follow-up.
+2. **Focused regression/unit coverage.** Add or update the narrowest relevant test under `tests/unit_test/` or `tests/transformers/`, preferably in an existing module or `tests/unit_test/models/test_model_quickcheck.py`. It must exercise the actual repaired production path and satisfy the revert-to-fail rule: removing the source fix makes the test fail in a way that matches the reported symptom, while restoring the fix makes it pass. A reproducer-catalog entry, smoke assertion, helper-only test that bypasses the failing boundary, or test that mirrors the implementation is not a substitute.
+
+Missing either half is a Blocker. The two layers serve different purposes: the reproducer preserves the reported configuration and pipeline stage for the Jenkins pre-merge job; the focused test gives fast, precise regression protection and localizes failures.
+
 ## Tests
 
 CONTRIBUTING.md (line 57, with original typo): *"verify all 4 pipeline stages (PyTorch HF → KV → ORT → AI 100) and make sure tokens are matching with refernce PyTorch HF"* [sic].

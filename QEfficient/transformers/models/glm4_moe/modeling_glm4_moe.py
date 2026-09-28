@@ -183,7 +183,7 @@ def eager_attention_forward_blocked_kv(
     for j in range(num_kv_blocks):
         start_index = j * block_size
         end_index = (j + 1) * block_size
-        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        K_block, V_block = past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
         K_block_states = repeat_kv(K_block, module.num_key_value_groups)
         V_block_states = repeat_kv(V_block, module.num_key_value_groups)
         past_seen_tokens_start = start_index
@@ -507,27 +507,25 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
-        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.to(
+        n_routed_experts = self.n_routed_experts if hasattr(self, "n_routed_experts") else self.num_experts
+        n_group = self.n_group if hasattr(self, "n_group") else self.num_group
+        scores_for_choice = scores.view(-1, n_routed_experts) + self.e_score_correction_bias.to(
             device=scores.device
         ).unsqueeze(0)
-        group_scores_top2 = scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group).topk(
-            2, dim=-1
-        )[0]
-        group_scores = group_scores_top2.sum(dim=-1)
+        group_scores = scores_for_choice.view(-1, n_group, n_routed_experts // n_group).topk(2, dim=-1)[0].sum(dim=-1)
         group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
         group_mask = torch.zeros_like(group_scores)
         group_mask.scatter_(1, group_idx, 1)
         score_mask = (
-            group_mask.unsqueeze(-1)
-            .expand(-1, self.n_group, self.n_routed_experts // self.n_group)
-            .reshape(-1, self.n_routed_experts)
+            group_mask.unsqueeze(-1).expand(-1, n_group, n_routed_experts // n_group).reshape(-1, n_routed_experts)
         )
         scores_for_choice = scores_for_choice.masked_fill(~score_mask.bool(), 0.0)
         topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]
         return topk_indices
 
     def orig_forward(self, hidden_states):
-        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        hidden_size = self.hidden_dim if hasattr(self, "hidden_dim") else self.config.hidden_size
+        hidden_states = hidden_states.view(-1, hidden_size)
         router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
         scores = router_logits.sigmoid()
         topk_indices = self.get_topk_indices(scores)
@@ -541,7 +539,8 @@ class QEffGlm4MoeTopkRouter(nn.Module):
 
     def forward(self, hidden_states):
         # orig_i, orig_w = self.orig_forward(hidden_states)
-        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        hidden_size = self.hidden_dim if hasattr(self, "hidden_dim") else self.config.hidden_size
+        hidden_states = hidden_states.view(-1, hidden_size)
         # router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
         router_logits = torch.nn.functional.linear(hidden_states, self.weight)
 

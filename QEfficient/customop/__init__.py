@@ -12,10 +12,12 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncPagedAttention,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
     CtxScatterFunc3DInt,
+    CtxScatterFuncPagedAttention,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherFuncBlockedKVCB,
@@ -31,10 +33,12 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
 from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE  # noqa: F401
 from QEfficient.customop.rms_norm import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.customop.utils import (
+    ctx_chunk_scatter_batch,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_3d_generalized,
     ctx_gather_blocked_kv,
+    ctx_gather_blocked_kv_batch,
     ctx_gather_blocked_kv_cb,
     ctx_gather_cb,
     ctx_gather_cb_3d,
@@ -53,6 +57,7 @@ __all__ = [
     "GemmaCustomRMSNormAIC",
     # Func classes (for ONNX export symbolic registration and direct use)
     "CtxScatterFunc",
+    "CtxScatterFuncPagedAttention",
     "CtxScatterFunc3D",
     "CtxScatterFunc3DGeneralized",
     "CtxScatterFunc3DInt",
@@ -60,6 +65,7 @@ __all__ = [
     "CtxGatherFunc3D",
     "CtxGatherFunc3DGeneralized",
     "CtxGatherFuncBlockedKV",
+    "CtxGatherFuncPagedAttention",
     "CtxScatterFuncCB",
     "CtxScatterFuncCB3D",
     "CtxGatherFuncCB",
@@ -73,6 +79,8 @@ __all__ = [
     "ctx_gather",
     "ctx_gather_3d",
     "ctx_gather_3d_generalized",
+    "ctx_chunk_scatter_batch",
+    "ctx_gather_blocked_kv_batch",
     "ctx_gather_blocked_kv",
     "ctx_scatter_cb",
     "ctx_scatter_cb_3d",

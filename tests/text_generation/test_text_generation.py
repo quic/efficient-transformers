@@ -6,10 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import os
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from transformers import AutoModelForCausalLM
 
+from QEfficient.generation import cloud_infer
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import hf_download
@@ -17,6 +20,133 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 
 configs = [pytest.param("gpt2", 2, None, 32, id="gpt2_config")]
+
+
+@pytest.fixture
+def profiling_runtime(monkeypatch):
+    """Provide a runtime whose profiling enum predates device KPI support."""
+    runtime = SimpleNamespace(
+        Context=Mock(),
+        Queue=Mock(),
+        Qpc=Mock(return_value=SimpleNamespace(getIoDescriptor=Mock(return_value=(0, b"")))),
+        QAicProgramProperties=SimpleNamespace,
+        Program=Mock(return_value=SimpleNamespace(load=Mock(return_value=0), activate=Mock())),
+        ExecObj=Mock(),
+        BufferDimensionsVecRef=list,
+        QStatus=SimpleNamespace(QS_SUCCESS=0),
+        QAicProfilingTypeEnum=SimpleNamespace(
+            QAIC_PROFILING_INFERENCE_LATENCY_TYPE=1,
+            QAIC_PROFILING_INFERENCE_TRACE_TYPE=2,
+            QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE=3,
+        ),
+        ProfilingHandle=Mock(return_value=SimpleNamespace(start=Mock(return_value=0), stop=Mock(return_value=0))),
+    )
+    dtype_names = (
+        "FLOAT_TYPE",
+        "FLOAT_16_TYPE",
+        "INT8_Q_TYPE",
+        "UINT8_Q_TYPE",
+        "INT16_Q_TYPE",
+        "INT32_Q_TYPE",
+        "INT32_I_TYPE",
+        "INT64_I_TYPE",
+        "INT8_TYPE",
+    )
+    aicapi = SimpleNamespace(
+        **{name: index for index, name in enumerate(dtype_names)},
+        IoDesc=Mock(
+            return_value=SimpleNamespace(
+                ParseFromString=Mock(), allowed_shapes=[], selected_set=SimpleNamespace(bindings=[])
+            )
+        ),
+    )
+    monkeypatch.setattr(cloud_infer, "qaicrt", runtime, raising=False)
+    monkeypatch.setattr(cloud_infer, "aicapi", aicapi, raising=False)
+    monkeypatch.setattr(cloud_infer, "is_qaicrt_imported", True)
+    monkeypatch.setattr(cloud_infer, "is_aicapi_imported", True, raising=False)
+    return runtime
+
+
+@pytest.mark.parametrize("has_profiling_api", [True, False])
+def test_session_profiling_disabled_on_older_sdk(profiling_runtime, tmp_path, has_profiling_api):
+    if not has_profiling_api:
+        del profiling_runtime.QAicProfilingTypeEnum
+        del profiling_runtime.ProfilingHandle
+
+    session = cloud_infer.QAICInferenceSession(tmp_path / "model.qpc")
+
+    assert session.profiling_handle is None
+    assert session.is_active
+    profiling_runtime.ExecObj.assert_called_once_with(session.context, session.program)
+    if has_profiling_api:
+        profiling_runtime.ProfilingHandle.assert_not_called()
+    assert not (tmp_path / "profiling_output").exists()
+
+
+@pytest.mark.parametrize(
+    "profiling_type,enum_name,enum_value",
+    [
+        ("latency", "QAIC_PROFILING_INFERENCE_LATENCY_TYPE", 1),
+        ("trace", "QAIC_PROFILING_INFERENCE_TRACE_TYPE", 2),
+        ("raw_device_stats", "QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE", 3),
+        ("stats", "QAIC_PROFILING_INFERENCE_DEV_KPI_TYPE", 4),
+    ],
+)
+def test_session_profiling_resolves_only_requested_mode(
+    profiling_runtime, tmp_path, profiling_type, enum_name, enum_value
+):
+    profiling_runtime.QAicProfilingTypeEnum = SimpleNamespace(**{enum_name: enum_value})
+    output_dir = tmp_path / "reports"
+
+    session = cloud_infer.QAICInferenceSession(
+        tmp_path / "model.qpc",
+        profiling_type=profiling_type,
+        profiling_output_dir=output_dir,
+        profiling_file_prefix="test-profiling",
+    )
+
+    profiling_runtime.ProfilingHandle.assert_called_once_with(
+        programs=[session.program],
+        type=enum_value,
+        fileNamePrefix="test-profiling",
+        outputDirectory=str(output_dir),
+    )
+    assert output_dir.is_dir()
+    with session.profile():
+        session.profiling_handle.start.assert_called_once_with()
+        session.profiling_handle.stop.assert_not_called()
+    session.profiling_handle.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "profiling_type,missing_api",
+    [("stats", None), ("latency", "QAicProfilingTypeEnum"), ("latency", "ProfilingHandle")],
+)
+def test_session_profiling_unavailable_before_device_allocation(
+    profiling_runtime, tmp_path, profiling_type, missing_api
+):
+    if missing_api is not None:
+        delattr(profiling_runtime, missing_api)
+
+    with pytest.raises(RuntimeError, match=f"profiling_type '{profiling_type}'.*installed QAIC SDK"):
+        cloud_infer.QAICInferenceSession(tmp_path / "model.qpc", profiling_type=profiling_type)
+
+    profiling_runtime.Context.assert_not_called()
+    profiling_runtime.Qpc.assert_not_called()
+    profiling_runtime.Program.assert_not_called()
+    assert not (tmp_path / "profiling_output").exists()
+
+
+def test_session_profiling_invalid_mode_before_device_allocation(profiling_runtime, tmp_path):
+    del profiling_runtime.QAicProfilingTypeEnum
+    del profiling_runtime.ProfilingHandle
+
+    with pytest.raises(ValueError, match="Unsupported profiling_type 'invalid'"):
+        cloud_infer.QAICInferenceSession(tmp_path / "model.qpc", profiling_type="invalid")
+
+    profiling_runtime.Context.assert_not_called()
+    profiling_runtime.Qpc.assert_not_called()
+    profiling_runtime.Program.assert_not_called()
 
 
 def load_causal_lm_model(model_config):

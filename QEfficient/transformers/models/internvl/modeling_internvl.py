@@ -114,6 +114,7 @@ class QEffInternVLModel(nn.Module):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         num_patches = compiler_options.pop("num_patches", None)

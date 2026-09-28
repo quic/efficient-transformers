@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).parent
 GENERATOR = HERE / "generate_ci_report.py"
+MERGE_SCRIPT = HERE / "merge_junit_results.sh"
 SAMPLE_DIR = HERE / "sample"
 
 
@@ -72,10 +74,48 @@ def test_dynamo_stage_recognised(gcr):
     assert "tests_log_dynamo_qaic.xml" in gcr.STAGE_MAP
     dynamo = gcr.STAGE_MAP["tests_log_dynamo_qaic.xml"]
     assert dynamo.gate == "RUN_DYNAMO_QAIC"
-    # Dynamo runs after CLI (order 8) and before Finetune (order 10).
-    assert dynamo.order == 9
+    # Dynamo runs after CLI (order 9) and before Finetune (order 11).
+    assert dynamo.order == 10
     finetune = gcr.STAGE_MAP["tests_log_finetune.xml"]
-    assert finetune.order == 10
+    assert finetune.order == 11
+
+
+def test_disagg_stage_recognised(gcr):
+    """DISAGG XML basename must be in STAGE_MAP — previously absent and silently unreported."""
+    assert "tests_log_disagg.xml" in gcr.STAGE_MAP
+    disagg = gcr.STAGE_MAP["tests_log_disagg.xml"]
+    assert disagg.display == "QAIC DISAGG"
+    assert disagg.gate == "RUN_QAIC_DISAGG"
+    # DISAGG sits between Multimodal (order 5) and Reranker (order 7).
+    assert disagg.order == 6
+    reranker = gcr.STAGE_MAP["tests_log_reranker.xml"]
+    assert reranker.order == 7
+    # A skipped DISAGG stage must warn the Causal LM category tile.
+    assert "tests_log_disagg.xml" in gcr._STAGE_FEEDS_CATEGORIES
+    assert gcr.CAT_CAUSAL in gcr._STAGE_FEEDS_CATEGORIES["tests_log_disagg.xml"]
+
+
+def test_merge_junit_results_includes_each_stage_once(tmp_path):
+    """The Jenkins aggregate must include per-stage XMLs, not stale/intermediate files."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+
+    def write_report(filename, names):
+        cases = "".join(f'<testcase classname="tests" name="{name}" />' for name in names)
+        (tests_dir / filename).write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
+
+    write_report("tests_log1.xml", ["export-1"])
+    write_report("tests_log2.xml", ["qaic-1", "qaic-2"])
+    write_report("tests_log_disagg.xml", ["disagg-1"])
+    write_report("tests_log_disagg_batch_0.xml", ["disagg-1"])
+    write_report("tests_log.xml", ["stale-aggregate"])
+
+    subprocess.run(["bash", str(MERGE_SCRIPT)], cwd=tmp_path, check=True)
+
+    aggregate = (tests_dir / "tests_log.xml").read_text()
+    for name in ("export-1", "qaic-1", "qaic-2", "disagg-1"):
+        assert aggregate.count(f'name="{name}"') == 1
+    assert "stale-aggregate" not in aggregate
 
 
 def test_category_roster_stable(gcr):
@@ -115,8 +155,7 @@ def test_vlm_scenario_key_strips_profile_prefix(gcr):
     for prefix in ("test_full_", "test_few_", "test_dummy_"):
         key = gcr._vlm_scenario_key(prefix + "image_text_to_text_ccl_dual_qpc")
         assert key == "image_text_to_text_ccl_dual_qpc"
-    # Non-profile VLM tests (reference / qnn / custom) don't collide with a scenario column.
-    assert gcr._vlm_scenario_key("test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn") == ""
+    # Non-profile VLM tests (reference / custom) don't collide with a scenario column.
     assert gcr._vlm_scenario_key("test_custom_replicate_kv_pytorch_vs_ai100") == ""
 
 
