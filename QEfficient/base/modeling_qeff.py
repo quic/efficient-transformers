@@ -175,11 +175,14 @@ def _weight_free_external_data_root(weight_spec_path: Optional[Union[str, Path]]
 
 def _compiler_env_with_external_data_root(weight_spec_path: Optional[Union[str, Path]]) -> Optional[Dict[str, str]]:
     """Return a compiler environment containing AIC_EXTERNAL_DATA_ROOT for weight-free models."""
+    compiler_env = os.environ.copy()
+    if compiler_env.get("AIC_EXTERNAL_DATA_ROOT"):
+        return compiler_env
+
     external_data_root = _weight_free_external_data_root(weight_spec_path)
     if external_data_root is None:
         return None
 
-    compiler_env = os.environ.copy()
     compiler_env["AIC_EXTERNAL_DATA_ROOT"] = str(external_data_root)
     return compiler_env
 

@@ -78,6 +78,8 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, **load_kwargs)
 
     model_kwargs = dict(load_kwargs)
+    if args.weight_free:
+        model_kwargs["weight_free"] = True
     if args.enable_proxy:
         model_kwargs["enable_proxy"] = True
         if args.num_hidden_layers > 0:
