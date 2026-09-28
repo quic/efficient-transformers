@@ -1091,23 +1091,27 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
+            hidden_size = _get_gemma4_config_attr(config, "hidden_size", layer_idx=i)
+            num_attention_heads = _get_gemma4_config_attr(config, "num_attention_heads", layer_idx=i)
+            default_head_dim = hidden_size // num_attention_heads
+
             if layer_type == "sliding_attention":
-                n_heads = config.num_key_value_heads
-                d_head = _get_gemma4_config_attr(
-                    config, "head_dim", config.hidden_size // config.num_attention_heads, i
-                )
-                layer_seq_len = min(config.sliding_window, seq_len)
+                n_heads = _get_gemma4_config_attr(config, "num_key_value_heads", layer_idx=i)
+                d_head = _get_gemma4_config_attr(config, "head_dim", default_head_dim, i)
+                sliding_window = _get_gemma4_config_attr(config, "sliding_window", seq_len, i)
+                layer_seq_len = min(sliding_window or seq_len, seq_len)
             else:
-                use_alternative_attention = getattr(config, "attention_k_eq_v", False)
+                use_alternative_attention = _get_gemma4_config_attr(config, "attention_k_eq_v", False, i)
+                global_kv_heads = _get_gemma4_config_attr(config, "num_global_key_value_heads", None, i)
                 n_heads = (
-                    config.num_global_key_value_heads
-                    if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
-                    else config.num_key_value_heads
+                    global_kv_heads
+                    if use_alternative_attention and global_kv_heads is not None
+                    else _get_gemma4_config_attr(config, "num_key_value_heads", layer_idx=i)
                 )
                 d_head = _get_gemma4_config_attr(
                     config,
                     "global_head_dim",
-                    _get_gemma4_config_attr(config, "head_dim", config.hidden_size // config.num_attention_heads, i),
+                    _get_gemma4_config_attr(config, "head_dim", default_head_dim, i),
                     i,
                 )
                 layer_seq_len = seq_len
@@ -1496,23 +1500,27 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
+            hidden_size = _get_gemma4_config_attr(config, "hidden_size", layer_idx=i)
+            num_attention_heads = _get_gemma4_config_attr(config, "num_attention_heads", layer_idx=i)
+            default_head_dim = hidden_size // num_attention_heads
+
             if layer_type == "sliding_attention":
-                n_heads = config.num_key_value_heads
-                d_head = _get_gemma4_config_attr(
-                    config, "head_dim", config.hidden_size // config.num_attention_heads, i
-                )
-                layer_seq_len = min(config.sliding_window, seq_len)
+                n_heads = _get_gemma4_config_attr(config, "num_key_value_heads", layer_idx=i)
+                d_head = _get_gemma4_config_attr(config, "head_dim", default_head_dim, i)
+                sliding_window = _get_gemma4_config_attr(config, "sliding_window", seq_len, i)
+                layer_seq_len = min(sliding_window or seq_len, seq_len)
             else:
-                use_alternative_attention = getattr(config, "attention_k_eq_v", False)
+                use_alternative_attention = _get_gemma4_config_attr(config, "attention_k_eq_v", False, i)
+                global_kv_heads = _get_gemma4_config_attr(config, "num_global_key_value_heads", None, i)
                 n_heads = (
-                    config.num_global_key_value_heads
-                    if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
-                    else config.num_key_value_heads
+                    global_kv_heads
+                    if use_alternative_attention and global_kv_heads is not None
+                    else _get_gemma4_config_attr(config, "num_key_value_heads", layer_idx=i)
                 )
                 d_head = _get_gemma4_config_attr(
                     config,
                     "global_head_dim",
-                    _get_gemma4_config_attr(config, "head_dim", config.hidden_size // config.num_attention_heads, i),
+                    _get_gemma4_config_attr(config, "head_dim", default_head_dim, i),
                     i,
                 )
                 layer_seq_len = seq_len
