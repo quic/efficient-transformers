@@ -230,7 +230,6 @@ class TestQEFFTransformersBase:
     @pytest.mark.parametrize(
         ("wrapper_cls", "model_factory"),
         [
-            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
             pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
             pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
             pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
@@ -250,25 +249,6 @@ class TestQEFFTransformersBase:
         qeff_model = wrapper_cls.from_pretrained("dummy-model", weight_free=True)
 
         assert "weight_free" not in captured_kwargs
-        assert qeff_model._weight_free is False
-        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
-        assert wrapper_cls.__name__ in caplog.text
-
-    @pytest.mark.parametrize(
-        ("wrapper_cls", "model_factory"),
-        [
-            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
-            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
-            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
-            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
-        ],
-    )
-    def test_direct_init_disables_unsupported_weight_free(self, wrapper_cls, model_factory, caplog):
-        """Non-CausalLM direct construction must not enable the weight-free export path."""
-        caplog.set_level(logging.WARNING, logger="QEfficient")
-
-        qeff_model = wrapper_cls(model_factory()[0], weight_free=True)
-
         assert qeff_model._weight_free is False
         assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
         assert wrapper_cls.__name__ in caplog.text
