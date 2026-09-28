@@ -18,10 +18,19 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 MODEL_ID = "MiniMaxAI/MiniMax-M3"
+
+
+def _optional_int_env(name: str) -> int | None:
+    value = os.environ.get(name)
+    return int(value) if value is not None else None
+
+
 Q_HEAD_BLOCK_CHUNK = int(os.environ.get("Q_HEAD_BLOCK_CHUNK", "1"))
 Q_BLOCK_SIZE = int(os.environ.get("Q_BLOCK_SIZE", "1024"))
 Q_BLOCK_CHUNK = int(os.environ.get("Q_BLOCK_CHUNK", "256"))
 NUM_KV_BLOCKS = int(os.environ.get("NUM_KV_BLOCKS", "2"))
+INDEXER_NUM_BLOCKS = _optional_int_env("INDEXER_NUM_BLOCKS")
+MSA_NUM_KV_BLOCKS = _optional_int_env("MSA_NUM_KV_BLOCKS")
 
 
 def _expand_batch(inputs, batch_size: int):
@@ -35,6 +44,10 @@ def _expand_batch(inputs, batch_size: int):
     return expanded
 
 
+def _parse_device_group(device_ids: str) -> list[int]:
+    return [int(device_id) for device_id in device_ids.strip("[]").split(",") if device_id.strip()]
+
+
 def _build_qaic_config(
     *,
     msa_indexer_dp: int,
@@ -45,6 +58,8 @@ def _build_qaic_config(
     indexer_prefill_parallel: bool,
     indexer_q_chunk: int | None,
     indexer_q_size: int | None,
+    indexer_num_blocks: int | None,
+    msa_num_kv_blocks: int | None,
     num_cores_per_device: int,
     msa_q_chunk: int,
     expert_parallel_chunk_size: int,
@@ -83,6 +98,10 @@ def _build_qaic_config(
         qaic_config["indexer_q_chunk"] = indexer_q_chunk
     if indexer_q_size is not None:
         qaic_config["indexer_q_size"] = indexer_q_size
+    if indexer_num_blocks is not None:
+        qaic_config["indexer_num_blocks"] = indexer_num_blocks
+    if msa_num_kv_blocks is not None:
+        qaic_config["msa_num_kv_blocks"] = msa_num_kv_blocks
     return qaic_config
 
 
@@ -102,7 +121,38 @@ def main():
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--ctx-len", type=int, default=4096)
     parser.add_argument("--num-devices", type=int, default=16)
+    parser.add_argument(
+        "--device-group",
+        type=_parse_device_group,
+        default=None,
+        help="Physical QAIC device IDs to use at runtime, for example '[0,1,2,3]'.",
+    )
     parser.add_argument("--num-cores", type=int, default=16)
+    parser.add_argument(
+        "--compile-threads",
+        type=int,
+        default=None,
+        help="Forward -compile-threads to qaic-compile when set.",
+    )
+    parser.add_argument(
+        "--time-passes",
+        action="store_true",
+        help="Forward -time-passes to qaic-compile.",
+    )
+    onnx_subfunctions_group = parser.add_mutually_exclusive_group()
+    onnx_subfunctions_group.add_argument(
+        "--use-onnx-subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_true",
+        default=True,
+        help="Enable ONNX subfunction export.",
+    )
+    onnx_subfunctions_group.add_argument(
+        "--no-onnx-subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_false",
+        help="Disable ONNX subfunction export.",
+    )
     parser.add_argument(
         "--mdp-num-partitions",
         type=int,
@@ -184,6 +234,18 @@ def main():
         help="Number of prefill KV blocks (default: NUM_KV_BLOCKS or 2).",
     )
     parser.add_argument(
+        "--indexer-num-blocks",
+        type=int,
+        default=INDEXER_NUM_BLOCKS,
+        help="MiniMax MSA indexer KV blocking factor; defaults to --num-kv-blocks when omitted.",
+    )
+    parser.add_argument(
+        "--msa-num-kv-blocks",
+        type=int,
+        default=MSA_NUM_KV_BLOCKS,
+        help="MiniMax MSA attention KV blocking factor; defaults to --num-kv-blocks when omitted.",
+    )
+    parser.add_argument(
         "--q-block-size",
         type=int,
         default=Q_BLOCK_SIZE,
@@ -223,6 +285,14 @@ def main():
         parser.error("--mdp-num-partitions must not exceed --num-devices")
     if args.num_devices % args.mdp_num_partitions:
         parser.error("--num-devices must be divisible by --mdp-num-partitions")
+    if args.device_group is not None and len(args.device_group) != args.num_devices:
+        parser.error("--device-group length must match --num-devices")
+    if args.compile_threads is not None and args.compile_threads < 1:
+        parser.error("--compile-threads must be positive")
+    if args.indexer_num_blocks is not None and args.indexer_num_blocks < 1:
+        parser.error("--indexer-num-blocks must be positive")
+    if args.msa_num_kv_blocks is not None and args.msa_num_kv_blocks < 1:
+        parser.error("--msa-num-kv-blocks must be positive")
     if args.indexer_q_chunk is not None and args.indexer_q_chunk < 1:
         parser.error("--indexer-q-chunk must be positive")
     if args.indexer_q_size is not None and args.indexer_q_size < 1:
@@ -257,6 +327,12 @@ def main():
     print(f"[timing] model load: {time.perf_counter() - load_start:.2f}s")
 
     compile_start = time.perf_counter()
+    compiler_options = {}
+    if args.compile_threads is not None:
+        compiler_options["compile_threads"] = args.compile_threads
+    if args.time_passes:
+        compiler_options["time_passes"] = True
+
     qpc_paths = qeff_model.compile(
         prefill_seq_len=args.prefill_seq_len,
         prefill_only=True,
@@ -268,7 +344,7 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=args.use_onnx_subfunctions,
         skip_vision=True,
         offload_pt_weights=False,
         node_precision_info=True,
@@ -284,6 +360,8 @@ def main():
             indexer_prefill_parallel=args.indexer_prefill_parallel,
             indexer_q_chunk=args.indexer_q_chunk,
             indexer_q_size=args.indexer_q_size,
+            indexer_num_blocks=args.indexer_num_blocks,
+            msa_num_kv_blocks=args.msa_num_kv_blocks,
             num_cores_per_device=args.num_cores_per_device,
             msa_q_chunk=args.msa_q_chunk,
             expert_parallel_chunk_size=args.expert_parallel_chunk_size,
@@ -295,6 +373,7 @@ def main():
             n_rep_chunk=n_rep_chunk,
             ctx_len=args.ctx_len,
         ),
+        **compiler_options,
     )
     prefill_qpc_path = qpc_paths["lang_prefill_qpc_path"]
     print(f"[timing] prefill export + compile: {time.perf_counter() - compile_start:.2f}s")
@@ -327,9 +406,7 @@ def main():
     pad_len = padded_len - input_len
     model_inputs["input_ids"] = torch.nn.functional.pad(model_inputs["input_ids"], (0, pad_len), value=0)
     if "attention_mask" in model_inputs:
-        model_inputs["attention_mask"] = torch.nn.functional.pad(
-            model_inputs["attention_mask"], (0, pad_len), value=0
-        )
+        model_inputs["attention_mask"] = torch.nn.functional.pad(model_inputs["attention_mask"], (0, pad_len), value=0)
         model_inputs["position_ids"] = torch.where(
             model_inputs["attention_mask"].bool(),
             torch.arange(padded_len).unsqueeze(0),
@@ -343,7 +420,7 @@ def main():
     np_inputs = {key: value.detach().cpu().numpy() for key, value in model_inputs.items() if torch.is_tensor(value)}
     np_inputs.pop("attention_mask", None)
     prefill_state = np_inputs.copy()
-    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_session = QAICInferenceSession(prefill_qpc_path, device_ids=args.device_group)
 
     prefill_start = time.perf_counter()
     for chunk_idx in range(num_chunks):

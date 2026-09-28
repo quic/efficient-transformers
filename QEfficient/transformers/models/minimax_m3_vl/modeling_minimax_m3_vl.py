@@ -346,10 +346,12 @@ def _gather_paged_kv_selected_heads(pool: torch.Tensor, physical_ids: torch.Tens
 
 
 class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
-    @staticmethod
-    def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def _apply_rope(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """Apply partial RoPE while preserving the remainder of the index head."""
-        rotary_dim = cos.shape[-1]
+        rotary_dim = min(
+            self.config.index_head_dim,
+            int(self.config.head_dim * self.config.rope_parameters.get("partial_rotary_factor", 1.0)),
+        )
         rotated = x[..., :rotary_dim]
         passthrough = x[..., rotary_dim:]
         head_axis = x.ndim - 3

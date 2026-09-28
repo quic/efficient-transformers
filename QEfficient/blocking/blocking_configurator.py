@@ -185,7 +185,7 @@ def _configure_minimax_prefill_export(
         compile_seq_len // math.gcd(compile_seq_len, msa_q_chunk),
     )
     indexer_q_proj_num_chunks = math.ceil(compile_seq_len / _MINIMAX_INDEX_Q_PROJ_CHUNK)
-    minimum_export_seq_len = max(ONNX_EXPORT_EXAMPLE_SEQ_LEN, indexer_q_proj_num_chunks)
+    minimum_export_seq_len = indexer_q_proj_num_chunks
     export_seq_len = ((minimum_export_seq_len + scale_denominator - 1) // scale_denominator) * scale_denominator
     full_index_signature = tuple(chunk_len // indexer_q_size for chunk_len in full_index_chunks)
 
