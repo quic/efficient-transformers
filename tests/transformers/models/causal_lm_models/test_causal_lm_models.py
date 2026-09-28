@@ -106,6 +106,9 @@ def _run_per_pr_causal_text_case(
     # compile-only so it never touches a device. See tests/two_phase.py.
     manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
 
+    # Per-test qaic_config takes precedence; fallback to per-model default.
+    qaic_config = dict(qaic_config or model_config.get("qaic_config", {})) or None
+
     # CCL must be enabled before export so comp_ctx_lengths remains an ONNX input.
     if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
         qaic_config = dict(qaic_config or {})

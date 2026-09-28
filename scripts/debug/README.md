@@ -30,12 +30,12 @@ model = QEFFAutoModelForCausalLM.from_pretrained(
 
 ### Saving Input/Output Files
 
-Generate IO files during inference using `write_io=True`:
+Generate IO files during inference using `artifacts=True`:
 
 ```python
 model.generate(
     inputs=...,
-    write_io=True  # Saves input/output tensors to .npy files
+    artifacts=True  # Saves input/output tensors to .npy files
 )
 ```
 
@@ -130,7 +130,7 @@ python image_model.py
 
 ## Generated IO Files
 
-When `write_io=True`, the model generates files in the qeff models directory:
+When `artifacts=True`, the model generates files in the qeff models directory:
 - `*.npy` files: NumPy arrays containing input/output tensors
 - File names indicate tensor type and layer depth
 - **Use case**: Validate model outputs, compare with baseline implementations, debug inference issues

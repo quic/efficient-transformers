@@ -100,11 +100,22 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
-    GraniteMoeParallelExperts,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
 )
+
+try:
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeParallelExperts,
+        GraniteMoeTopKGating,
+    )
+except ImportError:
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeExperts as GraniteMoeParallelExperts,
+    )
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeTopKRouter as GraniteMoeTopKGating,
+    )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -1534,6 +1545,42 @@ class BlockingAttentionTransform:
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+
+class GatedDeltaConfigTransform:
+    @classmethod
+    def apply(cls, model: nn.Module, gated_delta_config: dict | None = None) -> tuple[nn.Module, bool]:
+        target_modules = [module for module in model.modules() if hasattr(module, "torch_chunk_gated_delta_rule_qeff")]
+        if not target_modules:
+            return model, False
+
+        if not gated_delta_config:
+            # Avoid compile-to-compile state leakage when the same model object is reused
+            # across prefill/decode compiles and only one of them passes qaic_config.
+            transformed = False
+            for module in target_modules:
+                if getattr(module, "gdn_chunk_size", 64) != 64:
+                    module.gdn_chunk_size = 64
+                    if hasattr(module, "__qeff_init__"):
+                        module.__qeff_init__()
+                    transformed = True
+            return model, transformed
+
+        chunk_size = gated_delta_config.get("chunk_size")
+        chunk_size = int(chunk_size) if chunk_size is not None else None
+
+        if chunk_size is None:
+            return model, False
+
+        transformed = False
+        for module in target_modules:
+            if chunk_size is not None and chunk_size > 0:
+                module.gdn_chunk_size = chunk_size
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
+                transformed = True
+
         return model, transformed
 
 

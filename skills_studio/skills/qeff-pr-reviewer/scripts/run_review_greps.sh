@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 # Run all PR-review greps against a diff file and print categorized hits.
 # Usage: run_review_greps.sh <diff-file> [<repo-root>]
 # Prints per-category hits; empty categories are silent.
