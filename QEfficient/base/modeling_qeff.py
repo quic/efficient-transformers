@@ -42,6 +42,7 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    FFNBlockingTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
@@ -1000,6 +1001,7 @@ class QEFFBaseModel(ABC):
             # without a model config, this is not a model that is possible to block
             blocking_config = None
 
+        self.model, _ = FFNBlockingTransform.apply(self.model, qaic_config=qaic_config)
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
         if num_cores is None:
             num_cores = constants.DEFAULT_AIC_NUM_CORES
