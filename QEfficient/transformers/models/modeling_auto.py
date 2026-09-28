@@ -664,11 +664,12 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
         dynamo = kwargs.get("dynamo", self._weight_free)
-        # Below change is for dynamo export to receive dynamic shape info for seq_len when multi specializations are used, eg [32,64].
+        # Below change is workaround for dynamo export to receive dynamic shape info for seq_len when multi specializations are used, eg [32,64].
         # The 32,64 case creates two compiler specializations, so the ONNX must expose a dynamic seq_len input dimension.
         # Earlier exported ONNX still had input_ids [1, 32] and attention_mask [1, 32], so the compiler could not tell which
         # specialization to choose and failed with:
         # <class 'torch.fx.experimental.symbolic_shapes.ConstraintViolationError'>: 1 not in range [2, 1024]
+        # NOTE: To be removed once 1322 is merged.
         export_dynamic_axes = (
             {"input_ids": {1: "seq_len"}, "attention_mask": {1: "seq_len"}} if dynamo else dynamic_axes
         )
