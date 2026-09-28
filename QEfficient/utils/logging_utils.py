@@ -43,6 +43,7 @@ def create_logger() -> logging.Logger:
     Creates a logger object with Colored QEffFormatter.
     """
     logger = logging.getLogger("QEfficient")
+    logger.setLevel(logging.INFO)
 
     # create console handler and set level to debug
     ch = logging.StreamHandler()
