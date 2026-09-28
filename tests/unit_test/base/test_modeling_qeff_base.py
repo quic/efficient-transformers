@@ -28,8 +28,6 @@ from QEfficient.base.modeling_qeff import generate_mdp_compiler_dump
 from QEfficient.compile.mdp_generator import (
     _get_layer_num_from_inputs,
     _layer_partition_bounds,
-    generate_disagg_mdp_config,
-    MdpStrategy,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -613,10 +611,12 @@ class TestMdpLayerPartitionBounds:
 
     def test_generic_decoder_callsite_uses_model_layer_input(self):
         """GPT-OSS repeated-subgraph callsites expose their layer in weight inputs."""
-        assert _get_layer_num_from_inputs(
-            ["embedding", "model.layers.3.input_layernorm.weight", "model.layers.3.self_attn.q_proj.weight"]
-        ) == 3
-
+        assert (
+            _get_layer_num_from_inputs(
+                ["embedding", "model.layers.3.input_layernorm.weight", "model.layers.3.self_attn.q_proj.weight"]
+            )
+            == 3
+        )
 
     def test_8_layers_3_partitions_counts(self):
         """8 layers / 3 partitions -> layer counts [3, 3, 2]."""
