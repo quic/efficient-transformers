@@ -1455,6 +1455,37 @@ class BlockingAttentionTransform:
         return model, transformed
 
 
+class FFNBlockingTransform(PytorchTransform):
+    """Configure DeepSeek V4 routed-expert FFN tiling from ``qaic_config``."""
+
+    _VALID_MODES = {"default", "token", "weight", "token_weight"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        weight_block_size = config.get("ffn_weight_block_size")
+
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        for key, value in (
+            ("ffn_token_block_size", token_block_size),
+            ("ffn_weight_block_size", weight_block_size),
+        ):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+                raise ValueError(f"qaic_config['{key}'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffDeepseekV4Experts):
+                module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
+                transformed = True
+        return model, transformed
+
+
 def _iter_optimized_moe_modules(model: nn.Module):
     from QEfficient.transformers.moe import QEffMoEBlockMixin
 

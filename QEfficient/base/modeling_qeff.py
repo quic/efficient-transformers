@@ -41,6 +41,7 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    FFNBlockingTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
@@ -990,6 +991,7 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        self.model, _ = FFNBlockingTransform.apply(self.model, qaic_config=qaic_config)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
