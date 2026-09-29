@@ -432,3 +432,241 @@ class TestBlockingWrapperFallbackAndParity:
         assert torch.equal(original_token, transformed_token), (
             "Original and transformed model outputs diverged for same CPU input"
         )
+
+
+def test_glm_attention_config_resolves_dense_and_dsa_layers():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=2,
+        layer_types=["full_attention", "deepseek_sparse_attention"],
+        indexer_types=["full", "shared"],
+        index_topk=32,
+    )
+    resolved = resolve_glm_attention_layer_configs(
+        config,
+        {
+            "blocking_mode": "par",
+            "num_kv_blocks": 2,
+            "par_num_split": 16,
+            "mla_absorption": {"absorption": False, "online": False, "cache_compressed": True},
+            "indexer_dp": 1,
+            "indexer_cp": 2,
+            "indexer_kvp": 1,
+            "attn_dp": 2,
+            "attn_cp": 1,
+            "attn_kvp": 1,
+            "indexer_num_blocks": 1,
+            "num_cores_per_device": 16,
+        },
+        batch_size=2,
+        context_length=512,
+        num_devices=2,
+        num_cores=16,
+    )
+
+    assert resolved[0].attention_type == "dense_mla"
+    assert resolved[0].blocking_mode == "par"
+    assert resolved[0].absorption is False
+    assert resolved[1].attention_type == "dsa"
+    assert resolved[1].blocking_mode == "dsa"
+    assert resolved[1].absorption is True
+    assert resolved[1].indexer_type == "shared"
+    assert resolved[1].dsa_topk == config.index_topk
+
+
+@pytest.mark.parametrize("blocking_mode", ["none", "par", "prefill_par", "prefill_par_online"])
+def test_glm_specific_blocking_modes_skip_generic_blocking_config(blocking_mode):
+    from types import SimpleNamespace
+
+    from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+    config = SimpleNamespace(model_type="glm_moe_dsa")
+    assert (
+        build_transformer_blocking_config_for_transform(
+            config,
+            ctx_len=128,
+            seq_len=1,
+            qaic_config={"blocking_mode": blocking_mode},
+        )
+        is None
+    )
+
+
+def test_glm_attention_config_rejects_non_unit_kvp():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=16,
+    )
+    with pytest.raises(ValueError, match="only indexer_kvp=1"):
+        resolve_glm_attention_layer_configs(
+            config,
+            {"indexer_kvp": 2},
+            batch_size=1,
+            context_length=256,
+            num_devices=1,
+            num_cores=16,
+        )
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "dp", "cp", "context_length", "num_blocks", "topk"),
+    [
+        (2, 1, 1, 16, 2, 4),
+        (2, 1, 2, 32, 2, 4),
+        (16, 1, 16, 4096, 16, 32),
+    ],
+    ids=["cp1", "cp2", "ts16"],
+)
+def test_glm_blocked_topk_matches_monolithic_after_cache_updates(batch_size, dp, cp, context_length, num_blocks, topk):
+    from QEfficient.blocking.glm_attention import blocked_glm_dsa_topk
+    from QEfficient.transformers.cache_utils import glm_dsa_scatter_cache
+
+    torch.manual_seed(11)
+    num_heads = 2
+    head_dim = 4
+    batch_local = batch_size // dp
+    local_context = context_length // cp
+    folded_cache = torch.zeros(batch_local, dp * cp, local_context, head_dim)
+    logical_keys = torch.rand(batch_size, context_length, head_dim)
+    logical_keys = logical_keys + torch.arange(context_length).view(1, -1, 1) * 1e-3
+
+    update_points = (context_length // 2, context_length)
+    previous = 0
+    for stop in update_points:
+        positions = torch.arange(previous, stop, dtype=torch.int64).view(1, -1).expand(batch_size, -1)
+        folded_cache = glm_dsa_scatter_cache(
+            folded_cache,
+            positions,
+            logical_keys[:, previous:stop],
+            dp=dp,
+            cp=cp,
+        )
+        previous = stop
+
+        query = torch.rand(batch_size, 1, num_heads, head_dim)
+        head_weights = torch.rand(batch_size, 1, num_heads)
+        position_ids = torch.full((batch_size, 1), stop - 1, dtype=torch.int64)
+        attention_mask = torch.arange(context_length).view(1, 1, -1) >= stop
+        attention_mask = attention_mask.expand(batch_size, -1, -1).clone()
+        attention_mask[:, :, 1] = True
+
+        actual = blocked_glm_dsa_topk(
+            query,
+            head_weights,
+            folded_cache,
+            attention_mask,
+            position_ids,
+            scale=head_dim**-0.5,
+            dp=dp,
+            cp=cp,
+            num_blocks=num_blocks,
+            num_cores_per_device=1,
+            tokens_per_core=local_context // num_blocks,
+            block_topk=min(topk, local_context // num_blocks),
+            final_topk=topk,
+        )
+
+        reconstructed = (
+            folded_cache.view(batch_local, dp, cp, local_context, head_dim)
+            .transpose(2, 3)
+            .reshape(batch_size, context_length, head_dim)
+        )
+        scores = torch.matmul(query.float(), reconstructed.transpose(-1, -2).float().unsqueeze(1))
+        scores = torch.relu(scores * (head_dim**-0.5))
+        scores = torch.matmul(head_weights.float().unsqueeze(-2), scores).squeeze(-2)
+        scores = scores.masked_fill(attention_mask, float("-inf"))
+        expected = scores.topk(topk, dim=-1).indices.to(torch.int32)
+
+        torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "context_length", "num_devices", "error"),
+    [
+        (1, 4096, 16, "batch_size must be divisible by attention_dp"),
+        (16, 2176, 16, "indexer local context"),
+        (16, 4096, 8, "indexer_dp \* indexer_cp"),
+        (16, 4100, 16, "context_length must be divisible by indexer_cp"),
+    ],
+)
+def test_glm_ts16_rejects_invalid_runtime_dimensions(batch_size, context_length, num_devices, error):
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=2048,
+    )
+    qaic_config = {
+        "indexer_dp": 1,
+        "indexer_cp": 16,
+        "indexer_kvp": 1,
+        "attn_dp": 16,
+        "attn_cp": 1,
+        "attn_kvp": 1,
+        "indexer_num_blocks": 16,
+        "num_cores_per_device": 16,
+    }
+    with pytest.raises(ValueError, match=error):
+        resolve_glm_attention_layer_configs(
+            config,
+            qaic_config,
+            batch_size=batch_size,
+            context_length=context_length,
+            num_devices=num_devices,
+            num_cores=16,
+        )
+
+
+def test_glm_ts16_resolves_topology_values_for_hashing():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=2048,
+    )
+    resolved = resolve_glm_attention_layer_configs(
+        config,
+        {
+            "indexer_dp": 1,
+            "indexer_cp": 16,
+            "attn_dp": 16,
+            "attn_cp": 1,
+            "indexer_num_blocks": 16,
+            "num_cores_per_device": 16,
+        },
+        batch_size=16,
+        context_length=4096,
+        num_devices=16,
+        num_cores=16,
+    )[0]
+
+    assert resolved.indexer_local_context == 256
+    assert resolved.indexer_block_width == 16
+    assert resolved.indexer_tokens_per_core == 1
+    assert resolved.indexer_block_topk == 16
+    assert resolved.to_hash_dict()["indexer_tokens_per_core"] == 1

@@ -320,6 +320,18 @@ def build_transformer_blocking_config_for_transform(
     if requested_blocking_mode is None:
         return None
 
+    model_type = get_attr_or_key(model_config, ("model_type",))
+    if model_type == "glm_moe_dsa" and requested_blocking_mode in {
+        "none",
+        "par",
+        "prefill_par",
+        "prefill_par_online",
+    }:
+        # GLM owns these dense-MLA modes through GlmAttentionLayerConfig. They do
+        # not map to the generic BlockingMode strategies, and the GLM attention
+        # implementation consumes num_kv_blocks/par_num_split directly.
+        return None
+
     blocking_mode = BlockingMode.resolve(requested_blocking_mode)
 
     required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])

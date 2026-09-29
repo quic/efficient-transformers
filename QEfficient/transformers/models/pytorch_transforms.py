@@ -1420,16 +1420,55 @@ class BlockingAttentionTransform:
     _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
+    def apply(
+        cls,
+        model: nn.Module,
+        attn_blocking_config,
+        *,
+        qaic_config: Optional[dict] = None,
+        batch_size: int = 1,
+        seq_len: int = 1,
+        context_length: Optional[int] = None,
+        num_devices: int = 1,
+        num_cores: int = 16,
+    ) -> Tuple[nn.Module, bool]:
         transformed = False
         model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
         model_architectures = getattr(model_config, "architectures", None) or []
+        is_glm_moe_dsa = getattr(model_config, "model_type", None) == "glm_moe_dsa" or (
+            "GlmMoeDsaForCausalLM" in model_architectures
+        )
+        glm_layer_configs = None
+        if is_glm_moe_dsa:
+            from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+                QEffGlmMoeDsaAttention,
+                resolve_glm_attention_layer_configs,
+            )
+
+            glm_layer_configs = resolve_glm_attention_layer_configs(
+                model_config,
+                qaic_config,
+                batch_size=int(batch_size),
+                context_length=int(context_length or getattr(model_config, "max_position_embeddings", 1)),
+                num_devices=int(num_devices),
+                num_cores=int(num_cores),
+            )
+            model._qeff_compile_batch_size = int(batch_size)
+            model._qeff_compile_seq_len = int(seq_len)
+            model._qeff_compile_context_length = int(
+                context_length or getattr(model_config, "max_position_embeddings", 1)
+            )
         supported_attention_classes = {
             qeff_class
             for qeff_class in KVCacheTransform._module_mapping.values()
             if qeff_class.__name__.endswith("Attention")
         }
         for module in model.modules():
+            if is_glm_moe_dsa and isinstance(module, QEffGlmMoeDsaAttention):
+                module.attn_blocking_config = attn_blocking_config
+                module.glm_attention_config = glm_layer_configs[module.layer_idx]
+                transformed = True
+                continue
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue

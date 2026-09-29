@@ -1677,12 +1677,6 @@ def blocked_kv_mla_attention_forward(
         batch_size, num_heads, seq_len, module.config.kv_lora_rank, device=query.device, dtype=query.dtype
     )
 
-    if hasattr(module, "config"):
-        mask_dtype = module.config.torch_dtype
-    else:
-        mask_dtype = query.dtype
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
-
     # Initialize Running Maximum and Denominator
     current_max = torch.full(
         (batch_size, num_heads, seq_len),
@@ -1709,11 +1703,10 @@ def blocked_kv_mla_attention_forward(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (torch.full_like(current_position, start_index) > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
-                if skip_future.item():
-                    break
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and skip_future.item():
+                break
 
         compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
         k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
@@ -1751,7 +1744,11 @@ def blocked_kv_mla_attention_forward(
             krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
-            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            attn_weights_block = torch.where(
+                causal_mask_block,
+                torch.full_like(attn_weights_block, MIN_MASKED_ATTENTION_VALUE),
+                attn_weights_block,
+            )
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
                 attn_weights_block,
@@ -1771,7 +1768,11 @@ def blocked_kv_mla_attention_forward(
                 )
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
-            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            attn_weights_block = torch.where(
+                causal_mask_block,
+                torch.full_like(attn_weights_block, MIN_MASKED_ATTENTION_VALUE),
+                attn_weights_block,
+            )
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
                 attn_weights_block,

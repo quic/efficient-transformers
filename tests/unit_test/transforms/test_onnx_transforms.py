@@ -18,6 +18,7 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import pytest
+import torch
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -98,6 +99,89 @@ class TestONNXTransformsModuleStructure:
 
         assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
         assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
+
+    def test_glm_integer_ops_export_through_dynamo_translation_table(self):
+        from onnx import AttributeProto, TensorProto
+
+        from QEfficient.customop import glm_int_div, glm_int_mod
+        from QEfficient.utils.export_utils import build_dynamo_export_kwargs
+
+        class IntegerAddressing(torch.nn.Module):
+            def forward(self, values):
+                return glm_int_div(values, 4), glm_int_mod(values, 4)
+
+        values = torch.tensor([[0, 1, 4, 7]], dtype=torch.int32)
+        onnx_program = torch.onnx.export(
+            IntegerAddressing().eval(),
+            (values,),
+            f=None,
+            input_names=["values"],
+            output_names=["quotient", "remainder"],
+            **build_dynamo_export_kwargs({}),
+        )
+        model = onnx_program.model_proto
+
+        custom_nodes = {(node.domain, node.op_type): node for node in model.graph.node}
+        assert ("com.qti.aisw.onnx", "GlmIntDiv") in custom_nodes
+        assert ("com.qti.aisw.onnx", "GlmIntMod") in custom_nodes
+        for node in custom_nodes.values():
+            divisor = next(attribute for attribute in node.attribute if attribute.name == "divisor")
+            assert divisor.type == AttributeProto.INT
+            assert divisor.i == 4
+
+        functions = {function.name: function for function in model.functions}
+        assert {node.op_type for node in functions["GlmIntDiv"].node} >= {"CastLike", "Div"}
+        assert {node.op_type for node in functions["GlmIntMod"].node} >= {"CastLike", "Mod"}
+        assert all(output.type.tensor_type.elem_type == TensorProto.INT32 for output in model.graph.output)
+
+    def test_glm_blocked_indexer_exports_one_topk_per_block_and_final_merge(self, tmp_path):
+        import onnx
+
+        from QEfficient.blocking.glm_attention import blocked_glm_dsa_topk
+
+        class BlockedIndexer(torch.nn.Module):
+            def forward(self, query, head_weights, folded_cache, attention_mask, position_ids):
+                return blocked_glm_dsa_topk(
+                    query,
+                    head_weights,
+                    folded_cache,
+                    attention_mask,
+                    position_ids,
+                    scale=0.5,
+                    dp=1,
+                    cp=2,
+                    num_blocks=2,
+                    num_cores_per_device=2,
+                    tokens_per_core=2,
+                    block_topk=4,
+                    final_topk=4,
+                )
+
+        path = tmp_path / "glm_blocked_indexer.onnx"
+        torch.onnx.export(
+            BlockedIndexer().eval(),
+            (
+                torch.rand(2, 1, 2, 4),
+                torch.rand(2, 1, 2),
+                torch.rand(2, 2, 8, 4),
+                torch.zeros(2, 1, 16, dtype=torch.bool),
+                torch.full((2, 1), 15, dtype=torch.int64),
+            ),
+            path,
+            input_names=["query", "head_weights", "folded_cache", "attention_mask", "position_ids"],
+            output_names=["topk_indices"],
+            opset_version=17,
+            dynamo=False,
+        )
+        graph = onnx.load(path, load_external_data=False).graph
+
+        assert sum(node.op_type == "TopK" for node in graph.node) == 3
+        materialized_shapes = {
+            tuple(dim.dim_value for dim in value.type.tensor_type.shape.dim)
+            for value in graph.value_info
+            if value.type.HasField("tensor_type")
+        }
+        assert (2, 16, 4) not in materialized_shapes
 
     def test_base_onnx_transform_importable(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform

@@ -57,7 +57,7 @@ class BlockingMode(str, Enum):
 
     @classmethod
     def resolve(cls, mode: Optional[str | "BlockingMode"]) -> "BlockingMode":
-        if mode is None:
+        if mode is None or mode == "none":
             return cls.NONE
         resolved_mode = cls(mode)
         if resolved_mode == cls.AUTO:
@@ -138,6 +138,7 @@ class AttentionBlockingConfig:
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    par_num_split: Optional[int] = None
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
@@ -241,8 +242,39 @@ def generic_blocked_attention_interface(
     mla_kwargs: Optional[Dict[str, Any]] = None,
     is_mla: bool = False,
     prefill_only: bool = False,
+    auxiliary_state: Optional[Any] = None,
     **kwargs,
 ):
+    model_strategy = getattr(module, "qeff_attention_strategy", None)
+    if model_strategy is not None:
+        return model_strategy(
+            module=module,
+            query=query,
+            key=key,
+            value=value,
+            attention_mask=attention_mask,
+            scaling=scaling,
+            layer_idx=layer_idx,
+            past_key_value=past_key_value,
+            blocking_config=blocking_config,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            position_ids=position_ids,
+            past_seen_tokens=past_seen_tokens,
+            non_blocked_forward=non_blocked_forward,
+            score_mod=score_mod,
+            position_bias=position_bias,
+            sinks=sinks,
+            sliding_window=sliding_window,
+            mla_kwargs=mla_kwargs,
+            is_mla=is_mla,
+            prefill_only=prefill_only,
+            auxiliary_state=auxiliary_state,
+            **kwargs,
+        )
+
+    if blocking_config is None:
+        blocking_config = AttentionBlockingConfig()
     prefill_only = prefill_only or blocking_config.mode.is_prefill
     strategy = _STRATEGIES[
         BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
