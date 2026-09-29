@@ -492,7 +492,7 @@ def _estimate_gptoss_task_bytes(
     return max(1, source_bytes + final_output_bytes * output_copies)
 
 
-def _expert_parallel_params(hash_params: Dict) -> Optional[Tuple[int, int, object]]:
+def _expert_parallel_params(hash_params: Dict) -> Optional[Tuple[int, int]]:
     if hash_params.get("moe_prefill_flavour") != "expert_parallel":
         return None
 
@@ -509,11 +509,7 @@ def _expert_parallel_params(hash_params: Dict) -> Optional[Tuple[int, int, objec
     if pipeline_stages <= 0 or parallelized_experts <= 0:
         raise ValueError("expert_parallel pipeline stages and parallelized experts must be positive.")
 
-    return (
-        pipeline_stages,
-        parallelized_experts,
-        hash_params.get("moe_prefill_expert_parallel_chunk_size"),
-    )
+    return pipeline_stages, parallelized_experts
 
 
 def _task_refs(keys, stage="raw") -> tuple[TensorRef, ...]:
@@ -715,7 +711,6 @@ def _plan_expert_parallel_stages(cls, context: CheckpointPlanningContext) -> Non
                 params=TaskParams(
                     cls.TRANSFORM_ID,
                     _task_values(
-                        expert_parallel_chunk_size=pack_params[2],
                         parallelized_experts=pack_params[1],
                         pipeline_stages=pack_params[0],
                     ),
