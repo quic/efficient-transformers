@@ -150,7 +150,7 @@ def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) ->
         return
 
     logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM, QEffAutoModel; disabling it for %s.",
         qeff_auto_class_name,
     )
 
@@ -371,7 +371,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        # _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -657,29 +656,24 @@ class QEFFAutoModel(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
+        dynamo = kwargs.get("dynamo", self._weight_free)
+        if dynamo:
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
-        dynamo = kwargs.get("dynamo", self._weight_free)
-        # Below change is workaround for dynamo export to receive dynamic shape info for seq_len when multi specializations are used, eg [32,64].
-        # The 32,64 case creates two compiler specializations, so the ONNX must expose a dynamic seq_len input dimension.
-        # Earlier exported ONNX still had input_ids [1, 32] and attention_mask [1, 32], so the compiler could not tell which
-        # specialization to choose and failed with:
-        # <class 'torch.fx.experimental.symbolic_shapes.ConstraintViolationError'>: 1 not in range [2, 1024]
-        # NOTE: To be removed once 1322 is merged.
-        export_dynamic_axes = (
-            {"input_ids": {1: "seq_len"}, "attention_mask": {1: "seq_len"}} if dynamo else dynamic_axes
-        )
 
         output_names = ["output"]
 
         return self._export(
             example_inputs,
             output_names=output_names,
-            dynamic_axes=export_dynamic_axes,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             dynamo=dynamo,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
