@@ -1320,7 +1320,10 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(onnx_path)
         if artifacts:
             self.onnx_path = onnx_path
-        weight_spec_path = Path(self.weight_spec_path) if self.weight_spec_path else resolve_weight_spec_path(onnx_path)
+        existing_weight_spec_path = getattr(self, "weight_spec_path", None)
+        weight_spec_path = (
+            Path(existing_weight_spec_path) if existing_weight_spec_path else resolve_weight_spec_path(onnx_path)
+        )
         weight_free_inputs = _weight_free_spec_input_names(weight_spec_path)
         compiler_env = _compiler_env_with_external_data_root(weight_spec_path) if weight_free_inputs else None
 
