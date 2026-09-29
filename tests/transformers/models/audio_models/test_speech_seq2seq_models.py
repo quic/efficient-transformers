@@ -1024,7 +1024,8 @@ def run_seq2seq_pytorch_with_kv(
     config = model.model.config
 
     # prepare inputs
-    input_features = processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features
+    processed_inputs = processor(inputs, sampling_rate=sample_rate, return_tensors="pt")
+    input_features = processed_inputs.input_features
     decoder_input_ids = torch.ones((batch_size, seq_len), dtype=torch.int64) * config.decoder_start_token_id
     decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(batch_size, 1)
 
@@ -1034,6 +1035,11 @@ def run_seq2seq_pytorch_with_kv(
         position_ids=decoder_position_ids,
         past_key_values=[[] for _ in range(config.num_hidden_layers)],
     )
+    qpc_input_names = {input_info.name for input_info in model.model.get_inputs_info()}
+    if "feature_lengths" in qpc_input_names:
+        model_inputs["feature_lengths"] = processed_inputs.attention_mask.sum(dim=-1, dtype=torch.int64)
+        input_features = input_features.transpose(1, 2)
+        model_inputs["input_features"] = input_features
 
     # prepare dummy past kvs and cross kvs
     kv_cache_shape = get_padding_shape_from_config(config, batch_size, generation_len)
@@ -1058,7 +1064,7 @@ def run_seq2seq_pytorch_with_kv(
     next_token = logits.argmax(-1)
     generated_ids[:, 1] = next_token.squeeze(1)
 
-    model_inputs["input_features"] = torch.tensor(np.zeros((batch_size, config.num_mel_bins, 1)).astype(np.float32))
+    model_inputs["input_features"] = torch.zeros((batch_size, input_features.shape[1], 1), dtype=torch.float32)
     model_inputs["past_key_values"] = outputs["past_key_values"]
 
     for num_tokens in range(generation_len):
@@ -1127,7 +1133,8 @@ def run_seq2seq_ort(
     session = onnxruntime.InferenceSession(onnx_path, session_options)
 
     # prepare inputs
-    input_features = processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features
+    processed_inputs = processor(inputs, sampling_rate=sample_rate, return_tensors="pt")
+    input_features = processed_inputs.input_features
     decoder_input_ids = torch.ones((batch_size, seq_len), dtype=torch.int64) * config.decoder_start_token_id
     decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(batch_size, 1)
 
@@ -1136,6 +1143,11 @@ def run_seq2seq_ort(
         input_ids=decoder_input_ids,
         position_ids=decoder_position_ids,
     )
+    session_input_names = {session_input.name for session_input in session.get_inputs()}
+    if "feature_lengths" in session_input_names:
+        model_inputs["feature_lengths"] = processed_inputs.attention_mask.sum(dim=-1, dtype=torch.int64)
+        input_features = input_features.transpose(1, 2)
+        model_inputs["input_features"] = input_features
 
     # prepare dummy past kvs and cross kvs
     kv_cache_shape = get_padding_shape_from_config(config, batch_size, generation_len)
@@ -1164,7 +1176,7 @@ def run_seq2seq_ort(
     next_token = logits.argmax(-1)
     generated_ids[:, 1] = next_token.squeeze(1)
 
-    model_inputs["input_features"] = torch.tensor(np.zeros((batch_size, config.num_mel_bins, 1)).astype(np.float32))
+    model_inputs["input_features"] = torch.zeros((batch_size, input_features.shape[1], 1), dtype=torch.float32)
     for i, name in enumerate(pkv_names):
         model_inputs[name.split("_RetainedState")[0]] = outputs[1 + i]
 

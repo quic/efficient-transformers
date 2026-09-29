@@ -5377,7 +5377,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         output_names = self.model.get_output_names()
 
-        if onnx_path is None and callable(getattr(self.model, "get_export_hash_params", None)):
+        if onnx_path is None:
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
             if self.onnx_path is not None and weights_offloaded and not self._weight_free:
                 onnx_path = self.onnx_path
