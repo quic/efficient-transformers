@@ -5156,7 +5156,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
     _onnx_transforms = []
 
-    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+    def __init__(self, model: nn.Module, **kwargs):
         """
         Initialize a QEFFAutoModelForSpeechSeq2Seq instance.
 
@@ -5177,21 +5177,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
-        self.continuous_batching = continuous_batching
         super().__init__(model, **kwargs)
-        if continuous_batching and not getattr(self.model, "supports_continuous_batching", False):
-            raise NotImplementedError(
-                f"Continuous batching is not supported for {self.model.__class__.__name__} speech models"
-            )
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.hash_params["continuous_batching"] = continuous_batching
 
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str, *args, continuous_batching: bool = False, **kwargs
+        cls, pretrained_model_name_or_path: str, *args, **kwargs
     ):
         _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
@@ -5208,7 +5202,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             kwargs["enable_proxy"] = True
         return cls(
             model,
-            continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -5248,15 +5241,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         dummy_input_kwargs = {
             key: kwargs[key] for key in ("batch_size", "encoder_ctx_len") if kwargs.get(key) is not None
         }
-        if self.continuous_batching:
-            dummy_input_kwargs["continuous_batching"] = True
-            dummy_input_kwargs["full_batch_size"] = kwargs.get("full_batch_size")
         inputs = self.model.get_dummy_inputs(**dummy_input_kwargs)
-        dynamic_axes = (
-            self.model.get_onnx_dynamic_axes(continuous_batching=True)
-            if self.continuous_batching
-            else self.model.get_onnx_dynamic_axes()
-        )
+        dynamic_axes = self.model.get_onnx_dynamic_axes()
         get_export_hash_params = getattr(self.model, "get_export_hash_params", None)
         if callable(get_export_hash_params):
             self.hash_params["speech_export"] = get_export_hash_params(**dummy_input_kwargs)
@@ -5322,7 +5308,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
         full_batch_size : int, optional
-            Cache batch size used when ``continuous_batching=True``. Required in that mode.
+            Not supported for this speech-model path.
         kv_cache_batch_size : int, optional
             Not yet supported for this model.
         num_speculative_tokens : int, optional
@@ -5350,19 +5336,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         """
         _ignore_public_mdp_ts_num_devices(compiler_options)
-        if self.continuous_batching and full_batch_size is None:
-            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-        if full_batch_size is not None and not self.continuous_batching:
-            raise ValueError("Enable `continuous_batching=True` when passing `full_batch_size`.")
-
-        specialization_kwargs = {}
-        if self.continuous_batching:
-            specialization_kwargs["full_batch_size"] = full_batch_size
         specializations, compiler_options = self.model.get_specializations(
             batch_size,
             encoder_ctx_len,
             ctx_len,
-            **specialization_kwargs,
             **compiler_options,
         )
 
@@ -5388,8 +5365,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                     "batch_size": batch_size,
                     "use_onnx_subfunctions": use_onnx_subfunctions,
                 }
-                if self.continuous_batching:
-                    export_kwargs["full_batch_size"] = full_batch_size
                 onnx_path = self.export(**export_kwargs)
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
