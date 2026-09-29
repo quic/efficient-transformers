@@ -394,7 +394,10 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
         for key, shard_name in base_entries.items():
             entries_by_shard.setdefault(shard_name, []).append(key)
 
-        from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import split_glm_moe_dsa_q_b_proj
+        from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+            derive_glm_mla_parameters,
+            split_glm_moe_dsa_q_b_proj,
+        )
 
         def _load_dequantized(key: str, checkpoint=None) -> torch.Tensor:
             shard_name = weight_map[key]
@@ -422,14 +425,31 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
                     tensors[key] = tensor
                     if key.endswith(cls._Q_B_PROJ_SUFFIX):
                         prefix = key[: -len(".q_b_proj.weight")]
-                        q_up, q_rope = split_glm_moe_dsa_q_b_proj(
-                            tensor,
-                            model_config.num_attention_heads,
-                            model_config.qk_nope_head_dim,
-                            model_config.qk_rope_head_dim,
-                        )
-                        tensors[f"{prefix}.q_up"] = q_up
-                        tensors[f"{prefix}.q_rope"] = q_rope
+                        kv_b_key = f"{prefix}.kv_b_proj.weight"
+                        derived_config_fields = ("q_lora_rank", "kv_lora_rank", "v_head_dim")
+                        if kv_b_key in weight_map and all(
+                            hasattr(model_config, name) for name in derived_config_fields
+                        ):
+                            derived = derive_glm_mla_parameters(
+                                tensor,
+                                _load_dequantized(kv_b_key),
+                                num_heads=model_config.num_attention_heads,
+                                q_lora_rank=model_config.q_lora_rank,
+                                kv_lora_rank=model_config.kv_lora_rank,
+                                qk_nope_head_dim=model_config.qk_nope_head_dim,
+                                qk_rope_head_dim=model_config.qk_rope_head_dim,
+                                v_head_dim=model_config.v_head_dim,
+                            )
+                            tensors.update({f"{prefix}.{name}": value for name, value in derived.items()})
+                        else:
+                            q_up, q_rope = split_glm_moe_dsa_q_b_proj(
+                                tensor,
+                                model_config.num_attention_heads,
+                                model_config.qk_nope_head_dim,
+                                model_config.qk_rope_head_dim,
+                            )
+                            tensors[f"{prefix}.q_up"] = q_up
+                            tensors[f"{prefix}.q_rope"] = q_rope
 
             out_name = f"model_{shard_index:04d}.safetensors"
             atomic_save(tensors, out / out_name)

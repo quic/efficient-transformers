@@ -282,7 +282,7 @@ class TestWeightFreeCheckpointTransforms:
     def test_glm_partial_fp8_hf_patch_uses_configured_block_size(self, monkeypatch):
         from transformers.integrations.finegrained_fp8 import Fp8Dequantize
 
-        from scripts.glm53_four_layer_decode_compile_generate import install_partial_fp8_dequant_patch
+        from examples.glm.glm53_four_layer_decode_compile_generate import install_partial_fp8_dequant_patch
 
         monkeypatch.setattr(Fp8Dequantize, "_dequantize_one", Fp8Dequantize._dequantize_one)
         install_partial_fp8_dequant_patch(weight_block_size=(4, 2))
@@ -294,6 +294,40 @@ class TestWeightFreeCheckpointTransforms:
 
         expected = torch.tensor([[2.0, 2.0]] * 4 + [[3.0, 3.0]])
         torch.testing.assert_close(result, expected)
+
+    @pytest.mark.parametrize(
+        ("preset", "expected"),
+        [
+            ("dsa_cp1", (1, 2176, 1, 32)),
+            ("dsa_cp2", (1, 2176, 2, 32)),
+            ("dsa_ts16", (16, 4096, 16, 32)),
+        ],
+    )
+    def test_glm_validation_runtime_defaults_are_preset_specific(self, preset, expected):
+        from examples.glm.glm53_four_layer_decode_compile_generate import resolve_runtime_dimensions
+
+        args = SimpleNamespace(
+            attention_preset=preset,
+            batch_size=None,
+            ctx_len=None,
+            num_devices=None,
+            generation_len=None,
+            prompt_len=4,
+        )
+        assert resolve_runtime_dimensions(args) == expected
+
+    def test_glm_validation_runtime_cli_values_override_preset_defaults(self):
+        from examples.glm.glm53_four_layer_decode_compile_generate import resolve_runtime_dimensions
+
+        args = SimpleNamespace(
+            attention_preset="dsa_ts16",
+            batch_size=32,
+            ctx_len=8192,
+            num_devices=32,
+            generation_len=7,
+            prompt_len=4,
+        )
+        assert resolve_runtime_dimensions(args) == (32, 8192, 32, 7)
 
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
@@ -700,6 +734,18 @@ class TestWeightFreeExportHash:
         assert "indexer_key_cache" in dynamic_shapes
         assert len(dynamic_shapes["indexer_key_cache"]) == 2
 
+    def test_dynamic_shapes_keep_folded_glm_dimensions_static(self):
+        dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
+            {
+                "compressed_kv.0": {0: "glm_attn_batch_local_0", 2: "ctx_len"},
+                "indexer_key.0": {0: "batch_size", 2: "glm_indexer_ctx_local_0"},
+            },
+            SimpleNamespace(model_type="glm_moe_dsa"),
+        )
+
+        assert set(dynamic_shapes["compressed_kvs"][0][0]) == {2}
+        assert set(dynamic_shapes["indexer_key_cache"][0]) == {0}
+
     def test_weight_free_export_hash_differs_from_regular_dynamo(self):
         config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "llama"})
         common_model = SimpleNamespace(
@@ -1046,3 +1092,36 @@ class TestPruneFakeInitializersTransform:
         changed = PruneFakeInitializersTransform.apply(program)
         assert not changed
         assert "real_weight" in program.model.graph.initializers
+
+
+def test_glm_mla_derived_parameters_cover_all_production_graph_weights():
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import derive_glm_mla_parameters
+
+    q_b = torch.arange(16 * 4, dtype=torch.float32).reshape(16, 4)
+    kv_b = torch.arange(12 * 3, dtype=torch.float32).reshape(12, 3)
+    derived = derive_glm_mla_parameters(
+        q_b,
+        kv_b,
+        num_heads=2,
+        q_lora_rank=4,
+        kv_lora_rank=3,
+        qk_nope_head_dim=4,
+        qk_rope_head_dim=4,
+        v_head_dim=2,
+    )
+
+    assert set(derived) == {
+        "q_up",
+        "q_rope",
+        "k_up",
+        "v_up",
+        "per_head_q_up",
+        "per_head_k_up",
+        "per_head_k_up_normal",
+        "per_head_v_up",
+        "fusedqk",
+    }
+    torch.testing.assert_close(
+        derived["fusedqk"],
+        torch.matmul(derived["per_head_q_up"], derived["per_head_k_up"]),
+    )

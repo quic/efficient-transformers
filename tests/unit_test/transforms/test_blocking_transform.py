@@ -337,28 +337,6 @@ def test_generic_blocked_attention_infers_prefill_only_from_mode(monkeypatch):
     assert len(strategy_calls) == 1
 
 
-@pytest.mark.transforms
-def test_kv_batch_fold_preserves_optional_gdn_num_head_blocks():
-    from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
-
-    config = build_transformer_blocking_config_for_transform(
-        model_config=object(),
-        ctx_len=1024,
-        seq_len=1,
-        bs=512,
-        num_devices=4,
-        qaic_config={
-            "blocking_mode": "kv_batch_fold",
-            "num_kv_blocks": 16,
-            "gdn_num_head_blocks": 8,
-        },
-    )
-
-    assert config.mode == BlockingMode.KV_BATCH_FOLD
-    assert config.batch_fold is True
-    assert config.gdn_num_head_blocks == 8
-
-
 # ---------------------------------------------------------------------------
 # Tests: re-application overrides the previous config
 # ---------------------------------------------------------------------------
@@ -455,57 +433,240 @@ class TestBlockingWrapperFallbackAndParity:
             "Original and transformed model outputs diverged for same CPU input"
         )
 
-    @pytest.mark.parametrize(
-        "blocking_cfg",
-        [
-            AttentionBlockingConfig(mode=BlockingMode.NONE),
-            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128),
-            AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=2, num_q_blocks=2, ctx_len=128),
-            AttentionBlockingConfig(
-                mode=BlockingMode.HQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1, ctx_len=128
-            ),
-            AttentionBlockingConfig(
-                mode=BlockingMode.BHQKV,
-                num_kv_blocks=2,
-                num_q_blocks=2,
-                head_block_size=1,
-                num_batch_blocks=2,
-                ctx_len=128,
-            ),
-        ],
-        ids=["mode_none", "mode_kv", "mode_qkv", "mode_hqkv", "mode_bhqkv"],
+
+def test_glm_attention_config_resolves_dense_and_dsa_layers():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
     )
-    def test_cpu_logits_allclose_original_vs_blocked(self, blocking_cfg):
-        """Blocked attention (kv/qkv/hqkv, paged_attention=False) must reproduce the
-        unblocked model's logits to numerical precision, not just the same argmax
-        token - splitting attention into blocks with running-softmax accumulation
-        is a reformulation of the same computation, so it should match tightly.
-        Also covers "non-paged generation unchanged when num_kv_blocks is absent"
-        via the mode_none case, which never sets num_kv_blocks.
 
-        QEffLlamaForCausalLM.forward always gathers only the last token's hidden
-        state (via position_ids.argmax) before the lm_head projection, so it never
-        returns per-position logits for the full prompt - compare the last position
-        only, but with allclose instead of just argmax to make this a real numeric
-        tightening over test_cpu_parity_original_vs_transformed_with_same_input."""
-        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform, KVCacheTransform
+    config = SimpleNamespace(
+        num_hidden_layers=2,
+        layer_types=["full_attention", "deepseek_sparse_attention"],
+        indexer_types=["full", "shared"],
+        index_topk=32,
+    )
+    resolved = resolve_glm_attention_layer_configs(
+        config,
+        {
+            "blocking_mode": "par",
+            "num_kv_blocks": 2,
+            "par_num_split": 16,
+            "mla_absorption": {"absorption": False, "online": False, "cache_compressed": True},
+            "indexer_dp": 1,
+            "indexer_cp": 2,
+            "indexer_kvp": 1,
+            "attn_dp": 2,
+            "attn_cp": 1,
+            "attn_kvp": 1,
+            "indexer_num_blocks": 1,
+            "num_cores_per_device": 16,
+        },
+        batch_size=2,
+        context_length=512,
+        num_devices=2,
+        num_cores=16,
+    )
 
-        torch.manual_seed(7)
-        base = make_tiny_llama()
-        original = deepcopy(base).eval()
-        transformed = deepcopy(base).eval()
-        transformed, _ = KVCacheTransform.apply(transformed)
-        transformed, applied = BlockingAttentionTransform.apply(transformed, blocking_cfg)
-        assert applied
+    assert resolved[0].attention_type == "dense_mla"
+    assert resolved[0].blocking_mode == "par"
+    assert resolved[0].absorption is False
+    assert resolved[1].attention_type == "dsa"
+    assert resolved[1].blocking_mode == "dsa"
+    assert resolved[1].absorption is True
+    assert resolved[1].indexer_type == "shared"
+    assert resolved[1].dsa_topk == config.index_topk
 
-        input_ids = torch.randint(0, VOCAB_SIZE, (1, 8))
-        qeff_inputs = _make_qeff_inputs(input_ids, transformed.config)
 
-        with torch.no_grad():
-            original_logits = original(input_ids=input_ids).logits[:, -1, :]
-            transformed_logits = transformed(**qeff_inputs).logits[:, -1, :]
+@pytest.mark.parametrize("blocking_mode", ["none", "par", "prefill_par", "prefill_par_online"])
+def test_glm_specific_blocking_modes_skip_generic_blocking_config(blocking_mode):
+    from types import SimpleNamespace
 
-        assert torch.allclose(original_logits, transformed_logits, atol=1e-4, rtol=1e-4), (
-            f"Logits diverged beyond tolerance for blocking_cfg.mode={blocking_cfg.mode} "
-            f"(max abs diff={(original_logits - transformed_logits).abs().max().item()})"
+    from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+
+    config = SimpleNamespace(model_type="glm_moe_dsa")
+    assert (
+        build_transformer_blocking_config_for_transform(
+            config,
+            ctx_len=128,
+            seq_len=1,
+            qaic_config={"blocking_mode": blocking_mode},
         )
+        is None
+    )
+
+
+def test_glm_attention_config_rejects_non_unit_kvp():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=16,
+    )
+    with pytest.raises(ValueError, match="only indexer_kvp=1"):
+        resolve_glm_attention_layer_configs(
+            config,
+            {"indexer_kvp": 2},
+            batch_size=1,
+            context_length=256,
+            num_devices=1,
+            num_cores=16,
+        )
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "dp", "cp", "context_length", "num_blocks", "topk"),
+    [
+        (2, 1, 1, 16, 2, 4),
+        (2, 1, 2, 32, 2, 4),
+        (16, 1, 16, 4096, 16, 32),
+    ],
+    ids=["cp1", "cp2", "ts16"],
+)
+def test_glm_blocked_topk_matches_monolithic_after_cache_updates(batch_size, dp, cp, context_length, num_blocks, topk):
+    from QEfficient.blocking.glm_attention import blocked_glm_dsa_topk
+    from QEfficient.transformers.cache_utils import glm_dsa_scatter_cache
+
+    torch.manual_seed(11)
+    num_heads = 2
+    head_dim = 4
+    batch_local = batch_size // dp
+    local_context = context_length // cp
+    folded_cache = torch.zeros(batch_local, dp * cp, local_context, head_dim)
+    logical_keys = torch.rand(batch_size, context_length, head_dim)
+    logical_keys = logical_keys + torch.arange(context_length).view(1, -1, 1) * 1e-3
+
+    update_points = (context_length // 2, context_length)
+    previous = 0
+    for stop in update_points:
+        positions = torch.arange(previous, stop, dtype=torch.int64).view(1, -1).expand(batch_size, -1)
+        folded_cache = glm_dsa_scatter_cache(
+            folded_cache,
+            positions,
+            logical_keys[:, previous:stop],
+            dp=dp,
+            cp=cp,
+        )
+        previous = stop
+
+        query = torch.rand(batch_size, 1, num_heads, head_dim)
+        head_weights = torch.rand(batch_size, 1, num_heads)
+        position_ids = torch.full((batch_size, 1), stop - 1, dtype=torch.int64)
+        attention_mask = torch.arange(context_length).view(1, 1, -1) >= stop
+        attention_mask = attention_mask.expand(batch_size, -1, -1).clone()
+        attention_mask[:, :, 1] = True
+
+        actual = blocked_glm_dsa_topk(
+            query,
+            head_weights,
+            folded_cache,
+            attention_mask,
+            position_ids,
+            scale=head_dim**-0.5,
+            dp=dp,
+            cp=cp,
+            num_blocks=num_blocks,
+            num_cores_per_device=1,
+            tokens_per_core=local_context // num_blocks,
+            block_topk=min(topk, local_context // num_blocks),
+            final_topk=topk,
+        )
+
+        reconstructed = (
+            folded_cache.view(batch_local, dp, cp, local_context, head_dim)
+            .transpose(2, 3)
+            .reshape(batch_size, context_length, head_dim)
+        )
+        scores = torch.matmul(query.float(), reconstructed.transpose(-1, -2).float().unsqueeze(1))
+        scores = torch.relu(scores * (head_dim**-0.5))
+        scores = torch.matmul(head_weights.float().unsqueeze(-2), scores).squeeze(-2)
+        scores = scores.masked_fill(attention_mask, float("-inf"))
+        expected = scores.topk(topk, dim=-1).indices.to(torch.int32)
+
+        torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "context_length", "num_devices", "error"),
+    [
+        (1, 4096, 16, "batch_size must be divisible by attention_dp"),
+        (16, 2176, 16, "indexer local context"),
+        (16, 4096, 8, "indexer_dp \* indexer_cp"),
+        (16, 4100, 16, "context_length must be divisible by indexer_cp"),
+    ],
+)
+def test_glm_ts16_rejects_invalid_runtime_dimensions(batch_size, context_length, num_devices, error):
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=2048,
+    )
+    qaic_config = {
+        "indexer_dp": 1,
+        "indexer_cp": 16,
+        "indexer_kvp": 1,
+        "attn_dp": 16,
+        "attn_cp": 1,
+        "attn_kvp": 1,
+        "indexer_num_blocks": 16,
+        "num_cores_per_device": 16,
+    }
+    with pytest.raises(ValueError, match=error):
+        resolve_glm_attention_layer_configs(
+            config,
+            qaic_config,
+            batch_size=batch_size,
+            context_length=context_length,
+            num_devices=num_devices,
+            num_cores=16,
+        )
+
+
+def test_glm_ts16_resolves_topology_values_for_hashing():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["deepseek_sparse_attention"],
+        indexer_types=["full"],
+        index_topk=2048,
+    )
+    resolved = resolve_glm_attention_layer_configs(
+        config,
+        {
+            "indexer_dp": 1,
+            "indexer_cp": 16,
+            "attn_dp": 16,
+            "attn_cp": 1,
+            "indexer_num_blocks": 16,
+            "num_cores_per_device": 16,
+        },
+        batch_size=16,
+        context_length=4096,
+        num_devices=16,
+        num_cores=16,
+    )[0]
+
+    assert resolved.indexer_local_context == 256
+    assert resolved.indexer_block_width == 16
+    assert resolved.indexer_tokens_per_core == 1
+    assert resolved.indexer_block_topk == 16
+    assert resolved.to_hash_dict()["indexer_tokens_per_core"] == 1

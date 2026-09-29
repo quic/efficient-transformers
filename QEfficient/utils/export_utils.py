@@ -165,7 +165,15 @@ def convert_dynamic_axes_to_dynamic_shapes(
     indexer_key_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
-        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+        # Folded GLM cache dimensions are derived from fixed DP/CP topology
+        # values. Keep their distinct names in ONNX dynamic_axes metadata, but
+        # leave them static for torch.export, which cannot express B/DP or T/CP
+        # relationships and correctly infers these traced dimensions as static.
+        resolved = {
+            axis_idx: resolve_dim(dim_name)
+            for axis_idx, dim_name in axes_map.items()
+            if not dim_name.startswith("glm_")
+        }
         if input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
