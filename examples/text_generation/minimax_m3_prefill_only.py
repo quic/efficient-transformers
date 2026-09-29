@@ -26,9 +26,9 @@ def _optional_int_env(name: str) -> int | None:
 
 
 Q_HEAD_BLOCK_CHUNK = int(os.environ.get("Q_HEAD_BLOCK_CHUNK", "1"))
-Q_BLOCK_SIZE = int(os.environ.get("Q_BLOCK_SIZE", "1024"))
-Q_BLOCK_CHUNK = int(os.environ.get("Q_BLOCK_CHUNK", "256"))
-NUM_KV_BLOCKS = int(os.environ.get("NUM_KV_BLOCKS", "2"))
+Q_BLOCK_SIZE = int(os.environ.get("Q_BLOCK_SIZE", "256"))
+Q_BLOCK_CHUNK = int(os.environ.get("Q_BLOCK_CHUNK", "1024"))
+NUM_KV_BLOCKS = int(os.environ.get("NUM_KV_BLOCKS", "16"))
 INDEXER_NUM_BLOCKS = _optional_int_env("INDEXER_NUM_BLOCKS")
 MSA_NUM_KV_BLOCKS = _optional_int_env("MSA_NUM_KV_BLOCKS")
 
@@ -231,7 +231,7 @@ def main():
         "--num-kv-blocks",
         type=int,
         default=NUM_KV_BLOCKS,
-        help="Number of prefill KV blocks (default: NUM_KV_BLOCKS or 2).",
+        help="Number of prefill KV blocks (default: NUM_KV_BLOCKS or 16).",
     )
     parser.add_argument(
         "--indexer-num-blocks",
@@ -249,13 +249,13 @@ def main():
         "--q-block-size",
         type=int,
         default=Q_BLOCK_SIZE,
-        help="Prefill query block size (default: Q_BLOCK_SIZE or 1024).",
+        help="Prefill query block size within the outer query chunk (default: Q_BLOCK_SIZE or 256).",
     )
     parser.add_argument(
         "--q-block-chunk",
         type=int,
         default=Q_BLOCK_CHUNK,
-        help="Prefill query sub-block size used to derive n_rep_chunk (default: Q_BLOCK_CHUNK or 256).",
+        help="Outer prefill query chunk size used to derive n_rep_chunk (default: Q_BLOCK_CHUNK or 1024).",
     )
     parser.add_argument(
         "--num-cores-per-device",
@@ -277,8 +277,8 @@ def main():
         parser.error("--q-block-size must be positive")
     if args.q_block_chunk < 1:
         parser.error("--q-block-chunk must be positive")
-    if args.q_block_size % args.q_block_chunk:
-        parser.error("--q-block-size must be divisible by --q-block-chunk")
+    if args.q_block_chunk < args.q_block_size or args.q_block_chunk % args.q_block_size:
+        parser.error("--q-block-chunk must be at least and divisible by --q-block-size")
     if args.mdp_num_partitions < 1:
         parser.error("--mdp-num-partitions must be positive")
     if args.mdp_num_partitions > args.num_devices:
@@ -312,7 +312,7 @@ def main():
 
     execution_batch_size = args.batch_size * math.lcm(args.msa_indexer_dp, args.msa_attn_dp)
     num_q_blocks = max(1, math.ceil(args.prefill_seq_len / args.q_block_size))
-    n_rep_chunk = args.q_block_size // args.q_block_chunk
+    n_rep_chunk = args.q_block_chunk // args.q_block_size
     config = AutoConfig.from_pretrained(args.model_id)
     if args.num_layers is not None:
         config.text_config.num_hidden_layers = args.num_layers

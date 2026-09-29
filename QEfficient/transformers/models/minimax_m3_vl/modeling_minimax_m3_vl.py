@@ -32,18 +32,12 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     repeat_kv,
 )
 
-from QEfficient.transformers.cache_utils import (
-    QEffDynamicCache,
-    QEffMiniMaxSparseCache,
-    read_kv_cache_with_indices,
-    scatter_kv_into_cache,
-    update_and_read_index_key_cache,
-)
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
     generic_blocked_attention_interface,
 )
+from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP, M3CtxScatterFunc
 from QEfficient.customop.utils import (
     ctx_gather_3d,
     ctx_gather_block_range_kv_dp,
@@ -51,8 +45,10 @@ from QEfficient.customop.utils import (
     ctx_paged_scatter_dp,
     ctx_scatter_3d,
 )
-from QEfficient.customop import CtxGatherFuncBlockedKV, CtxGatherFuncPagedKVDP, CtxPagedScatterFuncDP, M3CtxScatterFunc
-
+from QEfficient.transformers.cache_utils import (
+    QEffDynamicCache,
+    QEffMiniMaxSparseCache,
+)
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEFlavour,
@@ -139,10 +135,7 @@ def _dynamic_sequence_nested_chunks(
         compile_axis_size=compile_axis_size,
     )
     return tuple(
-        tuple(
-            blocks[outer_idx * num_inner_chunks + inner_idx]
-            for inner_idx in range(num_inner_chunks)
-        )
+        tuple(blocks[outer_idx * num_inner_chunks + inner_idx] for inner_idx in range(num_inner_chunks))
         for outer_idx in range(num_outer_chunks)
     )
 
@@ -740,9 +733,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         num_q_blocks_per_chunk = q_block_chunk // q_block_size
         compile_seq_len = getattr(blocking_config, "prefill_compile_seq_len", None)
         q_chunks = _dynamic_sequence_chunks(idx_q, num_q_chunks, dim=2, compile_axis_size=compile_seq_len)
-        position_chunks = _dynamic_sequence_chunks(
-            position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len
-        )
+        position_chunks = _dynamic_sequence_chunks(position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len)
         nested_q_blocks = _dynamic_sequence_nested_chunks(
             idx_q,
             num_q_chunks,
@@ -961,14 +952,6 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         dp = blocking_config.msa_indexer_dp if (blocking_config and blocking_config.msa_indexer_dp) else 1
         cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
         hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
-        num_kv_blocks = max(
-            1,
-            int(
-                getattr(blocking_config, "indexer_num_blocks", None)
-                or getattr(blocking_config, "num_kv_blocks", None)
-                or 1
-            ),
-        )
         num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
         if num_cores < 1:
             raise ValueError(f"num_cores_per_device must be positive, got {num_cores}.")
@@ -1876,9 +1859,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         num_q_blocks_per_chunk = q_block_chunk // q_block_size
         compile_seq_len = getattr(blocking_config, "prefill_compile_seq_len", None)
         q_chunks = _dynamic_sequence_chunks(idx_q, num_q_chunks, dim=2, compile_axis_size=compile_seq_len)
-        position_chunks = _dynamic_sequence_chunks(
-            position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len
-        )
+        position_chunks = _dynamic_sequence_chunks(position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len)
         nested_q_blocks = _dynamic_sequence_nested_chunks(
             idx_q,
             num_q_chunks,
@@ -2141,9 +2122,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         token_valid_chunks = _dynamic_sequence_chunks(
             token_valid, num_q_chunks, dim=2, compile_axis_size=compile_seq_len
         )
-        position_chunks = _dynamic_sequence_chunks(
-            position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len
-        )
+        position_chunks = _dynamic_sequence_chunks(position_ids, num_q_chunks, dim=1, compile_axis_size=compile_seq_len)
         for q_chunk, block_chunk, block_valid_chunk, position_chunk in zip(
             q_chunks, token_index_chunks, token_valid_chunks, position_chunks
         ):
@@ -2546,7 +2525,6 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             raise ValueError(f"MSA batch size {batch} must be divisible by msa_attn_dp={dp}.")
 
         batch_local = batch // dp
-        page_block_size = key_cache.shape[2]
         if tuple(key_cache.shape[:2]) != (batch_local, rows):
             raise ValueError(f"GP key cache shape {tuple(key_cache.shape)} must start with ({batch_local}, {rows}).")
         if tuple(value_cache.shape) != tuple(key_cache.shape):
@@ -3211,12 +3189,8 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                     blocking_config=blocking_config,
                     position_ids=position_ids,
                 )
-                if attn_cp > 1:
-                    past_key_values.layers[self.layer_idx].keys = key_cache.reshape(key_cache_storage.shape)
-                    past_key_values.layers[self.layer_idx].values = value_cache.reshape(value_cache_storage.shape)
-                else:
-                    past_key_values.layers[self.layer_idx].keys = key_cache.reshape(batch, hkv, -1, self.head_dim)
-                    past_key_values.layers[self.layer_idx].values = value_cache.reshape(batch, hkv, -1, self.head_dim)
+                past_key_values.layers[self.layer_idx].keys = key_cache.reshape(key_cache_storage.shape)
+                past_key_values.layers[self.layer_idx].values = value_cache.reshape(value_cache_storage.shape)
             else:
                 selected_k, selected_v, flat_valid = past_key_values.read_kv_with_block_indices(
                     self.layer_idx, token_indices, token_valid
@@ -3676,11 +3650,13 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
 
     def _uses_context_partitioned_main_kv(self) -> bool:
         qaic_config = self._qaic_config()
-        # The sparse cache writer uses the compact GP layout for every
-        # msa_attn_cp > 1 configuration.  Keep export examples and dynamic
-        # cache metadata consistent with that runtime contract regardless of
-        # the selected blocking-mode label.
-        return int(qaic_config.get("msa_attn_cp", 1) or 1) > 1
+        # Sparse decode enters the GP cache path whenever either attention DP
+        # or CP is enabled. Keep export examples and dynamic cache metadata in
+        # that same layout so compiler-side DP splitting does not separate the
+        # cache batch axis from its DP-folded KV rows.
+        attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)
+        attn_cp = int(qaic_config.get("msa_attn_cp", 1) or 1)
+        return attn_dp > 1 or attn_cp > 1
 
     def get_qeff_vision_encoder(self):
         return QEffMiniMaxM3VLEncoderWrapper(self)
@@ -3869,7 +3845,6 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         indexer_kv_rows = (
             indexer_kv_batch_size * indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
         )
-        indexer_kv_ctx_len = ctx_len // indexer_cp if use_context_indexer_kv else None
         dp_multiplier = lcm(indexer_dp, msa_attn_dp)
         if export_batch_size < dp_multiplier or export_batch_size % dp_multiplier:
             raise ValueError(
@@ -4177,7 +4152,6 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                     break
         past_seq_len = int(kwargs.get("past_seq_len", ctx_len))
         qaic_config = self._qaic_config()
-        msa_q_chunk = int(qaic_config.get("msa_q_chunk", 1) or 1)
         indexer_dp = int(qaic_config.get("msa_indexer_dp", 1) or 1)
         indexer_cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
         attn_dp = int(qaic_config.get("msa_attn_dp", 1) or 1)

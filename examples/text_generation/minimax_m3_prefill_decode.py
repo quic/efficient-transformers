@@ -7,13 +7,11 @@
 
 import argparse
 import math
-import numpy as np
-import os
-import tempfile
 import time
 
+import numpy as np
 import torch
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -78,13 +76,28 @@ def _build_qaic_config(
     return qaic_config
 
 
-def _update_retained_cache_inputs(inputs: dict, outputs: dict, num_layers: int) -> None:
+def _update_retained_cache_inputs(
+    inputs: dict,
+    outputs: dict,
+    num_layers: int,
+    target_shapes: dict[str, tuple[int, ...]] | None = None,
+) -> None:
     """Carry retained KV and sparse-indexer states between QPC invocations."""
     for layer_idx in range(num_layers):
         for cache_name in ("past_key", "past_value", "index_key"):
             retained_name = f"{cache_name}.{layer_idx}_RetainedState"
             if retained_name in outputs:
-                inputs[f"{cache_name}.{layer_idx}"] = outputs[retained_name]
+                input_name = f"{cache_name}.{layer_idx}"
+                retained = outputs[retained_name]
+                if target_shapes is not None and input_name in target_shapes:
+                    target_shape = target_shapes[input_name]
+                    if retained.size != math.prod(target_shape):
+                        raise ValueError(
+                            f"Cannot hand off {retained_name} with shape {retained.shape} to "
+                            f"decode input shape {target_shape}."
+                        )
+                    retained = retained.reshape(target_shape)
+                inputs[input_name] = retained
 
 
 def main():
@@ -95,6 +108,12 @@ def main():
     parser.add_argument("--ctx-len", type=int, default=4096)
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--num-devices", type=int, default=16)
+    parser.add_argument(
+        "--decode-num-devices",
+        type=int,
+        default=None,
+        help="Number of devices used by the decode QPC; defaults to --num-devices.",
+    )
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument(
         "--mdp-num-partitions",
@@ -208,6 +227,24 @@ def main():
         help="MSA prefill attention query chunk size.",
     )
     parser.add_argument(
+        "--num-kv-blocks",
+        type=int,
+        default=16,
+        help="Number of prefill KV blocks.",
+    )
+    parser.add_argument(
+        "--q-block-size",
+        type=int,
+        default=256,
+        help="Prefill query block size within the outer query chunk.",
+    )
+    parser.add_argument(
+        "--q-block-chunk",
+        type=int,
+        default=1024,
+        help="Outer prefill query chunk size used to derive n_rep_chunk.",
+    )
+    parser.add_argument(
         "--num-cores-per-device",
         type=int,
         default=8,
@@ -216,8 +253,18 @@ def main():
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
+    if args.decode_num_devices is not None and args.decode_num_devices < 1:
+        parser.error("--decode-num-devices must be positive")
     if args.prefill_seq_len <= 1:
         parser.error("--prefill-seq-len must be greater than 1")
+    if args.num_kv_blocks < 1:
+        parser.error("--num-kv-blocks must be positive")
+    if args.q_block_size < 1:
+        parser.error("--q-block-size must be positive")
+    if args.q_block_chunk < 1:
+        parser.error("--q-block-chunk must be positive")
+    if args.q_block_chunk < args.q_block_size or args.q_block_chunk % args.q_block_size:
+        parser.error("--q-block-chunk must be at least and divisible by --q-block-size")
     if args.prefill_mdp_num_partitions < 1:
         parser.error("--mdp-num-partitions must be positive")
     if args.prefill_mdp_num_partitions > args.num_devices:
@@ -231,10 +278,7 @@ def main():
     if (
         args.indexer_q_chunk is not None
         and args.indexer_q_size is not None
-        and (
-            args.indexer_q_chunk < args.indexer_q_size
-            or args.indexer_q_chunk % args.indexer_q_size
-        )
+        and (args.indexer_q_chunk < args.indexer_q_size or args.indexer_q_chunk % args.indexer_q_size)
     ):
         parser.error("--indexer-q-chunk must be at least and divisible by --indexer-q-size")
     phase_values = (
@@ -263,6 +307,9 @@ def main():
         args.decode_msa_indexer_dp,
         args.decode_msa_attn_dp,
     )
+    decode_num_devices = args.num_devices if args.decode_num_devices is None else args.decode_num_devices
+    num_q_blocks = max(1, math.ceil(args.prefill_seq_len / args.q_block_size))
+    n_rep_chunk = args.q_block_chunk // args.q_block_size
 
     factory_kwargs = dict(kv_offload=True, dtype=torch.float16)
     config = AutoConfig.from_pretrained(args.model_id)
@@ -278,7 +325,6 @@ def main():
         batch_size=execution_batch_size,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         use_onnx_subfunctions=True,
@@ -290,26 +336,36 @@ def main():
         split_model_io=True,
     )
 
+    prefill_qaic_config = _build_qaic_config(
+        msa_indexer_dp=args.prefill_msa_indexer_dp,
+        msa_indexer_cp=args.prefill_msa_indexer_cp,
+        msa_attn_dp=args.prefill_msa_attn_dp,
+        msa_attn_cp=args.prefill_msa_attn_cp,
+        indexer_n_head=args.indexer_n_head,
+        indexer_prefill_parallel=args.indexer_prefill_parallel,
+        indexer_q_chunk=args.indexer_q_chunk,
+        indexer_q_size=args.indexer_q_size,
+        num_cores_per_device=args.num_cores_per_device,
+        msa_q_chunk=args.msa_q_chunk,
+        expert_parallel_chunk_size=args.expert_parallel_chunk_size,
+        cores_per_expert=args.cores_per_expert,
+        tree_reduce=args.tree_reduce,
+    )
+    prefill_qaic_config.update(
+        blocking_mode="prefill_online",
+        num_kv_blocks=args.num_kv_blocks,
+        num_q_blocks=num_q_blocks,
+        n_rep_chunk=n_rep_chunk,
+        ctx_len=args.ctx_len,
+    )
     prefill_compile_kwargs = dict(
         **common_compile_kwargs,
-        qaic_config=_build_qaic_config(
-            msa_indexer_dp=args.prefill_msa_indexer_dp,
-            msa_indexer_cp=args.prefill_msa_indexer_cp,
-            msa_attn_dp=args.prefill_msa_attn_dp,
-            msa_attn_cp=args.prefill_msa_attn_cp,
-            indexer_n_head=args.indexer_n_head,
-            indexer_prefill_parallel=args.indexer_prefill_parallel,
-            indexer_q_chunk=args.indexer_q_chunk,
-            indexer_q_size=args.indexer_q_size,
-            num_cores_per_device=args.num_cores_per_device,
-            msa_q_chunk=args.msa_q_chunk,
-            expert_parallel_chunk_size=args.expert_parallel_chunk_size,
-            cores_per_expert=args.cores_per_expert,
-            tree_reduce=args.tree_reduce,
-        ),
+        num_devices=args.num_devices,
+        qaic_config=prefill_qaic_config,
     )
     decode_compile_kwargs = dict(
         **common_compile_kwargs,
+        num_devices=decode_num_devices,
         qaic_config=_build_qaic_config(
             msa_indexer_dp=args.decode_msa_indexer_dp,
             msa_indexer_cp=args.decode_msa_indexer_cp,
@@ -368,9 +424,7 @@ def main():
     pad_len = padded_len - input_len
     model_inputs["input_ids"] = torch.nn.functional.pad(model_inputs["input_ids"], (0, pad_len), value=0)
     if "attention_mask" in model_inputs:
-        model_inputs["attention_mask"] = torch.nn.functional.pad(
-            model_inputs["attention_mask"], (0, pad_len), value=0
-        )
+        model_inputs["attention_mask"] = torch.nn.functional.pad(model_inputs["attention_mask"], (0, pad_len), value=0)
     if "attention_mask" in model_inputs:
         model_inputs["position_ids"] = torch.where(
             model_inputs["attention_mask"].bool(),
@@ -397,11 +451,20 @@ def main():
     prefill_session.deactivate()
     decode_session = QAICInferenceSession(decode_qpc_path)
     decode_session.activate()
+    decode_input_shapes = {
+        name: tuple(decode_session.bindings[decode_session.binding_index_map[name]].dims)
+        for name in decode_session.input_names
+    }
     last_position = np.max(np_inputs["position_ids"], axis=-1, keepdims=True)
     # MiniMax exports prefill logits for the last valid position as [batch, 1, vocab].
     next_tokens = np.argmax(prefill_output["logits"], axis=-1).astype(np_inputs["input_ids"].dtype)
     decode_inputs = {"input_ids": next_tokens, "position_ids": last_position + 1}
-    _update_retained_cache_inputs(decode_inputs, prefill_output, config.text_config.num_hidden_layers)
+    _update_retained_cache_inputs(
+        decode_inputs,
+        prefill_output,
+        config.text_config.num_hidden_layers,
+        target_shapes=decode_input_shapes,
+    )
     generated = [next_tokens]
     decode_start = time.perf_counter()
     for _ in range(max(0, args.generation_len - 1)):

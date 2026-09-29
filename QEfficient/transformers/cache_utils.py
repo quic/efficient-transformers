@@ -18,7 +18,6 @@ from QEfficient.customop import (
     CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     CtxGatherFuncBlockedKVDP,
-    CtxPagedScatterFuncDP as CtxPagedScatterFunc,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -30,6 +29,9 @@ from QEfficient.customop import (
     ctx_scatter_cb,
     ctx_scatter_cb_3d,
     m3_ctx_scatter,
+)
+from QEfficient.customop import (
+    CtxPagedScatterFuncDP as CtxPagedScatterFunc,
 )
 
 
@@ -1365,6 +1367,9 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                 return
             rows = dp * hkv
 
+            cache_shape = tuple(layer.keys.shape)
+            if tuple(layer.values.shape) != cache_shape:
+                raise ValueError("Sparse key and value cache shapes must match.")
             key_states = key_states.reshape(batch_local, rows, query_len, head_dim)
             value_states = value_states.reshape(batch_local, rows, query_len, head_dim)
             layer.keys = layer.keys.reshape(batch_local, rows, -1, head_dim)
@@ -1388,9 +1393,9 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
             block_id = block_id.to(dtype=torch.int32, device=layer.keys.device)
             addr = addr.to(dtype=torch.int32, device=layer.keys.device)
             layer.keys = CtxPagedScatterFunc.apply(layer.keys, block_id, addr, key_states)
-            layer.keys = layer.keys.reshape(batch, hkv, -1, head_dim)
+            layer.keys = layer.keys.reshape(cache_shape)
             layer.values = CtxPagedScatterFunc.apply(layer.values, block_id, addr, value_states)
-            layer.values = layer.values.reshape(batch, hkv, -1, head_dim)
+            layer.values = layer.values.reshape(cache_shape)
             layer._mark_initialized(layer.keys)
 
     def update_index_key_cache(
@@ -1451,7 +1456,6 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
             if cache is None:
                 raise ValueError(f"No index key cache for layer {layer_idx}.")
         batch_local, rows, _, _ = cache.shape
-        dp = position_ids_dp.shape[1]
         block_len = end - start
 
         pos_max = position_ids_dp.max(dim=-1).values  # [B_local, dp]
@@ -1506,7 +1510,6 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         per-way limit is derived accordingly (same logic as read_index_key_block_gp).
         """
         batch_local, rows, _, _ = cache_gp.shape
-        dp = position_ids_dp.shape[1]
         block_len = end - start
 
         pos_max = position_ids_dp.max(dim=-1).values  # [B_local, dp]
