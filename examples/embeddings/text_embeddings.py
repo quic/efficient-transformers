@@ -53,6 +53,11 @@ def main():
         action="store_true",
         help="Build the model on meta tensors and load weights at compile time",
     )
+    parser.add_argument(
+        "--use-onnx-subfunctions",
+        action="store_true",
+        help="Use subfunctions while exporting",
+    )
     args = parser.parse_args()
 
     # Parse seq_len argument
@@ -83,8 +88,8 @@ def main():
     qeff_model.compile(
         num_cores=args.num_cores,
         seq_len=seq_len,
-        dynamo=True if args.weight_free else False,
-        use_onnx_subfunctions=True,
+        dynamo=args.weight_free,
+        use_onnx_subfunctions=args.use_onnx_subfunctions,
     )
 
     # Tokenize sentences
