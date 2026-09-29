@@ -177,6 +177,7 @@ def main() -> None:
                     generation_len=args.generation_len,
                     device_ids=[args.device_id],
                 )
+                metrics = execution.perf_metrics
                 chunk_tokens, chunk_eos_reached = trim_at_eos(
                     execution.generated_ids[0].tolist(), model.model.config.eos_token_id
                 )
@@ -184,6 +185,11 @@ def main() -> None:
                 eos_reached = eos_reached and chunk_eos_reached
                 chunk_transcriptions.append(
                     processor.batch_decode(execution.generated_ids, skip_special_tokens=True)[0].strip()
+                )
+                print(
+                    f"chunk[{chunk_index}] prefill_s={metrics.prefill_time:.6f} "
+                    f"decode_tokens_per_s={metrics.decode_perf:.6f} "
+                    f"total_s={metrics.total_time:.6f}"
                 )
                 reset_session(model)
             transcription = " ".join(text for text in chunk_transcriptions if text)
