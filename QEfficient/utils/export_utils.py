@@ -33,6 +33,7 @@ from QEfficient.utils.constants import (
     _KNOWN_DECODER_LAYER_SUFFIXES,
     DYNAMO_DIM_MAX_BATCH_SIZE,
     DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
+    WAV2VEC2_MAX_SEQ_LEN,
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
@@ -132,17 +133,32 @@ def convert_dynamic_axes_to_dynamic_shapes(
 
     dim_registry: Dict[str, Any] = {}
 
-    def resolve_dim(dim_name: str):
+    def resolve_dim(dim_name: str, input_name: str):
         if dim_name not in dim_registry:
             if dim_name == "batch_size":
                 dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
             elif dim_name == "full_batch_size":
                 # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
                 dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
+            elif model_type == "wav2vec2" and input_name == "input_values" and dim_name == "seq_len":
+                # Wav2Vec2's input sequence is raw audio samples, not transformer positions.
+                dim_registry[dim_name] = Dim("seq_len", min=2, max=WAV2VEC2_MAX_SEQ_LEN)
             elif "seq_len" in dim_name:
                 dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif "encoder_ctx_len" in dim_name:
+                # Encoder-decoder cross-attention cache length (e.g. Whisper); independent from the
+                # decoder's ctx_len, so it must not share that symbol.
+                dim_registry[dim_name] = Dim(
+                    "encoder_ctx_len", min=2, max=getattr(model_config, "max_source_positions", max_seq_len)
+                )
+            elif "decoder_ctx_len" in dim_name:
+                # Whisper names its decoder KV-cache axis "decoder_ctx_len" (to disambiguate from
+                # encoder_ctx_len) but get_specializations keys the compiled specialization the same
+                # way; the symbol embedded in the exported graph must match that key exactly, so it
+                # can't fall through to the generic "ctx_len" branch below.
+                dim_registry[dim_name] = Dim("decoder_ctx_len", min=2, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
             elif "sliding_window" in dim_name:
@@ -160,10 +176,31 @@ def convert_dynamic_axes_to_dynamic_shapes(
     past_values: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
+    # Encoder-decoder models (e.g. Whisper) carry separate self- and cross-attention
+    # caches per layer instead of the plain decoder-only past_key./past_value. pair.
+    past_key_self_layers: Dict[int, Any] = {}
+    past_value_self_layers: Dict[int, Any] = {}
+    past_key_cross_layers: Dict[int, Any] = {}
+    past_value_cross_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
-        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
-        if input_name.startswith("past_key."):
+        resolved = {
+            axis_idx: resolve_dim(dim_name, input_name)
+            for axis_idx, dim_name in axes_map.items()
+            # Whisper's decoder mask construction (cache_position.reshape(-1, 1)) only holds for
+            # batch_size == 1, which is the only batch size it runs with today; keeping this axis
+            # static avoids tracing through that latent bsz>1 bug during export.
+            if not (model_type == "whisper" and dim_name == "batch_size")
+        }
+        if input_name.startswith("past_key_self."):
+            past_key_self_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_value_self."):
+            past_value_self_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_key_cross."):
+            past_key_cross_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_value_cross."):
+            past_value_cross_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
@@ -178,6 +215,24 @@ def convert_dynamic_axes_to_dynamic_shapes(
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
         dynamic_shapes["past_key_values"] = [
             [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+        ]
+
+    if past_key_self_layers or past_value_self_layers or past_key_cross_layers or past_value_cross_layers:
+        max_layer = max(
+            list(past_key_self_layers.keys())
+            + list(past_value_self_layers.keys())
+            + list(past_key_cross_layers.keys())
+            + list(past_value_cross_layers.keys())
+        )
+        # Order matches QEffWhisperForConditionalGeneration.get_dummy_inputs: [key_self, value_self, key_cross, value_cross] per layer.
+        dynamic_shapes["past_key_values"] = [
+            [
+                past_key_self_layers.get(i, {}),
+                past_value_self_layers.get(i, {}),
+                past_key_cross_layers.get(i, {}),
+                past_value_cross_layers.get(i, {}),
+            ]
+            for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -343,9 +398,8 @@ def export_wrapper(func):
                 else nullcontext()
             )
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(

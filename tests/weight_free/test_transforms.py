@@ -43,6 +43,7 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
+    Wav2Vec2PositionalConvWeightNormCheckpointTransform,
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -158,6 +159,29 @@ def _load_prepared_tensors(root):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_materializes_wav2vec2_positional_conv_weight(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        prefix = "wav2vec2.encoder.pos_conv_embed.conv"
+        weight_g = torch.tensor([[[2.0, 3.0, 4.0]]])
+        weight_v = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3) + 1
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{prefix}.weight_g": weight_g,
+                f"{prefix}.weight_v": weight_v,
+            },
+        )
+
+        prepared = CheckpointTransformPipeline(
+            [Wav2Vec2PositionalConvWeightNormCheckpointTransform, DtypeConversionCheckpointTransform]
+        ).apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        expected = weight_g * weight_v / torch.linalg.vector_norm(weight_v, dim=(0, 1), keepdim=True)
+        torch.testing.assert_close(_load_prepared_tensors(out)[f"{prefix}.weight"], expected)
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"

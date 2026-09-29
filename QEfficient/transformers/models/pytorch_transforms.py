@@ -303,6 +303,9 @@ from transformers.models.t5.modeling_t5 import (
 from transformers.models.wav2vec2.modeling_wav2vec2 import (
     Wav2Vec2Encoder,
     Wav2Vec2EncoderStableLayerNorm,
+    Wav2Vec2GroupNormConvLayer,
+    Wav2Vec2Model,
+    Wav2Vec2PositionalConvEmbedding,
 )
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
@@ -644,6 +647,9 @@ from QEfficient.transformers.models.t5.modeling_t5 import QEffT5Attention, QEffT
 from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
     QEffWav2Vec2Encoder,
     QEffWav2Vec2EncoderStableLayerNorm,
+    QEffWav2Vec2GroupNormConvLayer,
+    QEffWav2Vec2Model,
+    QEffWav2Vec2PositionalConvEmbedding,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -716,6 +722,9 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        Wav2Vec2GroupNormConvLayer: QEffWav2Vec2GroupNormConvLayer,
+        Wav2Vec2Model: QEffWav2Vec2Model,
+        Wav2Vec2PositionalConvEmbedding: QEffWav2Vec2PositionalConvEmbedding,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
