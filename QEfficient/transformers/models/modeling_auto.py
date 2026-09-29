@@ -5472,12 +5472,23 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         decoder_prompt = inputs.pop("decoder_input_ids", None)
         feature_binding = self.qpc_session.bindings[self.qpc_session.binding_index_map["input_features"]]
         input_features_shape = tuple(feature_binding.dims)
+
+        def binding_numpy_dtype(name: str, fallback: np.dtype) -> np.dtype:
+            binding_index = self.qpc_session.binding_index_map.get(name)
+            if binding_index is None:
+                return fallback
+            binding = self.qpc_session.bindings[binding_index]
+            dtype_mapping = getattr(self.qpc_session, "aic_to_np_dtype_mapping", {})
+            return dtype_mapping.get(getattr(binding, "type", None), fallback)
+
+        input_features_dtype = binding_numpy_dtype("input_features", np.float16)
+        logits_dtype = binding_numpy_dtype("logits", np.float16)
         prepare_qpc_generation_inputs = getattr(self.model, "prepare_qpc_generation_inputs", None)
         if callable(prepare_qpc_generation_inputs):
             inputs = prepare_qpc_generation_inputs(inputs, input_features_shape)
 
         inputs = self.auto_correct_inputs(inputs)
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+        inputs["input_features"] = inputs["input_features"].numpy().astype(input_features_dtype)
         if "feature_lengths" in inputs:
             inputs["feature_lengths"] = inputs["feature_lengths"].numpy().astype(np.int64)
 
@@ -5501,7 +5512,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         )
 
         outputs = {
-            "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(np.float32),
+            "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(logits_dtype),
         }
         self.qpc_session.set_buffers(outputs)
 
@@ -5513,7 +5524,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             inputs["input_ids"] = decoder_prompt[:, prompt_position : prompt_position + 1]
             inputs["position_ids"] = np.full((self.batch_size, 1), prompt_position, dtype=np.int64)
             outputs = self.qpc_session.run(inputs)
-            inputs["input_features"] = np.zeros((self.batch_size, input_features_shape[1], 1), dtype=np.float16)
+            inputs["input_features"] = np.zeros(
+                (self.batch_size, input_features_shape[1], 1), dtype=input_features_dtype
+            )
 
         generated_ids = np.full(
             (self.batch_size, prompt_length + generation_len), self.model.config.eos_token_id, dtype=np.int64
