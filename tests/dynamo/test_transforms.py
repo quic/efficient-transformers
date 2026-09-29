@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 from onnx import TensorProto, helper
 from transformers import LlamaConfig, LlamaForCausalLM
