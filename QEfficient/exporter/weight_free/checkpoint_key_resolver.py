@@ -36,9 +36,14 @@ _COMPUTED_INITIALIZER_NAMES = {
     "cos_cached",
     "sin_cached",
     "inv_freq",
+    "full_attention_sin_cached",
+    "full_attention_cos_cached",
+    "sliding_attention_sin_cached",
+    "sliding_attention_cos_cached",
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "_qeff_unit_weight",
 }
 
 
@@ -63,6 +68,17 @@ def _moe_weight_aliases(name: str) -> List[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
+    for onnx_suffix, checkpoint_suffix in (
+        (".moe_block.router.", ".router."),
+        (".moe_block.pre_feedforward_layernorm.", ".pre_feedforward_layernorm_2."),
+        (".moe_block.post_feedforward_layernorm.", ".post_feedforward_layernorm_2."),
+    ):
+        if onnx_suffix in name:
+            aliases.append(name.replace(onnx_suffix, checkpoint_suffix, 1))
+    if ".moe_block.moe_weights." in canonical:
+        canonical = canonical.replace(".moe_block.moe_weights.", ".moe_weights.", 1)
+        aliases.append(canonical)
+
     if ".experts.moe_weights." in name:
         canonical = name.replace(".experts.moe_weights.", ".moe_weights.", 1)
         aliases.append(canonical)
@@ -90,17 +106,18 @@ def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]
     seen: set = set()
     matches = []
     for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate in checkpoint_index:
-            matches.append(candidate)
-        for alias in _moe_weight_aliases(candidate):
+        for alias in [candidate, *_vlm_wrapper_aliases(candidate)]:
             if alias in seen:
                 continue
             seen.add(alias)
             if alias in checkpoint_index:
                 matches.append(alias)
+            for moe_alias in _moe_weight_aliases(alias):
+                if moe_alias in seen:
+                    continue
+                seen.add(moe_alias)
+                if moe_alias in checkpoint_index:
+                    matches.append(moe_alias)
     if len(matches) > 1:
         raise ValueError(
             f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {matches}. "
@@ -112,6 +129,36 @@ def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]
 def _is_computed_initializer(name: str) -> bool:
     """Return True for generated constants that are not stored in HF checkpoints."""
     return name.rsplit(".", 1)[-1] in _COMPUTED_INITIALIZER_NAMES
+
+
+def _vlm_wrapper_aliases(name: str) -> list[str]:
+    """Return aliases introduced by multimodal wrapper nesting."""
+    aliases = []
+    if name.startswith("model.model."):
+        aliases.append("model." + name[len("model.model.") :])
+    if name.startswith("model.vision_model."):
+        aliases.append("model.visual." + name[len("model.vision_model.") :])
+        aliases.append("model.vision_tower." + name[len("model.vision_model.") :])
+    if name.startswith("vision_model."):
+        aliases.append("model.visual." + name[len("vision_model.") :])
+        aliases.append("model.vision_tower." + name[len("vision_model.") :])
+    if name.startswith("visual."):
+        aliases.append("model.visual." + name[len("visual.") :])
+    if name.startswith("language_model."):
+        aliases.append("model.language_model." + name[len("language_model.") :])
+    if name.startswith("model.lm_head."):
+        aliases.append("lm_head." + name[len("model.lm_head.") :])
+    if name.startswith("lm_head."):
+        aliases.append("model.lm_head." + name[len("lm_head.") :])
+    if name.endswith("lm_head.weight"):
+        prefix = name[: -len("lm_head.weight")]
+        aliases.extend(
+            [
+                f"{prefix}language_model.embed_tokens.weight",
+                f"{prefix}embed_tokens.weight",
+            ]
+        )
+    return aliases
 
 
 def find_checkpoint_key(

@@ -13,15 +13,18 @@ from collections import Counter
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import onnx
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
+    CanonicalizeWhileLoopInitialConditionTransform,
     CustomOpTransform,
+    CustomOpTransform,
+    DeduplicateRepeatedSubgraphTransform,
     LocalizeFunctionReduceSumAxesTransform,
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
@@ -33,8 +36,6 @@ from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
     _KNOWN_DECODER_LAYER_ATTR_PATHS,
     _KNOWN_DECODER_LAYER_SUFFIXES,
-    DYNAMO_DIM_MAX_BATCH_SIZE,
-    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
@@ -62,20 +63,20 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
     """Reorder example_inputs (and optional dynamic_shapes) to match model.forward signature.
 
     torch.export requires inputs and dynamic_shapes to follow the forward parameter order
-    so that each shape constraint binds to the correct input tensor.
+    so that each shape constraint binds to the correct input tensor. Non-input
+    dynamic_shapes entries are dropped because torch.export only accepts entries
+    matching real forward inputs.
     """
     sig_keys = list(inspect.signature(model.forward).parameters.keys())
     sig_key_set = set(sig_keys)
-    ordered_inputs, ordered_shapes = {}, {}
+    ordered_inputs = {}
     for k in sig_keys:
         if k in example_inputs:
             ordered_inputs[k] = example_inputs[k]
-        if dynamic_shapes is not None and k in dynamic_shapes:
-            ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
-        return reordered_inputs, reordered_shapes
+        dynamic_shapes = {k: dynamic_shapes.get(k) for k in reordered_inputs}
+        return reordered_inputs, dynamic_shapes
     return reordered_inputs, None
 
 
@@ -101,9 +102,9 @@ def build_dynamo_export_kwargs(export_kwargs):
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
-    dynamic_axes: Dict[str, Dict[int, str]],
+    dynamic_axes: dict[str, dict[int, str]],
     model_config=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
 
@@ -128,40 +129,18 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
-    model_type = getattr(model_config, "model_type", None)
-    batch_min = 1 if model_type == "gpt_oss" else 2
-
-    dim_registry: Dict[str, Any] = {}
+    dim_registry: dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
-            if dim_name == "batch_size":
-                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif dim_name == "full_batch_size":
-                # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
-                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif "seq_len" in dim_name:
-                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
-            elif "comp_ctx_lengths" in dim_name:
-                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
-            elif "ctx_len" in dim_name:
-                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
-            elif "sliding_window" in dim_name:
-                dim_registry[dim_name] = Dim(
-                    "sliding_window",
-                    min=2,
-                    max=getattr(model_config, "sliding_window", max_seq_len),
-                )
-            else:
-                dim_registry[dim_name] = Dim.DYNAMIC
+            dim_registry[dim_name] = Dim(dim_name)
         return dim_registry[dim_name]
 
-    dynamic_shapes: Dict[str, Any] = {}
-    past_keys: Dict[int, Any] = {}
-    past_values: Dict[int, Any] = {}
-    compressed_kv_layers: Dict[int, Any] = {}
-    k_pe_layers: Dict[int, Any] = {}
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -180,6 +159,49 @@ def convert_dynamic_axes_to_dynamic_shapes(
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
         dynamic_shapes["past_key_values"] = [
             [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+        ]
+
+    if compressed_kv_layers or k_pe_layers:
+        max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
+        dynamic_shapes["compressed_kvs"] = [
+            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
+
+    return dynamic_shapes
+
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    hybrid_states: dict[int, list[Any]] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
+
+    for input_name, axes_map in dynamic_axes.items():
+        resolved = {}
+        for axis_idx, dim_name in axes_map.items():
+            dim = resolve_dim(dim_name)
+            if isinstance(dim, int):
+                continue
+            resolved[axis_idx] = dim
+        if input_name.startswith("past_key."):
+            past_keys[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_value."):
+            past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            hybrid_states.setdefault(int(input_name.split(".")[1]), [{}, {}])[0] = resolved
+        elif input_name.startswith("recurrent_state."):
+            hybrid_states.setdefault(int(input_name.split(".")[1]), [{}, {}])[1] = resolved
+        elif input_name.startswith("compressed_kv."):
+            compressed_kv_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("k_pe."):
+            k_pe_layers[int(input_name.split(".")[1])] = resolved
+        else:
+            dynamic_shapes[input_name] = resolved
+
+    if past_keys or past_values or hybrid_states:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()) + list(hybrid_states.keys()))
+        dynamic_shapes["past_key_values"] = [
+            hybrid_states.get(i, [past_keys.get(i, {}), past_values.get(i, {})]) for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -419,9 +441,8 @@ def export_wrapper(func):
                 else nullcontext()
             )
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(
@@ -599,8 +620,16 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
         # Dynamo: PreserveNestedCacheRetainedStateTransform + RenameRepeatedSubgraphTransform.
         if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
+        if CanonicalizeWhileLoopInitialConditionTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(CanonicalizeWhileLoopInitialConditionTransform)
+        if DeduplicateRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(DeduplicateRepeatedSubgraphTransform)
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
+        # if QualifyOnnxNodeNamesTransform not in qeff_model._onnx_transforms:
+        #     qeff_model._onnx_transforms.append(QualifyOnnxNodeNamesTransform)
+        # if RewriteSequenceSplitGetItemTransform not in qeff_model._onnx_transforms:
+        #     qeff_model._onnx_transforms.append(RewriteSequenceSplitGetItemTransform)
     else:
         # TorchScript: RenameFunctionOutputsTransform + CustomOpTransform.
         if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
@@ -622,6 +651,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
+            onnx_transform_kwargs["target_class_modules"] = {
+                cls.__name__: cls.__module__ for cls in decoder_layer_classes
+            }
             kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
         else:
             # TorchScript path: pass class objects for export_modules_as_functions
@@ -673,7 +705,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
             qeff_model.hash_params["onnx_subfunction_version"] = state["hash_subfunction_version"]
 
 
-def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
+def _save_export_metadata(export_dir: Path, filtered_hash_params: dict):
     """
     Save export metadata to JSON file for reproducibility.
 

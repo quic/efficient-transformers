@@ -79,6 +79,7 @@ def build_compile_kwargs(*, effective_prefill_seq_len: int, effective_ctx_len: i
         "split_model_io": kwargs.get("split_model_io", True),
         "batch_size": kwargs.get("BATCH_SIZE", 1),
         "node_precision_info": kwargs.get("node_precision_info", None),
+        "dynamo": kwargs.get("DYNAMO", False),
     }
     # Carry the Compute-Context-Length lists through to compile() when provided.
     for key in ("comp_ctx_lengths_prefill", "comp_ctx_lengths_decode"):
