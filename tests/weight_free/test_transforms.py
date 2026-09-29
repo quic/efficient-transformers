@@ -82,7 +82,11 @@ def make_tiny_llama():
     return model, cfg
 
 
-def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_count_per_fn: int = 2):
+def _make_minimal_onnx_with_repeated_subgraphs(
+    num_layers: int = 2,
+    scatter_count_per_fn: int = 2,
+    include_unrelated_scatter: bool = False,
+):
     """
     Build a minimal ONNX ModelProto that mimics dynamo's repeated-subgraph output:
       - graph has num_layers call nodes (one per layer), each referencing repeated_subgraphN
@@ -99,9 +103,20 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
 
         scatter_nodes = []
         fn_outputs = []
+        fn_inputs = [f"past_key.{i}", f"past_value.{i}", f"hidden_{i}", "position_ids"]
+        if include_unrelated_scatter:
+            fn_inputs.append(f"moe_indices_{i}")
+            scatter_nodes.append(
+                helper.make_node(
+                    "CtxScatter3DInt",
+                    inputs=[f"moe_indices_{i}", "position_ids", f"moe_indices_{i}"],
+                    outputs=[f"moe_scatter_{i}"],
+                    domain="qti.aisw",
+                )
+            )
         for j in range(scatter_count_per_fn):
             kind = "key" if j == 0 else "value"
-            scatter_out = f"scatter_{kind}_{i}"
+            scatter_out = f"scatter_{i}_{j}"
             scatter_node = helper.make_node(
                 "CtxScatter",
                 inputs=[f"past_{kind}.{i}", f"new_{kind}_{i}", "position_ids"],
@@ -114,7 +129,7 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
         fn = helper.make_function(
             domain="",
             fname=fn_name,
-            inputs=[f"past_key.{i}", f"past_value.{i}", f"hidden_{i}", "position_ids"],
+            inputs=fn_inputs,
             outputs=fn_outputs,
             nodes=scatter_nodes,
             opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid("qti.aisw", 1)],
@@ -125,7 +140,7 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
         retained_val = f"past_value.{i}_RetainedState"
         call_node = helper.make_node(
             fn_name,
-            inputs=[f"past_key.{i}", f"past_value.{i}", f"hidden_{i}", "position_ids"],
+            inputs=fn_inputs,
             outputs=[],
             domain="",
         )
@@ -137,6 +152,8 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
         graph_inputs.append(helper.make_tensor_value_info(f"past_key.{i}", TensorProto.FLOAT, None))
         graph_inputs.append(helper.make_tensor_value_info(f"past_value.{i}", TensorProto.FLOAT, None))
         graph_inputs.append(helper.make_tensor_value_info(f"hidden_{i}", TensorProto.FLOAT, None))
+        if include_unrelated_scatter:
+            graph_inputs.append(helper.make_tensor_value_info(f"moe_indices_{i}", TensorProto.INT32, None))
 
     graph_inputs.append(helper.make_tensor_value_info("position_ids", TensorProto.INT64, None))
 
@@ -502,7 +519,7 @@ class TestWeightFreeCheckpointTransforms:
 
         assert not (tmp_path / "out").exists()
 
-    def test_plan_fingerprint_changes_with_expert_parallel_layout(self, tmp_path):
+    def test_plan_fingerprint_tracks_expert_parallel_layout_not_chunk_size(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
         prefix = "model.layers.0.block_sparse_moe"
@@ -525,6 +542,7 @@ class TestWeightFreeCheckpointTransforms:
                 "moe_prefill_flavour": "expert_parallel",
                 "moe_prefill_num_pipeline_stages": 2,
                 "moe_prefill_num_parallelized_experts": 2,
+                "moe_prefill_expert_parallel_chunk_size": 64,
             },
         )
         plan_b, _ = pipeline.build_plan(
@@ -535,6 +553,7 @@ class TestWeightFreeCheckpointTransforms:
                 "moe_prefill_flavour": "expert_parallel",
                 "moe_prefill_num_pipeline_stages": 4,
                 "moe_prefill_num_parallelized_experts": 1,
+                "moe_prefill_expert_parallel_chunk_size": 64,
             },
         )
 
@@ -551,7 +570,7 @@ class TestWeightFreeCheckpointTransforms:
         )
 
         assert plan_a.fingerprint_payload() != plan_b.fingerprint_payload()
-        assert plan_a.fingerprint_payload() != plan_c.fingerprint_payload()
+        assert plan_a.fingerprint_payload() == plan_c.fingerprint_payload()
 
         from QEfficient.exporter.weight_free.export import _prepared_checkpoint_hash
 
@@ -566,9 +585,20 @@ class TestWeightFreeCheckpointTransforms:
         assert _prepared_checkpoint_hash(
             **common_hash_args,
             plan_payload=plan_a.fingerprint_payload(),
-        ) != _prepared_checkpoint_hash(
+        ) == _prepared_checkpoint_hash(
             **common_hash_args,
             plan_payload=plan_c.fingerprint_payload(),
+        )
+        assert _prepared_checkpoint_hash(
+            **common_hash_args,
+            plan_payload=plan_a.fingerprint_payload(),
+        ) != _prepared_checkpoint_hash(
+            **{
+                **common_hash_args,
+                "moe_prefill_num_pipeline_stages": 4,
+                "moe_prefill_num_parallelized_experts": 1,
+            },
+            plan_payload=plan_b.fingerprint_payload(),
         )
 
     def test_scheduler_waits_for_staged_dependency(self, tmp_path):
@@ -1162,11 +1192,29 @@ class TestPreserveNestedCacheRetainedStateTransform:
         changed = PreserveNestedCacheRetainedStateTransform.apply(model)
         assert not changed, "Transform should be a no-op when there are no dangling _RetainedState outputs"
 
-    def test_noop_when_scatter_count_not_two(self):
+    def test_rejects_missing_cache_writer_without_partial_rewire(self):
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=1, scatter_count_per_fn=1)
-        PreserveNestedCacheRetainedStateTransform.apply(model)
+        with pytest.raises(ValueError, match="Could not uniquely resolve"):
+            PreserveNestedCacheRetainedStateTransform.apply(model)
         fn = model.functions[0]
         assert len(fn.output) == 1, f"Function with 1 scatter should not have outputs added, got {list(fn.output)}"
+        assert not model.graph.node[0].output, "Function call must not be partially rewired"
+
+    def test_uses_cache_input_lineage_when_moe_scatter_is_present(self):
+        model = _make_minimal_onnx_with_repeated_subgraphs(
+            num_layers=1,
+            scatter_count_per_fn=2,
+            include_unrelated_scatter=True,
+        )
+
+        changed = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert changed
+        fn = model.functions[0]
+        call_node = model.graph.node[0]
+        assert "moe_scatter_0" not in fn.output
+        assert fn.output[-2:] == ["scatter_0_0", "scatter_0_1"]
+        assert call_node.output[-2:] == ["past_key.0_RetainedState", "past_value.0_RetainedState"]
 
 
 # ---------------------------------------------------------------------------
