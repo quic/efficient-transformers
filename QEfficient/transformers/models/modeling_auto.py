@@ -371,6 +371,8 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        if self.__class__ is not QEFFAutoModel:
+            _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -656,9 +658,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
-        # Weight-free export always uses the dynamo (torch.export) path.
-        # Must be set here — @export_wrapper reads dynamo from kwargs before _export() body runs.
-        dynamo = dynamo or self._weight_free
+        dynamo = kwargs.get("dynamo", False) or self._weight_free
         if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
             bs = max(2, bs)

@@ -90,8 +90,13 @@ def test_weight_free_embedding_hw_hf_parity(model_type, model_id, pooling, tmp_e
     qaic_embeddings = qaic_output["output"]
     if qaic_embeddings.ndim == 3:
         qaic_embeddings = qaic_embeddings[:, 0, :]
-    mad = np.mean(np.abs(hf_output - qaic_embeddings))
-    assert mad <= 1e-2, f"HF PT vs weight-free QAIC parity failed for {model_type}: MAD={mad}"
+    np.testing.assert_allclose(
+        hf_output,
+        qaic_embeddings,
+        rtol=1e-2,
+        atol=1e-2,
+        err_msg=f"HF PT vs weight-free QAIC parity failed for {model_type}",
+    )
 
 
 @pytest.mark.weight_free
