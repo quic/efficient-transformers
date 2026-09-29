@@ -44,6 +44,8 @@ def _default_weights_roots(weight_spec_path: Path, spec) -> List[Path]:
     ext_root = os.environ.get("AIC_EXTERNAL_DATA_ROOT")
     if ext_root:
         roots.append(Path(ext_root).expanduser())
+    if spec.external_data_root:
+        roots.append(Path(spec.external_data_root).expanduser())
 
     candidate = Path(spec.model_id).expanduser()
     if candidate.exists():

@@ -33,10 +33,10 @@ def huggingface_hub_cache_dir() -> Path:
 
 def _all_checkpoint_files_under(root: Path, checkpoint_files: Sequence[str]) -> bool:
     """Return True when every checkpoint file is contained under ``root``."""
-    root = root.expanduser().resolve()
+    root = root.expanduser()
     for checkpoint_file in checkpoint_files:
         try:
-            Path(checkpoint_file).expanduser().resolve().relative_to(root)
+            Path(checkpoint_file).expanduser().relative_to(root)
         except ValueError:
             return False
     return True

@@ -19,6 +19,7 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -48,6 +49,7 @@ from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_fre
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import runtime_requirements
+from QEfficient.utils.checkpoint_utils import checkpoint_root
 from QEfficient.utils.export_utils import _generate_export_hash
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
@@ -151,6 +153,23 @@ def _load_prepared_tensors(root):
         with safe_open(str(root / shard_name), framework="pt") as handle:
             loaded[key] = handle.get_tensor(key)
     return loaded
+
+
+def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
+    hub = tmp_path / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    blob = hub / "models--org--m" / "blobs" / "abc"
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"x")
+    local = tmp_path / "mymodel"
+    local.mkdir()
+    shard = local / "model.safetensors"
+    shard.symlink_to(blob)
+
+    root = checkpoint_root(str(local), [str(shard)])
+
+    assert root == tmp_path
+    assert shard.relative_to(root) == Path("mymodel/model.safetensors")
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +526,7 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+        assert spec.external_data_root == str(tmp_path)
 
 
 def _fake_export(

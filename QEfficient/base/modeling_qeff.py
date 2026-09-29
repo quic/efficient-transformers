@@ -156,6 +156,20 @@ def _copy_weight_free_spec(weight_spec_path: Path, artifact_dir: Path) -> None:
         shutil.copy2(weight_spec_path, artifact_weight_spec_path)
 
 
+def _root_containing_weight_free_files(model_id_path: Path, external_files) -> Optional[Path]:
+    """Return the nearest ancestor that resolves all relative weight-spec files."""
+    relative_paths = [
+        Path(external_file.path) for external_file in external_files if not Path(external_file.path).is_absolute()
+    ]
+    if not relative_paths:
+        return None
+
+    for root in (model_id_path, *model_id_path.parents):
+        if all((root / relative_path).exists() for relative_path in relative_paths):
+            return root
+    return None
+
+
 def _weight_free_external_data_root(weight_spec_path: Optional[Union[str, Path]]) -> Optional[Path]:
     """Return the root for weight-free external data files, if a weight spec exists."""
     if weight_spec_path is None:
@@ -166,8 +180,14 @@ def _weight_free_external_data_root(weight_spec_path: Optional[Union[str, Path]]
         return None
 
     spec = load_weight_spec(weight_spec_path)
+    if spec.external_data_root:
+        return Path(spec.external_data_root).expanduser()
+
     model_id_path = Path(spec.model_id).expanduser()
     if model_id_path.exists():
+        root = _root_containing_weight_free_files(model_id_path, spec.files)
+        if root is not None:
+            return root
         return checkpoint_root(spec.model_id, [str(model_id_path / external_file.path) for external_file in spec.files])
 
     return huggingface_hub_cache_dir()

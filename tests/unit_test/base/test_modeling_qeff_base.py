@@ -25,7 +25,7 @@ import torch
 from onnx import TensorProto, helper, numpy_helper
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
-from QEfficient.base.modeling_qeff import generate_mdp_compiler_dump
+from QEfficient.base.modeling_qeff import _weight_free_external_data_root, generate_mdp_compiler_dump
 from QEfficient.compile.mdp_generator import _layer_partition_bounds
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -1061,6 +1061,64 @@ class TestMdpCompileIntegration:
                 shutil.rmtree(compile_dir, ignore_errors=True)
             shutil.rmtree(compile_root, ignore_errors=True)
             onnx_path.unlink(missing_ok=True)
+
+    def test_cached_main_weight_free_spec_uses_containing_external_data_root(self, tmp_path, monkeypatch):
+        hf_cache = tmp_path / "hub"
+        snapshots = hf_cache / "models--org--m" / "snapshots"
+        prepared = snapshots / "deadbeef-qeff-prepared-float32"
+        checkpoint_path = prepared / "model.safetensors"
+        checkpoint_path.parent.mkdir(parents=True)
+        checkpoint_path.write_bytes(b"FAKE_SAFE_TENSORS")
+        monkeypatch.setenv("HF_HUB_CACHE", str(hf_cache))
+
+        weight_spec_path = tmp_path / "weight_spec.json"
+        weight_spec_path.write_text(
+            json.dumps(
+                {
+                    "files": [
+                        {
+                            "format": "safetensors",
+                            "path": "deadbeef-qeff-prepared-float32/model.safetensors",
+                        }
+                    ],
+                    "inputs": [{"name": "transformer.wte.weight", "location": {"file": 0, "key": "wte.weight"}}],
+                    "model_id": str(prepared),
+                    "model_name": "GPT2LMHeadModel",
+                    "version": 5,
+                }
+            )
+        )
+
+        external_data_root = _weight_free_external_data_root(weight_spec_path)
+
+        assert external_data_root == snapshots
+        assert (external_data_root / "deadbeef-qeff-prepared-float32/model.safetensors").is_file()
+
+    def test_weight_free_spec_external_data_root_overrides_heuristics(self, tmp_path):
+        recorded_root = tmp_path / "recorded_root"
+        recorded_root.mkdir()
+        prepared = tmp_path / "prepared"
+        prepared.mkdir()
+        weight_spec_path = tmp_path / "weight_spec.json"
+        weight_spec_path.write_text(
+            json.dumps(
+                {
+                    "external_data_root": str(recorded_root),
+                    "files": [
+                        {
+                            "format": "safetensors",
+                            "path": "prepared/model.safetensors",
+                        }
+                    ],
+                    "inputs": [{"name": "transformer.wte.weight", "location": {"file": 0, "key": "wte.weight"}}],
+                    "model_id": str(prepared),
+                    "model_name": "GPT2LMHeadModel",
+                    "version": 5,
+                }
+            )
+        )
+
+        assert _weight_free_external_data_root(weight_spec_path) == recorded_root
 
     def test_compile_artifacts_preserves_user_weight_free_external_data_root(self, tmp_path, monkeypatch):
         onnx_path = tmp_path / "model.onnx"
