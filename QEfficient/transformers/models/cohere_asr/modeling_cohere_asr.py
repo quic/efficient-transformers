@@ -8,7 +8,7 @@
 """
 QEff CohereAsr wrapper.
 
-CohereAsr is a Whisper-style encoder-decoder ASR model: a `ParakeetEncoder`
+CohereAsr is an encoder-decoder ASR model: a `ParakeetEncoder`
 (fast-conformer, bidirectional, no KV cache) feeding a causal, KV-cached text
 decoder that cross-attends to the fixed encoder output.
 

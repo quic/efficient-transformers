@@ -401,12 +401,14 @@ def test_cohere_asr_decode_reuses_cross_attention_cache(cohere_asr_qeff_model):
 def test_cohere_asr_continuous_batching_updates_only_owned_cache_rows(cohere_asr_qeff_model, batch_indices):
     active_batch_size = batch_indices.shape[0]
     full_batch_size = 4
-    cache = [[
-        torch.zeros((full_batch_size, 2, 4, 4)),
-        torch.zeros((full_batch_size, 2, 4, 4)),
-        torch.zeros((full_batch_size, 2, 2, 4)),
-        torch.zeros((full_batch_size, 2, 2, 4)),
-    ]]
+    cache = [
+        [
+            torch.zeros((full_batch_size, 2, 4, 4)),
+            torch.zeros((full_batch_size, 2, 4, 4)),
+            torch.zeros((full_batch_size, 2, 2, 4)),
+            torch.zeros((full_batch_size, 2, 2, 4)),
+        ]
+    ]
 
     outputs = cohere_asr_qeff_model(
         input_features=torch.randn(active_batch_size, 8, 16),
@@ -452,6 +454,75 @@ def test_cohere_asr_continuous_batching_export_contract(tmp_path, cohere_asr_qef
     assert graph_inputs["batch_index"].type.tensor_type.shape.dim[0].dim_param == "batch_size"
     assert graph_inputs["past_key_self.0"].type.tensor_type.shape.dim[0].dim_param == "full_batch_size"
     assert graph_inputs["past_key_cross.0"].type.tensor_type.shape.dim[0].dim_param == "full_batch_size"
+
+
+def test_speech_static_export_preserves_zero_argument_model_hooks(cohere_asr_qeff_model, monkeypatch, tmp_path):
+    wrapper = QEFFAutoModelForSpeechSeq2Seq(deepcopy(cohere_asr_qeff_model))
+    calls = []
+
+    monkeypatch.setattr(wrapper.model, "get_dummy_inputs", lambda **kwargs: calls.append(("dummy", kwargs)) or {})
+    monkeypatch.setattr(wrapper.model, "get_onnx_dynamic_axes", lambda: calls.append(("axes", {})) or {})
+    monkeypatch.setattr(wrapper.model, "get_output_names", lambda: [])
+    monkeypatch.setattr(wrapper, "_export", lambda *_args, **_kwargs: tmp_path / "model.onnx")
+
+    wrapper.export(export_dir=tmp_path)
+
+    assert calls == [("dummy", {}), ("axes", {})]
+
+
+def test_speech_static_compile_does_not_forward_none_full_batch_size(cohere_asr_qeff_model, monkeypatch):
+    wrapper = QEFFAutoModelForSpeechSeq2Seq(deepcopy(cohere_asr_qeff_model))
+    specialization_kwargs = {}
+
+    def get_specializations(batch_size, encoder_ctx_len, ctx_len, **kwargs):
+        specialization_kwargs.update(kwargs)
+        return [], {}
+
+    monkeypatch.setattr(wrapper.model, "get_specializations", get_specializations)
+    monkeypatch.setattr(wrapper.model, "get_export_hash_params", None)
+    monkeypatch.setattr(wrapper.model, "get_output_names", lambda: [])
+    monkeypatch.setattr(wrapper, "_compile", lambda **_kwargs: "qpc")
+
+    assert wrapper.compile(onnx_path="model.onnx") == "qpc"
+    assert "full_batch_size" not in specialization_kwargs
+
+
+def test_cohere_asr_export_hash_params_track_graph_shapes(cohere_asr_qeff_model, monkeypatch, tmp_path):
+    wrapper = QEFFAutoModelForSpeechSeq2Seq(deepcopy(cohere_asr_qeff_model))
+    monkeypatch.setattr(wrapper, "_export", lambda *_args, **_kwargs: tmp_path / "model.onnx")
+
+    wrapper.export(export_dir=tmp_path, batch_size=1, encoder_ctx_len=2)
+    first_export_params = deepcopy(wrapper.hash_params["speech_export"])
+    wrapper.export(export_dir=tmp_path, batch_size=2, encoder_ctx_len=3)
+
+    assert first_export_params != wrapper.hash_params["speech_export"]
+    assert wrapper.hash_params["speech_export"] == {
+        "batch_size": 2,
+        "continuous_batching": False,
+        "encoder_ctx_len": 3,
+        "full_batch_size": 2,
+    }
+
+
+def test_cohere_asr_rejects_encoder_output_larger_than_cross_cache(cohere_asr_qeff_model):
+    cache = [
+        [
+            torch.zeros((1, 2, 4, 4)),
+            torch.zeros((1, 2, 4, 4)),
+            torch.zeros((1, 2, 1, 4)),
+            torch.zeros((1, 2, 1, 4)),
+        ]
+    ]
+
+    with pytest.raises(ValueError, match="exceeds the configured encoder context length"):
+        cohere_asr_qeff_model(
+            input_features=torch.randn(1, 8, 16),
+            feature_lengths=torch.tensor([16]),
+            input_ids=torch.tensor([[4]]),
+            position_ids=torch.zeros((1, 1), dtype=torch.int64),
+            past_key_values=cache,
+            use_cache=True,
+        )
 
 
 def test_cohere_asr_native_and_qeff_logits_match_with_cached_decode():
