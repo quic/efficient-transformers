@@ -1248,7 +1248,8 @@ def test_whisper_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
-def test_cohere_asr_export_smoke(tmp_path):
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_cohere_asr_export_smoke(tmp_path, dtype):
     encoder_config = {
         "model_type": "parakeet_encoder",
         "num_mel_bins": 8,
@@ -1275,10 +1276,11 @@ def test_cohere_asr_export_smoke(tmp_path):
         max_position_embeddings=64,
         decoder_start_token_id=4,
     )
-    model_hf = CohereAsrForConditionalGeneration(config).eval()
+    config.torch_dtype = dtype
+    model_hf = CohereAsrForConditionalGeneration(config).eval().to(dtype)
 
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path="tiny-random/cohere-asr")
-    onnx_path = _run_whisper_export_smoke(qeff_model, tmp_path / "cohere_asr")
+    onnx_path = _run_whisper_export_smoke(qeff_model, tmp_path / f"cohere_asr-{dtype}")
 
     assert onnx_path.name.endswith(".onnx")
 

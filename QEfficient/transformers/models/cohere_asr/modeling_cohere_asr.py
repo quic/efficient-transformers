@@ -553,6 +553,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         num_key_value_heads = self.config.num_key_value_heads
         head_dim = self.config.hidden_size // self.config.num_attention_heads
         num_layers = self.config.num_hidden_layers
+        model_dtype = self.config.torch_dtype
 
         full_feature_len = encoder_ctx_len * subsampling_factor
         inputs = {
@@ -565,7 +566,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             # receive an encoder_ctx_len-frame encoder output.  Note: we still trace with
             # the full length so the Where condition (input_features.shape[2] == 1)
             # evaluates to False at trace time, keeping both branches in the ONNX.
-            "input_features": torch.zeros((bs, encoder_feature_count, full_feature_len), dtype=torch.float32),
+            "input_features": torch.zeros((bs, encoder_feature_count, full_feature_len), dtype=model_dtype),
             "feature_lengths": torch.full((bs,), full_feature_len, dtype=torch.int64),
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -582,9 +583,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             for self_cross in ["self", "cross"]:
                 for kv in ["key", "value"]:
                     inputs["past_key_values"][i].append(
-                        torch.zeros(
-                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
-                        )
+                        torch.zeros(kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=model_dtype)
                     )
 
         return inputs
