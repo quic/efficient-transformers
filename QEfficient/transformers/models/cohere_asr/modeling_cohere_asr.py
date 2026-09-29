@@ -410,18 +410,15 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     - added get_dummy_inputs, get_onnx_dynamic_axes, get_output_names, get_specializations,
       get_inputs_info, get_submodules_for_export for AutoModel export
     - changed forward inputs decoder_input_ids/decoder_position_ids to input_ids/position_ids
-    - transposes `input_features` from Parakeet's native `(batch, seq_len, num_mel_bins)`
-      to the mel-bins-major `(batch, num_mel_bins, feature_len)` contract that
-      `QEFFAutoModelForSpeechSeq2Seq` (Whisper-derived) hard-codes at the runtime boundary
-    - sets `config.num_mel_bins` (absent on `CohereAsrConfig`) from `config.encoder_config`,
-      since `QEFFAutoModelForSpeechSeq2Seq.generate()` reads `self.model.config.num_mel_bins`
+    - transposes `input_features` from the QPC's mel-bins-major
+      `(batch, num_mel_bins, feature_len)` contract to Parakeet's native
+      `(batch, seq_len, num_mel_bins)` layout
     - adds `feature_lengths` (int64 per batch item) as a new model input derived from
       the processor attention mask. It rebuilds Parakeet's frame mask before encoding and
       its output-length mask before decoder cross-attention.
     """
 
-    def __qeff_init__(self):
-        self.config.num_mel_bins = self.config.encoder_config.num_mel_bins
+    supports_continuous_batching = True
 
     def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.encoder.layers[0].__class__, QEffCohereAsrDecoderLayer}
@@ -500,6 +497,11 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
                 self.config.encoder_config.max_position_embeddings // self.config.encoder_config.subsampling_factor
             )
         pad_size = encoder_ctx_len - encoder_hidden_states.shape[1]
+        if pad_size < 0:
+            raise ValueError(
+                f"Encoder output length {encoder_hidden_states.shape[1]} exceeds the configured "
+                f"encoder context length {encoder_ctx_len}. Increase `encoder_ctx_len` when compiling."
+            )
         padding = encoder_hidden_states.new_zeros(
             encoder_hidden_states.shape[0], pad_size, encoder_hidden_states.shape[2]
         )
@@ -547,7 +549,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         encoder_ctx_len = kwargs.get("encoder_ctx_len") or (
             self.config.encoder_config.max_position_embeddings // subsampling_factor
         )
-        encoder_feature_count = self.config.num_mel_bins
+        encoder_feature_count = self.config.encoder_config.num_mel_bins
         num_key_value_heads = self.config.num_key_value_heads
         head_dim = self.config.hidden_size // self.config.num_attention_heads
         num_layers = self.config.num_hidden_layers
@@ -585,6 +587,48 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
                         )
                     )
 
+        return inputs
+
+    def get_export_hash_params(self, **kwargs):
+        batch_size = int(kwargs.get("batch_size", 1))
+        full_batch_size = int(kwargs.get("full_batch_size") or batch_size)
+        encoder_ctx_len = kwargs.get("encoder_ctx_len") or (
+            self.config.encoder_config.max_position_embeddings // self.config.encoder_config.subsampling_factor
+        )
+        return {
+            "batch_size": batch_size,
+            "continuous_batching": bool(kwargs.get("continuous_batching", False)),
+            "encoder_ctx_len": int(encoder_ctx_len),
+            "full_batch_size": full_batch_size,
+        }
+
+    def prepare_qpc_generation_inputs(self, inputs, input_features_shape):
+        inputs = dict(inputs)
+        if "feature_lengths" not in inputs:
+            attention_mask = inputs.get("attention_mask")
+            if attention_mask is None:
+                raise RuntimeError("Cohere ASR requires an attention mask to derive `feature_lengths`")
+            inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
+
+        input_features = inputs.get("input_features")
+        if not isinstance(input_features, torch.Tensor) or input_features.ndim != 3:
+            raise RuntimeError("Cohere ASR `input_features` must be a rank-3 torch.Tensor")
+
+        if input_features.shape[1] != input_features_shape[1] and input_features.shape[2] == input_features_shape[1]:
+            input_features = input_features.transpose(1, 2)
+        if input_features.shape[:2] != input_features_shape[:2]:
+            raise RuntimeError(
+                f"input_features must have batch/mel dimensions {input_features_shape[:2]}, "
+                f"got {tuple(input_features.shape[:2])}"
+            )
+        feature_padding = input_features_shape[2] - input_features.shape[2]
+        if feature_padding < 0:
+            raise RuntimeError(
+                f"input_features length {input_features.shape[2]} exceeds compiled length {input_features_shape[2]}"
+            )
+        if feature_padding:
+            input_features = nn.functional.pad(input_features, (0, feature_padding))
+        inputs["input_features"] = input_features
         return inputs
 
     def get_specializations(
