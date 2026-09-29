@@ -109,8 +109,6 @@ def impactOptions(String stageKey) {
 pipeline {
     agent { node { label params.NODE_LABEL } }
 
-    options { disableConcurrentBuilds() }
-
     parameters {
         string(
             name: 'NODE_LABEL',
