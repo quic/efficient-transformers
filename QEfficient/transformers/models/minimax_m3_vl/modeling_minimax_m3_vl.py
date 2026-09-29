@@ -949,17 +949,16 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         ) or past_key_values.layers[layer_idx].keys.shape[2]
         num_blocks = (ctx_len + cfg.index_block_size - 1) // cfg.index_block_size
 
-        dp = blocking_config.msa_indexer_dp if (blocking_config and blocking_config.msa_indexer_dp) else 1
-        cp = blocking_config.msa_indexer_cp if (blocking_config and blocking_config.msa_indexer_cp) else 1
         hkv = blocking_config.indexer_n_head if (blocking_config and blocking_config.indexer_n_head) else 1
         num_cores = int(getattr(blocking_config, "num_cores_per_device", 1) or 1)
         if num_cores < 1:
             raise ValueError(f"num_cores_per_device must be positive, got {num_cores}.")
 
-        # The GP selector owns every compact DP/CP cache layout, including
-        # the common dp=1, cp>1 case.  Falling through for cp>1 sends the
-        # rank-3 [rows, ctx_slots, dim] index cache to the rank-4 M3 scatter.
-        if dp > 1 or cp > 1:
+        # The GP selector owns non-paged blocked decode, including DP=CP=1.
+        # Besides handling compact DP/CP cache layouts, it keeps selected
+        # blocks compressed through the attention gather and inserts the
+        # mandatory current block without scoring its partially-filled tokens.
+        if blocking_config is not None:
             return self._select_blocks_dp(
                 hidden_states, position_ids, past_key_values, layer_idx, cos, sin, blocking_config
             )
@@ -1402,6 +1401,7 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         num_cores = (
             blocking_config.num_cores_per_device if (blocking_config and blocking_config.num_cores_per_device) else 1
         )
+        skip_kv = bool(getattr(blocking_config, "skip_kv", True))
         num_index_heads = cfg.index_n_heads
 
         num_blocks = (ctx_len + cfg.index_block_size - 1) // cfg.index_block_size
@@ -1409,6 +1409,8 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
 
         if query_len != 1:
             raise ValueError("MSA indexer GP selection is decode-only; QL must be 1.")
+        if cfg.index_local_blocks != 1:
+            raise ValueError("MSA indexer GP decode requires index_local_blocks == 1.")
         if dp < 1 or batch % dp:
             raise ValueError("MSA indexer batch size must be divisible by msa_indexer_dp.")
         if cp < 1 or ctx_len % cp:
@@ -1465,20 +1467,25 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         # batches, ...].  Convert once to the internal [B_local, DP, ...]
         # layout; keep the row axis [B_local, DP*cp*hkv] unchanged.
         position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
+        if cos.ndim == 3:
+            cos_dp = cos.view(dp, batch_local, query_len, cos.shape[-1]).permute(1, 0, 2, 3)
+            sin_dp = sin.view(dp, batch_local, query_len, sin.shape[-1]).permute(1, 0, 2, 3)
+        else:
+            cos_dp, sin_dp = cos, sin
         idx_q = self.q_proj(hidden_states).view(dp, batch_local, query_len, num_index_heads, dim).permute(1, 0, 3, 2, 4)
         idx_k = self.k_proj(hidden_states).view(dp, batch_local, query_len, hkv, dim).permute(1, 0, 3, 2, 4)
         idx_q = self.q_norm(idx_q)
         idx_k = self.k_norm(idx_k)
         idx_q = self._apply_rope_dp(
             idx_q,
-            cos,
-            sin,
+            cos_dp,
+            sin_dp,
             int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
         idx_k = self._apply_rope_dp(
             idx_k,
-            cos,
-            sin,
+            cos_dp,
+            sin_dp,
             int(cfg.head_dim * cfg.rope_parameters.get("partial_rotary_factor", 1.0)),
         )
 
@@ -1529,15 +1536,6 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             .reshape(batch_local, rows, ql_eff, dim)
         )
 
-        way_rows = torch.arange(rows, device=hidden_states.device).remainder(cp * hkv) // hkv
-        cache_addr = torch.arange(num_cores * tokens_per_core, device=hidden_states.device).view(
-            1, 1, num_cores, tokens_per_core
-        )
-        t_pos = (
-            (cache_addr // cfg.index_block_size) * (cfg.index_block_size * cp)
-            + way_rows.view(1, rows, 1, 1) * cfg.index_block_size
-            + cache_addr.remainder(cfg.index_block_size)
-        )
         q_pos_rows_all = (
             position_ids_dp[:, :, 0]
             .view(batch_local, dp, 1, 1)
@@ -1546,31 +1544,31 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         )
 
         block_ranges: list[tuple[int, int]] = []
-        block_starts: list[int] = []
         for block_idx in range(num_kv_blocks):
             start = block_idx * cache_block_size
             end = min(start + cache_block_size, cache_slots)
             if start < end:
                 block_ranges.append((start, end))
-                block_starts.append(start)
-
-        q_pos_shift_all = (
-            q_pos_rows_all[:, None, :, None, None]
-            - torch.tensor(
-                block_starts,
-                device=hidden_states.device,
-                dtype=q_pos_rows_all.dtype,
-            ).view(1, len(block_starts), 1, 1, 1)
-            * cp
-        )
-        causal_masks: list[torch.Tensor] = []
-        for block_idx in range(len(block_ranges)):
-            q_pos_shift = q_pos_shift_all[:, block_idx]
-            causal_masks.append(t_pos > q_pos_shift)
 
         candidate_score_groups: list[torch.Tensor] = []
         candidate_block_groups: list[torch.Tensor] = []
-        local_batch_size = batch_local
+        local_batch_size = 1
+        is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+
+        def make_block_ids_rows(start: int, local: int) -> torch.Tensor:
+            block_start = start * cp // cfg.index_block_size
+            block_ids_core = (
+                block_start
+                + torch.arange(cp, device=hidden_states.device).view(cp, 1, 1)
+                + torch.arange(num_cores, device=hidden_states.device).view(1, num_cores, 1) * (cp * blocks_per_core)
+                + torch.arange(blocks_per_core, device=hidden_states.device).view(1, 1, blocks_per_core) * cp
+            )
+            return (
+                block_ids_core.view(1, 1, cp, 1, num_cores, blocks_per_core)
+                .expand(local, dp, cp, hkv, num_cores, blocks_per_core)
+                .reshape(local, rows, num_cores, blocks_per_core)
+            )
+
         for batch_start in range(0, batch_local, local_batch_size):
             batch_end = min(batch_start + local_batch_size, batch_local)
             local = batch_end - batch_start
@@ -1581,9 +1579,15 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             # q_5d: [local, rows, num_cores, ql_eff, dim]
             device_block_score_groups: list[torch.Tensor] = []
             device_block_id_groups: list[torch.Tensor] = []
-            for block_idx, (start, end) in enumerate(block_ranges):
-                # end - start == num_cores * tokens_per_core
-                key_flat = (
+            q_block_rows = (
+                (position_ids_dp[batch_start:batch_end, :, 0] // cfg.index_block_size)
+                .view(local, dp, 1, 1)
+                .expand(local, dp, cp, hkv)
+                .reshape(local, rows)
+            )
+
+            def read_key_block(start: int, end: int) -> torch.Tensor:
+                return (
                     self._read_blocked_k_flat_dp(
                         key_local.reshape(batch_local, rows, cache_slots, dim)[batch_start:batch_end].reshape(
                             local * rows, cache_slots, dim
@@ -1598,18 +1602,9 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                     if index_cache_is_flat_dp_layout
                     else self._read_blocked_k_dp(key_local, pos_local, start, end, cfg.index_block_size, cp, hkv)
                 )
-                # key_flat: [local, rows, end - start, dim]
-                key_5d = key_flat.view(local, rows, num_cores, tokens_per_core, dim)
-                # key_5d: [local, rows, num_cores, tokens_per_core, dim]
-                score_block = torch.matmul(q_5d.float(), key_5d.transpose(-1, -2).float())
-                # score_block:
-                # [local, rows, num_cores, ql_eff, tokens_per_core]
-                causal = causal_masks[block_idx][batch_start:batch_end]
-                # causal: [local, rows, num_cores, tokens_per_core]
-                score_block = score_block.masked_fill(causal.unsqueeze(3), MASKED_ATTENTION_LOGIT)
 
-                # Every row contains complete index blocks; ql_eff stays as
-                # the query-head/query-length axis.
+            def compute_block_scores(key_5d: torch.Tensor) -> torch.Tensor:
+                score_block = torch.matmul(q_5d.float(), key_5d.transpose(-1, -2).float())
                 score_block = score_block.view(
                     local,
                     rows,
@@ -1618,86 +1613,91 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                     blocks_per_core,
                     cfg.index_block_size,
                 )
-                # score_block:
-                # [local, DP*cp*hkv, C, ql_eff,
-                #  blocks_per_core, block_size]
-                block_scores_core = score_block.amax(dim=-1)
-                # block_scores_core:
-                # [local, DP*cp*hkv, C, ql_eff, blocks_per_core]
+                return score_block.amax(dim=-1)
 
-                block_start = start * cp // cfg.index_block_size
-                block_ids_core = (
-                    block_start
-                    + torch.arange(cp, device=hidden_states.device).view(cp, 1, 1)
-                    + torch.arange(num_cores, device=hidden_states.device).view(1, num_cores, 1)
-                    * (cp * blocks_per_core)
-                    + torch.arange(blocks_per_core, device=hidden_states.device).view(1, 1, blocks_per_core) * cp
+            prologue_start, prologue_end = block_ranges[0]
+            key_5d = read_key_block(prologue_start, prologue_end).view(local, rows, num_cores, tokens_per_core, dim)
+            stopped_on_future = False
+            for block_idx in range(len(block_ranges) - 1):
+                start, _ = block_ranges[block_idx]
+                block_ids_rows = make_block_ids_rows(start, local)
+                block_skip_future = (
+                    torch.tensor(start * cp, device=hidden_states.device, dtype=q_pos_rows_all.dtype)
+                    > q_pos_rows_all[batch_start:batch_end]
                 )
-                # block_ids_core: [cp, C, blocks_per_core]
-                block_ids_rows = (
-                    block_ids_core.view(1, 1, cp, 1, num_cores, blocks_per_core)
-                    .expand(
-                        local,
-                        dp,
-                        cp,
-                        hkv,
-                        num_cores,
-                        blocks_per_core,
+                if skip_kv and not is_export and bool(block_skip_future.all().item()):
+                    masked_block = torch.full(
+                        (local, rows, num_cores, ql_eff, blocks_per_core),
+                        MASKED_ATTENTION_LOGIT,
+                        dtype=torch.float32,
+                        device=hidden_states.device,
                     )
-                    .reshape(local, rows, num_cores, blocks_per_core)
-                )
-                q_block_rows = (
-                    (position_ids_dp[batch_start:batch_end, :, 0] // cfg.index_block_size)
-                    .view(local, dp, 1, 1)
-                    .expand(local, dp, cp, hkv)
-                    .reshape(local, rows)
-                )
-                for local_offset in range(cfg.index_local_blocks):
-                    local_block = (q_block_rows - local_offset).clamp(min=0)
-                    local_mask = block_ids_rows == local_block.view(local, rows, 1, 1)
+                    for remaining_start, _ in block_ranges[block_idx:]:
+                        device_block_score_groups.append(masked_block)
+                        device_block_id_groups.append(make_block_ids_rows(remaining_start, local))
+                    stopped_on_future = True
+                    break
+
+                block_scores_core = compute_block_scores(key_5d)
+                if skip_kv:
                     block_scores_core = torch.where(
-                        local_mask.unsqueeze(3),
-                        torch.full_like(block_scores_core, -MASKED_ATTENTION_LOGIT),
+                        block_skip_future.view(local, rows, 1, 1, 1),
+                        _scalar_like(block_scores_core, MASKED_ATTENTION_LOGIT),
                         block_scores_core,
                     )
 
+                next_start, next_end = block_ranges[block_idx + 1]
+                key_5d = read_key_block(next_start, next_end).view(local, rows, num_cores, tokens_per_core, dim)
                 device_block_score_groups.append(block_scores_core)
                 device_block_id_groups.append(block_ids_rows)
+
+            if not stopped_on_future:
+                epilogue_idx = len(block_ranges) - 1
+                epilogue_start, _ = block_ranges[epilogue_idx]
+                epilogue_block_ids = make_block_ids_rows(epilogue_start, local)
+                epilogue_skip_future = (
+                    torch.tensor(epilogue_start * cp, device=hidden_states.device, dtype=q_pos_rows_all.dtype)
+                    > q_pos_rows_all[batch_start:batch_end]
+                )
+                epilogue_scores = compute_block_scores(key_5d)
+                if skip_kv:
+                    epilogue_scores = torch.where(
+                        epilogue_skip_future.view(local, rows, 1, 1, 1),
+                        _scalar_like(epilogue_scores, MASKED_ATTENTION_LOGIT),
+                        epilogue_scores,
+                    )
+                device_block_score_groups.append(epilogue_scores)
+                device_block_id_groups.append(epilogue_block_ids)
+
             if not device_block_score_groups:
                 raise ValueError("MSA indexer selection produced no cache blocks.")
 
-            device_block_scores = (
-                torch.cat(device_block_score_groups, dim=2)
-                .permute(0, 1, 3, 2, 4)
-                .reshape(
-                    local,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores * blocks_per_core,
-                )
-            )
+            device_block_scores = torch.cat(device_block_score_groups, dim=4)
             device_block_ids = (
-                torch.cat(device_block_id_groups, dim=2)
-                .unsqueeze(2)
-                .expand(
-                    local,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores,
-                    blocks_per_core,
-                )
-                .reshape(
-                    local,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores * blocks_per_core,
-                )
+                torch.cat(device_block_id_groups, dim=3)
+                .unsqueeze(3)
+                .expand(local, rows, num_cores, ql_eff, num_kv_blocks * blocks_per_core)
+            )
+            future_block = device_block_ids >= q_block_rows.view(local, rows, 1, 1, 1)
+            device_block_scores = torch.where(
+                future_block,
+                _scalar_like(device_block_scores, MASKED_ATTENTION_LOGIT),
+                device_block_scores,
             )
             # [local, DP*cp*indexer_n_head, ql_eff,
             #  num_kv_blocks*C*blocks_per_core]
-            device_topk = min(selected_blocks, device_block_scores.shape[-1])
-            device_topk_scores, device_topk_indices = torch.topk(device_block_scores, k=device_topk, dim=-1)
-            device_topk_block_ids = torch.gather(device_block_ids, -1, device_topk_indices)
+            core_topk = min(selected_blocks, device_block_scores.shape[-1])
+            core_topk_scores, core_topk_indices = torch.topk(device_block_scores, k=core_topk, dim=-1)
+            core_topk_block_ids = torch.gather(device_block_ids, -1, core_topk_indices)
+            core_candidate_scores = core_topk_scores.permute(0, 1, 3, 2, 4).reshape(
+                local, rows, ql_eff, num_cores * core_topk
+            )
+            core_candidate_block_ids = core_topk_block_ids.permute(0, 1, 3, 2, 4).reshape(
+                local, rows, ql_eff, num_cores * core_topk
+            )
+            device_topk = min(selected_blocks, core_candidate_scores.shape[-1])
+            device_topk_scores, device_topk_indices = torch.topk(core_candidate_scores, k=device_topk, dim=-1)
+            device_topk_block_ids = torch.gather(core_candidate_block_ids, -1, device_topk_indices)
             candidate_score_groups.append(device_topk_scores)
             candidate_block_groups.append(device_topk_block_ids)
 
@@ -1719,7 +1719,26 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         # Second Top-K: merge cp candidates on each DP/Hkv lane.
         topk_scores, candidate_topk = torch.topk(candidate_scores, k=selected_blocks, dim=-1)
         block_indices = torch.gather(candidate_block_indices, -1, candidate_topk)
-        # topk_scores/block_indices: [batch_local, dp, num_index_heads, top_k]
+        current_block_ids = (
+            (position_ids.view(dp, batch_local, query_len).permute(1, 0, 2) // cfg.index_block_size)
+            .view(batch_local, dp, 1, 1, query_len, 1)
+            .expand(
+                batch_local,
+                dp,
+                hkv,
+                q_heads_per_kv,
+                query_len,
+                1,
+            )
+            .to(block_indices.dtype)
+        )
+        block_indices = torch.cat([block_indices[..., :-1], current_block_ids], dim=-1)
+        topk_scores = torch.cat(
+            [topk_scores[..., :-1], torch.zeros_like(topk_scores[..., -1:])],
+            dim=-1,
+        )
+        # topk_scores/block_indices: [batch_local, dp, hkv,
+        # q_heads_per_kv, query_len, top_k]
         # Internally the candidates are [B_local, DP, H, ...].  The external
         # batch contract is DP-major, so move DP in front of B_local before
         # flattening; a direct reshape would produce local-batch-major order.
@@ -1728,21 +1747,16 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             batch, num_index_heads, query_len, selected_blocks
         )
         block_valid = topk_scores > (MASKED_ATTENTION_LOGIT / 2)
-        offsets = torch.arange(cfg.index_block_size, device=hidden_states.device).view(1, 1, 1, 1, -1)
-        token_indices = block_indices.unsqueeze(-1) * cfg.index_block_size + offsets
-        token_valid = block_valid.unsqueeze(-1) & (token_indices < ctx_len)
-        token_valid = token_valid & (token_indices <= position_ids[:, None, :, None, None])
-        token_indices = token_indices[:, :, 0]
-        token_valid = token_valid[:, :, 0]
-        safe_indices = torch.where(token_valid, token_indices, torch.zeros_like(token_indices)).to(torch.int32)
+        block_indices = block_indices[:, :, 0]
+        block_valid = block_valid[:, :, 0]
+        safe_indices = torch.where(block_valid, block_indices, torch.zeros_like(block_indices)).to(torch.int32)
         if not index_cache_is_dp_layout and not index_cache_is_flat_dp_layout:
             index_key_cache = self._from_dp_cache_shape(index_key_cache, dp, cp)
         past_key_values.index_keys[layer_idx] = index_key_cache
         if not torch.onnx.is_in_onnx_export():
             self.last_block_indices = block_indices.detach()
-        # safe_indices:    [B, index_n_heads, selected_blocks, index_block_size]
-        # token_valid:     [B, index_n_heads, selected_blocks, index_block_size]
-        return safe_indices, token_valid
+        # safe_indices/block_valid: [B, index_n_heads, selected_blocks]
+        return safe_indices, block_valid
 
     def _select_blocks_prefill(
         self,
@@ -2498,10 +2512,11 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
 
         ``key_cache`` and ``value_cache`` have already been updated by the
         sparse cache writer and use ``[B_local, DP * Hkv, ctx_len, D]``. The
-        selected indices may be either that layout or the external
-        ``[batch, Hkv, blocks, block_size]`` layout returned by the indexer.
+        selected indices may be compressed block IDs, row-local token IDs, or
+        the external ``[batch, Hkv, blocks, block_size]`` token layout.
         """
         batch, _, query_len, head_dim = query_states.shape
+        cfg = self.config
         hkv = self.config.num_key_value_heads
         num_kv_groups = self.num_key_value_groups
         rows = dp * hkv
@@ -2531,7 +2546,53 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             raise ValueError("GP key and value cache shapes must match.")
 
         selected_len: int
-        if token_indices.ndim == 4:
+        uses_block_indices = (
+            token_indices.ndim == 3
+            and tuple(token_indices.shape[:2]) == (batch, hkv)
+            and token_indices.shape[-1] <= cfg.index_topk_blocks
+        )
+        if uses_block_indices:
+            if position_ids is None:
+                raise ValueError("MSA block-index attention requires position_ids.")
+            if tuple(token_valid.shape) != tuple(token_indices.shape):
+                raise ValueError("MSA block_indices and block_valid shapes must match.")
+            if key_cache.shape[2] % cfg.index_block_size:
+                raise ValueError("MSA block-index gather requires cache length divisible by index_block_size.")
+
+            selected_blocks = token_indices.shape[-1]
+            selected_len = selected_blocks * cfg.index_block_size
+            block_ids = (
+                token_indices.reshape(dp, batch_local, hkv, selected_blocks)
+                .permute(1, 0, 2, 3)
+                .reshape(batch_local, rows, selected_blocks)
+            )
+            block_valid = (
+                token_valid.reshape(dp, batch_local, hkv, selected_blocks)
+                .permute(1, 0, 2, 3)
+                .reshape(batch_local, rows, selected_blocks)
+            )
+            safe_block_ids = torch.where(block_valid, block_ids, torch.zeros_like(block_ids)).to(torch.int32)
+            key_blocks = key_cache.reshape(batch_local, rows, -1, cfg.index_block_size, head_dim)
+            value_blocks = value_cache.reshape(batch_local, rows, -1, cfg.index_block_size, head_dim)
+            selected_k = ctx_gather_block_range_kv_dp(key_blocks, safe_block_ids).reshape(
+                batch_local, rows, selected_len, head_dim
+            )
+            selected_v = ctx_gather_block_range_kv_dp(value_blocks, safe_block_ids).reshape(
+                batch_local, rows, selected_len, head_dim
+            )
+
+            offsets = torch.arange(cfg.index_block_size, device=query_states.device).view(1, 1, 1, cfg.index_block_size)
+            selected_token_ids = block_ids.unsqueeze(-1) * cfg.index_block_size + offsets
+            position_ids_dp = position_ids.reshape(dp, batch_local, query_len).permute(1, 0, 2)
+            position_rows = (
+                position_ids_dp.unsqueeze(2)
+                .expand(batch_local, dp, hkv, query_len)
+                .reshape(batch_local, rows, query_len)
+            )
+            valid_idx = block_valid.unsqueeze(-1) & (selected_token_ids < key_cache.shape[2])
+            valid_idx = valid_idx & (selected_token_ids <= position_rows[:, :, None, :])
+            valid_idx = valid_idx.reshape(batch_local, rows, selected_len)
+        elif token_indices.ndim == 4:
             # External DP-major layout: [batch, Hkv, blocks, block_size].
             selected_len = token_indices.shape[-2] * token_indices.shape[-1]
             gather_idx = (
@@ -2567,11 +2628,11 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         else:
             raise ValueError("MSA token indices must be rank 3 or rank 4.")
 
-        if tuple(valid_idx.shape) != tuple(gather_idx.shape):
-            raise ValueError("MSA token_indices and token_valid shapes must match.")
-
-        selected_k = ctx_gather_blocked_kv_dp(key_cache, gather_idx.to(torch.int32))
-        selected_v = ctx_gather_blocked_kv_dp(value_cache, gather_idx.to(torch.int32))
+        if not uses_block_indices:
+            if tuple(valid_idx.shape) != tuple(gather_idx.shape):
+                raise ValueError("MSA token_indices and token_valid shapes must match.")
+            selected_k = ctx_gather_blocked_kv_dp(key_cache, gather_idx.to(torch.int32))
+            selected_v = ctx_gather_blocked_kv_dp(value_cache, gather_idx.to(torch.int32))
 
         num_cores = (
             blocking_config.num_cores_per_device
