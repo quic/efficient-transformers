@@ -864,6 +864,16 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.0.mlp.gate.weight"
         )
 
+    def test_resolver_prefers_exact_lm_head_over_tied_embedding_alias(self):
+        checkpoint_index = {
+            "lm_head.weight": "model.safetensors",
+            "model.embed_tokens.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert find_checkpoint_key("lm_head.weight", checkpoint_index, backbone) == "lm_head.weight"
+
     def test_resolver_maps_wrapped_vision_model_to_gemma4_vision_tower(self):
         checkpoint_name = "model.vision_tower.patch_embedder.position_embedding_table"
         backbone = MagicMock()

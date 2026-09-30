@@ -10,7 +10,6 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
 
 import numpy as np
 import onnx
@@ -39,8 +38,8 @@ from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
     ExpertParallelPackingCheckpointTransform,
-    GraniteMoeFusedExpertSplitCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+    GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
@@ -1714,8 +1713,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
-        dynamo = dynamo or self._weight_free
-        use_onnx_subfunctions = use_onnx_subfunctions or self._weight_free
+        weight_free = getattr(self, "_weight_free", False)
+        dynamo = dynamo or weight_free
+        use_onnx_subfunctions = use_onnx_subfunctions or weight_free
         if layerwise and dynamo:
             raise NotImplementedError("Dynamo export is not supported for layerwise VLM export.")
         if layerwise:
@@ -2013,7 +2013,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         qaic_config: dict | None = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
-        kv_cache_prefix: Optional[str] = None,
+        kv_cache_prefix: str | None = None,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         dynamo: bool = False,
         artifacts: bool = False,
@@ -2083,8 +2083,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
-        dynamo = dynamo or self._weight_free
-        use_onnx_subfunctions = use_onnx_subfunctions or self._weight_free
+        weight_free = getattr(self, "_weight_free", False)
+        dynamo = dynamo or weight_free
+        use_onnx_subfunctions = use_onnx_subfunctions or weight_free
         if layerwise and dynamo:
             raise NotImplementedError("Dynamo export is not supported for layerwise VLM compilation.")
 
@@ -2381,7 +2382,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang: bool = False,
         artifacts: bool = False,
         **kwargs,
-    ) -> Union[torch.Tensor, np.ndarray, Path]:
+    ) -> torch.Tensor | np.ndarray | Path:
         """
         Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
 
@@ -3190,17 +3191,17 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     def generate(
         self,
-        inputs: Optional[torch.Tensor] = None,
+        inputs: torch.Tensor | None = None,
         streamer: TextStreamer | None = None,
         device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
         generation_len: int | None = None,
         write_io: bool = False,
-        processor: Optional[AutoImageProcessor] = None,
-        images: List[str] = None,
-        prompts: List[str] = None,
+        processor: AutoImageProcessor | None = None,
+        images: list[str] = None,
+        prompts: list[str] = None,
         artifacts: bool = False,
-    ) -> Union[torch.Tensor, np.ndarray, Path]:
+    ) -> torch.Tensor | np.ndarray | Path:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
 
@@ -3540,7 +3541,8 @@ class QEFFAutoModelForImageTextToText:
         Union[_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC]
             The wrapped model instance, configured for either dual or single QPC.
         """
-        if kwargs.get("weight_free", False) and kv_offload is not True:
+        self._weight_free = kwargs.get("weight_free", False)
+        if self._weight_free and kv_offload is not True:
             raise NotImplementedError("weight_free=True for VLM is supported only with kv_offload=True.")
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(
@@ -5082,7 +5084,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         runtime_ai100: bool = True,
         artifacts: bool = False,
         **kwargs,
-    ) -> Union[CloudAI100ExecInfoNew, Path]:
+    ) -> CloudAI100ExecInfoNew | Path:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware.
 

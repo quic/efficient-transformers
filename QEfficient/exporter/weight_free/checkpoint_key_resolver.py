@@ -7,7 +7,6 @@
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -64,7 +63,7 @@ def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
     return [TiedWeightAlias(alias=alias, canonical=canonical) for alias, canonical in tied_mapping.items()]
 
 
-def _moe_weight_aliases(name: str) -> List[str]:
+def _moe_weight_aliases(name: str) -> list[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
@@ -92,7 +91,7 @@ def _moe_weight_aliases(name: str) -> List[str]:
     return aliases
 
 
-def _router_gate_aliases(name: str) -> List[str]:
+def _router_gate_aliases(name: str) -> list[str]:
     """Return the legacy router/gate spelling for sparse-MoE router weights."""
     if name.endswith(".mlp.gate.weight"):
         return [name[: -len(".mlp.gate.weight")] + ".mlp.router.weight"]
@@ -101,29 +100,55 @@ def _router_gate_aliases(name: str) -> List[str]:
     return []
 
 
-def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
+def _find_checkpoint_key(candidates: list[str], checkpoint_index: dict[str, str], onnx_name: str) -> str | None:
     """Return the unique matching checkpoint key, or fail on ambiguous matches."""
     seen: set = set()
-    matches = []
+    exact_matches = []
+    wrapper_alias_matches = []
+    compatibility_matches = []
     for candidate in candidates:
-        for alias in [candidate, *_vlm_wrapper_aliases(candidate)]:
+        if candidate not in seen:
+            seen.add(candidate)
+            if candidate in checkpoint_index:
+                exact_matches.append(candidate)
+        for alias in _vlm_wrapper_aliases(candidate):
             if alias in seen:
                 continue
             seen.add(alias)
             if alias in checkpoint_index:
-                matches.append(alias)
+                wrapper_alias_matches.append(alias)
             for moe_alias in _moe_weight_aliases(alias):
                 if moe_alias in seen:
                     continue
                 seen.add(moe_alias)
                 if moe_alias in checkpoint_index:
-                    matches.append(moe_alias)
-    if len(matches) > 1:
+                    compatibility_matches.append(moe_alias)
+        for moe_alias in _moe_weight_aliases(candidate):
+            if moe_alias in seen:
+                continue
+            seen.add(moe_alias)
+            if moe_alias in checkpoint_index:
+                compatibility_matches.append(moe_alias)
+    if len(exact_matches) > 1:
+        raise ValueError(
+            f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {exact_matches}. "
+            "Checkpoint transforms must produce unambiguous keys."
+        )
+    if exact_matches and compatibility_matches:
+        matches = [*exact_matches, *compatibility_matches]
         raise ValueError(
             f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {matches}. "
             "Checkpoint transforms must produce unambiguous keys."
         )
-    return matches[0] if matches else None
+    if exact_matches:
+        return exact_matches[0]
+    alias_matches = [*wrapper_alias_matches, *compatibility_matches]
+    if len(alias_matches) > 1:
+        raise ValueError(
+            f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {alias_matches}. "
+            "Checkpoint transforms must produce unambiguous keys."
+        )
+    return alias_matches[0] if alias_matches else None
 
 
 def _is_computed_initializer(name: str) -> bool:
@@ -163,10 +188,10 @@ def _vlm_wrapper_aliases(name: str) -> list[str]:
 
 def find_checkpoint_key(
     onnx_name: str,
-    checkpoint_index: Dict[str, str],
+    checkpoint_index: dict[str, str],
     backbone: nn.Module,
     active_transform=None,
-) -> Optional[str]:
+) -> str | None:
     """Resolve an ONNX initializer name to its safetensors checkpoint key.
 
     Resolution order:
@@ -259,7 +284,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     # (which would fail — the prepared checkpoint has canonical output keys like
     # moe_weights.gate, not the original per-expert keys that trigger detection).
 
-    from QEfficient.base.checkpoint_transforms import (  # noqa: PLC0415
+    from QEfficient.base.checkpoint_transforms import (
         CHECKPOINT_PREPARED_MANIFEST,
         _find_transform_by_id,
     )
@@ -278,7 +303,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         except (OSError, json.JSONDecodeError):
             pass  # no manifest → active_transform stays None, fallback to legacy aliases
 
-    promoted_inputs: List[WeightSpecInput] = []
+    promoted_inputs: list[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
         if name not in model_names:
