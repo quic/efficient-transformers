@@ -36,8 +36,6 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
-logger = logging.get_logger(__name__)
-
 
 class GemmaRMSNormFunc(torch.autograd.Function):
     @staticmethod

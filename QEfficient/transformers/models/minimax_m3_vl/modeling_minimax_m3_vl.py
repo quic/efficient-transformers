@@ -3914,10 +3914,12 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.ONNX_EXPORT_CTX_LEN
+        vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         # img_size is accepted by generic VLM compile APIs, but MiniMax-M3 VLM
         # specialization derives language/vision shapes from patch settings.
         # Drop it to avoid leaking `-img-size=None` into qaic-compile flags.
@@ -4048,7 +4050,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 "seq_len": seq_len,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
-                "vision_batch_size": batch_size,
+                "vision_batch_size": vision_batch_size,
             }
             if use_context_kv:
                 if use_row_folded_main_kv:
