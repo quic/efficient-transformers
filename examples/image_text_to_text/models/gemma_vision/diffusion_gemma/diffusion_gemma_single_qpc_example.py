@@ -139,8 +139,9 @@ def main():
     print(f"\nOutput:\n{output_text}")
     print(f"\nTTFT: {result.ttft:.2f}s ({result.retained_kv_buffers} KV buffers retained)")
     print(
-            f"Average number of steps: {result.total_steps/result.executed_blocks}, "
-            f"Tokens per second: {clean_token_count/result.total_canvas_time:.1f}"
+            f"Average number of steps: {result.total_steps/result.executed_blocks}\n "
+            f"Tokens per second: {clean_token_count/result.total_time:.1f}\n"
+            f"Tokens per second(TTFT excluded): {clean_token_count/(result.total_time - result.ttft):.1f}\n"
     )
     print(f"\nQPC_PATH={qpc_path}")
 

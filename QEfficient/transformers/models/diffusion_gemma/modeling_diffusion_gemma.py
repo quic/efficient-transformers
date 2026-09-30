@@ -48,15 +48,17 @@ DEVICE_ENTROPY_BOUND = 0.1
 _NPI_FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
 _NPI_MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
 _NPI_SAMPLER_OUTPUTS = {
-    "topk_logits",
-    "topk_indices",
+    "self_conditioning_topk_probabilities_RetainedState",
+    "self_conditioning_topk_indices_RetainedState",
+    "top1_indices",
     "newly_accepted_mask",
     "mean_entropy",
     "denoiser_canvas",
     "new_canvas",
 }
 _NPI_DISCRETE_SAMPLER_OUTPUTS = {
-    "topk_indices",
+    "self_conditioning_topk_indices_RetainedState",
+    "top1_indices",
     "newly_accepted_mask",
     "denoiser_canvas",
     "new_canvas",
@@ -215,11 +217,11 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
 
 
 def _top_k_self_conditioning_embeddings(
-    top_k_logits: torch.Tensor,
+    top_k_probabilities: torch.Tensor,
     top_k_indices: torch.Tensor,
     embedding_weight: torch.Tensor,
 ) -> torch.Tensor:
-    top_k_probabilities = top_k_logits.softmax(dim=-1, dtype=torch.float32).to(embedding_weight.dtype)
+    top_k_probabilities = top_k_probabilities.to(embedding_weight.dtype)
     top_k_embeddings = torch.nn.functional.embedding(top_k_indices, embedding_weight)
     return torch.matmul(top_k_probabilities.unsqueeze(-2), top_k_embeddings).squeeze(-2)
 
@@ -585,7 +587,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         vision_embeds: Optional[torch.Tensor] = None,
         image_idx: Optional[torch.Tensor] = None,
         mm_token_type_ids: Optional[torch.Tensor] = None,
-        self_conditioning_topk_logits: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_probabilities: Optional[torch.FloatTensor] = None,
         self_conditioning_topk_indices: Optional[torch.LongTensor] = None,
         sampling_uniforms: Optional[torch.FloatTensor] = None,
         temperature: Optional[torch.FloatTensor] = None,
@@ -611,11 +613,11 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
 
         inputs_embeds, next_image_idx = self.model._inject_vision_embeds(input_ids, vision_embeds, image_idx)
         decoder = self.model.model.decoder
-        if self_conditioning_topk_logits is None or self_conditioning_topk_indices is None:
+        if self_conditioning_topk_probabilities is None or self_conditioning_topk_indices is None:
             soft_embeddings = torch.zeros_like(inputs_embeds)
         else:
             soft_embeddings = _top_k_self_conditioning_embeddings(
-                self_conditioning_topk_logits,
+                self_conditioning_topk_probabilities,
                 self_conditioning_topk_indices,
                 decoder.embed_tokens.weight,
             ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
@@ -670,6 +672,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             k=SELF_CONDITIONING_TOP_K,
             dim=-1,
         )
+        topk_probabilities = topk_logits.softmax(dim=-1, dtype=torch.float32)
         if sampling_uniforms is None:
             sampling_uniforms = torch.zeros(
                 (*input_ids.shape, 1),
@@ -684,8 +687,13 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             input_ids,
             (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1),
         )
-        topk_logits = torch.where(is_encode_mask, torch.zeros_like(topk_logits), topk_logits)
+        topk_probabilities = torch.where(
+            is_encode_mask,
+            torch.zeros_like(topk_probabilities),
+            topk_probabilities,
+        )
         topk_indices = torch.where(is_encode_mask, torch.zeros_like(topk_indices), topk_indices)
+        top1_indices = topk_indices[..., 0]
         newly_accepted_mask = torch.where(
             is_encode_mask_2d,
             torch.zeros_like(newly_accepted_mask),
@@ -698,11 +706,12 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             for layer_index in range(self.text_config.num_hidden_layers)
         ]
         return (
-            topk_logits,
+            topk_probabilities,
             topk_indices,
             newly_accepted_mask,
             mean_entropy,
             denoiser_canvas,
+            top1_indices,
             next_image_idx,
             pkv,
         )
@@ -746,7 +755,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             "sliding_attention_mask": torch.zeros(
                 (batch_size, 1, block_length, sliding_kv_length + block_length), dtype=torch.float32
             ),
-            "self_conditioning_topk_logits": torch.zeros(
+            "self_conditioning_topk_probabilities": torch.zeros(
                 (batch_size, block_length, SELF_CONDITIONING_TOP_K), dtype=torch.float32
             ),
             "self_conditioning_topk_indices": torch.zeros(
@@ -794,7 +803,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
             "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
             "full_attention_mask": {0: "batch_size", 2: "seq_len", 3: "full_kv_plus_seq_len"},
             "sliding_attention_mask": {0: "batch_size", 2: "seq_len", 3: "sliding_kv_plus_seq_len"},
-            "self_conditioning_topk_logits": {0: "batch_size", 1: "seq_len"},
+            "self_conditioning_topk_probabilities": {0: "batch_size", 1: "seq_len"},
             "self_conditioning_topk_indices": {0: "batch_size", 1: "seq_len"},
             "sampling_uniforms": {0: "batch_size", 1: "seq_len"},
             "temperature": {0: "batch_size"},
@@ -807,11 +816,12 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
 
     def get_output_names(self, **kwargs):
         names = [
-            "topk_logits",
-            "topk_indices",
+            "self_conditioning_topk_probabilities_RetainedState",
+            "self_conditioning_topk_indices_RetainedState",
             "newly_accepted_mask",
             "mean_entropy",
             "denoiser_canvas",
+            "top1_indices",
             "image_idx_output",
         ]
         for layer_index in range(self.text_config.num_hidden_layers):
