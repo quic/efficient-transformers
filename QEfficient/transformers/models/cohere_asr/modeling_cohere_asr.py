@@ -21,8 +21,8 @@ are:
 - self-attention cache update passes `position_ids` via `cache_kwargs`, as
   required by `QEffDynamicLayer.update()`.
 - cross-attention KV reuse is rewritten branch-free with `torch.where`/
-  `torch.index_put`, gated on `input_features.shape[2] == 1` (the same
-  dummy-shape trick Whisper uses to select the "Decode" specialization),
+  `torch.index_put`, gated on `input_features.shape[2] == 1` to select the
+  encoder and decoder export specializations,
   instead of the Python-bool `past_key_values.is_updated` dict lookup that
   cannot be traced into a single ONNX graph shared by both specializations.
 - masking uses QEfficient's `torch.where`-based fp16-safe convention instead
@@ -197,7 +197,8 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
         bsz, tgt_len = hidden_states.shape[:-1]
 
         q_input_shape = (bsz, tgt_len, -1, self.head_dim)
-        # Use -1 for src_len so the view is dynamic at trace time — Whisper's pattern.
+        # Keep src_len symbolic at trace time so the view remains compatible
+        # with Cohere's encoder cross-attention cache specialization.
         # A fixed src_len here would produce a Reshape with a concrete output shape that
         # conflicts with the cross-cache shape (encoder_ctx_len) during qaic-compile.
         kv_input_shape = (bsz, -1, self.config.num_key_value_heads, self.head_dim)
@@ -206,7 +207,8 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
 
         if past_key_values is not None:
             # past_key_values here is already the cross_attention_cache (QEffDynamicCache),
-            # split off at the decoder-layer level — same pattern as Whisper.
+            # split off at the decoder-layer level for Cohere's combined
+            # encoder-decoder cache.
             # __getitem__ returns (keys_tensor, values_tensor) with traceable tensor identity.
             key_states_old = past_key_values[self.layer_idx][0]
             value_states_old = past_key_values[self.layer_idx][1]
@@ -281,10 +283,10 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
         if encoder_hidden_states is not None:
             residual = hidden_states
             hidden_states = self.post_attention_layernorm(hidden_states)
-            # Split the cross-attention sub-cache out of the combined encoder-decoder cache
-            # before passing to encoder_attn — mirrors Whisper's decoder-layer pattern so
-            # QEffCohereAsrCrossAttention receives a QEffDynamicCache whose __getitem__
-            # indexes directly to the named past_key_cross.{i} retained-state tensors.
+            # Split the cross-attention sub-cache out of Cohere's combined
+            # encoder-decoder cache before passing it to encoder_attn. This
+            # lets the cross-attention block index its retained-state tensors
+            # directly.
             cross_attn_past_key_value = past_key_values.cross_attention_cache if past_key_values is not None else None
             hidden_states, _ = self.encoder_attn(
                 hidden_states=hidden_states,
