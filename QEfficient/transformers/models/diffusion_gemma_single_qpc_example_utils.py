@@ -304,8 +304,6 @@ class DiffusionGemmaSingleQPCGenerator:
         *,
         cache_position_ids,
         is_encode,
-        self_conditioning_topk_logits,
-        self_conditioning_topk_indices,
         sampling_uniforms,
         temperature,
         use_self_conditioning,
@@ -330,17 +328,27 @@ class DiffusionGemmaSingleQPCGenerator:
             "vision_embeds": self.vision_embeds,
             "image_idx": self.image_idx,
             "mm_token_type_ids": self.mm_token_type_ids,
-            "self_conditioning_topk_logits": self_conditioning_topk_logits,
-            "self_conditioning_topk_indices": self_conditioning_topk_indices,
             "sampling_uniforms": np.asarray(sampling_uniforms, dtype=np.float32),
             "temperature": np.asarray(temperature, dtype=np.float32),
             "is_encode": np.array([is_encode], dtype=np.int64),
             "use_self_conditioning": np.array([use_self_conditioning], dtype=np.int64),
         }
 
+    def _initial_self_conditioning_state(self):
+        probability_dims = self._binding_dims("self_conditioning_topk_probabilities")
+        indices_dims = self._binding_dims("self_conditioning_topk_indices")
+        if probability_dims is None or indices_dims is None:
+            return {}
+        return {
+            "self_conditioning_topk_probabilities": np.zeros(probability_dims, dtype=np.float32),
+            "self_conditioning_topk_indices": np.zeros(indices_dims, dtype=np.int64),
+        }
+
     def prefill(self, debug_callback=None):
         retained_buffers = [
-            name for name in self.session.input_names + self.session.output_names if name.startswith("past_")
+            name
+            for name in self.session.input_names + self.session.output_names
+            if name.startswith("past_") or name.startswith("self_conditioning_topk_")
         ]
         retained_kv_count = 0
         start = time.perf_counter()
@@ -350,12 +358,12 @@ class DiffusionGemmaSingleQPCGenerator:
             feed = self._shared_feed(
                 cache_position_ids=self.position_ids,
                 is_encode=True,
-                self_conditioning_topk_logits=np.zeros((1, self.canvas_length, 128), dtype=np.float32),
-                self_conditioning_topk_indices=np.zeros((1, self.canvas_length, 128), dtype=np.int64),
                 sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
                 temperature=np.ones((1, 1), dtype=np.float32),
                 use_self_conditioning=False,
             )
+            if chunk_index == 0:
+                feed.update(self._initial_self_conditioning_state())
             outputs = self.session.run(_session_feed(self.session, feed))
             if "image_idx_output" in outputs:
                 self.image_idx = _to_numpy(outputs["image_idx_output"], np.int64)
@@ -397,8 +405,6 @@ class DiffusionGemmaSingleQPCGenerator:
         self._active_canvas_position_ids = self.position_ids.copy()
         new_canvas = canvas.copy()
         accepted_mask = np.zeros((1, self.canvas_length), dtype=bool)
-        self_conditioning_topk_logits = np.zeros((1, self.canvas_length, 128), dtype=np.float32)
-        self_conditioning_topk_indices = np.zeros((1, self.canvas_length, 128), dtype=np.int64)
         no_cache_write = np.full((1, self.canvas_length), -1, dtype=np.int64)
         argmax_canvas_history = []
 
@@ -414,23 +420,17 @@ class DiffusionGemmaSingleQPCGenerator:
                     self._shared_feed(
                         cache_position_ids=no_cache_write,
                         is_encode=False,
-                        self_conditioning_topk_logits=self_conditioning_topk_logits,
-                        self_conditioning_topk_indices=self_conditioning_topk_indices,
                         sampling_uniforms=self.rng.uniform(size=(1, self.canvas_length, 1)).astype(np.float32),
                         temperature=np.full((1, 1), temperature, dtype=np.float32),
                         use_self_conditioning=step > 0,
                     ),
                 )
             )
-            topk_logits = outputs["topk_logits"].astype(np.float32)
-            topk_indices = outputs["topk_indices"].astype(np.int64)
             denoiser_canvas = outputs["denoiser_canvas"].astype(np.int64)
             newly_accepted = outputs["newly_accepted_mask"].astype(bool)
             new_canvas = np.where(newly_accepted, denoiser_canvas, canvas)
             mean_entropy = float(outputs["mean_entropy"].mean())
-            self_conditioning_topk_logits = topk_logits
-            self_conditioning_topk_indices = topk_indices
-            argmax_canvas = topk_indices[..., 0]
+            argmax_canvas = outputs["top1_indices"].astype(np.int64)
             stable = stability_threshold == 0 or (
                 len(argmax_canvas_history) == stability_threshold
                 and all(np.array_equal(previous_canvas, argmax_canvas) for previous_canvas in argmax_canvas_history)
@@ -498,8 +498,6 @@ class DiffusionGemmaSingleQPCGenerator:
                 self._shared_feed(
                     cache_position_ids=self.position_ids,
                     is_encode=True,
-                    self_conditioning_topk_logits=np.zeros((1, self.canvas_length, 128), dtype=np.float32),
-                    self_conditioning_topk_indices=np.zeros((1, self.canvas_length, 128), dtype=np.int64),
                     sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
                     temperature=np.ones((1, 1), dtype=np.float32),
                     use_self_conditioning=False,
