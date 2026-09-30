@@ -74,7 +74,10 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
             ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+        # Legacy dynamic_axes may also describe outputs. torch.export accepts
+        # constraints only for actual forward inputs, so discard output-only
+        # entries while preserving any valid **kwargs inputs.
+        reordered_shapes = {key: dynamic_shapes.get(key, {}) for key in reordered_inputs}
         return reordered_inputs, reordered_shapes
     return reordered_inputs, None
 
@@ -154,7 +157,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
                     max=getattr(model_config, "sliding_window", max_seq_len),
                 )
             else:
-                dim_registry[dim_name] = Dim.DYNAMIC
+                # Preserve specialization symbol names for model-specific axes
+                # such as grid_height, grid_h, grid_w, and vision_batch_size.
+                # Anonymous Dim.DYNAMIC values are exported as s0/s1/... and
+                # cannot be resolved from the compiler specialization file.
+                dim_registry[dim_name] = Dim(dim_name)
         return dim_registry[dim_name]
 
     dynamic_shapes: Dict[str, Any] = {}
@@ -365,17 +372,21 @@ def export_wrapper(func):
                 stacklevel=2,
             )
 
-        # Extract flags
-        dynamo = kwargs.get("dynamo", False)
+        # Weight-free export always uses Dynamo, even when callers do not pass
+        # ``dynamo=True`` explicitly.
+        dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
         if dynamo:
             kwargs["dynamo"] = True
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
         if dynamo:
             validate_dynamo_export_requirements("dynamo=True")
-            # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
-            # the actual shape constraints.
-            dynamic_axes = kwargs.get("dynamic_axes")
+            # VLM component exports pass dynamic_axes positionally. Bind the
+            # complete call instead of looking only in kwargs, otherwise the
+            # Dynamo export silently receives dynamic_shapes=None and emits a
+            # static graph that cannot distinguish compile specializations.
+            bound_export_args = inspect.signature(func).bind_partial(self, *args, **kwargs)
+            dynamic_axes = bound_export_args.arguments.get("dynamic_axes")
             if dynamic_axes is not None:
                 model_config = getattr(self.model, "config", None)
                 kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
