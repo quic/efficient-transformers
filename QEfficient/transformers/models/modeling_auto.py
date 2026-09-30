@@ -118,6 +118,14 @@ CUSTOM_IO_DTYPE_MAP = {
 }
 
 
+def _disable_unsupported_weight_free(wrapper_name: str, kwargs: dict) -> None:
+    if kwargs.pop("weight_free", False):
+        logger.warning(
+            "weight_free=True is only supported for QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText; disabling it for %s.",
+            wrapper_name,
+        )
+
+
 def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict) -> bool:
     """Determine whether the compiler needs -convert-to-fp16.
 
@@ -357,6 +365,7 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
+        _disable_unsupported_weight_free(self.__class__.__name__, kwargs)
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
 
         if (
@@ -396,6 +405,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(cls.__name__, kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -564,6 +574,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(cls.__name__, kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -945,6 +956,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         QEFFAutoModelForSequenceClassification
             An instance initialized with the pretrained weights.
         """
+        _disable_unsupported_weight_free(cls.__name__, kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -5629,6 +5641,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
+        _disable_unsupported_weight_free(cls.__name__, kwargs)
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
