@@ -1014,6 +1014,7 @@ class QEFFBaseModel(ABC):
                 context_length=ctx_len or seq_len,
                 num_devices=num_devices,
                 num_cores=num_cores,
+                prefill_only=bool(compiler_options.get("prefill_only", False)),
             )
         if blocking_config is not None:
             self.hash_params["blocking_kwargs"] = blocking_config

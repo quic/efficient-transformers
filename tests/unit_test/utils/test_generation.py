@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 from transformers import AutoTokenizer
 
+from QEfficient.generation.cloud_infer import is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfo,
     CloudAI100ExecInfoNew,
@@ -199,6 +200,11 @@ class TestGenerationModuleImportability:
         from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 
         assert VisionLanguageGeneration is not None
+
+
+@pytest.mark.parametrize("name", ["indexer_key.0", "indexer_key.0_RetainedState"])
+def test_glm_indexer_cache_is_retained_state(name):
+    assert is_retained_state_name(name)
 
 
 # ---------------------------------------------------------------------------

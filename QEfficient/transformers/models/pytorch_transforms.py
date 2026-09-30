@@ -1431,6 +1431,7 @@ class BlockingAttentionTransform:
         context_length: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,
+        prefill_only: bool = False,
     ) -> Tuple[nn.Module, bool]:
         transformed = False
         model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
@@ -1452,6 +1453,8 @@ class BlockingAttentionTransform:
                 context_length=int(context_length or getattr(model_config, "max_position_embeddings", 1)),
                 num_devices=int(num_devices),
                 num_cores=int(num_cores),
+                seq_len=int(seq_len),
+                prefill_only=bool(prefill_only),
             )
             model._qeff_compile_batch_size = int(batch_size)
             model._qeff_compile_seq_len = int(seq_len)

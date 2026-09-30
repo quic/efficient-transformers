@@ -300,7 +300,7 @@ class TestWeightFreeCheckpointTransforms:
         [
             ("dsa_cp1", (1, 2176, 1, 32)),
             ("dsa_cp2", (1, 2176, 2, 32)),
-            ("dsa_ts16", (16, 4096, 16, 32)),
+            ("dsa_ts16_smoke", (16, 4096, 16, 32)),
         ],
     )
     def test_glm_validation_runtime_defaults_are_preset_specific(self, preset, expected):
@@ -320,7 +320,7 @@ class TestWeightFreeCheckpointTransforms:
         from examples.glm.glm53_four_layer_decode_compile_generate import resolve_runtime_dimensions
 
         args = SimpleNamespace(
-            attention_preset="dsa_ts16",
+            attention_preset="dsa_ts16_smoke",
             batch_size=32,
             ctx_len=8192,
             num_devices=32,
@@ -328,6 +328,64 @@ class TestWeightFreeCheckpointTransforms:
             prompt_len=4,
         )
         assert resolve_runtime_dimensions(args) == (32, 8192, 32, 7)
+
+    def test_glm_generation_perf_metrics_are_json_safe(self):
+        from examples.glm.glm53_four_layer_decode_compile_generate import serialize_qeff_perf_metrics
+
+        exec_info = SimpleNamespace(
+            perf_metrics=SimpleNamespace(
+                prefill_time=0.25,
+                decode_perf=50.0,
+                total_perf=40.0,
+                total_time=1.5,
+            )
+        )
+
+        assert serialize_qeff_perf_metrics(exec_info, batch_size=2) == {
+            "prefill_time": 0.25,
+            "decode_perf": 50.0,
+            "total_perf": 40.0,
+            "total_time": 1.5,
+            "decode_token_latency_ms_per_token": 10.0,
+        }
+
+    def test_glm_weight_free_compile_uses_mxint8_for_all_cache_io(self, tmp_path):
+        from examples.glm.glm53_four_layer_decode_compile_generate import compile_weight_free_decode_only
+
+        qeff_model = SimpleNamespace(
+            model=SimpleNamespace(
+                config=SimpleNamespace(num_hidden_layers=2),
+                get_indexer_cache_layers=lambda config: (0,),
+            ),
+            _compile=MagicMock(return_value=tmp_path / "qpc"),
+        )
+
+        compile_weight_free_decode_only(
+            qeff_model,
+            tmp_path / "model.onnx",
+            tmp_path / "compile",
+            ctx_len=4096,
+            batch_size=16,
+            num_devices=16,
+            num_cores=16,
+            cache_io_dtype="mxint8",
+        )
+
+        compile_kwargs = qeff_model._compile.call_args.kwargs
+        assert compile_kwargs["custom_io"] == {
+            "compressed_kv.0": "mxint8",
+            "compressed_kv.0_RetainedState": "mxint8",
+            "k_pe.0": "mxint8",
+            "k_pe.0_RetainedState": "mxint8",
+            "compressed_kv.1": "mxint8",
+            "compressed_kv.1_RetainedState": "mxint8",
+            "k_pe.1": "mxint8",
+            "k_pe.1_RetainedState": "mxint8",
+            "indexer_key.0": "mxint8",
+            "indexer_key.0_RetainedState": "mxint8",
+        }
+        assert compile_kwargs["mxint8_kv_cache"] is True
+        assert compile_kwargs["allow_mxint8_mdp_io"] is True
 
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"

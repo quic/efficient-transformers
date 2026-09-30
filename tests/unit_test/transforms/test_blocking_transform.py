@@ -453,6 +453,7 @@ def test_glm_attention_config_resolves_dense_and_dsa_layers():
             "blocking_mode": "par",
             "num_kv_blocks": 2,
             "par_num_split": 16,
+            "dsa_topk": 16,
             "mla_absorption": {"absorption": False, "online": False, "cache_compressed": True},
             "indexer_dp": 1,
             "indexer_cp": 2,
@@ -477,6 +478,51 @@ def test_glm_attention_config_resolves_dense_and_dsa_layers():
     assert resolved[1].absorption is True
     assert resolved[1].indexer_type == "shared"
     assert resolved[1].dsa_topk == config.index_topk
+    assert resolved[1].attention_tokens_per_core == config.index_topk // 16
+
+
+@pytest.mark.parametrize(
+    ("blocking_mode", "seq_len", "prefill_only", "error"),
+    [
+        ("par", 4, False, "decode-only"),
+        ("prefill_par", 1, False, "prefill_only=True"),
+        ("prefill_par_online", 1, False, "prefill_only=True"),
+    ],
+)
+def test_glm_dense_parallel_modes_validate_decode_prefill_contract(blocking_mode, seq_len, prefill_only, error):
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        resolve_glm_attention_layer_configs,
+    )
+
+    config = SimpleNamespace(
+        num_hidden_layers=1,
+        layer_types=["full_attention"],
+        indexer_types=["full"],
+        index_topk=32,
+    )
+    qaic_config = {
+        "blocking_mode": blocking_mode,
+        "num_kv_blocks": 2,
+        "par_num_split": 4,
+        "mla_absorption": {
+            "absorption": True,
+            "online": blocking_mode == "prefill_par_online",
+            "cache_compressed": True,
+        },
+    }
+    with pytest.raises(ValueError, match=error):
+        resolve_glm_attention_layer_configs(
+            config,
+            qaic_config,
+            batch_size=1,
+            context_length=32,
+            num_devices=1,
+            num_cores=4,
+            seq_len=seq_len,
+            prefill_only=prefill_only,
+        )
 
 
 @pytest.mark.parametrize("blocking_mode", ["none", "par", "prefill_par", "prefill_par_online"])
@@ -660,13 +706,130 @@ def test_glm_ts16_resolves_topology_values_for_hashing():
             "num_cores_per_device": 16,
         },
         batch_size=16,
-        context_length=4096,
+        context_length=262144,
         num_devices=16,
         num_cores=16,
     )[0]
 
-    assert resolved.indexer_local_context == 256
-    assert resolved.indexer_block_width == 16
-    assert resolved.indexer_tokens_per_core == 1
-    assert resolved.indexer_block_topk == 16
-    assert resolved.to_hash_dict()["indexer_tokens_per_core"] == 1
+    assert resolved.indexer_local_context == 16384
+    assert resolved.indexer_block_width == 1024
+    assert resolved.indexer_tokens_per_core == 64
+    assert resolved.indexer_block_topk == 1024
+    assert resolved.attention_tokens_per_core == 128
+    assert resolved.to_hash_dict()["indexer_tokens_per_core"] == 64
+
+
+def test_glm_tiled_sparse_attention_matches_flat_selected_softmax():
+    from types import SimpleNamespace
+
+    from QEfficient.blocking.glm_attention import _glm_tiled_sparse_mla_attention
+
+    torch.manual_seed(13)
+    batch_size = 2
+    num_heads = 4
+    kv_lora_rank = 3
+    rope_dim = 2
+    topk = 4
+    layer_config = SimpleNamespace(attn_dp=1, attn_cp=2, num_cores_per_device=2)
+    module = SimpleNamespace(
+        config=SimpleNamespace(kv_lora_rank=kv_lora_rank),
+        scaling=(kv_lora_rank + rope_dim) ** -0.5,
+        per_head_v_up=torch.randn(1, num_heads, kv_lora_rank, kv_lora_rank),
+    )
+    query_latent = torch.randn(batch_size, num_heads, 1, kv_lora_rank)
+    query_rope = torch.randn(batch_size, num_heads, 1, rope_dim)
+    sparse_ckv = torch.randn(batch_size, layer_config.attn_dp, layer_config.attn_cp, topk, kv_lora_rank)
+    sparse_rope = torch.randn(batch_size, layer_config.attn_dp, layer_config.attn_cp, topk, rope_dim)
+    row_valid = torch.ones(batch_size, layer_config.attn_dp, layer_config.attn_cp, topk, dtype=torch.bool)
+    row_valid[:, :, 1, -1] = False
+
+    actual, weights = _glm_tiled_sparse_mla_attention(
+        module=module,
+        query_latent=query_latent,
+        query_rope=query_rope,
+        sparse_ckv=sparse_ckv,
+        sparse_rope=sparse_rope,
+        row_valid=row_valid,
+        layer_config=layer_config,
+    )
+    assert weights is None
+
+    flat_ckv = sparse_ckv.reshape(batch_size, layer_config.attn_cp * topk, kv_lora_rank)
+    flat_rope = sparse_rope.reshape(batch_size, layer_config.attn_cp * topk, rope_dim)
+    valid = row_valid.reshape(batch_size, layer_config.attn_cp * topk)
+    query = torch.cat((query_latent, query_rope), dim=-1)
+    keys = torch.cat((flat_ckv, flat_rope), dim=-1)
+    scores = torch.einsum("bhsd,btd->bhst", query, keys) * module.scaling
+    scores = scores.masked_fill(~valid[:, None, None], -3.0e4)
+    probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(query_latent.dtype)
+    latent = torch.einsum("bhst,btd->bhsd", probs, flat_ckv)
+    expected = torch.matmul(latent, module.per_head_v_up[0]).transpose(1, 2).contiguous()
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("prefill", "online"),
+    [
+        (False, False),
+        (True, False),
+        (True, True),
+    ],
+)
+def test_glm_parallel_mla_attention_matches_flat_absorbed_attention(prefill, online):
+    from types import SimpleNamespace
+
+    from QEfficient.blocking.glm_attention import _glm_parallel_mla_attention
+
+    class FakeCompressedCache:
+        def __init__(self, ckv, k_pe):
+            self.layers = [SimpleNamespace(ckv=ckv, k_pe=k_pe)]
+
+        def read_only_blocked_ckv(self, start_index, end_index, layer_idx, cache_kwargs):
+            return self.layers[layer_idx].ckv[:, :, start_index:end_index]
+
+        def read_only_blocked_k_pe(self, start_index, end_index, layer_idx, cache_kwargs):
+            return self.layers[layer_idx].k_pe[:, :, start_index:end_index]
+
+    torch.manual_seed(19)
+    batch_size = 2
+    num_heads = 4
+    q_len = 3 if prefill else 1
+    ctx_len = 7
+    kv_lora_rank = 3
+    rope_dim = 2
+    query_width = kv_lora_rank + rope_dim
+    module = SimpleNamespace(config=SimpleNamespace(kv_lora_rank=kv_lora_rank, qk_rope_head_dim=rope_dim))
+    query = torch.randn(batch_size, num_heads, q_len, query_width)
+    ckv = torch.randn(batch_size, 1, ctx_len, kv_lora_rank)
+    k_pe = torch.randn(batch_size, 1, ctx_len, rope_dim)
+    per_head_v_up = torch.randn(1, num_heads, kv_lora_rank, kv_lora_rank)
+    position_ids = torch.arange(q_len, dtype=torch.long).view(1, q_len).expand(batch_size, -1)
+    attention_mask = torch.arange(ctx_len).view(1, 1, 1, ctx_len) > position_ids[:, None, :, None]
+
+    actual, weights = _glm_parallel_mla_attention(
+        module=module,
+        query=query,
+        per_head_k_up_normal=torch.empty(0),
+        per_head_v_up=per_head_v_up,
+        attention_mask=attention_mask,
+        scaling=query_width**-0.5,
+        num_kv_blocks=2,
+        par_num_split=2,
+        cache_kwargs={"position_ids": position_ids},
+        layer_idx=0,
+        compressed_kvs=FakeCompressedCache(ckv, k_pe),
+        absorption=True,
+        prefill=prefill,
+        online=online,
+    )
+    assert weights is None
+
+    keys = torch.cat((ckv[:, 0], k_pe[:, 0]), dim=-1)
+    scores = torch.einsum("bhsd,btd->bhst", query, keys) * (query_width**-0.5)
+    scores = scores.masked_fill(attention_mask, -3.0e4)
+    probs = torch.softmax(scores, dim=-1, dtype=torch.float32).to(query.dtype)
+    latent = torch.einsum("bhst,btd->bhsd", probs, ckv[:, 0])
+    expected = torch.matmul(latent, per_head_v_up[0]).transpose(1, 2).contiguous()
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
