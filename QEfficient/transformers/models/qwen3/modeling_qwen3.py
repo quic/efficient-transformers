@@ -358,7 +358,6 @@ class QEffQwen3Model(Qwen3Model):
             hidden_states_list = []
             hidden_states_layers = [8, 17, 26]
 
-        for layer_idx, decoder_layer in enumerate(self.layers):
         self.target_layer_ids = getattr(self, "target_layer_ids", None)
         target_hidden_list = []
 
@@ -385,7 +384,7 @@ class QEffQwen3Model(Qwen3Model):
             )
 
             # Flux2 klein specific: collect hidden states at specific layers
-            if is_flux2 and layer_idx in hidden_states_layers:
+            if is_flux2 and idx in hidden_states_layers:
                 hidden_states_list.append(hidden_states)
 
         # Process final hidden states based on model type
@@ -432,7 +431,6 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
         """Check if the model is configured for flux2 klein."""
         return getattr(self.config, "is_flux2", False)
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
     def get_submodules_for_export(self) -> type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.

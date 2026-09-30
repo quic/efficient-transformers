@@ -12,6 +12,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from QEfficient.diffusers.pipelines.flux2 import pipeline_flux2_klein as flux2_klein_module
 from QEfficient.diffusers.pipelines.flux2.pipeline_flux2_klein import (
     QEffFlux2KleinPipeline,
     compute_empirical_mu,
@@ -43,7 +44,7 @@ class _FakeEncoderOutput:
 class _FakeVAE(nn.Module):
     def __init__(self):
         super().__init__()
-        self.config = SimpleNamespace(latent_channels=4)
+        self.config = SimpleNamespace(latent_channels=4, block_out_channels=[1])
         self.encode_input = None
         self.decode_input = None
 
@@ -65,6 +66,52 @@ def _make_minimal_flux2_pipeline() -> QEffFlux2KleinPipeline:
     pipeline.vae_scale_factor = 8
     pipeline.model = SimpleNamespace(config=SimpleNamespace(is_distilled=False))
     return pipeline
+
+
+class _FakeCompiledTextEncoder:
+    def __init__(self):
+        self.compile_calls = []
+        self.device_ids = None
+        self.qpc_path = None
+
+    def compile(self, **kwargs):
+        self.compile_calls.append(kwargs)
+        self.qpc_path = "/compiled/text_encoder/qpc"
+
+
+class _FakeTransformerSession:
+    def __init__(self):
+        self.inputs = None
+
+    def run(self, inputs):
+        self.inputs = inputs
+        return {"sample": inputs["hidden_states"]}
+
+
+def _make_text_encoder_compile_config(qpc_path=None):
+    return {
+        "modules": {
+            "text_encoder": {
+                "specializations": {
+                    "batch_size": 2,
+                    "seq_len": 384,
+                    "ctx_len": 512,
+                },
+                "compilation": {
+                    "onnx_path": "/tmp/text_encoder.onnx",
+                    "compile_dir": "/tmp/text_encoder_compile",
+                    "mdp_ts_num_devices": 2,
+                    "mxfp6_matmul": True,
+                    "convert_to_fp16": True,
+                    "aic_num_cores": 12,
+                },
+                "execute": {
+                    "device_ids": [0, 1],
+                    "qpc_path": qpc_path,
+                },
+            }
+        }
+    }
 
 
 def _make_tiny_flux2_transformer():
@@ -155,6 +202,139 @@ class TestFlux2KleinHelpers:
     def test_retrieve_latents_rejects_unknown_output(self):
         with pytest.raises(AttributeError):
             retrieve_latents(object())
+
+
+@pytest.mark.diffusers
+class TestFlux2TextEncoderCompilation:
+    def test_init_wraps_text_encoder_without_compiling(self, monkeypatch):
+        text_encoder_instances = []
+
+        class FakeQEffWrapper:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+            def get_flux2_encoder_onnx_params(self):
+                return {}, {}, []
+
+        class FakeQEFFAutoModelForCausalLM:
+            def __init__(self, model):
+                self.model = model
+                self.compile_calls = []
+                text_encoder_instances.append(self)
+
+            def compile(self, **kwargs):
+                self.compile_calls.append(kwargs)
+
+        monkeypatch.setattr(flux2_klein_module, "QEFFAutoModelForCausalLM", FakeQEFFAutoModelForCausalLM)
+        monkeypatch.setattr(flux2_klein_module, "QEffFlux2TransformerModel", FakeQEffWrapper)
+        monkeypatch.setattr(flux2_klein_module, "QEffVAE", FakeQEffWrapper)
+
+        model = SimpleNamespace(
+            text_encoder=SimpleNamespace(config=SimpleNamespace()),
+            transformer=SimpleNamespace(),
+            vae=_FakeVAE(),
+            tokenizer=SimpleNamespace(),
+            tokenizer_max_length=512,
+            scheduler=SimpleNamespace(),
+            image_processor=SimpleNamespace(),
+        )
+
+        pipeline = QEffFlux2KleinPipeline(model)
+
+        assert model.text_encoder.config.is_flux2 is True
+        assert pipeline.text_encoder is text_encoder_instances[0]
+        assert pipeline.text_encoder.compile_calls == []
+        assert pipeline.modules["text_encoder"] is pipeline.text_encoder
+
+    def test_diffusion_modules_exclude_text_encoder(self):
+        pipeline = QEffFlux2KleinPipeline.__new__(QEffFlux2KleinPipeline)
+        pipeline.modules = {
+            "text_encoder": object(),
+            "transformer": object(),
+            "vae_encoder": object(),
+            "vae_decoder": object(),
+        }
+
+        assert set(pipeline._get_diffusion_modules()) == {"transformer", "vae_encoder", "vae_decoder"}
+
+    def test_compile_text_encoder_from_config_uses_compile_config(self):
+        pipeline = QEffFlux2KleinPipeline.__new__(QEffFlux2KleinPipeline)
+        pipeline.text_encoder = _FakeCompiledTextEncoder()
+        pipeline.custom_config = _make_text_encoder_compile_config()
+
+        pipeline._compile_text_encoder_from_config()
+
+        assert pipeline.text_encoder.device_ids == [0, 1]
+        assert len(pipeline.text_encoder.compile_calls) == 1
+        compile_call = pipeline.text_encoder.compile_calls[0]
+        assert compile_call["onnx_path"] == "/tmp/text_encoder.onnx"
+        assert compile_call["compile_dir"] == "/tmp/text_encoder_compile"
+        assert compile_call["prefill_seq_len"] == 384
+        assert compile_call["ctx_len"] == 512
+        assert compile_call["batch_size"] == 2
+        assert compile_call["prefill_only"] is True
+        assert compile_call["num_devices"] == 2
+        assert compile_call["num_cores"] == 12
+        assert compile_call["mxfp6_matmul"] is True
+        assert "convert_to_fp16" not in compile_call
+
+    def test_compile_text_encoder_from_config_reuses_configured_qpc(self, tmp_path):
+        qpc_path = tmp_path / "text_encoder_qpc"
+        qpc_path.mkdir()
+        pipeline = QEffFlux2KleinPipeline.__new__(QEffFlux2KleinPipeline)
+        pipeline.text_encoder = _FakeCompiledTextEncoder()
+        pipeline.custom_config = _make_text_encoder_compile_config(qpc_path=str(qpc_path))
+
+        pipeline._compile_text_encoder_from_config()
+
+        assert pipeline.text_encoder.qpc_path == str(qpc_path)
+        assert pipeline.text_encoder.device_ids == [0, 1]
+        assert pipeline.text_encoder.compile_calls == []
+
+
+@pytest.mark.diffusers
+class TestFlux2TransformerRuntimeInputs:
+    def test_run_transformer_step_passes_complete_input_contract(self):
+        session = _FakeTransformerSession()
+        pipeline = QEffFlux2KleinPipeline.__new__(QEffFlux2KleinPipeline)
+        pipeline.transformer = SimpleNamespace(qpc_session=session)
+
+        latent_model_input = torch.randn(1, 4, 32)
+        timestep = torch.tensor([500.0])
+        prompt_embeds = torch.randn(1, 5, 48)
+        text_ids = torch.zeros(1, 5, 4)
+        latent_image_ids = torch.zeros(1, 4, 4)
+        adaln_double_img = torch.randn(1, 96)
+        adaln_double_txt = torch.randn(1, 96)
+        adaln_single = torch.randn(1, 48)
+        adaln_out = torch.randn(1, 32)
+
+        output = pipeline._run_transformer_step(
+            latent_model_input=latent_model_input,
+            timestep=timestep,
+            prompt_embeds=prompt_embeds,
+            text_ids=text_ids,
+            latent_image_ids=latent_image_ids,
+            adaln_double_img=adaln_double_img,
+            adaln_double_txt=adaln_double_txt,
+            adaln_single=adaln_single,
+            adaln_out=adaln_out,
+        )
+
+        assert set(session.inputs) == {
+            "hidden_states",
+            "timestep",
+            "encoder_hidden_states",
+            "txt_ids",
+            "img_ids",
+            "adaln_double_img",
+            "adaln_double_txt",
+            "adaln_single",
+            "adaln_out",
+        }
+        assert torch.equal(torch.from_numpy(session.inputs["encoder_hidden_states"]), prompt_embeds)
+        assert torch.equal(torch.from_numpy(output["sample"]), latent_model_input)
 
 
 @pytest.mark.diffusers

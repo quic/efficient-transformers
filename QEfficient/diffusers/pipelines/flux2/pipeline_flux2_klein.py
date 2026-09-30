@@ -170,7 +170,6 @@ class QEffFlux2KleinPipeline:
         self.text_encoder = QEFFAutoModelForCausalLM(
             model=model.text_encoder,
         )
-        self.text_encoder.compile(prefill_seq_len=512, ctx_len=512, prefill_only=True)
 
         # ------------------------------------------------------------------ #
         # Transformer — QAIC session (lazy init on first call)               #
@@ -199,6 +198,7 @@ class QEffFlux2KleinPipeline:
         self.vae_encoder.get_onnx_params = self.vae_encoder.get_flux2_encoder_onnx_params
 
         self.modules = {
+            "text_encoder": self.text_encoder,
             "transformer": self.transformer,
             "vae_encoder": self.vae_encoder,
             "vae_decoder": self.vae_decoder,
@@ -210,6 +210,57 @@ class QEffFlux2KleinPipeline:
         self.vae = model.vae
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         self.default_sample_size = 128
+
+    def _get_diffusion_modules(self) -> dict[str, object]:
+        return {module_name: module for module_name, module in self.modules.items() if module_name != "text_encoder"}
+
+    def _compile_text_encoder_from_config(self) -> None:
+        text_encoder_config = self.custom_config["modules"].get("text_encoder")
+        if text_encoder_config is None or not hasattr(self, "text_encoder"):
+            return
+
+        execute_config = text_encoder_config.get("execute", {})
+        self.text_encoder.device_ids = execute_config.get("device_ids")
+        configured_qpc_path = execute_config.get("qpc_path")
+
+        if configured_qpc_path:
+            if not os.path.exists(configured_qpc_path):
+                raise FileNotFoundError(
+                    f"Given qpc path: {configured_qpc_path} does not exist. Please provide correct path or keep null"
+                )
+            self.text_encoder.qpc_path = configured_qpc_path
+            return
+
+        if self.text_encoder.qpc_path is not None:
+            return
+
+        specializations = text_encoder_config["specializations"].copy()
+        compile_kwargs = text_encoder_config["compilation"].copy()
+        onnx_path = compile_kwargs.pop("onnx_path", None)
+        compile_dir = compile_kwargs.pop("compile_dir", None)
+        mdp_ts_num_devices = compile_kwargs.pop("mdp_ts_num_devices", None)
+        aic_num_cores = compile_kwargs.pop("aic_num_cores", None)
+        compile_kwargs.pop("convert_to_fp16", None)
+
+        prefill_seq_len = specializations.get("seq_len", 512)
+        ctx_len = specializations.get("ctx_len", prefill_seq_len)
+        batch_size = specializations.get("batch_size", 1)
+
+        compiler_options = {
+            "onnx_path": onnx_path,
+            "compile_dir": compile_dir,
+            "prefill_seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "batch_size": batch_size,
+            "prefill_only": True,
+            **compile_kwargs,
+        }
+        if mdp_ts_num_devices is not None:
+            compiler_options["num_devices"] = mdp_ts_num_devices
+        if aic_num_cores is not None:
+            compiler_options["num_cores"] = aic_num_cores
+
+        self.text_encoder.compile(**compiler_options)
 
     def export(
         self,
@@ -263,7 +314,9 @@ class QEffFlux2KleinPipeline:
         vae_encoder_height = config_data["modules"]["vae_encoder"]["specializations"]["height"]
         vae_encoder_width = config_data["modules"]["vae_encoder"]["specializations"]["width"]
 
-        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
+        for module_name, module_obj in tqdm(
+            self._get_diffusion_modules().items(), desc="Exporting modules", unit="module"
+        ):
             # Get ONNX export configuration for this module
             # For VAE encoder, use dimensions from config specializations to match compilation
             if module_name == "vae_encoder":
@@ -350,6 +403,7 @@ class QEffFlux2KleinPipeline:
 
         # Set device IDs, qpc path if precompiled qpc exist
         set_execute_params(self)
+        self._compile_text_encoder_from_config()
 
         # Ensure all modules are exported to ONNX before compilation
         if any(
@@ -361,10 +415,11 @@ class QEffFlux2KleinPipeline:
         specialization_updates = {}
 
         # Use generic utility functions for compilation
+        diffusion_modules = self._get_diffusion_modules()
         if parallel:
-            compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
+            compile_modules_parallel(diffusion_modules, self.custom_config, specialization_updates)
         else:
-            compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
+            compile_modules_sequential(diffusion_modules, self.custom_config, specialization_updates)
 
     # ---------------------------------------------------------------------- #
     # Class method: from_pretrained                                           #
@@ -447,6 +502,31 @@ class QEffFlux2KleinPipeline:
             logger.info(f"Initialising VAE encoder QAIC session from: {self.vae_encode_qpc_path}")
             self._vae_encode_session = QAICInferenceSession(str(self.vae_encode_qpc_path))
         return self._vae_encode_session
+
+    def _run_transformer_step(
+        self,
+        latent_model_input: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        text_ids: torch.Tensor,
+        latent_image_ids: torch.Tensor,
+        adaln_double_img: torch.Tensor,
+        adaln_double_txt: torch.Tensor,
+        adaln_single: torch.Tensor,
+        adaln_out: torch.Tensor,
+    ):
+        transformer_inputs = {
+            "hidden_states": to_numpy(latent_model_input),
+            "timestep": to_numpy(timestep / 1000),
+            "encoder_hidden_states": to_numpy(prompt_embeds),
+            "txt_ids": to_numpy(text_ids.to(torch.float32)),
+            "img_ids": to_numpy(latent_image_ids.to(torch.float32)),
+            "adaln_double_img": to_numpy(adaln_double_img),
+            "adaln_double_txt": to_numpy(adaln_double_txt),
+            "adaln_single": to_numpy(adaln_single),
+            "adaln_out": to_numpy(adaln_out),
+        }
+        return self.transformer.qpc_session.run(transformer_inputs)
 
     # ---------------------------------------------------------------------- #
     # Text encoding                                                           #
@@ -924,7 +1004,18 @@ class QEffFlux2KleinPipeline:
             batch_size = prompt_embeds.shape[0]
 
         # ------------------------------------------------------------------ #
-        # 2. Encode prompt via text encoder on QAIC                          #
+        # 2. Compile / locate all QPCs before prompt encoding                #
+        # ------------------------------------------------------------------ #
+        self.compile(
+            compile_config=None,
+            parallel=False,
+            height=height,
+            width=width,
+            use_onnx_subfunctions=False,
+        )
+
+        # ------------------------------------------------------------------ #
+        # 3. Encode prompt via text encoder on QAIC                          #
         # ------------------------------------------------------------------ #
         prompt_embeds, text_ids, text_encoder_perf = self.encode_prompt(
             prompt=prompt,
@@ -967,21 +1058,6 @@ class QEffFlux2KleinPipeline:
 
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
-
-        # ------------------------------------------------------------------ #
-        # 3b. Compile / locate all QPCs before any QAIC session is needed     #
-        # ------------------------------------------------------------------ #
-
-        # ------------------------------------------------------------------ #
-        # 3b-ii. Compile all QPCs and initialise QAIC sessions               #
-        # ------------------------------------------------------------------ #
-        self.compile(
-            compile_config=None,
-            parallel=False,
-            height=height,
-            width=width,
-            use_onnx_subfunctions=False,
-        )
 
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(
@@ -1064,15 +1140,11 @@ class QEffFlux2KleinPipeline:
             latent_model_input = latents.to(torch.float32)
 
             latent_image_ids = latent_ids
-            print("outside if latent_model_input", latent_model_input.shape)
-            print("outside if latent_image_ids", latent_image_ids.shape)
 
             if image_latents is not None:
                 latent_model_input = torch.cat([latents, image_latents], dim=1).to(torch.float32)
 
                 latent_image_ids = torch.cat([latent_ids, image_latent_ids], dim=1)
-                print("inside if latent_model_input", latent_model_input.shape)
-                print("inside if latent_image_ids", latent_image_ids.shape)
 
             transformer_model = self.transformer.model  # Flux2Transformer2DModel
             temb_input = timestep.to(torch.float32)
@@ -1100,20 +1172,18 @@ class QEffFlux2KleinPipeline:
                 single_mod.squeeze(0).unsqueeze(0).expand(num_single, -1).contiguous()
             )  # [num_single, inner_dim*3]
 
-            ins_np = {
-                "hidden_states": to_numpy(latent_model_input),
-                "timestep": to_numpy(timestep / 1000),
-                "encoder_hidden_states": to_numpy(prompt_embeds),
-                "txt_ids": to_numpy(text_ids.to(torch.float32)),
-                "img_ids": to_numpy(latent_image_ids.to(torch.float32)),
-                "adaln_double_img": to_numpy(adaln_double_img),
-                "adaln_double_txt": to_numpy(adaln_double_txt),
-                "adaln_single": to_numpy(adaln_single),
-                "adaln_out": to_numpy(adaln_out),
-            }
-
             t_start = time.perf_counter()
-            transformer_output = self.transformer.qpc_session.run(ins_np)
+            transformer_output = self._run_transformer_step(
+                latent_model_input=latent_model_input,
+                timestep=timestep,
+                prompt_embeds=prompt_embeds,
+                text_ids=text_ids,
+                latent_image_ids=latent_image_ids,
+                adaln_double_img=adaln_double_img,
+                adaln_double_txt=adaln_double_txt,
+                adaln_single=adaln_single,
+                adaln_out=adaln_out,
+            )
             t_end = time.perf_counter()
             transformer_step_times.append(t_end - t_start)
             logger.info(f"Transformer inference time (step {i}): {t_end - t_start:.3f}s")
@@ -1123,14 +1193,17 @@ class QEffFlux2KleinPipeline:
 
             if do_classifier_free_guidance:
                 with self.transformer.cache_context("uncond"):
-                    neg_ins_np = {
-                        "hidden_states": to_numpy(latent_model_input),
-                        "timestep": to_numpy(timestep / 1000),
-                        "encoder_hidden_states": to_numpy(negative_prompt_embeds),
-                        "txt_ids": to_numpy(negative_text_ids.to(torch.float32)),
-                        "img_ids": to_numpy(latent_image_ids.to(torch.float32)),
-                    }
-                    neg_output = transformer_session.run(neg_ins_np)
+                    neg_output = self._run_transformer_step(
+                        latent_model_input=latent_model_input,
+                        timestep=timestep,
+                        prompt_embeds=negative_prompt_embeds,
+                        text_ids=negative_text_ids,
+                        latent_image_ids=latent_image_ids,
+                        adaln_double_img=adaln_double_img,
+                        adaln_double_txt=adaln_double_txt,
+                        adaln_single=adaln_single,
+                        adaln_out=adaln_out,
+                    )
                     neg_noise_pred = torch.tensor(neg_output["sample"])
                     neg_noise_pred = neg_noise_pred[:, : latents.size(1)]
                     noise_pred = neg_noise_pred + guidance_scale * (noise_pred - neg_noise_pred)
@@ -1176,10 +1249,8 @@ class QEffFlux2KleinPipeline:
             vae_perf = 0.0
 
             t_start = time.perf_counter()
-            print("t_start", t_start)
             vae_output = self.vae_decoder.qpc_session.run(vae_in_np)
             t_end = time.perf_counter()
-            print("t_end", t_end)
             vae_perf = t_end - t_start
             logger.info(f"VAE decoder inference time: {t_end - t_start:.3f}s")
 
