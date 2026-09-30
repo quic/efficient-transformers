@@ -9065,18 +9065,18 @@
         "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
         "prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
         "pytorch_hf_tokens": [
-          19094,
-          22662,
-          5432,
-          6457,
-          14735,
-          30718,
-          22800,
-          19094,
-          5432,
-          15605
+          6287,
+          8361,
+          14074,
+          30286,
+          12758,
+          5603,
+          12758,
+          9644,
+          12758,
+          4728
         ],
-        "timestamp": "2026-08-13T23:53:14.292571",
+        "timestamp": "2026-09-30T00:00:00",
         "variant_key": "float32_gl10_681e5064_33b1484c7715"
       }
     },
