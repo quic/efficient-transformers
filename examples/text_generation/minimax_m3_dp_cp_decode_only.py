@@ -12,7 +12,7 @@ import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -49,7 +49,6 @@ def _run_pytorch_parity_test(
     msa_attn_dp: int = 1,
     msa_attn_cp: int = 1,
     indexer_n_head: int = 1,
-    num_cores_per_device: int = 16,
     batch_size: int = 1,
     skip_kv: bool = False,
     num_kv_blocks: int = 2,
@@ -87,7 +86,7 @@ def _run_pytorch_parity_test(
             "expert_parallel_chunk_size": expert_parallel_chunk_size,
             "cores_per_expert": cores_per_expert,
             "tree_reduce": tree_reduce,
-        }
+        },
     }
     if msa_indexer_dp > 1 or msa_attn_dp > 1 or msa_attn_cp > 1:
         qaic_config["blocking_mode"] = "kv_headpar"
@@ -96,7 +95,7 @@ def _run_pytorch_parity_test(
             qaic_config["msa_indexer_dp"] = msa_indexer_dp
             qaic_config["msa_indexer_cp"] = msa_indexer_cp
             qaic_config["indexer_n_head"] = indexer_n_head
-            qaic_config["num_cores_per_device"] = num_cores_per_device
+            qaic_config["num_cores_per_device"] = num_cores
         if msa_attn_dp > 1 or msa_attn_cp > 1:
             qaic_config["msa_attn_cp"] = msa_attn_cp
             qaic_config["msa_attn_dp"] = msa_attn_dp
@@ -205,12 +204,6 @@ def main():
         help="Number of KV heads used by the MSA indexer in the DP path.",
     )
     parser.add_argument(
-        "--num-cores-per-device",
-        type=int,
-        default=8,
-        help="Number of NSP cores per device for MSA indexer DP block-scoring.",
-    )
-    parser.add_argument(
         "--test",
         action="store_true",
         help="Run PyTorch vs ONNX parity check using a tiny random model.",
@@ -239,7 +232,6 @@ def main():
                 msa_attn_dp=args.msa_attn_dp,
                 msa_attn_cp=args.msa_attn_cp,
                 indexer_n_head=args.indexer_n_head,
-                num_cores_per_device=args.num_cores_per_device,
                 batch_size=args.batch_size,
                 skip_kv=args.skip_kv,
                 num_kv_blocks=args.num_kv_blocks,
@@ -280,7 +272,7 @@ def main():
             "msa_attn_dp": args.msa_attn_dp,
             "msa_attn_cp": args.msa_attn_cp,
             "indexer_n_head": args.indexer_n_head,
-            "num_cores_per_device": args.num_cores_per_device,
+            "num_cores_per_device": args.num_cores,
             "moe_config": {
                 "flavour": "expert_parallel",
                 "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
@@ -295,7 +287,6 @@ def main():
     if args.skip_generate:
         return
 
-    processor = AutoProcessor.from_pretrained(args.model_id, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
     messages = [

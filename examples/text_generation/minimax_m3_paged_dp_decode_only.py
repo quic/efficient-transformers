@@ -66,7 +66,6 @@ def main() -> None:
     parser.add_argument("--indexer-num-blocks", type=int, default=None)
     parser.add_argument("--msa-num-kv-blocks", type=int, default=None)
     parser.add_argument("--indexer-n-head", type=int, default=1)
-    parser.add_argument("--num-cores-per-device", type=int, default=8)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--num-layers", type=int, default=None)
@@ -135,7 +134,7 @@ def main() -> None:
         "msa_attn_dp": args.msa_attn_dp,
         "msa_attn_cp": args.msa_attn_cp,
         "indexer_n_head": args.indexer_n_head,
-        "num_cores_per_device": args.num_cores_per_device,
+        "num_cores_per_device": args.num_cores,
         "paged_kv": True,
         "page_block_size": args.page_block_size,
         "moe_config": {

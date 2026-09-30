@@ -44,7 +44,7 @@ def _build_qaic_config(
     indexer_prefill_parallel: bool,
     indexer_q_chunk: int | None,
     indexer_q_size: int | None,
-    num_cores_per_device: int,
+    num_cores: int,
     msa_q_chunk: int,
     expert_parallel_chunk_size: int,
     cores_per_expert: int,
@@ -60,7 +60,7 @@ def _build_qaic_config(
         "msa_attn_cp": msa_attn_cp,
         "indexer_n_head": indexer_n_head,
         "indexer_prefill_parallel": indexer_prefill_parallel,
-        "num_cores_per_device": num_cores_per_device,
+        "num_cores_per_device": num_cores,
         "msa_q_chunk": msa_q_chunk,
         "moe_config": {
             "flavour": "expert_parallel",
@@ -244,12 +244,6 @@ def main():
         default=1024,
         help="Outer prefill query chunk size used to derive n_rep_chunk.",
     )
-    parser.add_argument(
-        "--num-cores-per-device",
-        type=int,
-        default=8,
-        help="Number of NSP cores per device for MSA indexer DP block-scoring.",
-    )
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
@@ -345,7 +339,7 @@ def main():
         indexer_prefill_parallel=args.indexer_prefill_parallel,
         indexer_q_chunk=args.indexer_q_chunk,
         indexer_q_size=args.indexer_q_size,
-        num_cores_per_device=args.num_cores_per_device,
+        num_cores=args.num_cores,
         msa_q_chunk=args.msa_q_chunk,
         expert_parallel_chunk_size=args.expert_parallel_chunk_size,
         cores_per_expert=args.cores_per_expert,
@@ -375,7 +369,7 @@ def main():
             indexer_prefill_parallel=False,
             indexer_q_chunk=None,
             indexer_q_size=None,
-            num_cores_per_device=args.num_cores_per_device,
+            num_cores=args.num_cores,
             msa_q_chunk=args.msa_q_chunk,
             expert_parallel_chunk_size=args.expert_parallel_chunk_size,
             cores_per_expert=args.cores_per_expert,
