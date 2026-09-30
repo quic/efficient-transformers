@@ -158,6 +158,9 @@ class AttentionBlockingConfig:
     prefill_compile_seq_len: Optional[int] = None
     prefill_export_seq_len: Optional[int] = None
     page_block_size: Optional[int] = None
+    num_logical_pages: Optional[int] = None
+    msa_indexer_num_logical_pages: Optional[int] = None
+    msa_attn_num_logical_pages: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:

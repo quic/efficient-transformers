@@ -338,6 +338,27 @@ def _gather_paged_kv_selected_heads(pool: torch.Tensor, physical_ids: torch.Tens
     return torch.stack(gathered, dim=0)
 
 
+def _resolve_num_logical_pages(ctx_len: int, page_block_size: int, configured_num_pages: Optional[int] = None) -> int:
+    """Resolve paged-cache capacity while preserving the context-derived default."""
+    num_pages = (
+        (ctx_len + page_block_size - 1) // page_block_size
+        if configured_num_pages is None
+        else int(configured_num_pages)
+    )
+    if num_pages <= 0:
+        raise ValueError("num_logical_pages must be greater than zero.")
+    if num_pages * page_block_size < ctx_len:
+        raise ValueError(
+            f"num_logical_pages ({num_pages}) with page_block_size ({page_block_size}) cannot hold ctx_len ({ctx_len})."
+        )
+    return num_pages
+
+
+def _num_page_groups(num_logical_pages: int, cp: int) -> int:
+    """Return the number of physical pages needed by CP-grouped paged decode."""
+    return (num_logical_pages + cp - 1) // cp
+
+
 class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
     def _apply_rope(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """Apply partial RoPE while preserving the remainder of the index head."""
@@ -1086,26 +1107,34 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         if index_key_cache is None or index_key_cache.ndim != 4:
             raise ValueError("Paged MSA index selection requires a physical index-key cache.")
         page_block_size = index_key_cache.shape[2]
-        ctx_len = (
-            blocking_config.ctx_len
-            if blocking_config and blocking_config.ctx_len
-            else block_table.shape[2] * page_block_size
-        )
-        num_pages = (ctx_len + page_block_size - 1) // page_block_size
-        batch, query_len = hidden_states.shape[:2]
         dp = blocking_config.msa_indexer_dp if blocking_config and blocking_config.msa_indexer_dp else 1
         cp = blocking_config.msa_indexer_cp if blocking_config and blocking_config.msa_indexer_cp else 1
         hkv = blocking_config.indexer_n_head if blocking_config and blocking_config.indexer_n_head else 1
+        ctx_len = (
+            blocking_config.ctx_len
+            if blocking_config and blocking_config.ctx_len
+            else block_table.shape[2] * page_block_size * cp
+        )
+        configured_num_pages = (
+            getattr(blocking_config, "msa_indexer_num_logical_pages", None) if blocking_config is not None else None
+        )
+        if configured_num_pages is None and blocking_config is not None:
+            configured_num_pages = getattr(blocking_config, "num_logical_pages", None)
+        num_pages = _resolve_num_logical_pages(ctx_len, page_block_size, configured_num_pages)
+        batch, query_len = hidden_states.shape[:2]
         if query_len != 1:
             raise ValueError("Paged MSA indexer selection is decode-only; QL must be 1.")
         if batch % dp:
             raise ValueError("MSA indexer batch size must be divisible by msa_indexer_dp.")
         if num_index_heads % hkv:
             raise ValueError("index_n_heads must be divisible by indexer_n_head.")
+        if cfg.index_local_blocks != 1:
+            raise ValueError("Paged MSA decode requires index_local_blocks == 1.")
         batch_local = batch // dp
         rows = dp * cp * hkv
+        num_page_groups = _num_page_groups(num_pages, cp)
         expected_cache_shape = (
-            dp * batch_local * num_pages,
+            dp * batch_local * num_page_groups,
             rows,
             page_block_size,
             dim,
@@ -1119,28 +1148,53 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
                 "msa_indexer_block_table must have shape "
                 f"[msa_indexer_dp, B_local, pages], got {tuple(block_table.shape)}."
             )
-        if block_table.shape[2] < ctx_len // page_block_size:
+        if block_table.shape[2] < num_page_groups:
             raise ValueError("msa_indexer_block_table is too short for the paged indexer.")
         if ctx_len % page_block_size:
             raise ValueError("Paged MSA indexer requires ctx_len divisible by page_block_size.")
-        if num_pages % num_kv_blocks:
+        if num_pages % (num_kv_blocks * cp):
             raise ValueError(
-                f"Paged MSA indexer pages ({num_pages}) must be divisible by num_kv_blocks={num_kv_blocks}."
+                f"Paged MSA indexer pages ({num_pages}) must be divisible by "
+                f"num_kv_blocks * msa_indexer_cp ({num_kv_blocks * cp})."
             )
-        pages_per_kv_block = num_pages // num_kv_blocks
-        if pages_per_kv_block % num_cores:
+        page_groups_per_kv_block = num_pages // (num_kv_blocks * cp)
+        if page_groups_per_kv_block % num_cores:
             raise ValueError(
-                f"Paged MSA indexer pages per KV block ({pages_per_kv_block}) must be divisible by "
+                f"Paged MSA indexer page groups per KV block ({page_groups_per_kv_block}) must be divisible by "
                 f"num_cores_per_device={num_cores}."
             )
-        pages_per_core = pages_per_kv_block // num_cores
-        tokens_per_core = pages_per_core * page_block_size
+        page_groups_per_core = page_groups_per_kv_block // num_cores
+        tokens_per_core = page_groups_per_core * page_block_size
 
         position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
         cos_dp = cos.view(dp, batch_local, query_len, cos.shape[-1]).permute(1, 0, 2, 3)
         sin_dp = sin.view(dp, batch_local, query_len, sin.shape[-1]).permute(1, 0, 2, 3)
-        idx_q = self.q_proj(hidden_states).view(dp, batch_local, query_len, num_index_heads, dim).permute(1, 0, 3, 2, 4)
-        idx_k = self.k_proj(hidden_states).view(dp, batch_local, query_len, hkv, dim).permute(1, 0, 3, 2, 4)
+        if dp > 1:
+            projection_dp = int(getattr(self, "indexer_paged_projection_dp", 1))
+            if projection_dp != dp:
+                raise ValueError(
+                    "Paged MSA indexer DP projection buffers are missing or were built for a different DP factor."
+                )
+            idx_q_all = F.linear(
+                hidden_states,
+                self.indexer_paged_q_proj_weight,
+                getattr(self, "indexer_paged_q_proj_bias", None),
+            ).view(dp, batch_local, query_len, dp, num_index_heads, dim)
+            idx_k_all = F.linear(
+                hidden_states,
+                self.indexer_paged_k_proj_weight,
+                getattr(self, "indexer_paged_k_proj_bias", None),
+            ).view(dp, batch_local, query_len, dp, hkv, dim)
+            lane_idx = torch.arange(dp, device=hidden_states.device).view(dp, 1, 1, 1, 1, 1)
+            q_lane_idx = lane_idx.expand(dp, batch_local, query_len, 1, num_index_heads, dim)
+            k_lane_idx = lane_idx.expand(dp, batch_local, query_len, 1, hkv, dim)
+            idx_q = torch.gather(idx_q_all, 3, q_lane_idx).squeeze(3).permute(1, 0, 3, 2, 4)
+            idx_k = torch.gather(idx_k_all, 3, k_lane_idx).squeeze(3).permute(1, 0, 3, 2, 4)
+        else:
+            idx_q = self.q_proj(hidden_states).view(dp, batch_local, query_len, num_index_heads, dim)
+            idx_q = idx_q.permute(1, 0, 3, 2, 4)
+            idx_k = self.k_proj(hidden_states).view(dp, batch_local, query_len, hkv, dim)
+            idx_k = idx_k.permute(1, 0, 3, 2, 4)
         idx_q = self.q_norm(idx_q)
         idx_k = self.k_norm(idx_k)
         idx_q = self._apply_rope(idx_q, cos_dp[..., :dim], sin_dp[..., :dim])
@@ -1160,8 +1214,9 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             .reshape(batch_local, rows, query_len)
         )
         logical_page = position_ids_dp // page_block_size
+        logical_page_group = logical_page // cp
         block_id_dp = (
-            torch.gather(block_table.permute(1, 0, 2), 2, logical_page)
+            torch.gather(block_table.permute(1, 0, 2), 2, logical_page_group)
             .to(torch.int32)
             .unsqueeze(2)
             .unsqueeze(3)
@@ -1201,6 +1256,12 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         way_rows = torch.arange(rows, device=hidden_states.device).remainder(cp * hkv) // hkv
         dp_rows = torch.arange(rows, device=hidden_states.device) // (cp * hkv)
         page_offsets = torch.arange(page_block_size, device=hidden_states.device)
+        group_order = (
+            torch.arange(page_groups_per_kv_block, device=hidden_states.device)
+            .view(page_groups_per_core, num_cores)
+            .transpose(0, 1)
+            .reshape(num_cores, page_groups_per_core)
+        )
 
         candidate_score_groups: list[torch.Tensor] = []
         candidate_block_groups: list[torch.Tensor] = []
@@ -1209,100 +1270,95 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             q_local = q_rows[batch_idx : batch_idx + 1]
             q_5d = q_local.unsqueeze(2).expand(1, rows, num_cores, ql_eff, dim)
             bt_local = block_table[:, batch_idx]
+            table_rows = bt_local.index_select(0, dp_rows)
             device_block_score_groups: list[torch.Tensor] = []
             device_block_id_groups: list[torch.Tensor] = []
 
-            for block_idx in range(num_kv_blocks):
-                page_start = block_idx * pages_per_kv_block
-                logical_pages = torch.arange(
-                    page_start,
-                    page_start + pages_per_kv_block,
-                    device=hidden_states.device,
-                ).view(num_cores, pages_per_core)
-                logical_pages_by_row = logical_pages.reshape(1, -1).expand(rows, -1)
-                table_rows = bt_local.index_select(0, dp_rows)
-                physical_pages_by_row = torch.gather(table_rows, 1, logical_pages_by_row)
+            def logical_page_groups_for_block(block_idx: int) -> torch.Tensor:
+                return block_idx * page_groups_per_kv_block + group_order
+
+            def logical_pages_for_rows(block_idx: int) -> torch.Tensor:
+                logical_page_groups = logical_page_groups_for_block(block_idx)
+                page_groups_by_row = logical_page_groups.reshape(1, -1).expand(rows, -1)
+                return (page_groups_by_row * cp + way_rows.view(rows, 1)).view(rows, num_cores, page_groups_per_core)
+
+            def read_page_groups(block_idx: int) -> torch.Tensor:
+                logical_page_groups = logical_page_groups_for_block(block_idx)
+                page_groups_by_row = logical_page_groups.reshape(1, -1).expand(rows, -1)
+                physical_pages_by_row = torch.gather(table_rows, 1, page_groups_by_row)
                 key_flat = CtxGatherFuncPagedKVDP.apply(
                     index_key_cache,
                     physical_pages_by_row.transpose(0, 1).contiguous().to(torch.int32),
                 )
-                key_5d = key_flat.view(1, rows, num_cores, tokens_per_core, dim)
+                return key_flat.view(1, rows, num_cores, tokens_per_core, dim)
+
+            def score_page_groups(block_idx: int, key_5d: torch.Tensor) -> torch.Tensor:
                 score_block = torch.matmul(q_5d.float(), key_5d.transpose(-1, -2).float())
-                token_positions = (logical_pages.unsqueeze(-1) * page_block_size + page_offsets.view(1, 1, -1)).reshape(
-                    num_cores, tokens_per_core
-                )
-                page_owner = logical_pages.remainder(cp)
-                owner_page_mask = page_owner.unsqueeze(0) != way_rows.view(rows, 1, 1)
-                owner_token_mask = (
-                    owner_page_mask.unsqueeze(-1)
-                    .expand(rows, num_cores, pages_per_core, page_block_size)
-                    .reshape(rows, num_cores, tokens_per_core)
-                )
-                causal_mask = token_positions.view(1, 1, num_cores, 1, tokens_per_core) > pos_rows_all[
+                logical_pages_by_row = logical_pages_for_rows(block_idx)
+                token_positions = (
+                    logical_pages_by_row.unsqueeze(-1) * page_block_size + page_offsets.view(1, 1, 1, -1)
+                ).reshape(rows, num_cores, tokens_per_core)
+                causal_mask = token_positions.view(1, rows, num_cores, 1, tokens_per_core) > pos_rows_all[
                     batch_idx : batch_idx + 1
                 ].unsqueeze(2)
-                causal_mask = causal_mask | owner_token_mask.view(1, rows, num_cores, 1, tokens_per_core)
                 score_block = score_block.masked_fill(causal_mask, MASKED_ATTENTION_LOGIT)
                 block_scores_core = score_block.view(
                     1,
                     rows,
                     num_cores,
                     ql_eff,
-                    pages_per_core,
+                    page_groups_per_core,
                     page_block_size,
                 ).amax(dim=-1)
+                return block_scores_core
 
-                block_ids_rows = logical_pages.view(1, 1, num_cores, pages_per_core).expand(
-                    1, rows, num_cores, pages_per_core
-                )
-                q_index_block_rows = (
-                    (position_ids_dp[batch_idx : batch_idx + 1, :, 0] // cfg.index_block_size)
-                    .view(1, dp, 1, 1)
-                    .expand(1, dp, cp, hkv)
-                    .reshape(1, rows)
-                )
-                for local_offset in range(cfg.index_local_blocks):
-                    local_block = (q_index_block_rows - local_offset).clamp(min=0)
-                    local_mask = (block_ids_rows == local_block.view(1, rows, 1, 1)) & ~owner_page_mask.unsqueeze(0)
-                    block_scores_core = torch.where(
-                        local_mask.unsqueeze(3),
-                        torch.full_like(block_scores_core, -MASKED_ATTENTION_LOGIT),
-                        block_scores_core,
-                    )
-
+            key_5d = read_page_groups(0)
+            next_key_5d = read_page_groups(1) if num_kv_blocks > 1 else None
+            for block_idx in range(num_kv_blocks - 1):
+                block_scores_core = score_page_groups(block_idx, key_5d)
+                block_ids_rows = logical_pages_for_rows(block_idx).view(1, rows, num_cores, page_groups_per_core)
                 device_block_score_groups.append(block_scores_core)
                 device_block_id_groups.append(block_ids_rows)
+                key_5d = next_key_5d
+                if block_idx + 2 < num_kv_blocks:
+                    next_key_5d = read_page_groups(block_idx + 2)
 
-            device_block_scores = (
-                torch.cat(device_block_score_groups, dim=2)
-                .permute(0, 1, 3, 2, 4)
-                .reshape(
-                    1,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores * pages_per_core,
-                )
-            )
+            epilogue_idx = num_kv_blocks - 1
+            epilogue_scores = score_page_groups(epilogue_idx, key_5d)
+            epilogue_ids = logical_pages_for_rows(epilogue_idx).view(1, rows, num_cores, page_groups_per_core)
+            device_block_score_groups.append(epilogue_scores)
+            device_block_id_groups.append(epilogue_ids)
+
+            device_block_scores = torch.cat(device_block_score_groups, dim=4)
             device_block_ids = (
-                torch.cat(device_block_id_groups, dim=2)
-                .unsqueeze(2)
-                .expand(
-                    1,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores,
-                    pages_per_core,
-                )
-                .reshape(
-                    1,
-                    rows,
-                    ql_eff,
-                    num_kv_blocks * num_cores * pages_per_core,
-                )
+                torch.cat(device_block_id_groups, dim=3)
+                .unsqueeze(3)
+                .expand(1, rows, num_cores, ql_eff, num_kv_blocks * page_groups_per_core)
             )
-            device_topk = min(cfg.index_topk_blocks, device_block_scores.shape[-1])
-            device_topk_scores, device_topk_indices = torch.topk(device_block_scores, k=device_topk, dim=-1)
-            device_topk_block_ids = torch.gather(device_block_ids, -1, device_topk_indices)
+            current_block_rows = (
+                (position_ids_dp[batch_idx : batch_idx + 1, :, 0] // cfg.index_block_size)
+                .view(1, dp, 1, 1)
+                .expand(1, dp, cp, hkv)
+                .reshape(1, rows)
+            )
+            future_block = device_block_ids >= current_block_rows.view(1, rows, 1, 1, 1)
+            device_block_scores = torch.where(
+                future_block,
+                torch.full_like(device_block_scores, MASKED_ATTENTION_LOGIT),
+                device_block_scores,
+            )
+            core_topk = min(cfg.index_topk_blocks, device_block_scores.shape[-1])
+            core_topk_scores, core_topk_indices = torch.topk(device_block_scores, k=core_topk, dim=-1)
+            core_topk_block_ids = torch.gather(device_block_ids, -1, core_topk_indices)
+            core_candidate_scores = core_topk_scores.permute(0, 1, 3, 2, 4).reshape(
+                1, rows, ql_eff, num_cores * core_topk
+            )
+            core_candidate_block_ids = core_topk_block_ids.permute(0, 1, 3, 2, 4).reshape(
+                1, rows, ql_eff, num_cores * core_topk
+            )
+            device_topk = min(cfg.index_topk_blocks, core_candidate_scores.shape[-1])
+            device_topk_scores, device_topk_indices = torch.topk(core_candidate_scores, k=device_topk, dim=-1)
+            device_topk_block_ids = torch.gather(core_candidate_block_ids, -1, device_topk_indices)
             candidate_score_groups.append(device_topk_scores)
             candidate_block_groups.append(device_topk_block_ids)
 
@@ -1356,6 +1412,14 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         block_indices = block_indices.permute(1, 0, 2, 3, 4, 5).reshape(
             batch, num_index_heads, query_len, cfg.index_topk_blocks
         )
+        current_block_ids = (
+            (position_ids // cfg.index_block_size)
+            .view(batch, 1, query_len, 1)
+            .expand(batch, num_index_heads, query_len, 1)
+            .to(block_indices.dtype)
+        )
+        block_indices = torch.cat((block_indices[..., :-1], current_block_ids), dim=-1)
+        topk_scores = torch.cat((topk_scores[..., :-1], torch.zeros_like(topk_scores[..., -1:])), dim=-1)
         block_valid = topk_scores > (MASKED_ATTENTION_LOGIT / 2)
         block_indices = block_indices[:, :, 0]
         block_valid = block_valid[:, :, 0]
@@ -2891,7 +2955,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             raise ValueError(
                 "MSA token_indices/token_valid must use either "
                 "[B, Hkv, selected_blocks], "
-                "[B_local, DP*Hkv, selected_len] or "
+                "[B_local, DP*CP*Hkv, selected_len] or "
                 "[B, Hkv, selected_blocks, index_block_size]."
             )
         if selected_len % cfg.index_block_size:
@@ -2925,16 +2989,26 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             raise ValueError(
                 f"msa_attn_block_table must have shape [msa_attn_dp, B_local, pages], got {tuple(block_table.shape)}."
             )
-        num_pages = block_table.shape[-1]
-        if num_pages % cp:
-            raise ValueError(f"Paged MSA attention pages ({num_pages}) must be divisible by msa_attn_cp={cp}.")
-        pages_per_cp = num_pages // cp
+        ctx_len = (
+            blocking_config.ctx_len
+            if blocking_config and blocking_config.ctx_len
+            else block_table.shape[-1] * cp * page_block_size
+        )
+        configured_num_pages = (
+            getattr(blocking_config, "msa_attn_num_logical_pages", None) if blocking_config is not None else None
+        )
+        if configured_num_pages is None and blocking_config is not None:
+            configured_num_pages = getattr(blocking_config, "num_logical_pages", None)
+        num_pages = _resolve_num_logical_pages(ctx_len, page_block_size, configured_num_pages)
+        num_page_groups = _num_page_groups(num_pages, cp)
+        if block_table.shape[-1] < num_page_groups:
+            raise ValueError("msa_attn_block_table is too short for paged attention.")
         if has_global_indices:
             logical_pages_global = gather_idx_global // page_block_size
-            owner_cp = logical_pages_global // pages_per_cp
-            cp_idx = torch.arange(cp, device=query_states.device).view(1, 1, 1, cp, 1)
-            valid_idx = valid_idx_global.unsqueeze(3) & (owner_cp.unsqueeze(3) == cp_idx)
-            gather_idx = gather_idx_global.unsqueeze(3).expand(-1, -1, -1, cp, -1)
+            owner_cp = logical_pages_global % cp
+            cp_idx = torch.arange(cp, device=query_states.device).view(1, 1, cp, 1, 1)
+            valid_idx = valid_idx_global.unsqueeze(2) & (owner_cp.unsqueeze(2) == cp_idx)
+            gather_idx = gather_idx_global.unsqueeze(2).expand(-1, -1, cp, -1, -1)
             gather_idx = torch.where(valid_idx, gather_idx, torch.zeros_like(gather_idx))
             gather_idx = gather_idx.reshape(batch_local, rows, selected_len)
             valid_idx = valid_idx.reshape(batch_local, rows, selected_len)
@@ -2951,8 +3025,8 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         q_rows = (
             query_states.reshape(dp, batch_local, hkv, n_rep, query_len, head_dim)
             .permute(1, 0, 2, 3, 4, 5)
-            .unsqueeze(3)
-            .expand(batch_local, dp, hkv, cp, n_rep, query_len, head_dim)
+            .unsqueeze(2)
+            .expand(batch_local, dp, cp, hkv, n_rep, query_len, head_dim)
             .reshape(batch_local, rows, ql_eff, head_dim)
         )
         local_batch_size = 1
@@ -2966,9 +3040,9 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             valid_blocks = valid_idx[batch_start:batch_end].view(local, rows, selected_blocks, cfg.index_block_size)
             q_local = q_rows[batch_start:batch_end]
             logical_pages = (gather_blocks[0, ..., 0] // page_block_size).long()
-            row_dp = torch.arange(rows, device=query_states.device) // (hkv * cp)
+            row_dp = torch.arange(rows, device=query_states.device) // (cp * hkv)
             table_rows = block_table[:, batch_start].index_select(0, row_dp)
-            physical_block_ids = torch.gather(table_rows, 1, logical_pages)
+            physical_block_ids = torch.gather(table_rows, 1, logical_pages // cp)
             physical_block_ids = torch.where(
                 valid_blocks[0].any(dim=-1),
                 physical_block_ids,
@@ -2979,12 +3053,12 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             selected_k = CtxGatherFuncPagedKVDP.apply(key_cache, block_ids.to(torch.int32))
             # Each core owns one Q head and receives a physical copy of the
             # complete selected KV sequence.
-            # selected_k: [local, DP*Hkv, C, selected_len, D]
+            # selected_k: [local, DP*CP*Hkv, C, selected_len, D]
             selected_k = (
                 selected_k.view(local, rows, selected_len, cfg.head_dim).unsqueeze(2).repeat(1, 1, num_cores, 1, 1)
             )
             valid_core = valid_blocks.view(local, rows, selected_len).unsqueeze(2).repeat(1, 1, num_cores, 1)
-            # q_core: [local, DP*Hkv, C, Q_heads_per_core*QL, D]
+            # q_core: [local, DP*CP*Hkv, C, Q_heads_per_core*QL, D]
             q_core = q_local.view(
                 local,
                 rows,
@@ -3014,13 +3088,13 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             sum_groups.append(sum_core)
             out_groups.append(torch.matmul(exp_core, selected_v.float()))
 
-        max_all = torch.cat(max_groups, dim=0).view(batch_local, dp, hkv, cp, num_cores, -1)
-        sum_all = torch.cat(sum_groups, dim=0).view(batch_local, dp, hkv, cp, num_cores, -1)
-        out_all = torch.cat(out_groups, dim=0).view(batch_local, dp, hkv, cp, num_cores, -1, head_dim)
-        global_max = max_all.max(dim=3).values
-        cp_weight = torch.exp(max_all - global_max.unsqueeze(3))
-        global_sum = (cp_weight * sum_all).sum(dim=3)
-        global_out = (cp_weight.unsqueeze(-1) * out_all).sum(dim=3)
+        max_all = torch.cat(max_groups, dim=0).view(batch_local, dp, cp, hkv, num_cores, -1)
+        sum_all = torch.cat(sum_groups, dim=0).view(batch_local, dp, cp, hkv, num_cores, -1)
+        out_all = torch.cat(out_groups, dim=0).view(batch_local, dp, cp, hkv, num_cores, -1, head_dim)
+        global_max = max_all.max(dim=2).values
+        cp_weight = torch.exp(max_all - global_max.unsqueeze(2))
+        global_sum = (cp_weight * sum_all).sum(dim=2)
+        global_out = (cp_weight.unsqueeze(-1) * out_all).sum(dim=2)
         safe_sum = torch.where(global_sum > 0, global_sum, torch.ones_like(global_sum))
         out_all = torch.where(
             global_sum.unsqueeze(-1) > 0,
@@ -3144,42 +3218,38 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
                     or key_cache.shape[1] != attn_dp * attn_cp * self.config.num_key_value_heads
                 ):
                     raise ValueError(
-                        "Paged MiniMax attention requires physical [pages, DP*Hkv*CP, page_size, head_dim] caches."
+                        "Paged MiniMax attention requires physical [pages, DP*CP*Hkv, page_size, head_dim] caches."
                     )
                 batch_local = input_shape[0] // attn_dp
                 position_ids_dp = position_ids.view(attn_dp, batch_local, -1).permute(1, 0, 2)
                 table = attention_block_table.permute(1, 0, 2)
                 logical_page = position_ids_dp // key_cache.shape[2]
-                num_pages = attention_block_table.shape[-1]
-                if num_pages % attn_cp:
-                    raise ValueError(
-                        f"Paged MSA attention pages ({num_pages}) must be divisible by msa_attn_cp={attn_cp}."
-                    )
-                owner_cp = logical_page // (num_pages // attn_cp)
-                cp_idx = torch.arange(attn_cp, device=key_cache.device).view(1, 1, 1, 1, attn_cp)
-                row_live = owner_cp.unsqueeze(2).unsqueeze(-1) == cp_idx
+                logical_page_group = logical_page // attn_cp
+                owner_cp = logical_page % attn_cp
+                cp_idx = torch.arange(attn_cp, device=key_cache.device).view(1, 1, attn_cp, 1, 1)
+                row_live = owner_cp.unsqueeze(2).unsqueeze(3) == cp_idx
                 row_live = row_live.expand(
-                    batch_local, attn_dp, self.config.num_key_value_heads, key_states.shape[2], attn_cp
+                    batch_local, attn_dp, attn_cp, self.config.num_key_value_heads, key_states.shape[2]
                 )
-                physical_page = torch.gather(table, 2, logical_page).unsqueeze(2).unsqueeze(-1)
+                physical_page = torch.gather(table, 2, logical_page_group).unsqueeze(2).unsqueeze(3)
                 physical_page = physical_page.expand_as(row_live)
                 invalid_page = torch.full_like(physical_page, torch.iinfo(torch.int32).max)
-                block_id = torch.where(row_live, physical_page, invalid_page).permute(0, 1, 2, 4, 3)
+                block_id = torch.where(row_live, physical_page, invalid_page)
                 addr = (position_ids_dp % key_cache.shape[2]).to(torch.int32).unsqueeze(2).unsqueeze(3)
-                addr = addr.expand(batch_local, attn_dp, self.config.num_key_value_heads, attn_cp, key_states.shape[2])
+                addr = addr.expand(batch_local, attn_dp, attn_cp, self.config.num_key_value_heads, key_states.shape[2])
                 updates_k = (
                     key_states.view(attn_dp, batch_local, self.config.num_key_value_heads, -1, self.head_dim)
                     .permute(1, 0, 2, 3, 4)
-                    .unsqueeze(3)
-                    .expand(batch_local, attn_dp, self.config.num_key_value_heads, attn_cp, -1, self.head_dim)
-                    .reshape(batch_local, attn_dp * self.config.num_key_value_heads * attn_cp, -1, self.head_dim)
+                    .unsqueeze(2)
+                    .expand(batch_local, attn_dp, attn_cp, self.config.num_key_value_heads, -1, self.head_dim)
+                    .reshape(batch_local, attn_dp * attn_cp * self.config.num_key_value_heads, -1, self.head_dim)
                 )
                 updates_v = (
                     value_states.view(attn_dp, batch_local, self.config.num_key_value_heads, -1, self.head_dim)
                     .permute(1, 0, 2, 3, 4)
-                    .unsqueeze(3)
-                    .expand(batch_local, attn_dp, self.config.num_key_value_heads, attn_cp, -1, self.head_dim)
-                    .reshape(batch_local, attn_dp * self.config.num_key_value_heads * attn_cp, -1, self.head_dim)
+                    .unsqueeze(2)
+                    .expand(batch_local, attn_dp, attn_cp, self.config.num_key_value_heads, -1, self.head_dim)
+                    .reshape(batch_local, attn_dp * attn_cp * self.config.num_key_value_heads, -1, self.head_dim)
                 )
                 layer.keys = CtxPagedScatterFuncDP.apply(
                     key_cache,
@@ -3864,6 +3934,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         indexer_cp = int(qaic_config.get("msa_indexer_cp", 1) or 1)
         indexer_hkv = int(qaic_config.get("indexer_n_head", 1) or 1)
         paged_kv = bool(qaic_config.get("paged_kv", False))
+        shared_num_pages = qaic_config.get("num_logical_pages")
         if prefill_seq_len > 1 and (indexer_dp != 1 or indexer_cp != 1 or msa_attn_dp != 1 or msa_attn_cp != 1):
             raise ValueError(
                 "MiniMax MSA prefill requires indexer DP=CP=1 and attention DP=CP=1; "
@@ -3877,11 +3948,32 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             page_size = int(
                 qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128))
             )
-            num_pages = (ctx_len + page_size - 1) // page_size
-            if num_pages % msa_attn_cp:
-                raise ValueError(
-                    f"Paged MSA attention pages ({num_pages}) must be divisible by msa_attn_cp={msa_attn_cp}."
-                )
+            indexer_num_pages = _resolve_num_logical_pages(
+                ctx_len, page_size, qaic_config.get("msa_indexer_num_logical_pages", shared_num_pages)
+            )
+            attn_num_pages = _resolve_num_logical_pages(
+                ctx_len, page_size, qaic_config.get("msa_attn_num_logical_pages", shared_num_pages)
+            )
+            indexer_page_groups = _num_page_groups(indexer_num_pages, indexer_cp)
+            attn_page_groups = _num_page_groups(attn_num_pages, msa_attn_cp)
+            if prefill_seq_len == 1:
+                index_block_size = int(getattr(self.config.text_config, "index_block_size", page_size))
+                if page_size != index_block_size:
+                    raise ValueError("Paged MSA decode requires page_block_size == index_block_size.")
+                if int(getattr(self.config.text_config, "index_local_blocks", 1)) != 1:
+                    raise ValueError("Paged MSA decode requires index_local_blocks == 1.")
+                indexer_num_blocks = int(qaic_config.get("indexer_num_blocks") or qaic_config.get("num_kv_blocks") or 1)
+                indexer_page_divisor = indexer_num_blocks * indexer_cp
+                if indexer_num_pages % indexer_page_divisor:
+                    raise ValueError(
+                        f"Paged MSA indexer pages ({indexer_num_pages}) must be divisible by "
+                        f"indexer_num_blocks * msa_indexer_cp ({indexer_page_divisor})."
+                    )
+                num_cores_per_device = int(qaic_config.get("num_cores_per_device", 1) or 1)
+                if (indexer_num_pages // indexer_page_divisor) % num_cores_per_device:
+                    raise ValueError(
+                        "Paged MSA indexer page groups per block must be divisible by num_cores_per_device."
+                    )
         if use_context_kv and ctx_len % msa_attn_cp:
             raise ValueError(f"Main-KV context length {ctx_len} must be divisible by msa_attn_cp={msa_attn_cp}.")
         kv_batch_size = kv_cache_batch_size if (continuous_batching and kv_cache_batch_size) else export_batch_size
@@ -3932,13 +4024,14 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 spec["indexer_kv_rows"] = indexer_kv_rows
                 spec["indexer_kv_ctx_len"] = ctx_len // indexer_cp
             if qaic_config.get("paged_kv", False):
-                page_size = int(
-                    qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128))
-                )
                 cache_batch_size = kv_cache_batch_size if continuous_batching else export_batch_size
                 spec["page_size"] = page_size
-                spec["num_pages"] = (ctx_len + page_size - 1) // page_size
-                spec["physical_pages"] = cache_batch_size * spec["num_pages"]
+                spec["indexer_num_pages"] = indexer_num_pages
+                spec["attn_num_pages"] = attn_num_pages
+                spec["indexer_page_groups"] = indexer_page_groups
+                spec["attn_page_groups"] = attn_page_groups
+                spec["indexer_physical_pages"] = cache_batch_size * indexer_page_groups
+                spec["attn_physical_pages"] = cache_batch_size * attn_page_groups
                 spec["indexer_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_indexer_dp", 1) or 1)
                 spec["attn_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_attn_dp", 1) or 1)
             if continuous_batching:
@@ -3968,15 +4061,16 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 spec["indexer_kv_rows"] = indexer_kv_rows
                 spec["indexer_kv_ctx_len"] = ctx_len // indexer_cp
             if qaic_config.get("paged_kv", False):
-                page_size = int(
-                    qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128))
-                )
                 cache_batch_size = kv_cache_batch_size if continuous_batching else export_batch_size
                 spec["page_size"] = page_size
                 spec["indexer_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_indexer_dp", 1) or 1)
                 spec["attn_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_attn_dp", 1) or 1)
-                spec["num_pages"] = (ctx_len + page_size - 1) // page_size
-                spec["physical_pages"] = cache_batch_size * spec["num_pages"]
+                spec["indexer_num_pages"] = indexer_num_pages
+                spec["attn_num_pages"] = attn_num_pages
+                spec["indexer_page_groups"] = indexer_page_groups
+                spec["attn_page_groups"] = attn_page_groups
+                spec["indexer_physical_pages"] = cache_batch_size * indexer_page_groups
+                spec["attn_physical_pages"] = cache_batch_size * attn_page_groups
             if continuous_batching:
                 spec["full_batch_size"] = kv_cache_batch_size
             if full_batch_size and seq_len != 1:
@@ -4073,13 +4167,17 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         if qaic_config.get("paged_kv", False):
             for i in range(lm_config.num_hidden_layers):
                 if i < len(layer_types) and layer_types[i] == "minimax_m3_sparse":
-                    for cache_name in ("past_key", "past_value", "index_key"):
+                    for cache_name in ("past_key", "past_value"):
                         _set_retained_state_axes(
                             f"{cache_name}.{i}",
-                            {0: "physical_pages", 2: "page_size"},
+                            {0: "attn_physical_pages", 2: "page_size"},
                         )
-            lang_dynamic_axes["msa_indexer_block_table"] = {1: "indexer_batch_local", 2: "num_pages"}
-            lang_dynamic_axes["msa_attn_block_table"] = {1: "attn_batch_local", 2: "num_pages"}
+                    _set_retained_state_axes(
+                        f"index_key.{i}",
+                        {0: "indexer_physical_pages", 2: "page_size"},
+                    )
+            lang_dynamic_axes["msa_indexer_block_table"] = {1: "indexer_batch_local", 2: "indexer_page_groups"}
+            lang_dynamic_axes["msa_attn_block_table"] = {1: "attn_batch_local", 2: "attn_page_groups"}
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         if comp_ctx_lengths is not None:
@@ -4117,7 +4215,18 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         return output_names
 
     def get_dummy_pkv_cache(
-        self, config, batch_size, seq_len, dtype=None, *, paged=False, dp=1, cp=1, page_block_size=128, hkv=None
+        self,
+        config,
+        batch_size,
+        seq_len,
+        dtype=None,
+        *,
+        paged=False,
+        dp=1,
+        cp=1,
+        page_block_size=128,
+        num_logical_pages=None,
+        hkv=None,
     ):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32) or torch.float32
         kv_cache_shape = self._main_kv_partition_shape(config=config, batch_size=batch_size, seq_len=seq_len)
@@ -4126,8 +4235,10 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         )
         layer_types = getattr(config, "layer_types", None) or ["full_attention"] * config.num_hidden_layers
         batch_local = batch_size // dp
-        num_pages = (seq_len + page_block_size - 1) // page_block_size
-        physical_pages = dp * batch_local * num_pages
+        num_pages = (
+            (seq_len + page_block_size - 1) // page_block_size if num_logical_pages is None else int(num_logical_pages)
+        )
+        physical_pages = dp * batch_local * _num_page_groups(num_pages, cp)
         past_key_values = []
         for layer_idx in range(config.num_hidden_layers):
             layer_type = layer_types[layer_idx] if layer_idx < len(layer_types) else "full_attention"
@@ -4159,14 +4270,17 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         dp=1,
         cp=1,
         page_block_size=128,
+        num_logical_pages=None,
         hkv=None,
         prefill=False,
     ):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32) or torch.float32
         layer_types = getattr(config, "layer_types", None) or ["full_attention"] * config.num_hidden_layers
         batch_local = batch_size // dp
-        num_pages = (seq_len + page_block_size - 1) // page_block_size
-        physical_pages = dp * batch_local * num_pages
+        num_pages = (
+            (seq_len + page_block_size - 1) // page_block_size if num_logical_pages is None else int(num_logical_pages)
+        )
+        physical_pages = dp * batch_local * _num_page_groups(num_pages, cp)
         # MSA prefill uses the reference rank-4 cache layout consumed by
         # M3CtxScatter: [batch, indexer_kv_heads, ctx_len, head_dim].  The
         # compact [rows, ctx_len / cp, head_dim] layout is decode-only.
@@ -4246,7 +4360,15 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         page_block_size = int(
             qaic_config.get("page_block_size", getattr(self.config.text_config, "index_block_size", 128))
         )
-        num_pages = (ctx_len + page_block_size - 1) // page_block_size
+        shared_num_pages = qaic_config.get("num_logical_pages")
+        indexer_num_pages = _resolve_num_logical_pages(
+            ctx_len, page_block_size, qaic_config.get("msa_indexer_num_logical_pages", shared_num_pages)
+        )
+        attn_num_pages = _resolve_num_logical_pages(
+            ctx_len, page_block_size, qaic_config.get("msa_attn_num_logical_pages", shared_num_pages)
+        )
+        indexer_page_groups = _num_page_groups(indexer_num_pages, indexer_cp)
+        attn_page_groups = _num_page_groups(attn_num_pages, attn_cp)
         patch_dim = (
             self.config.vision_config.num_channels
             * self.config.vision_config.temporal_patch_size
@@ -4275,6 +4397,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             dp=attn_dp,
             cp=attn_cp,
             page_block_size=page_block_size,
+            num_logical_pages=attn_num_pages if paged_kv else None,
         )
         index_keys = self.get_dummy_index_keys(
             config=self.model.language_model.config,
@@ -4285,6 +4408,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             dp=indexer_dp,
             cp=indexer_cp,
             page_block_size=page_block_size,
+            num_logical_pages=indexer_num_pages if paged_kv else None,
             hkv=int(qaic_config.get("indexer_n_head", 1) or 1),
             prefill=prefill,
         )
@@ -4294,14 +4418,14 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             if batch_size % indexer_dp or batch_size % attn_dp:
                 raise ValueError("Paged MiniMax block-table DP factors must divide batch_size.")
             inputs["msa_indexer_block_table"] = (
-                torch.arange(batch_size // indexer_dp * num_pages, dtype=torch.int32)
-                .view(1, batch_size // indexer_dp, num_pages)
+                torch.arange(batch_size // indexer_dp * indexer_page_groups, dtype=torch.int32)
+                .view(1, batch_size // indexer_dp, indexer_page_groups)
                 .expand(indexer_dp, -1, -1)
                 .contiguous()
             )
             inputs["msa_attn_block_table"] = (
-                torch.arange(batch_size // attn_dp * num_pages, dtype=torch.int32)
-                .view(1, batch_size // attn_dp, num_pages)
+                torch.arange(batch_size // attn_dp * attn_page_groups, dtype=torch.int32)
+                .view(1, batch_size // attn_dp, attn_page_groups)
                 .expand(attn_dp, -1, -1)
                 .contiguous()
             )
@@ -4353,12 +4477,12 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                     IOInfo(
                         name="msa_indexer_block_table",
                         datatype=torch.int32,
-                        shape=("msa_indexer_dp", "indexer_batch_local", "num_pages"),
+                        shape=("msa_indexer_dp", "indexer_batch_local", "indexer_page_groups"),
                     ),
                     IOInfo(
                         name="msa_attn_block_table",
                         datatype=torch.int32,
-                        shape=("msa_attn_dp", "attn_batch_local", "num_pages"),
+                        shape=("msa_attn_dp", "attn_batch_local", "attn_page_groups"),
                     ),
                 ]
             )

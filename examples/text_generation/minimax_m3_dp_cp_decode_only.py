@@ -51,6 +51,8 @@ def _run_pytorch_parity_test(
     indexer_n_head: int = 1,
     num_cores_per_device: int = 16,
     batch_size: int = 1,
+    skip_kv: bool = False,
+    num_kv_blocks: int = 2,
 ) -> None:
     """Compare HF PyTorch vs AIC on the last decode token of the prompt (prefill_seq_len=1)."""
     full_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
@@ -79,6 +81,7 @@ def _run_pytorch_parity_test(
     expected_token = int(hf_logits.argmax(-1)[0, 0])
 
     qaic_config = {
+        "skip_kv": skip_kv,
         "moe_config": {
             "flavour": "expert_parallel",
             "expert_parallel_chunk_size": expert_parallel_chunk_size,
@@ -88,7 +91,7 @@ def _run_pytorch_parity_test(
     }
     if msa_indexer_dp > 1 or msa_attn_dp > 1 or msa_attn_cp > 1:
         qaic_config["blocking_mode"] = "kv_headpar"
-        qaic_config["num_kv_blocks"] = 2
+        qaic_config["num_kv_blocks"] = num_kv_blocks
         if msa_indexer_dp > 1 or msa_indexer_cp > 1:
             qaic_config["msa_indexer_dp"] = msa_indexer_dp
             qaic_config["msa_indexer_cp"] = msa_indexer_cp
@@ -141,6 +144,17 @@ def main():
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--num-layers", type=int, default=None)
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--skip-kv",
+        action="store_true",
+        help="Skip KV blocks that are entirely in the future (disabled by default).",
+    )
+    parser.add_argument(
+        "--num-kv-blocks",
+        type=int,
+        default=2,
+        help="Number of KV cache blocks used by blocked attention.",
+    )
     parser.add_argument(
         "--expert-parallel-chunk-size",
         type=int,
@@ -204,6 +218,8 @@ def main():
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
+    if args.num_kv_blocks < 1:
+        parser.error("--num-kv-blocks must be positive")
     execution_batch_size = _execution_batch_size(args.batch_size, args.msa_indexer_dp, args.msa_attn_dp)
 
     if args.test:
@@ -225,6 +241,8 @@ def main():
                 indexer_n_head=args.indexer_n_head,
                 num_cores_per_device=args.num_cores_per_device,
                 batch_size=args.batch_size,
+                skip_kv=args.skip_kv,
+                num_kv_blocks=args.num_kv_blocks,
             )
         return
 
@@ -255,7 +273,8 @@ def main():
         log_times=True,
         qaic_config={
             "blocking_mode": "kv_headpar",
-            "num_kv_blocks": 2,
+            "num_kv_blocks": args.num_kv_blocks,
+            "skip_kv": args.skip_kv,
             "msa_indexer_dp": args.msa_indexer_dp,
             "msa_indexer_cp": args.msa_indexer_cp,
             "msa_attn_dp": args.msa_attn_dp,
