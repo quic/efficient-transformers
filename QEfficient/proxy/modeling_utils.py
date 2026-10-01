@@ -12,8 +12,9 @@ from collections import Counter
 from transformers import AutoConfig
 
 from QEfficient.utils import get_num_layers_from_config
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 
+logger = QEFFLogger.get_logger("INFRA")
 _CONFIG_LOAD_KWARGS = (
     "cache_dir",
     "force_download",
