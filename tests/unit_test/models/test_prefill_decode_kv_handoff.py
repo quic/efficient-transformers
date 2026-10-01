@@ -111,6 +111,12 @@ def _decode_inputs(next_token, decode_position, past_key_values):
     }
 
 
+def _make_transformed_qeff_model(model):
+    qeff = QEFFAutoModelForCausalLM(model)
+    qeff.transform(ctx_len=CTX_LEN, seq_len=PREFILL_LEN, bs=1)
+    return qeff
+
+
 # ---------------------------------------------------------------------------
 # Tiny model factories
 # ---------------------------------------------------------------------------
@@ -212,7 +218,7 @@ def _run_real_handoff(factory, n_decode_steps=3, seed=42):
     """
     torch.manual_seed(seed)
     model, cfg = factory()
-    qeff = QEFFAutoModelForCausalLM(model)
+    qeff = _make_transformed_qeff_model(model)
 
     input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
     prefill_in = _prefill_inputs(input_ids, cfg)
@@ -258,7 +264,7 @@ class TestPrefillWritesCache:
 
     def _assert_cache_written(self, factory, label):
         model, cfg = factory()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_model(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
@@ -390,7 +396,7 @@ class TestRealCacheInfluencesOutput:
 
         for seed in range(n_seeds):
             torch.manual_seed(seed)
-            qeff = QEFFAutoModelForCausalLM(model)
+            qeff = _make_transformed_qeff_model(model)
             input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
             # Prefill to get real cache
@@ -446,7 +452,7 @@ class TestDecodePositionAdvancesStrictly:
 
     def _assert_positions_advance(self, factory, label):
         model, cfg = factory()
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_model(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         prefill_in = _prefill_inputs(input_ids, cfg)
 
@@ -515,7 +521,7 @@ class TestFullPipelineConsistency:
         hf_token = hf_logits.argmax(-1).item()
 
         # QEff prefill
-        qeff = QEFFAutoModelForCausalLM(model)
+        qeff = _make_transformed_qeff_model(model)
         with torch.no_grad():
             prefill_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         qeff_token = _extract_next_token(prefill_out.logits)

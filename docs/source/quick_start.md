@@ -30,12 +30,12 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``shoul
 Below are the Command Line APIs we support for infernce in the library.
 
 #### Export
-**CLI API:** [`QEfficient.cloud.export`](#export_api)
+**Deprecated CLI API:** [`QEfficient.cloud.export`](#export_api)
 
-User can export a model to ONNX using the CLI command. This will convert the model to an ONNX format and store the resulting ONNX model file in the QEfficient cache folder. [Click here](#export_api) for more information about the export command and arguments explanation.
+Direct export is deprecated as an external user-facing API. Use `QEfficient.cloud.infer` or the Python `.compile()` API instead; both paths export ONNX as needed with the complete compile configuration.
 
 ```bash
-python -m QEfficient.cloud.export --model_name gpt2
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is"
 ```
 ---
 
@@ -197,7 +197,7 @@ print(f"{model_name} optimized for Cloud AIxxx (AI100, AI200 and so on) \n", qef
 
 ### 2. Export and Compile with one API
 
-Use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.
+Use the model `compile()` API to export the transformed model to ONNX and compile it for Cloud AI hardware. The legacy `qualcomm_efficient_converter`/`QEfficient.export` entry points are deprecated as public APIs.
 
 ```Python
 # We can now export the modified models to ONNX framework

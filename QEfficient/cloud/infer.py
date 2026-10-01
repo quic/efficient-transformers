@@ -267,7 +267,6 @@ def main(
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
         trust_remote_code=trust_remote_code,
-        qaic_config=qaic_config,
     )
 
     image_path = kwargs.pop("image_path", None)
@@ -302,6 +301,7 @@ def main(
         qnn_config=qnn_config,
         use_onnx_subfunctions=use_onnx_subfunctions,
         dynamo=dynamo,
+        qaic_config=qaic_config,
         **kwargs,
     )
 

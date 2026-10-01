@@ -370,7 +370,6 @@ def get_session(
     qeff_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path,
         continuous_batching=is_cb,
-        qaic_config=qaic_config,
     )
     num_devices = len(device_group)
     model_qpc_path: str = qeff_model.compile(
@@ -380,6 +379,7 @@ def get_session(
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
+        qaic_config=qaic_config,
     )
     print(f"{model_qpc_path=}")
     # init qaic session

@@ -263,9 +263,8 @@ def pld_spec_decode_inference(
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, qaic_config={"speculative_model_type": "target"}
-    )
+    target_qaic_config = {"speculative_model_type": "target"}
+    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=continuous_batching)
 
     num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
@@ -276,6 +275,7 @@ def pld_spec_decode_inference(
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
         num_speculative_tokens=decode_ks,
+        qaic_config=target_qaic_config,
     )
     # init qaic session
     target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
