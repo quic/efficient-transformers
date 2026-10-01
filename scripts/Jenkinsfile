@@ -109,8 +109,6 @@ def impactOptions(String stageKey) {
 pipeline {
     agent { node { label params.NODE_LABEL } }
 
-    options { disableConcurrentBuilds() }
-
     parameters {
         string(
             name: 'NODE_LABEL',
@@ -278,7 +276,7 @@ pipeline {
                             export QEFF_APT_ARCHIVES_PATH="${QEFF_APT_ARCHIVES_PATH:-${HOME}/.cache/qeff-apt/archives}"
                             export QEFF_APT_LISTS_PATH="${QEFF_APT_LISTS_PATH:-${HOME}/.cache/qeff-apt/lists}"
                             mkdir -p "${QEFF_UV_CACHE_PATH}" "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
-                            sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                            sudo docker run --pull=always --privileged -dit --name ${BUILD_TAG} \
                             -e HF_TOKEN=${HF_TOKEN} \
                             -e TMPDIR=/efficient-transformers/.ci-tmp/default \
                             -e PIP_CACHE_DIR=/root/.cache/pip \
@@ -733,11 +731,6 @@ pipeline {
                 } catch (error) {
                     echo "Failed to collect container diagnostics: ${error}"
                 }
-                try {
-                    sh 'sudo chown -R ubuntu .'
-                } catch (error) {
-                    echo "Failed to change ownership: ${error}"
-                }
                 if (env.CI_IMPACT_TRUSTED_TOOL_DIR) {
                     if (!(env.CI_IMPACT_TRUSTED_TOOL_DIR ==~ /\/opt\/qeff-ci\/qgenie\/[A-Za-z0-9_.-]+/)) {
                         error("Refusing to remove unsafe qgenie tool path: ${env.CI_IMPACT_TRUSTED_TOOL_DIR}")
@@ -783,6 +776,11 @@ pipeline {
                     sh 'sudo docker rm -f ${BUILD_TAG}'
                 } catch (error) {
                     echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+                try {
+                    sh 'sudo chown -R "$(id -u):$(id -g)" .'
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
                 }
             }
             echo 'Cleaning Workspace'
