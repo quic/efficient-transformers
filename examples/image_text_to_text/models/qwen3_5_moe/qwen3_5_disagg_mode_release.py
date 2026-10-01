@@ -166,6 +166,8 @@ qaic_config = {
     "n_rep_chunk": 1,
     "skip_kv": True,
     "gdn_chunk_size": gdn_chunk_size,
+    # Prefill replaces the complete BS1 GDN state, so retained-state routing is unnecessary.
+    "gdn_full_state_update": True,
 }
 
 # CL 64K BSZ1
@@ -242,7 +244,7 @@ else:
     try:
         prefill_compile_result = qeff_model.compile(
             batch_size=1,
-            kv_cache_batch_size=FULL_BATCH_SIZE,
+            kv_cache_batch_size=1,
             full_batch_size=1,
             prefill_seq_len=PREFILL_SEQ_LEN,
             ctx_len=CTX_LEN,
