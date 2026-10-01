@@ -136,6 +136,14 @@ def find_checkpoint_key(
     if stripped.endswith(".mlp.router.weight"):
         candidates.append(stripped[: -len(".router.weight")] + ".gate.weight")
 
+    parametrized_weight_suffixes = {
+        ".parametrizations.weight.original0": ".weight_g",
+        ".parametrizations.weight.original1": ".weight_v",
+    }
+    for suffix, checkpoint_suffix in parametrized_weight_suffixes.items():
+        if stripped.endswith(suffix):
+            candidates.append(stripped[: -len(suffix)] + checkpoint_suffix)
+
     return _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
 
 

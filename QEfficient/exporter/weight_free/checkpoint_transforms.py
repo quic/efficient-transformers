@@ -1000,3 +1000,91 @@ class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         write_index(out, new_weight_map)
         sentinel.touch()
         return True
+
+
+# ---------------------------------------------------------------------------
+# Transform 6: materialize Wav2Vec2 positional-convolution weight normalization
+# ---------------------------------------------------------------------------
+
+
+class Wav2Vec2PositionalConvWeightNormCheckpointTransform(BaseCheckpointTransform):
+    """Add the materialized Wav2Vec2 positional-convolution weight to a prepared checkpoint.
+
+    HF stores this weight as ``weight_g`` and ``weight_v``. The Dynamo model
+    exports the effective ``weight`` after QEff removes the parametrization, so
+    weight-free checkpoint preparation must generate the matching tensor.
+    """
+
+    _PREFIX = "wav2vec2.encoder.pos_conv_embed.conv"
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        # Apply only to HF checkpoints that store the parametrized form.
+        return all(f"{cls._PREFIX}.{suffix}" in weight_map for suffix in ("weight_g", "weight_v"))
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        **kwargs,
+    ) -> bool:
+        sentinel = out / _SENTINEL
+        if sentinel.exists():
+            logger.info("Wav2Vec2PositionalConvWeightNormCheckpointTransform: prepared checkpoint exists, skipping.")
+            return False
+
+        out.mkdir(parents=True, exist_ok=True)
+        copy_checkpoint_aux_files(src, out)
+
+        weight_map = read_weight_map(src)
+        weight_g_key = f"{cls._PREFIX}.weight_g"
+        weight_v_key = f"{cls._PREFIX}.weight_v"
+        weight_key = f"{cls._PREFIX}.weight"
+        shard_names = sorted(set(weight_map.values()))
+        new_name_for = {
+            shard: (f"model_{idx:04d}.safetensors" if len(shard_names) > 1 else "model.safetensors")
+            for idx, shard in enumerate(shard_names)
+        }
+
+        # Read the two source tensors from their mapped shards. They may be in
+        # different shards for a larger checkpoint.
+        with safe_open(str(src / weight_map[weight_g_key]), framework="pt") as handle:
+            weight_g = handle.get_tensor(weight_g_key)
+        with safe_open(str(src / weight_map[weight_v_key]), framework="pt") as handle:
+            weight_v = handle.get_tensor(weight_v_key)
+
+        # Match the dtype used by the exported ONNX graph before deriving the
+        # effective weight.
+        if weight_g.is_floating_point():
+            weight_g = weight_g.to(target_dtype)
+        if weight_v.is_floating_point():
+            weight_v = weight_v.to(target_dtype)
+
+        # HF's Conv1d weight_norm uses dim=2: normalize across output and
+        # input-channel dimensions while retaining the kernel dimension.
+        norm_dims = tuple(dim for dim in range(weight_v.ndim) if dim != 2)
+        weight = weight_g * weight_v / torch.linalg.vector_norm(weight_v, dim=norm_dims, keepdim=True)
+        weight_shard = weight_map[weight_v_key]
+
+        # Preserve every checkpoint tensor and add the derived weight to the
+        # shard containing weight_v, which keeps the output index unambiguous.
+        for shard_name in shard_names:
+            tensors: Dict[str, torch.Tensor] = {}
+            with safe_open(str(src / shard_name), framework="pt") as handle:
+                for key in handle.keys():
+                    tensor = handle.get_tensor(key)
+                    tensors[key] = tensor.to(target_dtype) if tensor.is_floating_point() else tensor
+            if shard_name == weight_shard:
+                tensors[weight_key] = weight
+            atomic_save(tensors, out / new_name_for[shard_name])
+
+        # Register the generated tensor so weight-free ONNX inputs resolve to
+        # the prepared checkpoint instead of the original weight_g/weight_v pair.
+        new_weight_map = {key: new_name_for[shard] for key, shard in weight_map.items()}
+        new_weight_map[weight_key] = new_name_for[weight_shard]
+        write_index(out, new_weight_map)
+        sentinel.touch()
+        logger.info(f"Wav2Vec2PositionalConvWeightNormCheckpointTransform: done → {out}")
+        return True
