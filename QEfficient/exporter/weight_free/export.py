@@ -222,6 +222,7 @@ def export_weight_free_onnx(
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
 
     meta_qeff_model.model.requires_grad_(False)
+    torch_onnx_export_start = time.perf_counter()
     with dynamo_invoke_subgraph_fallback_env():
         onnx_program = torch.onnx.export(
             meta_qeff_model.model,
@@ -236,6 +237,11 @@ def export_weight_free_onnx(
         )
     if onnx_program is None:
         raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
+    torch_onnx_export_duration_seconds = time.perf_counter() - torch_onnx_export_start
+    logger.info(
+        "Weight-free torch.onnx.export completed in %.2fs",
+        torch_onnx_export_duration_seconds,
+    )
 
     prep_start = time.perf_counter()
     prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
@@ -245,6 +251,10 @@ def export_weight_free_onnx(
         prep_duration_seconds,
         prepared_model_ref,
     )
+    qeff_model._weight_free_export_metrics = {
+        "torch_onnx_export_seconds": torch_onnx_export_duration_seconds,
+        "checkpoint_preparation_seconds": prep_duration_seconds,
+    }
 
     spec = promote_initializers_and_build_spec(
         onnx_program=onnx_program,

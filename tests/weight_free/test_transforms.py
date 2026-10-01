@@ -247,7 +247,7 @@ class TestWeightFreeCheckpointTransforms:
         torch.testing.assert_close(tensors["model.layers.3.mlp.gate.weight"], torch.full((2, 2), 6.0))
         assert not any("layers.4" in key or ".mtp." in key or key.endswith("_scale_inv") for key in tensors)
 
-    def test_reduced_glm_moe_dsa_checkpoint_requires_four_layers(self, tmp_path):
+    def test_glm_moe_dsa_checkpoint_requires_positive_layer_count(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
         _write_safetensors_checkpoint(
@@ -262,16 +262,51 @@ class TestWeightFreeCheckpointTransforms:
             },
         )
 
-        with pytest.raises(ValueError, match="reduced four-layer"):
+        with pytest.raises(ValueError, match="positive num_hidden_layers"):
             GlmMoeDsaReducedCheckpointTransform.apply(
                 src,
                 tmp_path / "out",
                 model_config=SimpleNamespace(
                     model_type="glm_moe_dsa",
-                    num_hidden_layers=78,
+                    num_hidden_layers=0,
                     quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]},
                 ),
             )
+
+    def test_glm_moe_dsa_checkpoint_stacks_all_active_sparse_layers(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        tensors = {
+            "model.layers.0.self_attn.q_b_proj.weight": torch.ones(8, 2),
+            "model.layers.0.self_attn.q_b_proj.weight_scale_inv": torch.ones(4, 1),
+            "model.layers.0.mlp.gate_proj.weight": torch.ones(2, 2),
+            "model.layers.0.mlp.up_proj.weight": torch.ones(2, 2),
+            "model.layers.0.mlp.down_proj.weight": torch.ones(2, 2),
+        }
+        for layer_idx in (3, 4):
+            for kind in ("gate", "up", "down"):
+                tensors[f"model.layers.{layer_idx}.mlp.experts.0.{kind}_proj.weight"] = torch.full((2, 2), layer_idx)
+                tensors[f"model.layers.{layer_idx}.mlp.experts.0.{kind}_proj.weight_scale_inv"] = torch.ones(1, 1)
+        _write_safetensors_checkpoint(src, tensors)
+
+        config = SimpleNamespace(
+            model_type="glm_moe_dsa",
+            num_hidden_layers=5,
+            num_attention_heads=2,
+            qk_nope_head_dim=2,
+            qk_rope_head_dim=2,
+            n_routed_experts=1,
+            mlp_layer_types=["dense", "dense", "dense", "sparse", "sparse"],
+            quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]},
+        )
+
+        assert GlmMoeDsaReducedCheckpointTransform.apply(src, out, model_config=config)
+        prepared = _load_prepared_tensors(out)
+        for layer_idx in (3, 4):
+            for kind in ("gate", "up", "down"):
+                key = f"model.layers.{layer_idx}.mlp.moe_weights.{kind}"
+                torch.testing.assert_close(prepared[key], torch.full((1, 2, 2), layer_idx, dtype=torch.float32))
 
     def test_glm_checkpoint_transform_precedes_generic_moe_stacking(self):
         transforms = QEFFAutoModelForCausalLM._checkpoint_transforms

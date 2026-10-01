@@ -16,6 +16,7 @@ the source floating-point dtype does not already match the exported ONNX input d
 
 import json
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -264,12 +265,11 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
 
 
 class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
-    """Prepare the approved four-layer GLM-MoE-DSA checkpoint slice.
+    """Prepare an active-layer GLM-MoE-DSA checkpoint.
 
-    The source checkpoint contains blockwise FP8 weights for the full model. A
-    reduced GLM config traces only layers 0-3, so this transform reads just
-    those tensors, dequantizes active FP8 weights, and materializes QEff-only
-    attention and MoE parameters that do not exist in the upstream checkpoint.
+    The source checkpoint contains blockwise FP8 weights and per-expert MLP
+    tensors. This transform reads the configured active layers, dequantizes
+    their FP8 weights, and materializes QEff-only attention and MoE parameters.
     """
 
     _LAYER_RE = re.compile(r"^model\.layers\.(\d+)\.")
@@ -340,15 +340,14 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
         model_config=None,
         **kwargs,
     ) -> bool:
-        """Write a dequantized four-layer GLM-MoE-DSA checkpoint slice."""
+        """Write a dequantized active-layer GLM-MoE-DSA checkpoint."""
         sentinel = out / _SENTINEL
         if sentinel.exists():
             logger.info("GlmMoeDsaReducedCheckpointTransform: prepared checkpoint exists, skipping.")
             return False
-        if model_config is None or getattr(model_config, "num_hidden_layers", None) != 4:
-            raise ValueError(
-                "GLM-MoE-DSA weight-free export is approved only for the reduced four-layer configuration."
-            )
+        num_hidden_layers = getattr(model_config, "num_hidden_layers", None)
+        if not isinstance(num_hidden_layers, int) or num_hidden_layers <= 0:
+            raise ValueError("GLM-MoE-DSA weight-free export requires a positive num_hidden_layers value.")
 
         block_size = cls._weight_block_size(model_config)
         weight_map = read_weight_map(src)
@@ -356,19 +355,18 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
             raise ValueError("Checkpoint does not use the supported GLM-5.3 FP8 per-expert layout.")
 
         base_entries: dict[str, str] = {}
-        expert_entries: dict[tuple[int, str], tuple[str, str]] = {}
+        expert_entries: dict[tuple[int, int, str], tuple[str, str]] = {}
         for key, shard_name in weight_map.items():
             layer_match = cls._LAYER_RE.match(key)
-            if layer_match is not None and int(layer_match.group(1)) >= model_config.num_hidden_layers:
+            if layer_match is not None and int(layer_match.group(1)) >= num_hidden_layers:
                 continue
             if key.startswith("model.mtp"):
                 continue
             expert_match = cls._EXPERT_RE.match(key)
             if expert_match is not None:
                 layer_idx = int(expert_match.group(2))
-                if layer_idx == 3:
-                    expert_idx = int(expert_match.group(3))
-                    expert_entries[(expert_idx, expert_match.group(4))] = (shard_name, key)
+                expert_idx = int(expert_match.group(3))
+                expert_entries[(layer_idx, expert_idx, expert_match.group(4))] = (shard_name, key)
                 continue
             if key.endswith(cls._SCALE_SUFFIX):
                 continue
@@ -377,15 +375,34 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
         num_experts = getattr(model_config, "n_routed_experts", None) or getattr(
             model_config, "num_local_experts", None
         )
+        expert_layers = sorted({layer_idx for layer_idx, _, _ in expert_entries})
+        mlp_layer_types = getattr(model_config, "mlp_layer_types", None)
+        if mlp_layer_types is not None:
+            expected_expert_layers = [
+                layer_idx
+                for layer_idx, layer_type in enumerate(mlp_layer_types[:num_hidden_layers])
+                if layer_type == "sparse"
+            ]
+            missing_expert_layers = sorted(set(expected_expert_layers).difference(expert_layers))
+            if missing_expert_layers:
+                raise ValueError(
+                    f"GLM-5.3 is missing expert weights for active sparse layers: {missing_expert_layers[:3]}."
+                )
         if num_experts is None:
-            num_experts = len({expert_idx for expert_idx, _ in expert_entries})
+            num_experts = len({expert_idx for _, expert_idx, _ in expert_entries})
         expected_expert_entries = {
-            (expert_idx, kind) for expert_idx in range(num_experts) for kind in ("gate_proj", "up_proj", "down_proj")
+            (layer_idx, expert_idx, kind)
+            for layer_idx in expert_layers
+            for expert_idx in range(num_experts)
+            for kind in ("gate_proj", "up_proj", "down_proj")
         }
         missing_expert_entries = expected_expert_entries.difference(expert_entries)
         if missing_expert_entries:
-            sample = ", ".join(f"expert {idx} {kind}" for idx, kind in sorted(missing_expert_entries)[:3])
-            raise ValueError(f"GLM-5.3 layer 3 is missing required expert weights: {sample}.")
+            sample = ", ".join(
+                f"layer {layer_idx} expert {expert_idx} {kind}"
+                for layer_idx, expert_idx, kind in sorted(missing_expert_entries)[:3]
+            )
+            raise ValueError(f"GLM-5.3 is missing required expert weights: {sample}.")
 
         out.mkdir(parents=True, exist_ok=True)
         copy_checkpoint_aux_files(src, out)
@@ -455,26 +472,36 @@ class GlmMoeDsaReducedCheckpointTransform(BaseCheckpointTransform):
             atomic_save(tensors, out / out_name)
             new_weight_map.update({key: out_name for key in tensors})
 
-        for kind_index, kind in enumerate(("gate_proj", "up_proj", "down_proj")):
-            entries_for_kind: dict[str, list[tuple[int, str]]] = {}
-            for expert_idx in range(num_experts):
-                shard_name, expert_key = expert_entries[(expert_idx, kind)]
-                entries_for_kind.setdefault(shard_name, []).append((expert_idx, expert_key))
+        for layer_idx in expert_layers:
+            layer_start = time.perf_counter()
+            logger.info("Preparing GLM expert layer %d/%d", layer_idx, num_hidden_layers - 1)
+            for kind_index, kind in enumerate(("gate_proj", "up_proj", "down_proj")):
+                entries_for_kind: dict[str, list[tuple[int, str]]] = {}
+                for expert_idx in range(num_experts):
+                    shard_name, expert_key = expert_entries[(layer_idx, expert_idx, kind)]
+                    entries_for_kind.setdefault(shard_name, []).append((expert_idx, expert_key))
 
-            first_key = expert_entries[(0, kind)][1]
-            with safe_open(str(src / weight_map[first_key]), framework="pt") as checkpoint:
-                first_shape = checkpoint.get_slice(first_key).get_shape()
-            stacked = torch.empty((num_experts, first_shape[1], first_shape[0]), dtype=target_dtype)
-            for shard_name, shard_entries in sorted(entries_for_kind.items()):
-                with safe_open(str(src / shard_name), framework="pt") as checkpoint:
-                    for expert_idx, expert_key in shard_entries:
-                        stacked[expert_idx] = _load_dequantized(expert_key, checkpoint).transpose(0, 1)
+                first_key = expert_entries[(layer_idx, 0, kind)][1]
+                with safe_open(str(src / weight_map[first_key]), framework="pt") as checkpoint:
+                    first_shape = checkpoint.get_slice(first_key).get_shape()
+                stacked = torch.empty((num_experts, first_shape[1], first_shape[0]), dtype=target_dtype)
+                for shard_name, shard_entries in sorted(entries_for_kind.items()):
+                    with safe_open(str(src / shard_name), framework="pt") as checkpoint:
+                        for expert_idx, expert_key in shard_entries:
+                            stacked[expert_idx] = _load_dequantized(expert_key, checkpoint).transpose(0, 1)
 
-            canonical_kind = kind.removesuffix("_proj")
-            canonical_key = f"model.layers.3.mlp.moe_weights.{canonical_kind}"
-            out_name = f"model_glm_experts_{kind_index:02d}.safetensors"
-            atomic_save({canonical_key: stacked}, out / out_name)
-            new_weight_map[canonical_key] = out_name
+                canonical_kind = kind.removesuffix("_proj")
+                canonical_key = f"model.layers.{layer_idx}.mlp.moe_weights.{canonical_kind}"
+                out_name = f"model_glm_experts_layer_{layer_idx:05d}_{kind_index:02d}.safetensors"
+                atomic_save({canonical_key: stacked}, out / out_name)
+                new_weight_map[canonical_key] = out_name
+                del stacked
+            logger.info(
+                "Prepared GLM expert layer %d/%d in %.2fs",
+                layer_idx,
+                num_hidden_layers - 1,
+                time.perf_counter() - layer_start,
+            )
 
         write_index(out, new_weight_map)
         sentinel.touch()
