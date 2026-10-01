@@ -23,6 +23,8 @@ Verifies that:
 All tests run on CPU only, using tiny in-memory models -- no checkpoints, no Hugging Face Hub access.
 """
 
+import copy
+
 import pytest
 import torch
 from torch import nn
@@ -30,6 +32,165 @@ from torch import nn
 VOCAB_SIZE = 500
 CTX_LEN = 32
 HIDDEN_SIZE = 64
+
+
+def make_tiny_qwen3_5_vlm():
+    from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
+
+    config = Qwen3_5Config(
+        text_config={
+            "vocab_size": VOCAB_SIZE,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 4,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "head_dim": 16,
+            "layer_types": ["linear_attention", "full_attention", "linear_attention", "full_attention"],
+            "linear_key_head_dim": 8,
+            "linear_value_head_dim": 8,
+            "linear_num_key_heads": 2,
+            "linear_num_value_heads": 4,
+            "max_position_embeddings": CTX_LEN,
+            "rope_parameters": {
+                "rope_type": "default",
+                "rope_theta": 10000,
+                "partial_rotary_factor": 1.0,
+                "mrope_section": [2, 3, 3],
+            },
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 2,
+            "out_hidden_size": 32,
+            "patch_size": 16,
+            "spatial_merge_size": 2,
+            "temporal_patch_size": 2,
+        },
+        image_token_id=3,
+        video_token_id=4,
+        vision_start_token_id=5,
+        vision_end_token_id=6,
+    )
+    config._attn_implementation = "eager"
+    return Qwen3_5ForConditionalGeneration(config).eval()
+
+
+@pytest.mark.parametrize("accepted", [0, 1, 3])
+@pytest.mark.parametrize("prompt_len", [1, 5])
+@pytest.mark.parametrize("chunk_size", [16, 64])
+@pytest.mark.parametrize("matrix_solve", [False, True])
+def test_qwen3_5_dflash_replay_matches_autoregressive(accepted, prompt_len, chunk_size, matrix_solve, monkeypatch):
+    """Verify then replay a prefix; next-round results must exclude rejected tokens."""
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    torch.manual_seed(7)
+    hf_model = make_tiny_qwen3_5_vlm()
+    reference = copy.deepcopy(hf_model)
+    qeff = QEFFAutoModelForImageTextToText(hf_model, kv_offload=True, qaic_config={"target_layer_ids": [1, 3]})
+    model = qeff.lang_model.model.language_model
+    model.dflash_chunk_size = chunk_size
+    for layer in model.layers:
+        if layer.layer_type == "linear_attention":
+            layer.linear_attn.dflash_matrix_solve = matrix_solve
+
+    def unexpected_decode(*args, **kwargs):
+        raise AssertionError("DFlash must not compute the one-token recurrent branch")
+
+    monkeypatch.setattr(
+        "QEfficient.transformers.models.qwen3_5.modeling_qwen3_5.recurrent_gdn_decode_forward", unexpected_decode
+    )
+    initial = qeff.model.get_dummy_inputs(kv_offload=True)["lang"]["past_key_values"]
+    tokens = torch.randint(10, VOCAB_SIZE, (1, 16))
+    # This standalone runtime uses a single request.
+    cache = tuple(tuple(t[:1].clone() for t in layer) for layer in initial)
+
+    def run(ids, start, state, commit, valid=None):
+        positions = torch.arange(start, start + ids.shape[1]).view(1, -1)
+        if valid is not None:
+            positions[:, valid:] = -1
+        return model(
+            input_ids=ids,
+            position_ids=positions,
+            past_key_values=state,
+            cache_commit=torch.tensor([commit]),
+            use_cache=True,
+        )
+
+    with torch.no_grad():
+        prefill = run(tokens[:, :8], 0, cache, 1, valid=prompt_len)
+        verify = run(tokens[:, prompt_len : prompt_len + 4], prompt_len, prefill.past_key_values, 0)
+        for i in (0, 2):
+            for actual, expected in zip(verify.past_key_values[i], prefill.past_key_values[i]):
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        commit_count = accepted + 1  # seed token plus accepted DLM tokens
+        committed = run(
+            tokens[:, prompt_len : prompt_len + 4], prompt_len, verify.past_key_values, 1, valid=commit_count
+        )
+        next_pos = prompt_len + commit_count
+        followup_ids = torch.tensor([[48, 49, 50, 51]])
+        followup = run(followup_ids, next_pos, committed.past_key_values, 0)
+        expected_ids = torch.cat([tokens[:, :next_pos], followup_ids], dim=1)
+        expected = reference.model.language_model(input_ids=expected_ids, use_cache=False, output_hidden_states=True)
+
+    torch.testing.assert_close(followup.last_hidden_state, expected.last_hidden_state[:, -4:], rtol=2e-4, atol=2e-4)
+    projection = model.hidden_norm(model.fc(torch.cat([expected.hidden_states[i][:, -4:] for i in [1, 3]], dim=-1)))
+    torch.testing.assert_close(followup.hidden_states, projection, rtol=2e-4, atol=2e-4)
+    assert followup.hidden_states.shape == (1, 4, 32)
+    with torch.no_grad():
+        restarted = run(tokens[:, :8], 0, followup.past_key_values, 1, valid=prompt_len)
+    for i in (0, 2):
+        for actual, expected in zip(restarted.past_key_values[i], prefill.past_key_values[i]):
+            torch.testing.assert_close(actual, expected, rtol=2e-4, atol=2e-4)
+
+
+def test_qwen3_5_dflash_requires_explicit_commit():
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    qeff = QEFFAutoModelForImageTextToText(
+        make_tiny_qwen3_5_vlm(), kv_offload=True, qaic_config={"target_layer_ids": [1, 3]}
+    )
+    inputs = qeff.model.get_dummy_inputs(kv_offload=True)["lang"]
+    inputs.pop("cache_commit")
+    with pytest.raises(ValueError, match="requires cache_commit"):
+        qeff.lang_model.model(**inputs)
+
+
+@pytest.mark.parametrize("prefill_seq_len", [1, 65, 128])
+def test_qwen3_5_dflash_rejects_unsupported_prefill(prefill_seq_len):
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    qeff = QEFFAutoModelForImageTextToText(
+        make_tiny_qwen3_5_vlm(), kv_offload=True, qaic_config={"target_layer_ids": [1, 3]}
+    )
+    with pytest.raises(ValueError, match="prefill_seq_len=16"):
+        qeff.model.get_specializations(batch_size=1, prefill_seq_len=prefill_seq_len, ctx_len=256, kv_offload=True)
+    with pytest.raises(ValueError, match="prefill_seq_len <= 64"):
+        qeff.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=prefill_seq_len)
+
+
+@pytest.mark.parametrize("dummy_seq_len", [16, 32, 64])
+def test_qwen3_5_dflash_export_traces_one_chunk(dummy_seq_len):
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    qeff = QEFFAutoModelForImageTextToText(
+        make_tiny_qwen3_5_vlm(), kv_offload=True, qaic_config={"target_layer_ids": [1, 3]}
+    )
+    inputs = qeff.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=dummy_seq_len)["lang"]
+    assert inputs["input_ids"].shape[1] == 16
+    assert inputs["position_ids"].shape[-1] == 16
+    with pytest.raises(ValueError, match="prefill_seq_len=16"):
+        qeff.model.get_specializations(batch_size=1, prefill_seq_len=64, ctx_len=256, kv_offload=True)
+
+
+@pytest.mark.parametrize("chunk_size", [0, 1, 3, 24])
+def test_qwen3_5_dflash_matrix_solve_requires_power_of_two(chunk_size):
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5GatedDeltaNet
+
+    with pytest.raises(ValueError, match="power-of-two"):
+        QEffQwen3_5GatedDeltaNet._dflash_triangular_inverse(None, None, chunk_size)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +363,69 @@ class TestDFlashDraftTransform:
 
         assert outputs.logits.shape == (batch, block_size, VOCAB_SIZE)
         assert torch.isfinite(outputs.logits).all()
+
+    @pytest.mark.parametrize("is_causal", [None, False, True])
+    def test_mixed_attention_masks_follow_draft_config(self, is_causal):
+        from QEfficient import QEFFAutoModelForCausalLM
+        from QEfficient.transformers.cache_utils import QEffDynamicCache
+
+        hf_model = make_tiny_qwen3()
+        hf_model.config.layer_types = ["sliding_attention", "full_attention"]
+        hf_model.config.sliding_window = 8
+        hf_model.config.is_causal = is_causal
+        qeff = QEFFAutoModelForCausalLM(hf_model, qaic_config={"dflash_dlm": True})
+        assert qeff.hash_params["dflash_attention"] == "per_layer_window_v1"
+        masks = []
+
+        def record_mask(module, args, kwargs):
+            masks.append(kwargs["attention_mask"].clone())
+
+        handles = [
+            layer.self_attn.register_forward_pre_hook(record_mask, with_kwargs=True)
+            for layer in qeff.model.model.layers
+        ]
+        try:
+            with torch.no_grad():
+                qeff.model(
+                    input_ids=torch.ones((1, 4), dtype=torch.int64),
+                    target_hidden=torch.randn(1, 4, HIDDEN_SIZE),
+                    position_ids_target=torch.arange(5, 9).unsqueeze(0),
+                    position_ids=torch.arange(9, 13).unsqueeze(0),
+                    past_key_values=QEffDynamicCache.from_legacy_cache(
+                        _make_legacy_past_key_values(hf_model.config, 1, CTX_LEN)
+                    ),
+                    use_cache=True,
+                )
+        finally:
+            for handle in handles:
+                handle.remove()
+        for i, mask in enumerate(masks):
+            causal = i == 0 if is_causal is None else is_causal
+            for row, query in enumerate(range(9, 13)):
+                for key in range(CTX_LEN):
+                    visible = key <= 12 and (not causal or key <= query)
+                    if i == 0:
+                        visible = visible and query - key < 8 and (causal or key - query < 8)
+                    assert mask[0, 0, row, key].item() == (not visible)
+
+
+@pytest.mark.parametrize("start", [0, 2032, 2047, 2048, 2064])
+@pytest.mark.parametrize("sliding_window,is_causal", [(None, False), (2048, True), (2048, False)])
+def test_dflash_mask_crosses_sliding_window(start, sliding_window, is_causal):
+    from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import _create_mask
+
+    positions = torch.arange(start, start + 16).unsqueeze(0)
+    mask = _create_mask(positions, 4096, sliding_window=sliding_window, is_causal=is_causal)
+    keys = torch.arange(4096)
+    for row, query in enumerate(positions[0].tolist()):
+        visible = keys <= start + 15
+        if is_causal:
+            visible &= keys <= query
+        if sliding_window:
+            visible &= query - keys < sliding_window
+            if not is_causal:
+                visible &= keys - query < sliding_window
+        torch.testing.assert_close(mask[0, 0, row], ~visible)
 
 
 # ---------------------------------------------------------------------------
