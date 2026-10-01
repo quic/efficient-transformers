@@ -9,10 +9,11 @@ import copy
 import inspect
 import json
 import os
+import shlex
 import subprocess
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
+from xml.parsers import expat
 
 import requests
 import torch
@@ -662,7 +663,7 @@ def execute_command(process: str, command: str, output_file_path: Optional[str] 
     """
     print(f"Running {process} command : \n {command}")
     try:
-        result = subprocess.run(command, capture_output=True, text=True, shell=True)
+        result = subprocess.run(shlex.split(command), capture_output=True, text=True, shell=False)
     except Exception as e:
         print("Execution failed: %s", e)
 
@@ -835,12 +836,42 @@ def get_qaic_sdk_version(qaic_sdk_xml_path: str) -> Optional[str]:
     # Check and extract version from the given SDK XML file
     if os.path.exists(qaic_sdk_xml_path):
         try:
-            tree = ET.parse(qaic_sdk_xml_path)
-            root = tree.getroot()
-            base_version_element = root.find(".//base_version")
-            if base_version_element is not None:
-                qaic_sdk_version = base_version_element.text
-        except ET.ParseError as e:
+            parser = expat.ParserCreate()
+            parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+
+            def reject_doctype(*_args):
+                raise ValueError("DTD declarations are forbidden in SDK XML")
+
+            def reject_external_entity(*_args):
+                raise ValueError("External entities are forbidden in SDK XML")
+
+            parser.StartDoctypeDeclHandler = reject_doctype
+            parser.ExternalEntityRefHandler = reject_external_entity
+            element_text = []
+            capture_depth = 0
+
+            def start_element(name, _attrs):
+                nonlocal capture_depth
+                if capture_depth or name == "base_version":
+                    capture_depth += 1
+
+            def character_data(data):
+                if capture_depth:
+                    element_text.append(data)
+
+            def end_element(_name):
+                nonlocal capture_depth
+                if capture_depth:
+                    capture_depth -= 1
+
+            parser.StartElementHandler = start_element
+            parser.CharacterDataHandler = character_data
+            parser.EndElementHandler = end_element
+            with open(qaic_sdk_xml_path, "rb") as xml_file:
+                parser.ParseFile(xml_file)
+            if element_text:
+                qaic_sdk_version = "".join(element_text).strip()
+        except expat.ExpatError as e:
             print(f"Error parsing XML file {qaic_sdk_xml_path}: {e}")
         except Exception as e:
             print(f"An unexpected error occurred while processing {qaic_sdk_xml_path}: {e}")
