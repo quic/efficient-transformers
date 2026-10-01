@@ -21,7 +21,7 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
-from ._helpers import skip_on_model_fetch_error
+from ._helpers import WEIGHT_FREE_VLM_MODEL_PARAMS, load_weight_free_vlm_model, skip_on_model_fetch_error
 
 DISAGG_MODEL_PARAMS = [
     pytest.param("glm4_moe", "tiny-random/glm-4-moe", id="glm4-moe"),
@@ -271,6 +271,62 @@ def test_weight_free_disaggregated_prefill_and_decode(model_type, model_id, tmp_
 
     assert decode_qpc
     assert prefill_qpc
+
+
+@pytest.mark.weight_free
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_VLM_MODEL_PARAMS)
+def test_weight_free_vlm_disaggregated_prefill_and_decode(model_type, model_id, tmp_export_dir):
+    """Compile separate vision, language prefill, and language decode QPCs for a weight-free VLM."""
+    try:
+        qeff_model = load_weight_free_vlm_model(model_id)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    common = {
+        "batch_size": 1,
+        "ctx_len": 512,
+        "height": 354,
+        "width": 536,
+        "num_cores": 4,
+        "num_devices": 1,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
+        "use_onnx_subfunctions": True,
+        "offload_pt_weights": False,
+    }
+    vision_qpcs = qeff_model.compile(
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_vision"),
+        prefill_seq_len=64,
+        skip_lang=True,
+        **common,
+    )
+    vision_onnx_path = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+
+    prefill_qpcs = qeff_model.compile(
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_prefill"),
+        prefill_seq_len=64,
+        prefill_only=True,
+        enable_chunking=True,
+        retain_full_kv=True,
+        skip_vision=True,
+        **common,
+    )
+    prefill_onnx_path = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
+
+    decode_qpcs = qeff_model.compile(
+        compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_decode"),
+        prefill_seq_len=1,
+        skip_vision=True,
+        **common,
+    )
+    decode_onnx_path = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
+
+    assert len({vision_onnx_path, prefill_onnx_path, decode_onnx_path}) == 3
+    assert vision_qpcs.get("vision_qpc_path")
+    assert prefill_qpcs.get("lang_prefill_qpc_path")
+    assert decode_qpcs.get("lang_decode_qpc_path")
 
 
 @pytest.mark.weight_free
