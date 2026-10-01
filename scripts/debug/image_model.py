@@ -173,7 +173,7 @@ for model_config in models:
     outputs = qeff_model.generate(
         inputs=inputs,
         generation_len=10,
-        write_io=True,  # Saves input/output tensors to files
+        artifacts=True,
     )
     print(f"Output: {outputs}\n")
     print(f"✓ Successfully processed: {model_name}\n")

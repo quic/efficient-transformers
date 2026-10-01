@@ -269,6 +269,13 @@ def compile(
 
     """
 
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
