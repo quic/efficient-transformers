@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--prompt", default="Describe all the colors seen in the image.")
     parser.add_argument("--prefill-seq-len", type=int, default=128)
     parser.add_argument("--ctx-len", type=int, default=4096)
-    parser.add_argument("--generation-len", type=int, default=30)
+    parser.add_argument("--generation-len", type=int, default=100)
     parser.add_argument(
         "--num-cores",
         type=int,

@@ -1788,7 +1788,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
             )
         )
-        dynamo = kwargs.get("dynamo", False) or self._weight_free
+        dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
