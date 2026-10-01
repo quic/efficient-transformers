@@ -841,6 +841,7 @@ class QEffGptOssAttention(GptOssAttention):
                 attention_mask=attention_mask,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
+                ccl_length=attention_mask.shape[-1] if comp_ctx_lengths is not None else None,
                 batch_index=batch_index,
                 position_ids=position_ids,
                 sliding_window=self.sliding_window,
@@ -1085,11 +1086,15 @@ class QEffGptOssModel(GptOssModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
+        if comp_ctx_lengths is not None:
+            causal_mask = causal_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
             target_length=past_key_values.get_sliding_window_len(),
             sliding_window=past_key_values.get_sliding_window_len(),
         )
+        if comp_ctx_lengths is not None:
+            sliding_mask = sliding_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
 
         hidden_states = inputs_embeds
 
