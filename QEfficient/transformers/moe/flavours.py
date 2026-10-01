@@ -84,10 +84,10 @@ def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index from a per-token expert-match mask."""
     batch_size, seq_len = T2Ei.shape
     int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
     token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1, dtype=torch.int32)
     valid_dest = valid_prefix - 1
+    int32_max_scalar = torch.full_like(valid_dest, int32_max)
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
     # NOTE: expand_as(...) instead of torch.full_like(...) is the compiler-preferred
     # workaround for ConstantOfShape(INT32_MAX); both produce identical traced Ctx ops.
@@ -123,7 +123,8 @@ def cumsum_scatter_gather_update_expert_blocked(
     )
     packed_chunk_size = seq_len // num_packed_chunks
     matched_idx = build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=-1, keepdim=True)
+    index_dtype = torch.int64
+    valid_rows = torch.einsum("ij->i", T2Ei.to(index_dtype)).unsqueeze(1)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
     for chunk_idx in range(num_packed_chunks):
         packed_start = chunk_idx * packed_chunk_size
@@ -132,7 +133,7 @@ def cumsum_scatter_gather_update_expert_blocked(
         else:
             packed_stop = packed_start + packed_chunk_size
         chunk_rows = packed_stop - packed_start
-        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
+        row_range = torch.arange(chunk_rows, dtype=index_dtype, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)

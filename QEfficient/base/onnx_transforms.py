@@ -5,6 +5,9 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
+import hashlib
+import json
 import logging
 import os
 import re
@@ -14,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import numpy as np
 import onnx
 import torch
-from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
+from onnx import AttributeProto, ModelProto, TensorProto, external_data_helper, numpy_helper
 
 from QEfficient.customop.ctx_scatter_gather import (
     CtxChunkScatterBatch,
@@ -303,14 +306,54 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         }
     )
 
-    @staticmethod
-    def _scatter_sort_key(n) -> int:
-        output_name = n.output[0] if n.output else ""
-        if "key" in output_name:
-            return 0
-        if "value" in output_name:
-            return 1
-        return 2
+    @classmethod
+    def _resolve_kv_scatter_outputs(cls, fn, node, layer_idx: str) -> dict[str, str] | None:
+        """Resolve nested KV scatter outputs from the function-call data flow.
+
+        ONNX function-call inputs bind positionally. Each cache scatter consumes
+        the cache buffer as its first input, so the matching scatter is identified
+        from that buffer's function argument rather than output names or node order.
+        """
+        function_cache_inputs: dict[str, str] = {}
+        for input_index, input_name in enumerate(node.input):
+            match = cls._KV_INPUT_RE.match(input_name)
+            if match is None:
+                continue
+            kind, input_layer_idx = match.groups()
+            if input_layer_idx != layer_idx:
+                continue
+            if input_index >= len(fn.input):
+                raise ValueError(
+                    f"Nested function '{fn.name}' has no input at position {input_index} for "
+                    f"call-node cache input '{input_name}'."
+                )
+            function_cache_inputs[kind] = fn.input[input_index]
+
+        if set(function_cache_inputs) != {"key", "value"}:
+            return None
+
+        scatter_outputs = {}
+        for kind, function_input in function_cache_inputs.items():
+            writers = [
+                fn_node
+                for fn_node in fn.node
+                if fn_node.op_type in cls._SCATTER_OP_TYPES
+                and fn_node.input
+                and fn_node.input[0] == function_input
+                and fn_node.output
+            ]
+            if len(writers) != 1:
+                writer_names = [
+                    f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})" for writer in writers
+                ]
+                raise ValueError(
+                    f"Could not uniquely resolve the nested past_{kind}.{layer_idx} cache writer in function "
+                    f"'{fn.name}': expected one CtxScatter* with data input '{function_input}', "
+                    f"found {len(writers)} ({writer_names})."
+                )
+            scatter_outputs[kind] = writers[0].output[0]
+
+        return scatter_outputs
 
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
@@ -330,27 +373,6 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             fn = fn_by_name.get(node.op_type)
             if fn is None:
                 continue
-
-            # Collect scatter nodes that write back the KV cache.
-            # Sort by first-input name so the key scatter reliably precedes the
-            # value scatter: dynamo names function-body args generically (arg7_1
-            # etc.), so we sort by the scatter output name instead — dynamo
-            # preserves "key"/"value" in output tensor names even when input
-            # argument names are opaque.
-            scatter_nodes = [
-                fn_node for fn_node in fn.node if fn_node.op_type in cls._SCATTER_OP_TYPES and fn_node.output
-            ]
-            if len(scatter_nodes) != 2:
-                logger.debug(
-                    "PreserveNestedCacheRetainedStateTransform: function '%s' has %d scatter node(s), expected 2 — skipping.",
-                    node.op_type,
-                    len(scatter_nodes),
-                )
-                continue
-
-            scatter_nodes.sort(key=cls._scatter_sort_key)
-            # Only the first two scatter outputs map to key / value respectively.
-            scatter_outputs = [n.output[0] for n in scatter_nodes[:2]]
 
             # Identify layer index from KV inputs on this call node.
             layer_idx = None
@@ -379,10 +401,21 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if not any(name in dangling_retained_outputs for name in desired_outputs):
                 continue
 
+            if not all(name in dangling_retained_outputs for name in desired_outputs):
+                raise ValueError(
+                    f"Nested function '{fn.name}' has partially dangling KV retained-state outputs for layer "
+                    f"{layer_idx}: expected both {desired_outputs}."
+                )
+
+            scatter_outputs = cls._resolve_kv_scatter_outputs(fn, node, layer_idx)
+            if scatter_outputs is None:
+                continue
+
             # Expose scatter outputs in the function's output list, rename KV
-            # inputs and append retained-state output names to the call node —
-            # all in one pass over the two key/value pairs.
-            for kind, scatter_output, desired_output in zip(("key", "value"), scatter_outputs, desired_outputs):
+            # inputs and append retained-state output names to the call node.
+            # Both writers are resolved before this block, so graph rewiring is atomic.
+            for kind, desired_output in zip(("key", "value"), desired_outputs):
+                scatter_output = scatter_outputs[kind]
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
@@ -421,6 +454,60 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         return changed
 
 
+class CanonicalizeWhileLoopInitialConditionTransform(BaseOnnxTransform):
+    """Make Dynamo while-loop initial conditions ONNX constants.
+
+    ``torch.while_loop`` lowers its initial condition through the captured
+    condition graph. ONNX permits that value to be dynamic, but QAIC requires
+    the initial ``Loop`` condition to be constant. A scalar ``Constant`` node
+    supplies that initial ``true`` value; the loop body still carries and
+    updates the dynamic condition for subsequent iterations.
+    """
+
+    _COND_GRAPH_MARKER = "while_loop_cond_graph"
+
+    @classmethod
+    def _constant_node(cls, name: str) -> onnx.NodeProto:
+        value = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name=name)
+        return onnx.helper.make_node("Constant", [], [name], value=value)
+
+    @classmethod
+    def _rewrite_nodes(cls, nodes) -> bool:
+        changed = False
+        index = 0
+        while index < len(nodes):
+            node = nodes[index]
+            if node.op_type == "Loop" and len(node.input) > 1 and node.input[1]:
+                condition_name = node.input[1]
+                condition_producer = next(
+                    (candidate for candidate in nodes[:index] if condition_name in candidate.output), None
+                )
+                if condition_producer is not None and cls._COND_GRAPH_MARKER in condition_producer.op_type:
+                    constant_name = f"{condition_name}_constant"
+                    nodes.insert(index, cls._constant_node(constant_name))
+                    node.input[1] = constant_name
+                    changed = True
+                    index += 1
+
+            for attribute in node.attribute:
+                if attribute.HasField("g") and cls._rewrite_nodes(attribute.g.node):
+                    changed = True
+                for graph in attribute.graphs:
+                    if cls._rewrite_nodes(graph.node):
+                        changed = True
+            index += 1
+        return changed
+
+    @classmethod
+    def apply(cls, model: ModelProto, **kwargs) -> bool:
+        del kwargs
+        changed = cls._rewrite_nodes(model.graph.node)
+        for function in model.functions:
+            if cls._rewrite_nodes(function.node):
+                changed = True
+        return changed
+
+
 class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
     """Rename dynamo repeated_subgraph function names to model-specific layer class names.
 
@@ -447,6 +534,8 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
             for attr in node.attribute:
                 if attr.HasField("g"):
                     yield from cls._iter_all_nodes(attr.g.node)
+                for graph in attr.graphs:
+                    yield from cls._iter_all_nodes(graph.node)
 
     @staticmethod
     def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:
@@ -515,6 +604,293 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
             cls._rename_op_types(fn.node, old_to_new)
 
         return True
+
+
+class DeduplicateRepeatedSubgraphTransform(BaseOnnxTransform):
+    """Collapse structurally identical repeated decoder local functions.
+
+    Dynamo subfunction export can emit one FunctionProto per decoder layer, even
+    when those function bodies differ only by local SSA names or layer-indexed
+    formal parameter names. ONNX local-function calls bind inputs and outputs by
+    position, so duplicate call nodes can safely target the first structurally
+    equivalent function without changing graph-level tensor names.
+    """
+
+    _NUMERIC_SUFFIX_RE = re.compile(r"^(?P<base>.+)_(?P<idx>\d+)$")
+
+    @classmethod
+    def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
+        target_classnames = [name for name in (target_classnames or []) if name]
+        candidates = cls._collect_candidate_functions(model, target_classnames)
+        if len(candidates) < 2:
+            return False
+
+        input_dim_signatures = cls._function_input_dim_signatures(model, candidates)
+        fingerprint_to_canonical = {}
+        duplicate_to_canonical = {}
+        functions_to_remove = set()
+
+        for _, fn in candidates:
+            fingerprint = cls._function_fingerprint(fn, input_dim_signatures.get(fn.name))
+            canonical = fingerprint_to_canonical.get(fingerprint)
+            if canonical is None:
+                fingerprint_to_canonical[fingerprint] = fn
+                continue
+            duplicate_to_canonical[fn.name] = canonical.name
+            functions_to_remove.add(fn.name)
+
+        if not duplicate_to_canonical:
+            return False
+
+        cls._rewrite_function_calls(model.graph.node, duplicate_to_canonical)
+        for fn in model.functions:
+            cls._rewrite_function_calls(fn.node, duplicate_to_canonical)
+
+        kept_functions = [fn for fn in model.functions if fn.name not in functions_to_remove]
+        del model.functions[:]
+        model.functions.extend(kept_functions)
+        return True
+
+    @classmethod
+    def _collect_candidate_functions(cls, model: ModelProto, target_classnames: List[str]):
+        called_function_names = cls._called_function_names(model)
+        candidates = []
+        for fn in model.functions:
+            if fn.name not in called_function_names:
+                continue
+            order = cls._candidate_order(fn.name, target_classnames)
+            if order is None:
+                continue
+            candidates.append((order, fn))
+        candidates.sort(key=lambda item: item[0])
+        return candidates
+
+    @classmethod
+    def _candidate_order(cls, name: str, target_classnames: List[str]) -> Optional[Tuple[int, int, str]]:
+        for pattern_index, pattern in enumerate(RenameRepeatedSubgraphTransform._REPEATED_SUBGRAPH_PATTERNS):
+            match = pattern.match(name)
+            if match:
+                return pattern_index, int(match.group(1)), name
+
+        for class_index, class_name in enumerate(target_classnames):
+            if name == class_name:
+                return 100 + class_index, 0, name
+            match = cls._NUMERIC_SUFFIX_RE.match(name)
+            if match and match.group("base") == class_name:
+                return 100 + class_index, int(match.group("idx")), name
+
+        return None
+
+    @classmethod
+    def _called_function_names(cls, model: ModelProto) -> set[str]:
+        function_names = {fn.name for fn in model.functions}
+        called = set()
+        for node in cls._iter_all_nodes(model.graph.node):
+            if node.op_type in function_names:
+                called.add(node.op_type)
+        for fn in model.functions:
+            for node in cls._iter_all_nodes(fn.node):
+                if node.op_type in function_names:
+                    called.add(node.op_type)
+        return called
+
+    @staticmethod
+    def _rewrite_function_calls(nodes, old_to_new) -> None:
+        for node in DeduplicateRepeatedSubgraphTransform._iter_all_nodes(nodes):
+            new_op_type = old_to_new.get(node.op_type)
+            if new_op_type is None:
+                continue
+            node.op_type = new_op_type
+
+    @staticmethod
+    def _iter_all_nodes(nodes):
+        yield from RenameRepeatedSubgraphTransform._iter_all_nodes(nodes)
+
+    @classmethod
+    def _function_fingerprint(
+        cls, fn: onnx.FunctionProto, input_dim_signatures: Optional[Dict[int, tuple]] = None
+    ) -> str:
+        state = cls._new_value_state(fn.input)
+        payload = {
+            "domain": fn.domain,
+            "inputs": [state["value"](name) for name in fn.input],
+            "outputs": [state["value"](name) for name in fn.output],
+            "opsets": sorted((opset.domain, opset.version) for opset in fn.opset_import),
+            "nodes": [cls._node_key(node, state, input_dim_signatures) for node in fn.node],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _new_value_state(inputs):
+        input_index = {name: idx for idx, name in enumerate(inputs)}
+        value_map = {name: f"arg{idx}" for idx, name in enumerate(inputs)}
+        counter = {"value": 0}
+
+        def value(name: str) -> str:
+            if not name:
+                return ""
+            if name not in value_map:
+                value_map[name] = f"tmp{counter['value']}"
+                counter["value"] += 1
+            return value_map[name]
+
+        def assign(name: str, canonical_value: str) -> None:
+            if name:
+                value_map[name] = canonical_value
+
+        return {"value": value, "assign": assign, "input_index": input_index}
+
+    @classmethod
+    def _node_key(cls, node: onnx.NodeProto, state, input_dim_signatures: Optional[Dict[int, tuple]] = None) -> tuple:
+        shape_dim_key = cls._shape_dim_key(node, state, input_dim_signatures)
+        if shape_dim_key is not None:
+            canonical_output = cls._shape_dim_value_name(shape_dim_key)
+            state["assign"](node.output[0], canonical_output)
+            return node.domain, "ShapeDim", shape_dim_key
+
+        squeezed_shape_dim = cls._squeezed_shape_dim_value(node, state)
+        if squeezed_shape_dim is not None:
+            state["assign"](node.output[0], squeezed_shape_dim)
+            return node.domain, "SqueezeShapeDim", squeezed_shape_dim
+
+        return (
+            node.domain,
+            node.op_type,
+            tuple(state["value"](name) for name in node.input),
+            tuple(state["value"](name) for name in node.output),
+            tuple(cls._attribute_key(attr, state) for attr in sorted(node.attribute, key=lambda attr: attr.name)),
+        )
+
+    @classmethod
+    def _shape_dim_key(
+        cls, node: onnx.NodeProto, state, input_dim_signatures: Optional[Dict[int, tuple]]
+    ) -> Optional[tuple]:
+        if node.op_type != "Shape" or len(node.input) != 1 or len(node.output) != 1 or input_dim_signatures is None:
+            return None
+
+        input_index = state["input_index"].get(node.input[0])
+        if input_index is None:
+            return None
+
+        dims = input_dim_signatures.get(input_index)
+        if not dims:
+            return None
+
+        attrs = {attr.name: attr.i for attr in node.attribute if attr.name in {"start", "end"}}
+        start = attrs.get("start", 0)
+        end = attrs.get("end", len(dims))
+        if start < 0:
+            start += len(dims)
+        if end < 0:
+            end += len(dims)
+        if start < 0 or end > len(dims) or end - start != 1:
+            return None
+
+        dim = dims[start]
+        if dim is None:
+            return None
+        return "shape_dim", dim
+
+    @staticmethod
+    def _shape_dim_value_name(shape_dim_key: tuple) -> str:
+        _, dim = shape_dim_key
+        return "shape_dim_" + "_".join(str(part) for part in dim)
+
+    @classmethod
+    def _squeezed_shape_dim_value(cls, node: onnx.NodeProto, state) -> Optional[str]:
+        if node.op_type != "Squeeze" or len(node.input) != 1 or len(node.output) != 1:
+            return None
+        input_value = state["value"](node.input[0])
+        if not input_value.startswith("shape_dim_"):
+            return None
+        return f"squeezed_{input_value}"
+
+    @classmethod
+    def _attribute_key(cls, attr: onnx.AttributeProto, state) -> tuple:
+        attr_type = attr.type
+        if attr_type == AttributeProto.FLOAT:
+            return attr.name, "f", attr.f
+        if attr_type == AttributeProto.INT:
+            return attr.name, "i", attr.i
+        if attr_type == AttributeProto.STRING:
+            return attr.name, "s", attr.s.decode("utf-8", errors="replace")
+        if attr_type == AttributeProto.FLOATS:
+            return attr.name, "floats", tuple(attr.floats)
+        if attr_type == AttributeProto.INTS:
+            return attr.name, "ints", tuple(attr.ints)
+        if attr_type == AttributeProto.STRINGS:
+            return attr.name, "strings", tuple(s.decode("utf-8", errors="replace") for s in attr.strings)
+        if attr_type == AttributeProto.TENSOR:
+            return attr.name, "t", cls._tensor_key(attr.t)
+        if attr_type == AttributeProto.TENSORS:
+            return attr.name, "tensors", tuple(cls._tensor_key(tensor) for tensor in attr.tensors)
+        if attr_type == AttributeProto.GRAPH:
+            return attr.name, "g", cls._graph_key(attr.g)
+        if attr_type == AttributeProto.GRAPHS:
+            return attr.name, "graphs", tuple(cls._graph_key(graph) for graph in attr.graphs)
+        return attr.name, "raw", attr.SerializeToString().hex()
+
+    @classmethod
+    def _graph_key(cls, graph: onnx.GraphProto) -> tuple:
+        inputs = [value.name for value in graph.input]
+        state = cls._new_value_state(inputs)
+        return (
+            tuple(state["value"](value.name) for value in graph.input),
+            tuple(state["value"](value.name) for value in graph.output),
+            tuple(cls._tensor_key(tensor) for tensor in graph.initializer),
+            tuple(cls._node_key(node, state) for node in graph.node),
+        )
+
+    @classmethod
+    def _function_input_dim_signatures(cls, model: ModelProto, candidates) -> Dict[str, Dict[int, tuple]]:
+        function_by_name = {fn.name: fn for _, fn in candidates}
+        value_shapes = cls._graph_value_shape_signatures(model.graph)
+        observed_shapes: Dict[str, Dict[int, set]] = {name: {} for name in function_by_name}
+
+        for node in cls._iter_all_nodes(model.graph.node):
+            fn = function_by_name.get(node.op_type)
+            if fn is None:
+                continue
+            for idx, input_name in enumerate(node.input[: len(fn.input)]):
+                shape = value_shapes.get(input_name)
+                if shape is None:
+                    continue
+                observed_shapes[node.op_type].setdefault(idx, set()).add(shape)
+
+        input_dim_signatures = {}
+        for function_name, shapes_by_input in observed_shapes.items():
+            stable_shapes = {idx: next(iter(shapes)) for idx, shapes in shapes_by_input.items() if len(shapes) == 1}
+            input_dim_signatures[function_name] = stable_shapes
+        return input_dim_signatures
+
+    @staticmethod
+    def _graph_value_shape_signatures(graph: onnx.GraphProto) -> Dict[str, tuple]:
+        value_shapes = {}
+
+        def dim_key(dim, index):
+            if dim.dim_param:
+                return "sym", dim.dim_param
+            if dim.HasField("dim_value"):
+                return "value", dim.dim_value
+            return "unknown", index
+
+        for value_info in list(graph.input) + list(graph.value_info) + list(graph.output):
+            tensor_type = value_info.type.tensor_type
+            if not tensor_type.HasField("shape"):
+                continue
+            value_shapes[value_info.name] = tuple(dim_key(dim, idx) for idx, dim in enumerate(tensor_type.shape.dim))
+
+        for initializer in graph.initializer:
+            value_shapes[initializer.name] = tuple(("value", dim) for dim in initializer.dims)
+
+        return value_shapes
+
+    @staticmethod
+    def _tensor_key(tensor: onnx.TensorProto) -> tuple:
+        tensor = copy.deepcopy(tensor)
+        tensor.name = ""
+        return tensor.data_type, tuple(tensor.dims), tensor.SerializeToString().hex()
 
 
 class AdapterWeightsToInputsTransform(BaseOnnxTransform):
@@ -916,6 +1292,14 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if PreserveNestedCacheRetainedStateTransform in requested:
             applied[PreserveNestedCacheRetainedStateTransform] = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        if CanonicalizeWhileLoopInitialConditionTransform in requested:
+            applied[CanonicalizeWhileLoopInitialConditionTransform] = (
+                CanonicalizeWhileLoopInitialConditionTransform.apply(model)
+            )
+
+        if DeduplicateRepeatedSubgraphTransform in requested:
+            applied[DeduplicateRepeatedSubgraphTransform] = DeduplicateRepeatedSubgraphTransform.apply(model, **kwargs)
 
         if RenameRepeatedSubgraphTransform in requested:
             applied[RenameRepeatedSubgraphTransform] = RenameRepeatedSubgraphTransform.apply(model, **kwargs)
