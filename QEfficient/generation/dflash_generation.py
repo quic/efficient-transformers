@@ -22,6 +22,10 @@ import torch
 from qwen_vl_utils import process_vision_info
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
+    QWEN3_5_DFLASH_CHUNK_SIZE,
+    QEffQwen3_5ForConditionalGeneration,
+)
 from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLForConditionalGeneration,
 )
@@ -46,6 +50,8 @@ class SpecDecodingMetrics:
         self.block_size = block_size
         self.total_prefill_time = 0.0
         self.tlm_decode_time = 0.0
+        self.tlm_verify_time = 0.0
+        self.tlm_commit_time = 0.0
         self.dlm_decode_time = 0.0
         self.total_accepted_tokens = 0
         self.total_rejected_tokens = 0
@@ -116,6 +122,7 @@ def _run_spd_core(
     generated_ids: np.ndarray,
     metrics: SpecDecodingMetrics,
     prefill_start_time: float | None = None,
+    tlm_commit: Callable[[np.ndarray, np.ndarray, int], None] | None = None,
 ) -> SpecDecodingMetrics:
     """Run model-independent DFlash prefill, verification, and cache advancement.
 
@@ -209,7 +216,9 @@ def _run_spd_core(
 
         tlm_decode_start = time.time()
         tlm_logits, target_hidden = tlm_decode(dlm_candidates, dlm_inputs["position_ids"])
-        metrics.tlm_decode_time += time.time() - tlm_decode_start
+        verify_time = time.time() - tlm_decode_start
+        metrics.tlm_verify_time += verify_time
+        metrics.tlm_decode_time += verify_time
 
         accepted_length = 0
         rejected_flag = False
@@ -245,6 +254,16 @@ def _run_spd_core(
         metrics.total_generated_tokens += len(this_iter_gen_ids)
         if any(tok_id in eos_token_ids for tok_id in this_iter_gen_ids):
             continue_generation = False
+
+        if tlm_commit is not None:
+            # A commit call reuses the session's output buffers. Preserve the
+            # verification features that the draft model consumes next.
+            target_hidden = target_hidden.copy()
+            commit_start = time.time()
+            tlm_commit(dlm_candidates, dlm_inputs["position_ids"], accepted_length + 1)
+            commit_time = time.time() - commit_start
+            metrics.tlm_commit_time += commit_time
+            metrics.tlm_decode_time += commit_time
 
         if not continue_generation or gen_idx >= generation_limit:
             break
@@ -557,11 +576,16 @@ def _get_rope_model_qwen3_vl(config):
     key = id(config)
     if key not in _rope_model_cache_qwen3_vl:
         with torch.device("meta"):
-            _rope_model_cache_qwen3_vl[key] = QEffQwen3VLForConditionalGeneration._from_config(config)
+            model_cls = (
+                QEffQwen3_5ForConditionalGeneration
+                if config.model_type == "qwen3_5"
+                else QEffQwen3VLForConditionalGeneration
+            )
+            _rope_model_cache_qwen3_vl[key] = model_cls._from_config(config)
     return _rope_model_cache_qwen3_vl[key]
 
 
-def compute_position_ids_qwen3_vl(input_ids, attention_mask, image_grid_thw, config):
+def compute_position_ids_qwen3_vl(input_ids, attention_mask, image_grid_thw, config, mm_token_type_ids=None):
     """Delegates to QEffQwen3VLForConditionalGeneration.prepare_inputs_for_generation
     for M-RoPE construction. With image_grid_thw=None (text-only) this reduces to a
     plain arange position broadcast to all 4 rows with rope_deltas=0.
@@ -569,6 +593,14 @@ def compute_position_ids_qwen3_vl(input_ids, attention_mask, image_grid_thw, con
     """
     rope_model = _get_rope_model_qwen3_vl(config)
     batch_size, seq_len = input_ids.shape
+    if config.model_type == "qwen3_5":
+        if mm_token_type_ids is None:
+            mm_token_type_ids = (input_ids == config.image_token_id).to(torch.int64)
+        mrope, deltas = rope_model.model.get_rope_index(
+            input_ids, mm_token_type_ids, image_grid_thw=image_grid_thw, attention_mask=attention_mask
+        )
+        flat = torch.arange(seq_len).view(1, 1, -1).expand(1, batch_size, -1)
+        return torch.cat((flat, mrope), dim=0), deltas
     inputs = rope_model.prepare_inputs_for_generation(
         inputs={
             "input_ids": input_ids,
@@ -648,7 +680,17 @@ def run_spd_inference_qwen3_vl(
     compiled_width: int = 536,
     batch_size: int = 1,
 ) -> SpecDecodingMetrics:
-    """Run Qwen3-VL DFlash inference for a text-only or single-image prompt."""
+    """Run Qwen3-VL or Qwen3.5 DFlash for a text-only or single-image prompt."""
+    is_qwen35 = tlm_config.model_type == "qwen3_5"
+    if is_qwen35 and (batch_size != 1 or "cache_commit" not in tlm_session.input_names):
+        raise ValueError("Qwen3.5 DFlash requires batch size 1 and a TLM QPC with cache_commit input.")
+    if is_qwen35 and (
+        prompt_chunk_size not in (QWEN3_5_DFLASH_CHUNK_SIZE, 64) or not 1 < block_size <= prompt_chunk_size
+    ):
+        raise ValueError(
+            "Qwen3.5 DFlash requires 16-token target calls (or a legacy 64-token QPC) and a block that fits; "
+            "rebuild with --prefill_seq_len 16."
+        )
     metrics = SpecDecodingMetrics(block_size=block_size)
     image_processing_start = time.time()
 
@@ -664,6 +706,7 @@ def run_spd_inference_qwen3_vl(
         processor_inputs["attention_mask"],
         image_grid_thw,
         tlm_config,
+        mm_token_type_ids=processor_inputs.get("mm_token_type_ids"),
     )
     position_ids = torch.nn.functional.pad(position_ids, (0, padded_len - input_ids_length), value=-1)
     input_ids = torch.nn.functional.pad(
@@ -675,35 +718,47 @@ def run_spd_inference_qwen3_vl(
     position_ids_np = position_ids.numpy()
     flat_position_ids = position_ids_np[0]
     rope_delta = int(rope_deltas.reshape(-1)[0])
-    generated_ids = _initialize_generated_ids(batch_size, ctx_len, padded_len, tokenizer.pad_token_id)
+    # Verification always consumes a complete block, including near the length limit.
+    generation_ctx_len = ctx_len - block_size if is_qwen35 else ctx_len
+    generated_ids = _initialize_generated_ids(batch_size, generation_ctx_len, padded_len, tokenizer.pad_token_id)
     metrics.image_processing_time = time.time() - image_processing_start
 
     prefill_start = time.time()
     vision_binding = tlm_session.bindings[tlm_session.binding_index_map["vision_embeds"]]
     vision_dtype = tlm_session.aic_to_np_dtype_mapping.get(vision_binding.type, np.dtype(np.float32))
-    deepstack_binding = tlm_session.bindings[tlm_session.binding_index_map["deepstack_features"]]
-    deepstack_dtype = tlm_session.aic_to_np_dtype_mapping.get(deepstack_binding.type, np.dtype(np.float32))
+    has_deepstack = "deepstack_features" in tlm_session.input_names
+    if has_deepstack:
+        deepstack_binding = tlm_session.bindings[tlm_session.binding_index_map["deepstack_features"]]
+        deepstack_dtype = tlm_session.aic_to_np_dtype_mapping.get(deepstack_binding.type, np.dtype(np.float32))
 
     if image is not None:
         if vision_session is None:
             raise ValueError("An image was given but no vision_session was provided.")
-        vision_embeds, deepstack_features = run_vision_encoder_qwen3_vl(
-            vision_session,
-            processor_inputs["pixel_values"].numpy(),
-            image_grid_thw.numpy(),
+        vision_results = vision_session.run(
+            {
+                "pixel_values": processor_inputs["pixel_values"].numpy().astype(np.float16),
+                "image_grid_thw": image_grid_thw.numpy(),
+            }
         )
+        vision_embeds = vision_results["vision_embeds"]
+        if has_deepstack:
+            deepstack_features = vision_results["deepstack_features"]
         metrics.vision_prefill_time = time.time() - prefill_start
     else:
         vision_embeds = np.zeros(tuple(int(dim) for dim in vision_binding.dims), dtype=vision_dtype)
-        deepstack_features = np.zeros(tuple(int(dim) for dim in deepstack_binding.dims), dtype=deepstack_dtype)
+        if has_deepstack:
+            deepstack_features = np.zeros(tuple(int(dim) for dim in deepstack_binding.dims), dtype=deepstack_dtype)
         metrics.vision_prefill_time = 0.0
 
     vision_outputs = {
         "vision_embeds": vision_embeds.astype(vision_dtype),
-        "deepstack_features": deepstack_features.astype(deepstack_dtype),
     }
+    if has_deepstack:
+        vision_outputs["deepstack_features"] = deepstack_features.astype(deepstack_dtype)
     tlm_session.set_buffers(vision_outputs)
     lang_extra = {"image_idx": np.array([[0]], dtype=np.int64)}
+    if is_qwen35:
+        lang_extra["cache_commit"] = np.ones(1, dtype=np.int64)
     tlm_session.set_buffers({"logits": np.zeros((batch_size, prompt_chunk_size), dtype=np.int32)})
     tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
 
@@ -719,19 +774,35 @@ def run_spd_inference_qwen3_vl(
         return outputs["logits"], outputs["hidden_states"]
 
     def prepare_decode():
-        tlm_session.set_buffers({"logits": np.zeros((batch_size, block_size), dtype=np.int32)})
-        tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, block_size, hidden_size), dtype=np.float32)})
+        target_seq_len = prompt_chunk_size if is_qwen35 else block_size
+        tlm_session.set_buffers({"logits": np.zeros((batch_size, target_seq_len), dtype=np.int32)})
+        tlm_session.set_buffers(
+            {"hidden_states": np.zeros((batch_size, target_seq_len, hidden_size), dtype=np.float32)}
+        )
         tlm_session.skip_buffers(vision_outputs.keys())
+        if is_qwen35:
+            lang_extra["cache_commit"] = np.zeros(1, dtype=np.int64)
+
+    def decode_inputs(draft_ids, decode_position_ids, valid_tokens):
+        positions = build_decode_position_ids_qwen3_vl(decode_position_ids, rope_delta)
+        if is_qwen35:
+            padding = prompt_chunk_size - block_size
+            draft_ids = np.pad(draft_ids, ((0, 0), (0, padding)), constant_values=tokenizer.pad_token_id)
+            positions = np.pad(positions, ((0, 0), (0, 0), (0, padding)), constant_values=-1)
+            positions[:, :, valid_tokens:] = -1
+        return {"input_ids": draft_ids, "position_ids": positions, **lang_extra}
 
     def tlm_decode(draft_ids, decode_position_ids):
-        outputs = tlm_session.run(
+        outputs = tlm_session.run(decode_inputs(draft_ids, decode_position_ids, block_size))
+        return outputs["logits"][:, :block_size], outputs["hidden_states"][:, :block_size]
+
+    def tlm_commit(draft_ids, decode_position_ids, count):
+        tlm_session.run(
             {
-                "input_ids": draft_ids,
-                "position_ids": build_decode_position_ids_qwen3_vl(decode_position_ids, rope_delta),
-                **lang_extra,
+                **decode_inputs(draft_ids, decode_position_ids, count),
+                "cache_commit": np.ones(1, dtype=np.int64),
             }
         )
-        return outputs["logits"], outputs["hidden_states"]
 
     eos_token_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
     return _run_spd_core(
@@ -752,4 +823,5 @@ def run_spd_inference_qwen3_vl(
         generated_ids=generated_ids,
         metrics=metrics,
         prefill_start_time=prefill_start,
+        tlm_commit=tlm_commit if is_qwen35 else None,
     )

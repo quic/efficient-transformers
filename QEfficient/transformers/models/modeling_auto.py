@@ -3739,6 +3739,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.dflash_dlm:
             self.model, _ = DFlashTransform.apply(self.model, qaic_config)
             self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
+            self.hash_params["dflash_attention"] = "per_layer_window_v1"
         if self.dflash_tlm:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
