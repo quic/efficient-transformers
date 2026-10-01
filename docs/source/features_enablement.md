@@ -77,6 +77,71 @@ location recorded in `weight_spec.json`.
 
 ---
 
+(id-proxy-model-export)=
+## Proxy Model Export
+
+Proxy model export builds a representative graph for compile/runtime bring-up
+without keeping the model's embedding and output projection work in the compiled
+graph. Enable it with `enable_proxy=True` when loading a QEfficient model.
+
+When proxy mode is enabled, QEfficient replaces the language model's embedding
+layer and LM head with proxy modules. For models with repeated decoder-layer
+patterns, QEfficient also reduces the language stack to the smallest
+representative layer count that still includes repeated calls for each layer
+type. This is useful for compiler validation, artifact generation, and external
+harnesses that need a lightweight graph matching the model's runtime interface.
+
+```Python
+from QEfficient import QEFFAutoModelForCausalLM
+
+model = QEFFAutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2-1.5B-Instruct",
+    enable_proxy=True,
+    trust_remote_code=True,
+)
+
+qpc_path = model.compile(
+    prefill_seq_len=32,
+    ctx_len=128,
+    use_onnx_subfunctions=True,
+)
+```
+
+Use `num_hidden_layers` to override the automatically selected proxy layer
+count when a specific reduced depth is required:
+
+```Python
+model = QEFFAutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2-1.5B-Instruct",
+    enable_proxy=True,
+    num_hidden_layers=2,
+    trust_remote_code=True,
+)
+```
+
+The text generation example exposes the same flow from the CLI:
+
+```bash
+python examples/text_generation/basic_inference.py \
+  --model-name Qwen/Qwen2-1.5B-Instruct \
+  --enable-proxy \
+  --use-onnx-subfunctions \
+  --compile-only
+```
+
+Proxy mode can also be combined with `artifacts=True` to emit compiler and
+runner replay files without invoking the compiler or runtime:
+
+```bash
+python examples/text_generation/basic_inference.py \
+  --model-name Qwen/Qwen2-1.5B-Instruct \
+  --enable-proxy \
+  --use-onnx-subfunctions \
+  --artifacts
+```
+
+---
+
 (id-qnn-compilation-via-python-api)=
 ## QNN Compilation via Python API
 
@@ -124,3 +189,25 @@ dlm.compile()
 ```
 
 The `qaic_config` dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.
+
+## Export artifacts without compiler or runtime execution
+
+CausalLM and ImageTextToText external harnesses can request the files for compilation and one `qaic-runner` invocation without executing either tool:
+
+```python
+compile_dir = model.compile(
+    prefill_seq_len=32,
+    ctx_len=128,
+    artifacts=True,
+)
+
+io_dir = model.generate(
+    tokenizer=tokenizer,
+    prompts=["Hello"],
+    artifacts=True,
+)
+```
+
+The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` and node precision info (NPI) files when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
+
+Image-text-to-text generation also requires an example `processor`, `images`, and `prompts`. For dual-QPC models, set exactly one of `skip_vision=True` or `skip_lang=True` to emit one independently replayable stage.

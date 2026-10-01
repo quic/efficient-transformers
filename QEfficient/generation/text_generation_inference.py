@@ -8,7 +8,9 @@
 import json
 import os
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -17,6 +19,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
+from QEfficient.generation.generation_helpers import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -78,56 +81,12 @@ class CloudAI100ExecInfoNew:
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
-io_files = []
-
-
-def write_io_files(
-    inputs: Dict[str, np.ndarray],
-    outputs: Dict[str, np.ndarray],
-    write_io_dir: str,
-    write_io_subdir: str,
-    write_io_name: str,
-    include_dims: bool = False,
-    reset: bool = False,
-):
-    global io_files
-    if reset:
-        io_files = []
-    io = []
-    os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
-    for iname, i_array in inputs.items():
-        i_array.tofile(f"{write_io_dir}/{write_io_subdir}/{iname}.raw")
-        i_spec = {
-            "path": f"{write_io_subdir}/{iname}.raw",
-            "io-direction": "in",
-            "elem-size": i_array.itemsize,
-            "map-to": iname,
-        }
-        if include_dims:
-            i_spec["dims"] = i_array.shape
-        io.append(i_spec)
-    for o_name, o_array in outputs.items():
-        o_array.tofile(f"{write_io_dir}/{write_io_subdir}/{o_name}.raw")
-        o_spec = {
-            "path": f"{write_io_subdir}/{o_name}.raw",
-            "io-direction": "out",
-            "elem-size": o_array.itemsize,
-            "map-to": o_name,
-        }
-        if include_dims or o_name.endswith("_RetainedState"):
-            o_spec["dims"] = o_array.shape
-        io.append(o_spec)
-    io_files.append(io)
-    with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
-        json.dump({"IO-files": io_files}, fp, indent=True)
-
-
 def latency_stats_bertstyle(
     model_name: str,
     qpc_path: str,
     seq_len: int,
     prompt: str,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
@@ -137,9 +96,9 @@ def latency_stats_bertstyle(
         :qpc_path (str): Path to save generated binary file after compilation.
         :seq_len (int): Sequence length.
         :prompt (str): Sample prompt for the model text generation.
-        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
+        :device_ids (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
     """
-    session = QAICInferenceSession(qpc_path, device_id)
+    session = QAICInferenceSession(qpc_path, device_ids)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
@@ -321,13 +280,12 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     comp_ctx_lengths_prefill: Optional[List[int]] = None,
     comp_ctx_lengths_decode: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
-    write_io_dir: Optional[str] = None,
     automation=False,
     iteration: int = 1,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
@@ -336,6 +294,8 @@ def cloud_ai_100_exec_kv(
     return_pdfs: bool = False,
     include_guided_decoding: bool = False,
     sampling_params: Optional[Dict[str, Any]] = None,
+    profiling_type: str | None = None,
+    profiling_output_dir: Path | str | None = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -350,10 +310,9 @@ def cloud_ai_100_exec_kv(
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.
         :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.
         :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
-        :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
+        :device_ids (List[int]): Device IDs to be used for execution. If ``len(device_ids) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
         :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
-        :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
@@ -368,6 +327,9 @@ def cloud_ai_100_exec_kv(
         The dictionary should contain the following keys:
         `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
         `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
+        :profiling_type (str, default=None): One of "latency", "trace", "raw_device_stats", "stats". Enables
+        runtime device profiling capture (via `QAICInferenceSession`'s profiling API) for this call.
+        :profiling_output_dir (Union[Path, str], default=None): Directory to write the profiling report to.
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
@@ -379,7 +341,7 @@ def cloud_ai_100_exec_kv(
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
         qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_ids=[0])
 
     """
     batch_size, ctx_len, full_batch_size, num_kv_blocks = get_compilation_dims(qpc_path)
@@ -392,12 +354,11 @@ def cloud_ai_100_exec_kv(
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_id,
+        device_ids=device_ids,
         ctx_len=ctx_len,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         enable_debug_logs=enable_debug_logs,
-        write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
         num_kv_blocks=num_kv_blocks,
         is_tlm=is_tlm,
@@ -405,6 +366,8 @@ def cloud_ai_100_exec_kv(
         return_pdfs=return_pdfs,
         include_guided_decoding=include_guided_decoding,
         sampling_params=sampling_params,
+        profiling_type=profiling_type,
+        profiling_output_dir=profiling_output_dir,
     )
 
     for _ in range(0, int(iteration)):
@@ -447,20 +410,20 @@ class QEffTextGenerationBase:
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
         include_sampler: bool = False,
         return_pdfs: bool = False,
         include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
         activate: bool = True,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
     ) -> None:
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
         self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
-        self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
         self.include_guided_decoding = include_guided_decoding
@@ -469,7 +432,12 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(
-            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+            qpc_path,
+            device_ids,
+            activate=activate,
+            enable_debug_logs=enable_debug_logs,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
         )
 
         # Validate sampler inputs for On-Device Sampling
@@ -509,15 +477,17 @@ class QEffTextGenerationBase:
             [x for x in self._session.input_names + self._session.output_names if is_retained_state_name(x)]
         )
 
+    def profiling_context(self):
+        """Context manager bracketing a block of `run()` calls with start/stop profiling, or a no-op if profiling is disabled."""
+        if self._session.profiling_handle is not None:
+            return self._session.profile()
+        return nullcontext()
+
     def _set_tokenizer_params(self):
         """
         Sets the tokenizer parameters for the model.
         """
-        if self.tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            self.tokenizer.padding_side = "right"
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        prepare_tokenizer(self.tokenizer)
 
     def _fetch_full_batch_size(
         self,
@@ -797,11 +767,7 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
         """
         # Run prefill
-        inputs = self.tokenizer(prompt, return_tensors="np", padding=True)
-        position_ids = inputs["attention_mask"].sum(1, keepdims=True)
-        padded_len = inputs["input_ids"].shape[1]
-        num_chunks = -(padded_len // -self._prefill_seq_len)  # ceil divide without float
-        padded_len = num_chunks * self._prefill_seq_len  # Convert to a multiple of prompt_len
+        inputs, position_ids, num_chunks = build_prefill_inputs(self.tokenizer, prompt, self._prefill_seq_len)
 
         # Initialize variables specific to request
         # Calculate the max generation length.
@@ -810,10 +776,6 @@ class QEffTextGenerationBase:
 
         # Set the prefill output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
-
-        inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs.pop("token_type_ids", None)
 
         if block_table is not None:
             inputs["block_table"] = block_table
@@ -854,13 +816,7 @@ class QEffTextGenerationBase:
                     prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
-            chunk_inputs = inputs.copy()
-            chunk_inputs["input_ids"] = inputs["input_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
-            chunk_inputs["position_ids"] = inputs["position_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
+            chunk_inputs = slice_prefill_inputs(inputs, i, self._prefill_seq_len)
             if block_table is not None:
                 chunk_start_position_id = i * self._prefill_seq_len
                 chunk_inputs["slot_id"] = np.full(
@@ -871,8 +827,6 @@ class QEffTextGenerationBase:
 
             outputs = self._session.run(chunk_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
         return (
             outputs,
             position_ids,
@@ -1046,10 +1000,6 @@ class QEffTextGenerationBase:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
             decode_inputs["position_ids"][:, -1] += 1
@@ -1084,10 +1034,6 @@ class QEffTextGenerationBase:
             yield decode_inputs["input_ids"]
             outputs = self._session.run(decode_inputs)
 
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
             decode_inputs["position_ids"] += 1
@@ -1109,14 +1055,15 @@ class TextGeneration:
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
         include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
             tokenizer=tokenizer,
@@ -1126,14 +1073,15 @@ class TextGeneration:
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-            device_id=device_id,
+            device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
-            write_io_dir=write_io_dir,
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._num_kv_blocks = self._qaic_model.num_kv_blocks
@@ -1337,15 +1285,17 @@ class TextGeneration:
 
         if self._full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
-            perf_metrics, generated_texts = self._continuous_batching_execution(
-                prompt, generation_len, prompt_to_lora_id_mapping
-            )
+            with self._qaic_model.profiling_context():
+                perf_metrics, generated_texts = self._continuous_batching_execution(
+                    prompt, generation_len, prompt_to_lora_id_mapping
+                )
         else:
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
-            perf_metrics, generated_texts = self._regular_model_execution(
-                prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
-            )
+            with self._qaic_model.profiling_context():
+                perf_metrics, generated_texts = self._regular_model_execution(
+                    prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
+                )
 
         if stream:
             stream_start = 0 if self._full_batch_size else 1

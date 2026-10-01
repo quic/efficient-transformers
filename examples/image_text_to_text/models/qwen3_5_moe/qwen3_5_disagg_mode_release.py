@@ -147,6 +147,9 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 512
+# The GDN prefill mini-chunk follows the prefill/CPL by default. This is passed
+# explicitly because the shared compile API does not infer model-specific options.
+gdn_chunk_size = PREFILL_SEQ_LEN
 CTX_LEN = 14 * 1024
 BATCH_SIZE = 512  # Per-slot prefill batch size
 BS = BATCH_SIZE
@@ -162,6 +165,7 @@ qaic_config = {
     "num_q_blocks": 4,
     "n_rep_chunk": 1,
     "skip_kv": True,
+    "gdn_chunk_size": gdn_chunk_size,
 }
 
 # CL 64K BSZ1
@@ -175,7 +179,6 @@ qaic_config = {
 # CL 14K BSZ512
 # Decode-time KV blocking plus EP decode.
 decode_qaic_config = {
-    "qeff_chunk_size": 1,
     "blocking_mode": "kv_batch_fold",
     "num_kv_blocks": 16,
     "gdn_num_head_blocks": int(os.environ.get("QEFF_GDN_NUM_HEAD_BLOCKS", "8")),

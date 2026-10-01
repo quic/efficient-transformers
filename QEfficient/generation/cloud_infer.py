@@ -7,6 +7,7 @@
 
 import platform
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from warnings import warn
@@ -73,6 +74,9 @@ class QAICInferenceSession:
         stages: Optional[int] = 1,
         cluster_id: Optional[str] = None,
         full_batch_size: int = 1,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
+        profiling_file_prefix: str = "aic-profiling-python",
     ):
         """
         Initialise for QAIC inference Session
@@ -93,6 +97,12 @@ class QAICInferenceSession:
             selects which exec-object pool this session allocates. Unused otherwise.
         :full_batch_size: int. Number of decode slots; `batch_index` offsets wrap
             modulo this value at prefill handoff. Only used when `kv_dma_share=True`.
+        :profiling_type: Optional[str]. One of "latency", "trace", "raw_device_stats", "stats". Selects the
+            runtime device profiling type (via the `qaicrt.ProfilingHandle` API on this session's `Program`).
+            If None (default), profiling support is disabled.
+        :profiling_output_dir: Optional[Union[Path, str]]. Directory to write the profiling report to. Defaults to
+            a "profiling_output" directory alongside `qpc_path`. Only used when `profiling_type` is set.
+        :profiling_file_prefix: str. Filename prefix for the profiling report. Default="aic-profiling-python".
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError(
@@ -122,6 +132,25 @@ class QAICInferenceSession:
         self.cluster_id = cluster_id
         self.full_batch_size = full_batch_size
         self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
+        if profiling_type is not None:
+            profiling_type_map = {
+                "latency": "QAIC_PROFILING_INFERENCE_LATENCY_TYPE",
+                "trace": "QAIC_PROFILING_INFERENCE_TRACE_TYPE",
+                "raw_device_stats": "QAIC_PROFILING_INFERENCE_RAW_DEVICE_STATS_TYPE",
+                "stats": "QAIC_PROFILING_INFERENCE_DEV_KPI_TYPE",
+            }
+            if profiling_type not in profiling_type_map:
+                raise ValueError(
+                    f"Unsupported profiling_type {profiling_type!r}; expected one of {list(profiling_type_map)}"
+                )
+            profiling_enum = getattr(
+                getattr(qaicrt, "QAicProfilingTypeEnum", None), profiling_type_map[profiling_type], None
+            )
+            if profiling_enum is None or not hasattr(qaicrt, "ProfilingHandle"):
+                raise RuntimeError(
+                    f"profiling_type {profiling_type!r} is not supported by the installed QAIC SDK; "
+                    "use a supported profiling mode or disable profiling with profiling_type=None."
+                )
 
         # Load QPC
         if device_ids is not None:
@@ -157,13 +186,26 @@ class QAICInferenceSession:
                 dev_id_non_mq = device_ids[0]
             elif len(device_ids) > 1:
                 prog_properties.devMapping = ":".join(map(str, device_ids))
+        self.is_active = False
         self.program = qaicrt.Program(self.context, dev_id_non_mq, qpc, prog_properties)
         if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
-        self.is_active = False
+        self.profiling_handle = None
+        if profiling_type is not None:
+            output_dir = (
+                Path(profiling_output_dir)
+                if profiling_output_dir
+                else (Path(qpc_path) if Path(qpc_path).is_dir() else Path(qpc_path).parent) / "profiling_output"
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.profiling_handle = qaicrt.ProfilingHandle(
+                programs=[self.program],
+                type=profiling_enum,
+                fileNamePrefix=profiling_file_prefix,
+                outputDirectory=str(output_dir),
+            )
         if activate:
             self.activate()
-            self.is_active = True
         if self._kv_dma is None:
             # Create input qbuffers and buf_dims (single-execObj `run()` path)
             self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
@@ -232,19 +274,67 @@ class QAICInferenceSession:
     def activate(self):
         """Activate qpc"""
         if not self.is_active:
-            self.program.activate()
-            if self._kv_dma is not None:
-                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
-            else:
-                self.execObj = qaicrt.ExecObj(self.context, self.program)
-            self.is_active = True
+            try:
+                self.program.activate()
+                self.is_active = True
+                if self._kv_dma is not None:
+                    self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
+                else:
+                    self.execObj = qaicrt.ExecObj(self.context, self.program)
+            except Exception:
+                try:
+                    self._deactivate(force=True)
+                except Exception as cleanup_error:
+                    warn(f"Failed to deactivate QAIC program after activation error: {cleanup_error}", RuntimeWarning)
+                raise
+
+    def _deactivate(self, force: bool = False):
+        """Deactivate qpc"""
+        if force or getattr(self, "is_active", False):
+            if hasattr(self, "execObj"):
+                del self.execObj
+            try:
+                self.program.deactivate()
+            finally:
+                self.is_active = False
 
     def deactivate(self):
         """Deactivate qpc"""
-        if self.is_active:
-            del self.execObj
-            self.program.deactivate()
-            self.is_active = False
+        self._deactivate()
+
+    def __del__(self):
+        """Best-effort release of device resources when the session is discarded."""
+        try:
+            self.deactivate()
+        except Exception:
+            pass
+
+    def start_profiling(self):
+        """Start capturing a profiling report for this session's program(s)."""
+        if self.profiling_handle is None:
+            raise RuntimeError("Profiling is not enabled for this session; pass `profiling_type` to the constructor.")
+
+        status = self.profiling_handle.start()
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError(f"Failed to start profiling. Status {status}")
+
+    def stop_profiling(self):
+        """Stop profiling and flush the report to `profiling_output_dir`."""
+        if self.profiling_handle is None:
+            raise RuntimeError("Profiling is not enabled for this session; pass `profiling_type` to the constructor.")
+        status = self.profiling_handle.stop()
+
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError(f"Failed to stop profiling. Status {status}")
+
+    @contextmanager
+    def profile(self):
+        """Context manager that brackets a block of `run()` calls with start/stop profiling."""
+        self.start_profiling()
+        try:
+            yield
+        finally:
+            self.stop_profiling()
 
     def _release_program_after_run_failure(self) -> None:
         """Release device resources while preserving the original execution error."""

@@ -9,6 +9,7 @@ import gc
 import inspect
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -31,7 +32,10 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.blocking.blocking_configurator import (
+    build_gated_delta_config_for_transform,
+    build_transformer_blocking_config_for_transform,
+)
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_config,
@@ -42,6 +46,7 @@ from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    GatedDeltaConfigTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
@@ -73,6 +78,23 @@ _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
 def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
     if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
+
+
+def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Path) -> None:
+    """Copy a file-valued compiler input into compile_dir and update command in-place."""
+    for index, argument in enumerate(command):
+        option, separator, value = argument.partition("=")
+        if option != flag or not separator:
+            continue
+
+        input_path = Path(value)
+        if not input_path.is_file():
+            continue
+
+        artifact_path = compile_dir / input_path.name
+        if input_path.resolve() != artifact_path.resolve():
+            shutil.copy2(input_path, artifact_path)
+        command[index] = f"{flag}={artifact_path}"
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -240,8 +262,17 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
+        if getattr(self, "_enable_proxy", False):
+            language_config = self.config
+            for config_name in ("text_config", "llm_config", "language_config"):
+                if nested_config := getattr(self.config, config_name, None):
+                    language_config = nested_config
+                    break
+            if (proxy_num_hidden_layers := getattr(language_config, "num_hidden_layers", None)) is not None:
+                self.hash_params["proxy_num_hidden_layers"] = proxy_num_hidden_layers
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
+        self.compile_artifacts_path: Optional[Path] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
         self.weight_spec_path: Optional[str] = None
         self.model_architecture = (
@@ -1006,8 +1037,18 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
+        self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
+            self.model, gated_delta_config=gated_delta_config
+        )
+        if gated_delta_transformed and gated_delta_config is not None:
+            self.hash_params["gated_delta_kwargs"] = gated_delta_config
+        else:
+            self.hash_params.pop("gated_delta_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
+        else:
+            self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
@@ -1058,6 +1099,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
+        artifacts: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1078,6 +1120,7 @@ class QEFFBaseModel(ABC):
             :num_speculative_tokens (int | List[int], optional): Number of speculative tokens for TLM decode. A plain int K compiles one decode specialization (seq_len=K+1). A list [K0, K1, ...] compiles one specialization per value, enabling per-step dispatch to the cheapest kernel.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
+            :artifacts (bool): Export the model and write compiler inputs and a replay script without invoking the compiler. ``Defaults to False.``
             :compiler_options: Pass any compiler option as input.
                 Any flag that is supported by `qaic-compile` can be passed. Params are converted to flags as below:
 
@@ -1088,7 +1131,6 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
 
         for removed_option in ("compile_only", "compile-only"):
@@ -1136,6 +1178,8 @@ class QEFFBaseModel(ABC):
             onnx_path = Path(onnx_path)
             return onnx_path
         onnx_path = Path(onnx_path)
+        if artifacts:
+            self.onnx_path = onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -1143,6 +1187,8 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
+            if artifacts:
+                raise NotImplementedError("`artifacts` is not supported by the QNN compilation path.")
             if compiler_options:
                 logger.warning(
                     f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
@@ -1227,6 +1273,7 @@ class QEFFBaseModel(ABC):
             mdp_ts_json = load_json(str(mdp_ts_json_path))
         elif mdp_num_partitions > 1:
             # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
+            compile_dir.mkdir(parents=True, exist_ok=True)
             num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             num_layers = getattr(self, "num_layers", None)
             if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
@@ -1281,12 +1328,14 @@ class QEFFBaseModel(ABC):
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
-        if (qpc_path / "programqpc.bin").is_file():
-            self.qpc_path = qpc_path
-            return qpc_path
-        if qpc_path.is_dir():
-            # Probably compilation failure last time, delete directory to start over.
-            shutil.rmtree(qpc_path)
+        if not artifacts:
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                self.compile_artifacts_path = compile_dir
+                return qpc_path
+            if qpc_path.is_dir():
+                # Probably compilation failure last time, delete directory to start over.
+                shutil.rmtree(qpc_path)
         compile_dir.mkdir(parents=True, exist_ok=True)
 
         # Write tensor-slice MDP partition config now that compile_dir exists.
@@ -1318,7 +1367,46 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
-        logger.info(f"Running compiler: {' '.join(command)}")
+        if artifacts:
+            logger.info(f"Writing compiler replay command: {' '.join(command)}")
+        else:
+            logger.info(f"Running compiler: {' '.join(command)}")
+
+        if artifacts:
+            _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
+            _copy_existing_compiler_input(command, "-mdp-load-partition-config", compile_dir)
+            path_flags = {
+                "-aic-binary-dir",
+                "-custom-IO-list-file",
+                "-mdp-dump-partition-config",
+                "-mdp-load-partition-config",
+                "-m",
+                "-network-specialization-config",
+                "-node-precision-info",
+                "-ols-config",
+            }
+            replay_command = [Path(command[0]).name]
+            for argument in command[1:]:
+                flag, separator, value = argument.partition("=")
+                if separator and flag in path_flags:
+                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), compile_dir)}"
+                replay_command.append(argument)
+            compile_command = shlex.join(replay_command)
+            script_lines = (
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'cd -- "$(dirname -- "$0")"',
+                compile_command,
+                "",
+            )
+            script_path = compile_dir / "qaic-compile.sh"
+            script_path.write_text("\n".join(script_lines))
+            script_path.chmod(0o755)
+            create_json(str(compile_dir / "hashed_compile_params.json"), compile_hash_params)
+            self.qpc_path = None
+            self.compile_artifacts_path = compile_dir
+            logger.info(f"Compiler artifacts written to {compile_dir}")
+            return compile_dir
 
         try:
             subprocess.run(command, capture_output=True, check=True)

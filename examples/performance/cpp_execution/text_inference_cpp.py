@@ -131,7 +131,7 @@ def main(
         qpc_path=qpc_dir_path,
         prompt_len=prompt_len,
         prompt=prompt,
-        device_id=device_group,
+        device_ids=device_group,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
         full_batch_size=full_batch_size,
@@ -144,7 +144,7 @@ def cloud_ai_100_exec_kv_cpp(
     prompt_len: int,
     prompt: Optional[List[str]] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -156,7 +156,7 @@ def cloud_ai_100_exec_kv_cpp(
 
     # ********* CPP Calling ********
     InferenceSetIOBuffer.generatePrompt(
-        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id
+        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_ids
     )
 
 

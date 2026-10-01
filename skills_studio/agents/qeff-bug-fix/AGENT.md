@@ -1,6 +1,6 @@
 ---
 name: qeff-bug-fix
-description: Use when the user provides a JIRA ticket key (e.g. "PROJ-1234"), a JIRA URL, a bug report, or a reproducer for the quic/efficient-transformers (QEfficient) repo and asks for a bug fix. For JIRA Data Center tickets, the agent pulls the issue via REST API using the `$JIRA_PAT` and `$JIRA_URL` env vars. It then writes a standalone reproduction script into the working directory (modeled on `efficient-transformers/examples/`) that either the agent or the user can run, reproduces the bug, proposes a minimal fix, adds/updates a regression test, and iterates a bounded verify-loop until the evidence ladder is green OR honestly reports which rungs remain unverified. Does NOT commit, push, or create PRs — edits files only. Trigger phrases: "fix this JIRA", "fetch JIRA ...", "bug fix for QEff", "reproduce and fix this issue".
+description: Use when the user provides a JIRA ticket key (e.g. "PROJ-1234"), a JIRA URL, a bug report, or a reproducer for the quic/efficient-transformers (QEfficient) repo and asks for a bug fix. For JIRA Data Center tickets, the agent pulls the issue via REST API using the `$JIRA_PAT` and `$JIRA_URL` env vars. It then writes a standalone reproduction script into the working directory (modeled on `efficient-transformers/examples/`), adds or updates a tiny-random Reproducer Config Test when the failure is a model-stage regression, reproduces the bug, proposes a minimal fix, adds/updates a focused regression test, and iterates a bounded verify-loop until the evidence ladder is green OR honestly reports which rungs remain unverified. Does NOT commit, push, or create PRs — edits files only. Trigger phrases: "fix this JIRA", "fetch JIRA ...", "bug fix for QEff", "reproduce and fix this issue".
 ---
 
 # QEfficient Bug Fix Agent
@@ -188,6 +188,17 @@ Extract: (a) summary, (b) expected vs actual behavior, (c) reproducer command or
 - **If you cannot reproduce end-to-end (no hardware, no model access, no credentials), say so loudly in the final report** and still leave the repro script behind so the user can run it. Do *not* silently substitute "a unit test that exercises the suspect function" for reproduction — those tests prove your theory, not the bug. A fix without reproduction evidence is a hypothesis, and must be labeled as such in the report so the user can run the repro on their end before trusting it.
 - **Point the user at the script in the final report** (Step 10): give its path and the command to run it.
 
+**Add the catalog entry too.** For every model-stage bug, add or update one `RegressionScenario` in
+`tests/reproducer_configs/test_reported_reproducer_configs.py`, following
+`tests/reproducer_configs/README.md`. Use `stage="export"` when the failure occurs before QAIC compilation,
+`stage="compile"` when compiler artifacts are part of the failure, and the matching `model_api`. Prefer a
+`tiny_model_id` for the same architecture and keep `official_model_id` unset when the user requests tiny-random
+coverage only. Preserve the ticket's relevant `load_kwargs`, `export_kwargs`, `compile_kwargs`, and
+`inference_kwargs`; do not mark a faithful tiny scenario skipped merely because the official model is large. Run the
+targeted scenario with `QEFF_REPRODUCER_SCENARIO=<scenario-name> pytest
+tests/reproducer_configs/test_reported_reproducer_configs.py -q -rs` after the fix, with
+`HF_HUB_CACHE=/home/huggingface_hub`, `HF_HUB_ENABLE_HF_TRANSFER=1`, and `TMPDIR=/home/rishinr/tmpdir` set.
+
 ### 4. Find the regression commit (conditional)
 
 - **Skip this step for clear one-line fixes** unless the user asked for it or the introducing commit genuinely changes the fix. For those, `git blame <file> -L <line>,<line>` on the suspect line is enough — cite its SHA in the report and move on.
@@ -222,6 +233,8 @@ Extract: (a) summary, (b) expected vs actual behavior, (c) reproducer command or
 
 - Place the test in the most specific matching directory under `tests/` — mirror the source layout (`QEfficient/transformers/X.py` → `tests/transformers/test_X.py` or `tests/unit_test/...`).
 - Follow existing test patterns in that directory (fixtures, parametrize, markers). Do not introduce a new testing framework or pattern.
+- This focused test does not replace the Reproducer Config Test: the catalog entry is the production-shaped model-stage
+  coverage, while the focused test should remain CPU-runnable when possible.
 - **The test must exercise the bug, not the theory.** The passing criterion is "if I revert the source fix, this test fails in a way that mirrors the user's reported symptom." Parity tests against a sibling implementation, invariants on helpers, and shape assertions are *supporting* evidence — they are not regression tests unless they also satisfy the revert-to-fail criterion for the actual reported behavior. Before writing the test, write down: "this test fails without my fix because ___, and the failure looks like ___ — which matches the user's symptom." If you can't fill in that sentence, the test is not a regression test for this bug.
 - The test must fail on current `main` without your source fix and pass with it. Demonstrate this by running the test against the unpatched file first if feasible — if not, at minimum reason through it and flag the uncertainty in the report.
 - Use an appropriate marker. If the test needs hardware, mark `on_qaic`; if it's a pure unit test, no marker needed. Never add a test that requires hardware as the *only* coverage — also add a CPU-runnable sanity check where possible.
