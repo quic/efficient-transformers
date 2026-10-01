@@ -13,10 +13,41 @@ Don't add an example if:
 - The model works with existing generic examples (just use those)
 - The only difference is the model name, you can include the model name in validated model list and model class readme file. 
 
+## Text Generation: One Canonical Entry Point
+
+Text-only language models are served by a single flag-driven script,
+[`text_generation/basic_inference.py`](text_generation/basic_inference.py). It
+covers dense, continuous-batching, MoE, GGUF, blocked-attention, disaggregated,
+and MDP workloads as flags over the same
+`QEFFAutoModelForCausalLM.from_pretrained` / `.compile` / `.generate` calls.
+
+**Do not add a new per-model `.py` file under `text_generation/`.** To support a
+new model or recipe:
+- If it runs on the existing three-step API, express it as flags on
+  `basic_inference.py` (see `python text_generation/basic_inference.py --help`
+  and `--help-advanced`) and add the model to the validated model list — no code
+  change needed.
+- If it needs new tunable behaviour, add the flag/config to `basic_inference.py`
+  and its shared parser in [`_common/args.py`](_common/args.py) so every recipe
+  stays on one entry point.
+- Only genuinely bespoke, one-off surgery that does not fit the canonical API
+  belongs under `text_generation/advanced/`, with a README noting its
+  scratchpad nature. Historical GLM4 and Kimi-K2 recipes are available in the
+  [text-generation archive](text_generation/archive/advanced/).
+
+A reviewer will ask any new text-generation script to justify why it cannot be a
+flag or config on `basic_inference.py`.
+
+Replaced scripts are retained in the
+[`text_generation/archive/`](text_generation/archive/README.md) directory as
+historical references. Add new capabilities to the canonical entry point; do
+not add recipes to the archive. Text DFlash shares its existing callable runner
+with `basic_inference.py --dflash`.
+
 ## Directory Structure
 
 Place your example in the appropriate domain:
-- `text_generation/` - Text-only language models
+- `text_generation/` - Text-only language models (flags on `basic_inference.py`; see above)
 - `image_text_to_text/` - Vision-language models
 - `embeddings/` - Embedding models
 - `audio/` - Speech and audio models
@@ -28,6 +59,11 @@ Place your example in the appropriate domain:
 ## File Requirements
 
 ### 1. Python Script
+
+> Note: this standalone-script template applies to the vision, embeddings,
+> audio, PEFT, and performance domains, and to `text_generation/advanced/`
+> one-offs. New text-generation recipes go through `basic_inference.py` flags
+> instead (see "Text Generation: One Canonical Entry Point" above).
 
 Your example script should:
 - Include the copyright header

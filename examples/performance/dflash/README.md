@@ -14,6 +14,12 @@ single prompt in-process via `QEfficient.generation.dflash_generation`. The thre
 
 ## Text (dense language models)
 
+The canonical text-generation example also exposes this runner through
+`--dflash`, with hyphenated flags, independent target/draft QPC reuse, and
+`--compile-only`. See the
+[canonical recipe](../../text_generation/README.md#text-dflash-target-and-draft).
+The commands below retain the standalone entry point's existing flags and defaults.
+
 **Supported models:** Llama-3.1-8B-Instruct, Qwen3-4B, Qwen3-8B (see `--help` for the full list).
 
 ### Single prompt
