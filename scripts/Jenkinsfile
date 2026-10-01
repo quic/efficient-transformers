@@ -749,11 +749,6 @@ pipeline {
                 } catch (error) {
                     echo "Failed to collect container diagnostics: ${error}"
                 }
-                try {
-                    sh 'sudo chown -R ubuntu .'
-                } catch (error) {
-                    echo "Failed to change ownership: ${error}"
-                }
                 if (env.CI_IMPACT_TRUSTED_TOOL_DIR) {
                     if (!(env.CI_IMPACT_TRUSTED_TOOL_DIR ==~ /\/opt\/qeff-ci\/qgenie\/[A-Za-z0-9_.-]+/)) {
                         error("Refusing to remove unsafe qgenie tool path: ${env.CI_IMPACT_TRUSTED_TOOL_DIR}")
@@ -799,6 +794,11 @@ pipeline {
                     sh 'sudo docker rm -f ${BUILD_TAG}'
                 } catch (error) {
                     echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+                try {
+                    sh 'sudo chown -R "$(id -u):$(id -g)" .'
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
                 }
             }
             echo 'Cleaning Workspace'
