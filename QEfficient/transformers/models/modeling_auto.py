@@ -38,8 +38,9 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
+    ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-    GraniteMoeFusedExpertSplitCheckpointTransform,
+    MoEExpertParallelCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
@@ -140,18 +141,6 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
-
-
-def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) -> None:
-    """Remove unsupported weight-free mode from non-CausalLM wrappers."""
-
-    if not kwargs.pop("weight_free", False):
-        return
-
-    logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
-        qeff_auto_class_name,
-    )
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -370,7 +359,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -409,7 +397,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -578,7 +565,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -952,7 +938,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         QEFFAutoModelForSequenceClassification
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1162,6 +1147,15 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = []
 
+    _checkpoint_transforms = [
+        # MoEExpertParallelCheckpointTransform,
+        # GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        # MoEExpertStackingCheckpointTransform,
+        # MoEFusedExpertSplitCheckpointTransform,
+        # GraniteMoeFusedExpertSplitCheckpointTransform,
+        DtypeConversionCheckpointTransform,
+    ]
+
     def __init__(self, model: nn.modules, **kwargs):
         """
         Initializes the vision encoder component for multimodal models.
@@ -1174,7 +1168,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1203,6 +1196,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the vision encoder.
         """
+        dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
         return self._export(
             inputs,
             output_names=output_names,
@@ -1210,6 +1204,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            dynamo=dynamo,
         )
 
     def compile(
@@ -1294,12 +1289,22 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         PackQuantizedInt4ToMatMulNBitsTransform,
         FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         FP8BlockWiseDequantLinearToLinearTransform,
+        FP8DeQuantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
         SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
+
+    _checkpoint_transforms = [
+        MoEExpertParallelCheckpointTransform,
+        GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        MoEExpertStackingCheckpointTransform,
+        MoEFusedExpertSplitCheckpointTransform,
+        ExpertParallelPackingCheckpointTransform,
+        DtypeConversionCheckpointTransform,
+    ]
 
     def __init__(self, model, qaic_config: dict | None = None, **kwargs):
         """
@@ -1316,7 +1321,17 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
+        if kwargs.pop("fp8_retain_weights", False):
+            self._pytorch_transforms = [
+                t
+                for t in self._pytorch_transforms
+                if t
+                not in (
+                    FP8DeQuantLinearToLinearTransform,
+                    FP8BlockWiseDequantLinearToLinearTransform,
+                    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+                )
+            ]
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.qaic_config = qaic_config
@@ -1412,6 +1427,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 prefill_seq_len=prefill_seq_len,
             )
         else:
+            dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
             return self._export(
                 inputs,
                 output_names=output_names,
@@ -1419,6 +1435,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                dynamo=dynamo,
             )
 
     def compile(
@@ -1519,7 +1536,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         **kwargs :
             Additional keyword arguments.
         """
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -1528,6 +1544,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model = model
         self.config = model.config
         self._pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
+        self._weight_free = kwargs.get("weight_free", False)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
@@ -1571,7 +1588,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         _QEffAutoModelForImageTextToTextDualQPC
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1722,7 +1738,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        if self.lang_model.qaic_config is not None and self.lang_model.qaic_config.get("include_sampler", False):
+        lang_qaic_config = getattr(self.lang_model, "qaic_config", None)
+        if lang_qaic_config is not None and lang_qaic_config.get("include_sampler", False):
             logits_index = output_names["lang"].index("logits")
             output_names["lang"][logits_index] = "next_tokens"
             inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
@@ -1731,7 +1748,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.lang_model.get_model_config["vocab_size"],
-                qaic_config=self.lang_model.qaic_config,
+                qaic_config=lang_qaic_config,
             )
 
         layerwise_export = QEFFBaseModel._layerwise_active
@@ -1744,6 +1761,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
             )
         )
+        dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
@@ -1752,6 +1770,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 export_dir=export_dir,
                 offload_pt_weights=False,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                dynamo=dynamo,
             )
 
         # TODO: remove the current pt weight offload capability once CustomLoader is in place
@@ -1776,6 +1795,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
+                dynamo=dynamo,
             )
         return self.onnx_path
 
@@ -1963,6 +1983,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         artifacts: bool = False,
+        dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2200,6 +2221,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     offload_pt_weights=offload_pt_weights,
+                    dynamo=dynamo,
                 )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -2859,7 +2881,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         _QEFFAutoModelForImageTextToTextSingleQPC
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -2960,6 +2981,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            dynamo=kwargs.get("dynamo", False),
         )
 
     def compile(
@@ -3479,7 +3501,6 @@ class QEFFAutoModelForImageTextToText:
         Union[_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC]
             The wrapped model instance, configured for either dual or single QPC.
         """
-        _disable_unsupported_weight_free(kwargs, self.__name__)
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(
                 model, continuous_batching, qaic_config=qaic_config, **kwargs
@@ -3496,6 +3517,7 @@ class QEFFAutoModelForImageTextToText:
         continuous_batching: bool = False,
         qaic_config: dict | None = None,
         layerwise: bool = False,
+        weight_free: bool = False,
         **kwargs,
     ):
         """
@@ -3527,8 +3549,16 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
+
+        if layerwise and weight_free:
+            raise ValueError(
+                "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
+            )
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
+
         enable_proxy = kwargs.pop("enable_proxy", False)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
@@ -3558,10 +3588,14 @@ class QEFFAutoModelForImageTextToText:
             # internally via the layer-wise driver, so the outer instance is
             # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        elif weight_free:
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        if fp8_retain_weights:
+            kwargs["fp8_retain_weights"] = fp8_retain_weights
 
         instance = cls(
             model,
@@ -3569,6 +3603,7 @@ class QEFFAutoModelForImageTextToText:
             continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            weight_free=weight_free,
             **kwargs,
         )
         # Mark the wrapper so its compile() can default ``layerwise=True`` if
@@ -3611,6 +3646,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
@@ -3622,10 +3658,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _onnx_transforms = []
 
     _checkpoint_transforms = [
+        MoEExpertParallelCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
         MoEFusedExpertSplitCheckpointTransform,
-        GraniteMoeFusedExpertSplitCheckpointTransform,
+        ExpertParallelPackingCheckpointTransform,
         DtypeConversionCheckpointTransform,
     ]
 
@@ -3722,6 +3759,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
+        if kwargs.pop("fp8_retain_weights", False):
+            self._pytorch_transforms = [
+                t
+                for t in self._pytorch_transforms
+                if t not in (FP8DeQuantLinearToLinearTransform, FP8BlockWiseDequantLinearToLinearTransform)
+            ]
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
@@ -3869,6 +3912,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         )
 
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         _resolve_torch_dtype(kwargs)
         if enable_proxy:
             prepare_proxy_config(pretrained_model_name_or_path, kwargs)
@@ -3897,6 +3941,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        if fp8_retain_weights:
+            kwargs["fp8_retain_weights"] = fp8_retain_weights
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -4393,7 +4439,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
-                if torch.onnx.is_in_onnx_export():
+                if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
                         return outputs.logits, _legacyify_cache(outputs.past_key_values)
                     return _legacyify_cache(outputs)
@@ -4793,11 +4839,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
-
-        if self._weight_free and (prefill_only is True or prefill_seq_len == 1):
-            raise NotImplementedError(
-                "weight_free=True is not supported with disaggregated compile (prefill_only=True or prefill_seq_len=1)."
-            )
 
         _decode_ks = (
             sorted(set(num_speculative_tokens))
@@ -5548,7 +5589,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
