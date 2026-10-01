@@ -336,7 +336,7 @@ class QEffQwen3VLMoeVisionAttention(Qwen3VLMoeVisionAttention):
         q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
 
         attention_mask = torch.full(
-            [1, seq_length, seq_length], torch.finfo(q.dtype).min, device=q.device, dtype=q.dtype
+            [1, seq_length, seq_length], MIN_MASKED_ATTENTION_VALUE, device=q.device, dtype=q.dtype
         )
 
         # Create index grids
@@ -357,7 +357,7 @@ class QEffQwen3VLMoeVisionAttention(Qwen3VLMoeVisionAttention):
         final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
 
-        final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
+        final_mask = torch.where(final_mask == 1.0, MIN_MASKED_ATTENTION_VALUE, final_mask)
 
         attention_mask[0] = final_mask
 
