@@ -603,6 +603,21 @@ class TestCustomOpTransformStructure:
 
         assert "CtxGatherFunc3DGeneralized" in CustomOpTransform._custom_ops
 
+    @pytest.mark.parametrize("op_name", ["CtxScatter3D", "CtxScatter3DInt"])
+    def test_ctx_scatter_3d_custom_ops_cast_position_ids_before_concat(self, op_name):
+        """ScatterND indices must concatenate tensors with matching INT32 element types."""
+        from QEfficient.customop.ctx_scatter_gather import CtxScatter3D, CtxScatter3DInt
+        from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
+
+        onnxscript_op = {"CtxScatter3D": CtxScatter3D, "CtxScatter3DInt": CtxScatter3DInt}[op_name]
+        function_proto = get_dynamo_onnxscript_func(onnxscript_op).to_function_proto()
+        cast_outputs = {
+            node.output[0] for node in function_proto.node if node.op_type == "Cast" and node.input == ["position_ids"]
+        }
+
+        assert cast_outputs
+        assert any(node.op_type == "Unsqueeze" and node.input[0] in cast_outputs for node in function_proto.node)
+
     def test_custom_op_transform_rms_norm_maps_to_custom_rms_norm(self):
         """CustomRMSNormFunc must map to CustomRMSNorm class."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
