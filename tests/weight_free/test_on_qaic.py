@@ -34,11 +34,49 @@ from ._helpers import (
     CTX_LEN,
     PROMPT_LEN,
     WEIGHT_FREE_QAIC_MODEL_PARAMS,
+    WEIGHT_FREE_VLM_MODEL_PARAMS,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
+    load_weight_free_vlm_model,
     skip_on_model_fetch_error,
 )
+
+VLM_PREFILL_SEQ_LEN = 64
+VLM_CTX_LEN = 512
+VLM_IMAGE_HEIGHT = 354
+VLM_IMAGE_WIDTH = 536
+VLM_NUM_CORES = 4
+
+
+@pytest.mark.weight_free
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_VLM_MODEL_PARAMS)
+def test_weight_free_vlm_combined_compile(model_type, model_id, tmp_export_dir):
+    """Compile vision and combined language prefill/decode QPCs for a weight-free VLM."""
+    try:
+        qeff_model = load_weight_free_vlm_model(model_id)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    qpc_paths = qeff_model.compile(
+        compile_dir=str(tmp_export_dir / f"{model_type}_combined"),
+        batch_size=1,
+        prefill_seq_len=VLM_PREFILL_SEQ_LEN,
+        ctx_len=VLM_CTX_LEN,
+        height=VLM_IMAGE_HEIGHT,
+        width=VLM_IMAGE_WIDTH,
+        num_cores=VLM_NUM_CORES,
+        num_devices=1,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+    )
+
+    assert qpc_paths.get("vision_qpc_path")
+    assert qpc_paths.get("lang_qpc_path")
 
 
 @pytest.mark.weight_free
