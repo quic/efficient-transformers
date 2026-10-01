@@ -23,21 +23,80 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from transformers import AutoConfig
+import torch
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModel, QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
 
 from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     PROMPT_LEN,
+    WEIGHT_FREE_EMBEDDING_MODEL_PARAMS,
     WEIGHT_FREE_QAIC_MODEL_PARAMS,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
     skip_on_model_fetch_error,
 )
+
+
+@pytest.mark.weight_free
+@pytest.mark.on_qaic
+@pytest.mark.embedding_audio_model
+@pytest.mark.parametrize("model_type,model_id,pooling", WEIGHT_FREE_EMBEDDING_MODEL_PARAMS)
+def test_weight_free_embedding_hw_hf_parity(model_type, model_id, pooling, tmp_export_dir):
+    """HF embedding output matches weight-free embedding output on QAIC."""
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        model_hf = AutoModel.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            attn_implementation="eager",
+            low_cpu_mem_usage=False,
+            torch_dtype=torch.float32,
+        )
+        model_hf.eval()
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        if model_type in {"jina", "nomic"}:
+            raise
+        skip_on_model_fetch_error(exc, model_id)
+
+    inputs = tokenizer("hello world", return_tensors="pt")
+    with torch.no_grad():
+        hf_hidden_states = model_hf(**inputs).last_hidden_state
+        hf_output = POOLING_MAP[pooling](hf_hidden_states, inputs["attention_mask"]).cpu().numpy()
+
+    qeff_model = QEFFAutoModel.from_pretrained(model_id, pooling=pooling, weight_free=True)
+    onnx_path = exported_onnx_path(
+        qeff_model.export(
+            tmp_export_dir / f"{model_type}_export",
+            dynamo=True,
+            offload_pt_weights=False,
+        )
+    )
+    qeff_model.compile(
+        onnx_path=str(onnx_path),
+        compile_dir=str(tmp_export_dir / f"{model_type}_compile"),
+        seq_len=32,
+        batch_size=1,
+        num_cores=16,
+    )
+    qaic_output = qeff_model.generate(inputs=inputs)
+
+    assert qaic_output is not None, f"Weight-free QAIC generate returned None for {model_type}"
+    qaic_embeddings = qaic_output["output"]
+    if qaic_embeddings.ndim == 3:
+        qaic_embeddings = qaic_embeddings[:, 0, :]
+    np.testing.assert_allclose(
+        hf_output,
+        qaic_embeddings,
+        rtol=1e-2,
+        atol=1e-2,
+        err_msg=f"HF PT vs weight-free QAIC parity failed for {model_type}",
+    )
 
 
 @pytest.mark.weight_free
