@@ -46,6 +46,7 @@ from QEfficient.transformers.moe import (
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
     delete_module_attrs,
+    gptoss_clamp,
     gptoss_clamped_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -149,8 +150,8 @@ class _QEffGptOssLegacyBlockedMixin:
                 up = (tgb @ W_u) + b_u  # [T, I]
 
                 # Apply GptOss activation with clamping
-                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+                gate = gptoss_clamp(gate, min_value=torch.finfo(torch.float16).min, max_value=self.experts.limit)
+                up = gptoss_clamp(up, min_value=-self.experts.limit, max_value=self.experts.limit)
 
                 # GLU activation
                 glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -233,8 +234,10 @@ class _QEffGptOssLegacyBlockedMixin:
                         cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
                         cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
 
-                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                    cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
+                    cur_gate = gptoss_clamp(
+                        cur_gate, min_value=torch.finfo(torch.float16).min, max_value=self.experts.limit
+                    )
+                    cur_up = gptoss_clamp(cur_up, min_value=-self.experts.limit, max_value=self.experts.limit)
                     cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
                     cur_intermediate = (cur_up + 1) * cur_glu
                     intermediates.append(cur_intermediate)
@@ -326,8 +329,8 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
         # Apply activation with clamping
-        gate = gate.clamp(min=None, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        gate = gptoss_clamp(gate, max_value=self.experts.limit)
+        up = gptoss_clamp(up, min_value=-self.experts.limit, max_value=self.experts.limit)
         glu = gate * torch.sigmoid(gate * self.experts.alpha)
         gated_output = (up + 1) * glu
 
@@ -397,8 +400,8 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
             up = (hidden_states @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=None, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+            gate = gptoss_clamp(gate, max_value=self.experts.limit)
+            up = gptoss_clamp(up, min_value=-self.experts.limit, max_value=self.experts.limit)
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
