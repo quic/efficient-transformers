@@ -131,7 +131,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    text_config = getattr(model_config, "text_config", None)
+    max_seq_len = getattr(
+        model_config,
+        "max_position_embeddings",
+        getattr(text_config, "max_position_embeddings", 1024),
+    )
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
