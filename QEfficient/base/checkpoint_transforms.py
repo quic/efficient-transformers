@@ -486,6 +486,19 @@ def _clear_stale_prepared_dir(out: Path, src: Path) -> None:
         out.unlink()
 
 
+def _config_num_experts(config) -> Optional[int]:
+    """Return the MoE expert count from top-level or nested text configs."""
+    if config is None:
+        return None
+    for candidate in (config, getattr(config, "text_config", None), getattr(config, "llm_config", None)):
+        if candidate is None:
+            continue
+        num_experts = getattr(candidate, "num_local_experts", None) or getattr(candidate, "num_experts", None)
+        if num_experts:
+            return int(num_experts)
+    return None
+
+
 def detect_group_transform(
     config,
     weight_map: Dict[str, str],
@@ -494,8 +507,9 @@ def detect_group_transform(
 ) -> Optional[Type["BaseCheckpointTransform"]]:
     """Return the active layout transform class, or None for dense models.
 
-    Scans weight_map key patterns (gated by config.num_experts) to identify
-    which layout transform applies.  DtypeConversionCheckpointTransform is
+    Scans weight_map key patterns (gated by config.num_experts or nested
+    text_config/llm_config expert counts) to identify which layout transform applies.
+    DtypeConversionCheckpointTransform is
     excluded — it always runs unconditionally and is not a layout transform.
 
     Parameters
@@ -519,9 +533,7 @@ def detect_group_transform(
     if hash_params is None:
         hash_params = {}
 
-    num_experts = None
-    if config is not None:
-        num_experts = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    num_experts = _config_num_experts(config)
     if not num_experts:
         return None
 

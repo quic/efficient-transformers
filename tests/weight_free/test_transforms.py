@@ -47,7 +47,10 @@ from QEfficient.base.onnx_transforms import (
     RenameRepeatedSubgraphTransform,
 )
 from QEfficient.exporter.weight_free import checkpoint_key_resolver
-from QEfficient.exporter.weight_free.checkpoint_key_resolver import find_checkpoint_key
+from QEfficient.exporter.weight_free.checkpoint_key_resolver import (
+    _is_non_persistent_buffer,
+    find_checkpoint_key,
+)
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
     ExpertParallelPackingCheckpointTransform,
@@ -864,6 +867,50 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.0.mlp.gate.weight"
         )
 
+    def test_resolver_strips_vlm_wrapper_prefix_before_visual_alias(self):
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key(
+                "model.vision_model.patch_embed.proj.weight",
+                {"visual.patch_embed.proj.weight": "model.safetensors"},
+                backbone,
+            )
+            == "visual.patch_embed.proj.weight"
+        )
+
+    def test_resolver_strips_language_model_wrapper_for_tied_vlm_weights(self):
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key(
+                "model.language_model.embed_tokens.weight",
+                {"model.embed_tokens.weight": "model.safetensors"},
+                backbone,
+            )
+            == "model.embed_tokens.weight"
+        )
+        assert (
+            find_checkpoint_key(
+                "language_model.embed_tokens.weight",
+                {"model.embed_tokens.weight": "model.safetensors"},
+                backbone,
+            )
+            == "model.embed_tokens.weight"
+        )
+
+    def test_non_persistent_buffers_are_classified_as_computed(self):
+        import torch.nn as nn
+
+        module = nn.Module()
+        module.register_buffer("generated_mask", torch.ones(2), persistent=False)
+        module.register_buffer("checkpoint_buffer", torch.ones(2), persistent=True)
+
+        assert _is_non_persistent_buffer(module, "generated_mask")
+        assert not _is_non_persistent_buffer(module, "checkpoint_buffer")
+
     def test_resolver_combines_router_gate_alias_with_active_transform(self):
         checkpoint_name = "model.layers.0.block_sparse_moe.router.weight"
         backbone = MagicMock()
@@ -1026,6 +1073,63 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+
+    def test_promotes_lm_head_from_wrapped_tied_vlm(self, tmp_path, monkeypatch):
+        src = tmp_path / "src"
+        src.mkdir()
+        tied_weight = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+        checkpoint_key = "model.language_model.embed_tokens.weight"
+        _write_safetensors_checkpoint(src, {checkpoint_key: tied_weight})
+
+        class TiedVLM(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.language_model = torch.nn.Module()
+                self.model.language_model.embed_tokens = torch.nn.Embedding(4, 3)
+                self.lm_head = torch.nn.Linear(3, 4, bias=False)
+                self.lm_head.weight = self.model.language_model.embed_tokens.weight
+
+            def get_expanded_tied_weights_keys(self, all_submodels=True):
+                return {"lm_head.weight": checkpoint_key}
+
+        class DecoderWrapper(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = TiedVLM()
+                self.language_model = self.model.model.language_model
+
+        initializer = SimpleNamespace(shape=tied_weight.shape, dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={"model.lm_head.weight": initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-wrapped-tied-vlm",
+            qeff_model=SimpleNamespace(model=DecoderWrapper()),
+        )
+
+        assert "model.lm_head.weight" not in graph.initializers
+        assert [value.name for value in graph.inputs] == ["model.lm_head.weight"]
+        assert spec.inputs[0].location.key == checkpoint_key
+
+    def test_resolves_repeated_model_wrapper_prefix(self):
+        checkpoint_key = "model.visual.patch_embed.proj.weight"
+        checkpoint_index = {checkpoint_key: "base-0000.safetensors"}
+        backbone = torch.nn.Module()
+
+        assert (
+            checkpoint_key_resolver.find_checkpoint_key(
+                "model.model.visual.patch_embed.proj.weight", checkpoint_index, backbone
+            )
+            == checkpoint_key
+        )
 
 
 def _fake_export(
