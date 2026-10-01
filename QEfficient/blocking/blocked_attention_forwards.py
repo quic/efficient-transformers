@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from transformers.cache_utils import Cache
 
+from QEfficient.customop import CtxGatherFuncPagedKVDP
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import HEADPAR_MASKED_ATTENTION_VALUE, MIN_MASKED_ATTENTION_VALUE
 
@@ -141,6 +142,317 @@ def _read_kv_block(
         updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == kv_block_idx
         return past_key_value.read_only_paged_attention(block_index, updated, layer_idx, cache_kwargs)
     return past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
+
+
+def _gather_paged_gqa_dp(pool: torch.Tensor, block_ids_per_page: torch.Tensor) -> torch.Tensor:
+    """Gather page IDs for a physical cache whose rows are ordered [DP, CP, Hkv]."""
+    if block_ids_per_page.ndim != 2:
+        raise ValueError("Paged GQA block IDs must have shape [DP, pages].")
+    dp, num_pages = block_ids_per_page.shape
+    rows = pool.shape[1]
+    if rows % dp:
+        raise ValueError("Paged GQA block IDs must have shape [DP, pages] and divide the cache rows.")
+    rows_per_dp = rows // dp
+    block_ids_by_row = (
+        block_ids_per_page.transpose(0, 1).unsqueeze(2).expand(num_pages, dp, rows_per_dp).reshape(num_pages, rows)
+    )
+    return CtxGatherFuncPagedKVDP.apply(pool, block_ids_by_row.to(torch.int32))
+
+
+def _gather_paged_gqa_v_dp(
+    value_cache: torch.Tensor,
+    block_ids: torch.Tensor,
+    threshold: torch.Tensor,
+    block_len: int,
+    num_cores: int,
+    head_dim: int,
+) -> torch.Tensor:
+    """Gather one paged V block and zero positions beyond each CP/core validity limit."""
+    invalid = (
+        torch.arange(block_len, device=value_cache.device).view(1, 1, 1, block_len) > threshold.unsqueeze(-1)
+    ).unsqueeze(-1)
+    value_block = _gather_paged_gqa_dp(value_cache, block_ids).view(
+        1, value_cache.shape[1], num_cores, block_len, head_dim
+    )
+    return torch.where(invalid, torch.zeros_like(value_block), value_block)
+
+
+def _paged_gqa_prefill_attention(
+    module: nn.Module,
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    block_table: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    ctx_len: int,
+    page_block_size: int,
+) -> torch.Tensor:
+    """Run page-streamed GQA prefill. Prefill intentionally keeps DP=CP=1."""
+    batch, num_heads, query_len, head_dim = query.shape
+    num_kv_heads = key_cache.shape[1]
+    if block_table.ndim == 3:
+        block_table = block_table[0]
+    if tuple(block_table.shape) != (batch, ctx_len // page_block_size):
+        raise ValueError("Paged GQA prefill block_table must have shape [B, ctx_len / page_block_size].")
+
+    outputs = []
+    masked_value = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype, device=query.device)
+    for batch_idx in range(batch):
+        current_max = torch.full((1, num_heads, query_len), MIN_MASKED_ATTENTION_VALUE, device=query.device)
+        denominator = torch.zeros((1, num_heads, query_len), device=query.device)
+        output = torch.zeros((1, num_heads, query_len, head_dim), dtype=query.dtype, device=query.device)
+        q_batch = query[batch_idx : batch_idx + 1]
+        for page_idx in range(block_table.shape[-1]):
+            page_ids = block_table[batch_idx, page_idx].view(1, 1).expand(1, num_kv_heads)
+            k_page = CtxGatherFuncPagedKVDP.apply(key_cache, page_ids.to(torch.int32))
+            v_page = CtxGatherFuncPagedKVDP.apply(value_cache, page_ids.to(torch.int32))
+            k_page, v_page = _get_kv_states(module, k_page, v_page)
+            scores = torch.matmul(q_batch, k_page.transpose(2, 3)) * scaling
+            start = page_idx * page_block_size
+            mask = None
+            if attention_mask is not None:
+                mask = attention_mask[batch_idx : batch_idx + 1, :, :, start : start + page_block_size]
+            if mask is None or mask.shape[-1] != scores.shape[-1]:
+                mask = _create_causal_mask(
+                    position_ids[batch_idx : batch_idx + 1], start + page_block_size, start_index=start
+                )
+            scores = torch.where(mask, masked_value, scores)
+            current_max, denominator, output = update_running_softmax(current_max, scores, denominator, output, v_page)
+        outputs.append(output)
+    return torch.cat(outputs, dim=0).transpose(1, 2).contiguous()
+
+
+def paged_gqa_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    *,
+    ctx_len: Optional[int],
+    skip_kv: bool = False,
+    attn_dp: int = 1,
+    attn_cp: int = 1,
+    page_block_size: Optional[int] = None,
+    num_cores_per_device: int = 1,
+) -> Tuple[torch.Tensor, None]:
+    """Paged dense GQA using the MiniMax benchmark's [DP, CP, Hkv] physical layout."""
+    if ctx_len is None or page_block_size is None:
+        raise ValueError("Paged GQA requires ctx_len and page_block_size.")
+    batch, num_heads, query_len, head_dim = query.shape
+    num_kv_heads = key.shape[1]
+    dp = int(attn_dp)
+    cp = int(attn_cp)
+    num_cores = int(num_cores_per_device)
+    if dp < 1 or cp < 1 or num_cores < 1 or page_block_size < 1 or num_kv_blocks < 1 or batch % dp:
+        raise ValueError("Paged GQA requires positive DP/CP/core counts and a DP-divisible batch.")
+    if num_heads % num_kv_heads:
+        raise ValueError("Paged GQA requires the query-head count to be divisible by the KV-head count.")
+    block_table = cache_kwargs.get("block_table")
+    position_ids = cache_kwargs.get("position_ids")
+    if block_table is None:
+        raise ValueError("Paged GQA requires a block_table.")
+    if position_ids is None:
+        raise ValueError("Paged GQA requires position_ids.")
+
+    key_cache, value_cache = past_key_value.write_only_paged_attention_dp(
+        key,
+        value,
+        layer_idx,
+        {
+            **cache_kwargs,
+            "attn_dp": dp,
+            "attn_cp": cp,
+            "page_block_size": page_block_size,
+        },
+    )
+
+    if query_len > 1:
+        if dp != 1 or cp != 1:
+            raise NotImplementedError("Paged GQA prefill currently requires attn_dp=1 and attn_cp=1.")
+        return (
+            _paged_gqa_prefill_attention(
+                module,
+                query,
+                key_cache,
+                value_cache,
+                block_table,
+                position_ids,
+                attention_mask,
+                scaling,
+                ctx_len,
+                page_block_size,
+            ),
+            None,
+        )
+
+    batch_local = batch // dp
+    rows = dp * cp * num_kv_heads
+    expected_tail = (rows, page_block_size, head_dim)
+    if key_cache.ndim != 4 or tuple(key_cache.shape[1:]) != expected_tail:
+        raise ValueError(
+            f"Paged GQA cache must have shape [physical_pages, {rows}, {page_block_size}, {head_dim}], "
+            f"got {tuple(key_cache.shape)}."
+        )
+    if tuple(value_cache.shape) != tuple(key_cache.shape):
+        raise ValueError("Paged GQA key and value cache shapes must match.")
+    if block_table.ndim != 3 or tuple(block_table.shape[:2]) != (dp, batch_local):
+        raise ValueError(f"Paged GQA block_table must have shape [{dp}, {batch_local}, pages].")
+    if ctx_len % page_block_size or ctx_len % num_kv_blocks:
+        raise ValueError("Paged GQA requires ctx_len divisible by page_block_size and num_kv_blocks.")
+
+    logical_block_size = ctx_len // num_kv_blocks
+    if logical_block_size % (cp * page_block_size):
+        raise ValueError("Each paged GQA KV block must contain complete CP page groups.")
+    local_block_size = logical_block_size // cp
+    num_page_groups = local_block_size // page_block_size
+    if num_page_groups % num_cores:
+        raise ValueError("Paged GQA page groups per KV block must be divisible by num_cores_per_device.")
+    groups_per_core = num_page_groups // num_cores
+    tokens_per_core = groups_per_core * page_block_size
+    logical_page_groups = math.ceil(ctx_len / page_block_size / cp)
+    if block_table.shape[2] < logical_page_groups:
+        raise ValueError("Paged GQA block_table is too short for ctx_len.")
+
+    num_kv_groups = num_heads // num_kv_heads
+    query_len_effective = num_kv_groups * query_len
+    group_order = (
+        torch.arange(num_page_groups, device=query.device).view(groups_per_core, num_cores).transpose(0, 1).reshape(-1)
+    )
+    query_dp = query.view(dp, batch_local, num_heads, query_len, head_dim).permute(1, 0, 2, 3, 4)
+    position_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2).to(torch.int32)
+    position_rows = (
+        position_dp.view(batch_local, dp, 1, 1, query_len)
+        .expand(batch_local, dp, cp, num_kv_heads, query_len)
+        .reshape(batch_local, rows, 1, query_len)
+    )
+    query_block = position_rows // logical_block_size
+    query_block_offset = position_rows - query_block * logical_block_size
+    query_page = query_block_offset // page_block_size
+    query_remainder = query_block_offset - query_page * page_block_size
+    core_index = torch.arange(num_cores, dtype=position_rows.dtype, device=query.device).view(1, 1, num_cores, 1)
+    row_group = (torch.arange(rows, dtype=position_rows.dtype, device=query.device) // num_kv_heads).view(1, rows, 1, 1)
+    row_way = row_group - (row_group // cp) * cp
+    block_indices = torch.arange(num_kv_blocks, dtype=position_rows.dtype, device=query.device).view(
+        1, 1, 1, num_kv_blocks
+    )
+    query_after = (query_block > block_indices).squeeze(2)
+    query_in = (query_block == block_indices).squeeze(2)
+    query_page_local = query_page // cp
+    query_page_way = query_page - query_page_local * cp
+    last_page = torch.where(
+        row_way < query_page_way,
+        query_page_local,
+        torch.where(row_way == query_page_way, query_page_local, query_page_local - 1),
+    )
+    valid_page = last_page >= 0
+    safe_page = torch.where(valid_page, last_page, torch.zeros_like(last_page))
+    page_group = safe_page // num_cores
+    page_core = safe_page - page_group * num_cores
+    group_start = page_group * page_block_size
+    threshold_before = group_start + page_block_size - 1
+    threshold_current = group_start + query_remainder
+    threshold_after = torch.where(page_group > 0, group_start - 1, torch.full_like(group_start, -1))
+    current_threshold = torch.where(
+        valid_page & (core_index < page_core),
+        threshold_before,
+        torch.where(
+            valid_page & (core_index == page_core),
+            torch.where(row_way == query_page_way, threshold_current, threshold_before),
+            torch.where(valid_page, threshold_after, torch.full_like(threshold_after, -1)),
+        ),
+    ).squeeze(-1)
+    thresholds = torch.where(
+        query_after.unsqueeze(2),
+        torch.full_like(current_threshold.unsqueeze(-1), tokens_per_core - 1),
+        torch.where(
+            query_in.unsqueeze(2),
+            current_threshold.unsqueeze(-1),
+            torch.full_like(current_threshold.unsqueeze(-1), -1),
+        ),
+    )
+
+    batch_maxima = []
+    batch_sums = []
+    batch_outputs = []
+    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+    for batch_idx in range(batch_local):
+        query_local = query_dp[batch_idx].reshape(dp, num_kv_heads, query_len_effective, head_dim)
+        query_rows = (
+            query_local.unsqueeze(1)
+            .expand(dp, cp, num_kv_heads, query_len_effective, head_dim)
+            .reshape(1, rows, query_len_effective, head_dim)
+        )
+        query_core = query_rows.unsqueeze(2).expand(1, rows, num_cores, query_len_effective, head_dim)
+        table = block_table[:, batch_idx]
+        maxima = []
+        sums = []
+        outputs = []
+        key_block = _gather_paged_gqa_dp(key_cache, table[:, group_order]).view(
+            1, rows, num_cores, tokens_per_core, head_dim
+        )
+        for block_idx in range(num_kv_blocks):
+            threshold = thresholds[batch_idx : batch_idx + 1, :, :, block_idx]
+            skip_future = (threshold < 0).unsqueeze(-1)
+            causal_mask = torch.arange(tokens_per_core, device=query.device).view(1, 1, 1, tokens_per_core)
+            causal_mask = causal_mask > threshold.unsqueeze(-1)
+            causal_mask = causal_mask.unsqueeze(3).expand(-1, -1, -1, num_kv_groups, -1)
+            scores = torch.matmul(query_core.float(), key_block.transpose(-1, -2).float()) * scaling
+            scores = scores.masked_fill(causal_mask, -3.0e4)
+            block_max = scores.max(dim=-1).values
+            block_exp = torch.exp(scores - block_max.unsqueeze(-1))
+            block_sum = block_exp.sum(dim=-1)
+            if skip_kv:
+                block_max = torch.where(skip_future, torch.full_like(block_max, -3.0e4), block_max)
+                block_exp = torch.where(skip_future.unsqueeze(-1), torch.zeros_like(block_exp), block_exp)
+                block_sum = torch.where(skip_future, torch.zeros_like(block_sum), block_sum)
+            page_offset = block_idx * num_page_groups
+            page_ids = table[:, page_offset + group_order]
+            value_block = _gather_paged_gqa_v_dp(value_cache, page_ids, threshold, tokens_per_core, num_cores, head_dim)
+            block_output = torch.matmul(block_exp, value_block.float())
+            if skip_kv and is_export:
+                block_output = torch.where(skip_future.unsqueeze(-1), torch.zeros_like(block_output), block_output)
+            maxima.append(block_max)
+            sums.append(block_sum)
+            outputs.append(block_output)
+            if block_idx + 1 < num_kv_blocks:
+                next_offset = (block_idx + 1) * num_page_groups
+                key_block = _gather_paged_gqa_dp(key_cache, table[:, next_offset + group_order]).view(
+                    1, rows, num_cores, tokens_per_core, head_dim
+                )
+        batch_maxima.append(torch.stack(maxima))
+        batch_sums.append(torch.stack(sums))
+        batch_outputs.append(torch.stack(outputs))
+
+    maxima = torch.cat(batch_maxima, dim=1)
+    sums = torch.cat(batch_sums, dim=1)
+    outputs = torch.cat(batch_outputs, dim=1)
+    block_max = maxima.max(dim=0).values
+    block_weight = torch.exp(maxima - block_max.unsqueeze(0))
+    block_sum = (block_weight * sums).sum(dim=0)
+    block_output = (block_weight.unsqueeze(-1) * outputs).sum(dim=0)
+    core_max = block_max.max(dim=2).values
+    core_weight = torch.exp(block_max - core_max.unsqueeze(2))
+    core_sum = (core_weight * block_sum).sum(dim=2)
+    core_output = (core_weight.unsqueeze(-1) * block_output).sum(dim=2)
+    core_max = core_max.view(batch_local, dp, cp, num_kv_heads, query_len_effective)
+    core_sum = core_sum.view(batch_local, dp, cp, num_kv_heads, query_len_effective)
+    core_output = core_output.view(batch_local, dp, cp, num_kv_heads, query_len_effective, head_dim)
+    cp_max = core_max.max(dim=2).values
+    cp_weight = torch.exp(core_max - cp_max.unsqueeze(2))
+    cp_sum = (cp_weight * core_sum).sum(dim=2)
+    cp_output = (cp_weight.unsqueeze(-1) * core_output).sum(dim=2)
+    safe_sum = torch.where(cp_sum > 0, cp_sum, torch.ones_like(cp_sum))
+    output = (cp_output / safe_sum.unsqueeze(-1)).view(batch_local, dp, num_heads, query_len, head_dim)
+    output = output.permute(1, 0, 2, 3, 4).reshape(batch, num_heads, query_len, head_dim)
+    return output.to(query.dtype).transpose(1, 2).contiguous(), None
 
 
 def blocked_kv_attention_forward(

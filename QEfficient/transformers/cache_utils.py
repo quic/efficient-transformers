@@ -15,9 +15,9 @@ from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncBlockedKVDP,
     CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
-    CtxGatherFuncBlockedKVDP,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -594,6 +594,70 @@ class QEffDynamicLayer(CacheLayerMixin):
             block_id = block_id.unsqueeze(-1)
             self.keys = CtxScatterFuncPagedAttention.apply(self.keys, block_id, ctx_indices, key_states)
             self.values = CtxScatterFuncPagedAttention.apply(self.values, block_id, ctx_indices, value_states)
+
+    def write_only_paged_attention_dp(self, key_states, value_states, cache_kwargs):
+        """Write GQA K/V into a physical page pool with rows ordered [DP, CP, Hkv]."""
+        if self.keys is None or self.values is None:
+            raise ValueError("Paged GQA requires preallocated physical key and value pools.")
+        self._mark_initialized(self.keys)
+        position_ids = cache_kwargs.get("position_ids")
+        block_table = cache_kwargs.get("block_table")
+        dp = int(cache_kwargs.get("attn_dp", 1))
+        cp = int(cache_kwargs.get("attn_cp", 1))
+        page_block_size = int(cache_kwargs.get("page_block_size", self.keys.shape[2]))
+        batch, num_kv_heads, seq_len, head_dim = key_states.shape
+        if batch % dp:
+            raise ValueError("Paged GQA batch size must be divisible by attn_dp.")
+        batch_local = batch // dp
+        rows = dp * cp * num_kv_heads
+        if tuple(self.keys.shape[1:]) != (rows, page_block_size, head_dim):
+            raise ValueError(
+                f"Paged GQA key cache must have tail shape {(rows, page_block_size, head_dim)}, "
+                f"got {tuple(self.keys.shape[1:])}."
+            )
+        if tuple(self.values.shape) != tuple(self.keys.shape):
+            raise ValueError("Paged GQA key and value cache shapes must match.")
+        if block_table is None or block_table.ndim != 3 or tuple(block_table.shape[:2]) != (dp, batch_local):
+            raise ValueError(f"Paged GQA block_table must have shape [{dp}, {batch_local}, pages].")
+
+        position_dp = position_ids.view(dp, batch_local, seq_len).permute(1, 0, 2)
+        logical_page = position_dp // page_block_size
+        logical_page_group = logical_page // cp
+        owner_cp = logical_page % cp
+        if not torch.onnx.is_in_onnx_export() and int(logical_page_group.max()) >= block_table.shape[-1]:
+            raise ValueError("Paged GQA block_table is too short for the requested position_ids.")
+        table = block_table.permute(1, 0, 2)
+        physical_page = torch.gather(table, 2, logical_page_group.to(torch.int64))
+        physical_page = physical_page.unsqueeze(2).unsqueeze(3).expand(batch_local, dp, cp, num_kv_heads, seq_len)
+        cp_index = torch.arange(cp, device=key_states.device).view(1, 1, cp, 1, 1)
+        row_live = (owner_cp.unsqueeze(2).unsqueeze(3) == cp_index).expand_as(physical_page)
+        invalid_page = torch.full_like(physical_page, torch.iinfo(torch.int32).max)
+        block_id = torch.where(row_live, physical_page, invalid_page).reshape(batch_local, rows, seq_len)
+        address = (
+            (position_dp % page_block_size)
+            .to(torch.int32)
+            .unsqueeze(2)
+            .unsqueeze(3)
+            .expand(batch_local, dp, cp, num_kv_heads, seq_len)
+            .reshape(batch_local, rows, seq_len)
+        )
+        key_updates = (
+            key_states.view(dp, batch_local, num_kv_heads, seq_len, head_dim)
+            .permute(1, 0, 2, 3, 4)
+            .unsqueeze(2)
+            .expand(batch_local, dp, cp, num_kv_heads, seq_len, head_dim)
+            .reshape(batch_local, rows, seq_len, head_dim)
+        )
+        value_updates = (
+            value_states.view(dp, batch_local, num_kv_heads, seq_len, head_dim)
+            .permute(1, 0, 2, 3, 4)
+            .unsqueeze(2)
+            .expand(batch_local, dp, cp, num_kv_heads, seq_len, head_dim)
+            .reshape(batch_local, rows, seq_len, head_dim)
+        )
+        self.keys = CtxPagedScatterFunc.apply(self.keys, block_id.to(torch.int32), address, key_updates)
+        self.values = CtxPagedScatterFunc.apply(self.values, block_id.to(torch.int32), address, value_updates)
+        return self.keys, self.values
 
     def write_only(self, key_states, value_states, cache_kwargs):
         """
@@ -1173,6 +1237,11 @@ class QEffDynamicCache(Cache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].write_only_paged_attention(key_states, value_states, cache_kwargs)
+
+    def write_only_paged_attention_dp(self, key_states, value_states, layer_idx, cache_kwargs):
+        """Write and return one layer's DP/CP-row paged GQA cache."""
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_paged_attention_dp(key_states, value_states, cache_kwargs)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """

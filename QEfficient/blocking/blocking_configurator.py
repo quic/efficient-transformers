@@ -536,6 +536,9 @@ def build_transformer_blocking_config_for_transform(
         "n_rep_chunk",
         "ctx_len",
         "kv_block_unroll",
+        "paged_gqa",
+        "attn_dp",
+        "attn_cp",
         "msa_indexer_dp",
         "msa_indexer_cp",
         "msa_attn_dp",
@@ -567,6 +570,10 @@ def build_transformer_blocking_config_for_transform(
 
     if qaic_config.get("ctx_len") is None:
         blocking_config.ctx_len = ctx_len
+
+    if qaic_config.get("paged_kv", False) and _is_minimax_m3_config(model_config):
+        blocking_config.paged_attention = True
+        blocking_config.paged_gqa = True
 
     if qaic_config.get("num_cores_per_device") is None:
         blocking_config.num_cores_per_device = compile_options.get("aic_num_cores")
