@@ -16,7 +16,9 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFuncBlockedKVDP,
     CtxGatherFuncBlockRangeKVDP,
     CtxGatherFuncPagedKVDP,
+    CtxGatherFuncPagedKVHeads,
     CtxPagedScatterFuncDP,
+    CtxPagedScatterFuncPage,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
@@ -79,8 +81,10 @@ __all__ = [
     "CtxGatherFuncCB3D",
     # DP-layout ops (com.qti.aisw.onnx namespace)
     "CtxPagedScatterFuncDP",
+    "CtxPagedScatterFuncPage",
     "CtxGatherFuncBlockedKVDP",
     "CtxGatherFuncPagedKVDP",
+    "CtxGatherFuncPagedKVHeads",
     "CtxGatherFuncBlockRangeKVDP",
     # Interface functions (dynamo-aware, prefer these at call sites)
     "ctx_scatter",

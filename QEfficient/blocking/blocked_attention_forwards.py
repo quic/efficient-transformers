@@ -178,18 +178,22 @@ def _gather_paged_gqa_v_dp(
 
 
 def _paged_gqa_prefill_attention(
-    module: nn.Module,
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     block_table: torch.Tensor,
     position_ids: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
     scaling: float,
     ctx_len: int,
     page_block_size: int,
+    num_kv_blocks: int,
+    num_cores: int,
+    skip_kv: bool,
+    num_q_blocks: int,
+    q_blocks_per_outer: int,
+    head_block_size: int,
 ) -> torch.Tensor:
-    """Run page-streamed GQA prefill. Prefill intentionally keeps DP=CP=1."""
+    """Run benchmark-equivalent block-streamed paged GQA prefill."""
     batch, num_heads, query_len, head_dim = query.shape
     num_kv_heads = key_cache.shape[1]
     if block_table.ndim == 3:
@@ -197,31 +201,150 @@ def _paged_gqa_prefill_attention(
     if tuple(block_table.shape) != (batch, ctx_len // page_block_size):
         raise ValueError("Paged GQA prefill block_table must have shape [B, ctx_len / page_block_size].")
 
-    outputs = []
-    masked_value = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype, device=query.device)
-    for batch_idx in range(batch):
-        current_max = torch.full((1, num_heads, query_len), MIN_MASKED_ATTENTION_VALUE, device=query.device)
-        denominator = torch.zeros((1, num_heads, query_len), device=query.device)
-        output = torch.zeros((1, num_heads, query_len, head_dim), dtype=query.dtype, device=query.device)
-        q_batch = query[batch_idx : batch_idx + 1]
-        for page_idx in range(block_table.shape[-1]):
-            page_ids = block_table[batch_idx, page_idx].view(1, 1).expand(1, num_kv_heads)
-            k_page = CtxGatherFuncPagedKVDP.apply(key_cache, page_ids.to(torch.int32))
-            v_page = CtxGatherFuncPagedKVDP.apply(value_cache, page_ids.to(torch.int32))
-            k_page, v_page = _get_kv_states(module, k_page, v_page)
-            scores = torch.matmul(q_batch, k_page.transpose(2, 3)) * scaling
-            start = page_idx * page_block_size
-            mask = None
-            if attention_mask is not None:
-                mask = attention_mask[batch_idx : batch_idx + 1, :, :, start : start + page_block_size]
-            if mask is None or mask.shape[-1] != scores.shape[-1]:
-                mask = _create_causal_mask(
-                    position_ids[batch_idx : batch_idx + 1], start + page_block_size, start_index=start
+    if num_cores % num_kv_heads or num_heads % num_cores:
+        raise ValueError("Paged GQA prefill requires KV heads to divide cores and cores to divide query heads.")
+    if query_len <= 1 or query_len % page_block_size:
+        raise ValueError("Paged GQA prefill query length must be page aligned.")
+    if ctx_len % num_kv_blocks:
+        raise ValueError("Paged GQA prefill requires ctx_len divisible by num_kv_blocks.")
+    kv_block_size = ctx_len // num_kv_blocks
+    if kv_block_size % page_block_size:
+        raise ValueError("Paged GQA prefill KV blocks must contain complete pages.")
+    if num_q_blocks < 1 or query_len % num_q_blocks:
+        raise ValueError("Paged GQA prefill requires query length divisible by num_q_blocks.")
+    if q_blocks_per_outer < 1 or num_q_blocks % q_blocks_per_outer:
+        raise ValueError("Paged GQA prefill requires num_q_blocks divisible by q_blocks_per_outer.")
+
+    kv_repeat = num_cores // num_kv_heads
+    heads_per_core = num_heads // num_cores
+    if head_block_size < 1 or heads_per_core % head_block_size:
+        raise ValueError("Paged GQA prefill head_block_size must divide query heads per core.")
+    query_block_size = query_len // num_q_blocks
+    query_chunk_size = query_block_size * q_blocks_per_outer
+    query_folded = query.reshape(batch, num_cores, heads_per_core, query_len, head_dim)
+    head_ranges = [
+        (start, min(start + head_block_size, heads_per_core)) for start in range(0, heads_per_core, head_block_size)
+    ]
+    output_chunks: list[torch.Tensor] = []
+    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+
+    for query_chunk_start in range(0, query_len, query_chunk_size):
+        query_chunk_end = min(query_chunk_start + query_chunk_size, query_len)
+        query_chunk_position = position_ids[:, query_chunk_start:query_chunk_end].max(dim=-1).values
+        query_states: dict[int, dict[str, Any]] = {}
+        for query_start in range(query_chunk_start, query_chunk_end, query_block_size):
+            query_end = min(query_start + query_block_size, query_chunk_end)
+            block_len = query_end - query_start
+            positions = position_ids[:, query_start:query_end]
+            accumulators = []
+            for head_start, head_end in head_ranges:
+                head_count = head_end - head_start
+                accumulators.append(
+                    {
+                        "head_count": head_count,
+                        "query": query_folded[:, :, head_start:head_end, query_start:query_end].reshape(
+                            batch, num_cores, head_count * block_len, head_dim
+                        ),
+                        "maximum": torch.full(
+                            (batch, num_cores, head_count * block_len),
+                            MIN_MASKED_ATTENTION_VALUE,
+                            dtype=query.dtype,
+                            device=query.device,
+                        ),
+                        "denominator": torch.zeros(
+                            batch, num_cores, head_count * block_len, dtype=query.dtype, device=query.device
+                        ),
+                        "output": torch.zeros(
+                            batch,
+                            num_cores,
+                            head_count * block_len,
+                            head_dim,
+                            dtype=query.dtype,
+                            device=query.device,
+                        ),
+                    }
                 )
-            scores = torch.where(mask, masked_value, scores)
-            current_max, denominator, output = update_running_softmax(current_max, scores, denominator, output, v_page)
-        outputs.append(output)
-    return torch.cat(outputs, dim=0).transpose(1, 2).contiguous()
+            query_states[query_start] = {
+                "block_len": block_len,
+                "positions": positions,
+                "current_position": positions.max(dim=-1).values,
+                "accumulators": accumulators,
+            }
+
+        for kv_block_idx in range(num_kv_blocks):
+            start_index = kv_block_idx * kv_block_size
+            end_index = start_index + kv_block_size
+            if (
+                skip_kv
+                and not is_export
+                and bool((torch.tensor(start_index, device=query.device) > query_chunk_position).all().item())
+            ):
+                break
+            page_start = start_index // page_block_size
+            page_end = end_index // page_block_size
+            key_batches = []
+            value_batches = []
+            for batch_idx in range(batch):
+                page_ids = block_table[batch_idx, page_start:page_end].view(-1, 1).expand(-1, num_kv_heads)
+                key_batches.append(CtxGatherFuncPagedKVDP.apply(key_cache, page_ids.to(torch.int32)))
+                value_batches.append(CtxGatherFuncPagedKVDP.apply(value_cache, page_ids.to(torch.int32)))
+            key_block = torch.cat(key_batches, dim=0).repeat_interleave(kv_repeat, dim=1)
+            value_block = torch.cat(value_batches, dim=0).repeat_interleave(kv_repeat, dim=1)
+            key_positions = torch.arange(start_index, end_index, device=query.device)
+            key_block_transposed = key_block.transpose(2, 3)
+            invalid_value = key_positions[None, None, :] > position_ids.max(dim=1, keepdim=True).values.unsqueeze(1)
+            value_block = torch.where(invalid_value.unsqueeze(-1), torch.zeros_like(value_block), value_block)
+
+            for query_start in range(query_chunk_start, query_chunk_end, query_block_size):
+                state = query_states[query_start]
+                skip_future = (torch.tensor(start_index, device=query.device) > state["current_position"]).all()
+                if skip_kv and not is_export and bool(skip_future.item()):
+                    continue
+                causal = key_positions[None, None, None, :] > state["positions"][:, None, :, None]
+                for accumulator in state["accumulators"]:
+                    head_count = accumulator["head_count"]
+                    scores = torch.matmul(accumulator["query"], key_block_transposed) * scaling
+                    scores = scores.view(batch, num_cores, head_count, state["block_len"], -1)
+                    scores = torch.where(
+                        causal.unsqueeze(2),
+                        torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=scores.dtype, device=scores.device),
+                        scores,
+                    ).reshape(batch, num_cores, head_count * state["block_len"], -1)
+                    accumulator["maximum"], accumulator["denominator"], accumulator["output"] = (
+                        update_running_softmax_prefill(
+                            accumulator["maximum"],
+                            scores,
+                            accumulator["denominator"],
+                            accumulator["output"],
+                            value_block,
+                            skip_kv,
+                            skip_future,
+                        )
+                    )
+
+        block_outputs = []
+        for query_start in range(query_chunk_start, query_chunk_end, query_block_size):
+            state = query_states[query_start]
+            head_outputs = []
+            for accumulator in state["accumulators"]:
+                denominator = torch.where(
+                    accumulator["denominator"] > 0,
+                    accumulator["denominator"],
+                    torch.ones_like(accumulator["denominator"]),
+                )
+                head_outputs.append(
+                    (accumulator["output"] / denominator.unsqueeze(-1)).view(
+                        batch,
+                        num_cores,
+                        accumulator["head_count"],
+                        state["block_len"],
+                        head_dim,
+                    )
+                )
+            block_outputs.append(torch.cat(head_outputs, dim=2))
+        output_chunks.append(torch.cat(block_outputs, dim=3))
+
+    return torch.cat(output_chunks, dim=3).reshape(batch, num_heads, query_len, head_dim).transpose(1, 2).contiguous()
 
 
 def paged_gqa_attention_forward(
@@ -242,6 +365,9 @@ def paged_gqa_attention_forward(
     attn_cp: int = 1,
     page_block_size: Optional[int] = None,
     num_cores_per_device: int = 1,
+    num_q_blocks: int = 1,
+    q_blocks_per_outer: int = 1,
+    head_block_size: int = 1,
 ) -> Tuple[torch.Tensor, None]:
     """Paged dense GQA using the MiniMax benchmark's [DP, CP, Hkv] physical layout."""
     if ctx_len is None or page_block_size is None:
@@ -279,16 +405,20 @@ def paged_gqa_attention_forward(
             raise NotImplementedError("Paged GQA prefill currently requires attn_dp=1 and attn_cp=1.")
         return (
             _paged_gqa_prefill_attention(
-                module,
                 query,
                 key_cache,
                 value_cache,
                 block_table,
                 position_ids,
-                attention_mask,
                 scaling,
                 ctx_len,
                 page_block_size,
+                num_kv_blocks,
+                num_cores,
+                skip_kv,
+                int(num_q_blocks or 1),
+                int(q_blocks_per_outer or 1),
+                int(head_block_size or 1),
             ),
             None,
         )
@@ -416,17 +546,18 @@ def paged_gqa_attention_forward(
             page_offset = block_idx * num_page_groups
             page_ids = table[:, page_offset + group_order]
             value_block = _gather_paged_gqa_v_dp(value_cache, page_ids, threshold, tokens_per_core, num_cores, head_dim)
+            next_key_block = None
+            if block_idx + 1 < num_kv_blocks:
+                next_offset = (block_idx + 1) * num_page_groups
+                next_key_block = _gather_paged_gqa_dp(key_cache, table[:, next_offset + group_order])
             block_output = torch.matmul(block_exp, value_block.float())
             if skip_kv and is_export:
                 block_output = torch.where(skip_future.unsqueeze(-1), torch.zeros_like(block_output), block_output)
             maxima.append(block_max)
             sums.append(block_sum)
             outputs.append(block_output)
-            if block_idx + 1 < num_kv_blocks:
-                next_offset = (block_idx + 1) * num_page_groups
-                key_block = _gather_paged_gqa_dp(key_cache, table[:, next_offset + group_order]).view(
-                    1, rows, num_cores, tokens_per_core, head_dim
-                )
+            if next_key_block is not None:
+                key_block = next_key_block.view(1, rows, num_cores, tokens_per_core, head_dim)
         batch_maxima.append(torch.stack(maxima))
         batch_sums.append(torch.stack(sums))
         batch_outputs.append(torch.stack(outputs))

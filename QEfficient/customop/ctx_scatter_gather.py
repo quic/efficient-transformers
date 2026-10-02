@@ -659,6 +659,54 @@ class CtxPagedScatterFuncDP(torch.autograd.Function):
 
 
 @qeff_custom_op("com.qti.aisw.onnx", 1)
+def CtxPagedScatterPage(
+    data: onnxscript.FLOAT, block_id: onnxscript.INT32, updates: onnxscript.FLOAT
+) -> onnxscript.FLOAT:
+    """Scatter complete pages into a physical page pool.
+
+    ``data`` is ``[physical_pages, heads, page_size, dim]``;
+    ``block_id`` is ``[pages, heads]`` and ``updates`` is
+    ``[pages, heads, page_size, dim]``.
+    """
+    update_shape = ops.Shape(updates)
+    num_pages = ops.Gather(update_shape, [0])
+    num_heads = ops.Gather(update_shape, [1])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    head_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, num_heads, one), [0]),
+        ops.Concat(num_pages, num_heads, axis=0),
+    )
+    indices = ops.Concat(
+        ops.Unsqueeze(ops.Cast(block_id, to=7), [-1]),
+        ops.Unsqueeze(ops.Cast(head_idx, to=7), [-1]),
+        axis=2,
+    )
+    return ops.ScatterND(data, indices, updates)
+
+
+class CtxPagedScatterFuncPage(torch.autograd.Function):
+    """Whole-page scatter matching the MSA microbenchmark ABI."""
+
+    @staticmethod
+    def forward(data: torch.Tensor, block_id: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+        out = data.clone()
+        valid = block_id != torch.iinfo(torch.int32).max
+        page_idx = block_id.long()
+        heads = torch.arange(data.shape[1], device=data.device).view(1, -1).expand_as(block_id)
+        out[page_idx[valid], heads[valid]] = updates[valid]
+        return out
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, block_id: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxPagedScatterPage, data, block_id, updates).setTypeAs(data)
+
+
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CtxGatherBlockedKVDP(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     return ops.GatherND(data, ops.Unsqueeze(ctx_indices, [-1]), batch_dims=2)
 
@@ -745,6 +793,55 @@ class CtxGatherFuncPagedKVDP(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, block_ids: torch.Value) -> torch.Value:
         output = g.onnxscript_op(CtxGatherPagedKVDP, data, block_ids)
+        return _set_paged_gather_output_type(output, data, block_ids)
+
+
+@qeff_custom_op("com.qti.aisw.onnx", 1)
+def CtxGatherPagedKVHeads(data: onnxscript.FLOAT, block_ids: onnxscript.INT32) -> onnxscript.FLOAT:
+    """Gather pages for head-major IDs: ``[pages, heads] -> [1, heads, tokens, D]``."""
+    data_shape = ops.Shape(data)
+    ids_shape = ops.Shape(block_ids)
+    num_heads = ops.Gather(ids_shape, [1])
+    page_size = ops.Gather(data_shape, [2])
+    head_dim = ops.Gather(data_shape, [3])
+    num_pages = ops.Gather(ids_shape, [0])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    head_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, num_heads, one), [0]), ids_shape
+    )
+    indices = ops.Concat(
+        ops.Unsqueeze(ops.Cast(block_ids, to=7), [-1]),
+        ops.Unsqueeze(ops.Cast(head_idx, to=7), [-1]),
+        axis=2,
+    )
+    pages = ops.GatherND(data, indices, batch_dims=0)
+    pages = ops.Transpose(pages, perm=[1, 0, 2, 3])
+    return ops.Reshape(pages, ops.Concat(one, num_heads, ops.Mul(num_pages, page_size), head_dim, axis=0))
+
+
+class CtxGatherFuncPagedKVHeads(torch.autograd.Function):
+    """Head-aware whole-page gather matching the MSA microbenchmark."""
+
+    @staticmethod
+    def forward(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+        block_ids = torch.where(
+            block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids
+        )
+        num_pages, heads = block_ids.shape
+        if heads != data.shape[1]:
+            raise ValueError("Paged head gather IDs must match the cache head dimension.")
+        head_idx = torch.arange(heads, device=data.device).view(1, heads)
+        pages = data[block_ids.long(), head_idx]
+        return pages.permute(1, 0, 2, 3).reshape(1, heads, num_pages * data.shape[2], data.shape[3])
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, block_ids: torch.Value) -> torch.Value:
+        output = g.onnxscript_op(CtxGatherPagedKVHeads, data, block_ids)
         return _set_paged_gather_output_type(output, data, block_ids)
 
 

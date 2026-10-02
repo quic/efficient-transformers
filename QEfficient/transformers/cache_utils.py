@@ -17,6 +17,7 @@ from QEfficient.customop import (
     CtxGatherFuncBlockedKVBatch,
     CtxGatherFuncBlockedKVDP,
     CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
+    CtxPagedScatterFuncPage,
     CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     ctx_gather,
     ctx_gather_3d,
@@ -655,6 +656,32 @@ class QEffDynamicLayer(CacheLayerMixin):
             .expand(batch_local, dp, cp, num_kv_heads, seq_len, head_dim)
             .reshape(batch_local, rows, seq_len, head_dim)
         )
+        is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+        page_aligned = dp == 1 and cp == 1 and seq_len % page_block_size == 0
+        if page_aligned and not is_export:
+            page_aligned = bool(
+                torch.all(position_ids[:, 0] % page_block_size == 0).item()
+                and torch.all(position_ids[:, 1:] == position_ids[:, :-1] + 1).item()
+            )
+        if page_aligned:
+            num_pages = seq_len // page_block_size
+            logical_pages = (position_ids[:, ::page_block_size] // page_block_size).to(torch.int64)
+            physical_pages = torch.gather(block_table[0].to(torch.int64), 1, logical_pages).to(torch.int32)
+            for batch_idx in range(batch):
+                page_ids = physical_pages[batch_idx].view(num_pages, 1).expand(num_pages, num_kv_heads)
+                key_pages = (
+                    key_states[batch_idx]
+                    .reshape(num_kv_heads, num_pages, page_block_size, head_dim)
+                    .permute(1, 0, 2, 3)
+                )
+                value_pages = (
+                    value_states[batch_idx]
+                    .reshape(num_kv_heads, num_pages, page_block_size, head_dim)
+                    .permute(1, 0, 2, 3)
+                )
+                self.keys = CtxPagedScatterFuncPage.apply(self.keys, page_ids, key_pages)
+                self.values = CtxPagedScatterFuncPage.apply(self.values, page_ids, value_pages)
+            return self.keys, self.values
         self.keys = CtxPagedScatterFunc.apply(self.keys, block_id.to(torch.int32), address, key_updates)
         self.values = CtxPagedScatterFunc.apply(self.values, block_id.to(torch.int32), address, value_updates)
         return self.keys, self.values
@@ -1339,6 +1366,21 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         super().__init__(ddp_cache_data, *args, **kwargs)
         self.index_keys: dict[int, Optional[torch.Tensor]] = {}
 
+    @staticmethod
+    def paged_scatter(data, block_id, addr, updates):
+        return CtxPagedScatterFunc.apply(data, block_id, addr, updates)
+
+    @staticmethod
+    def paged_scatter_page(data, block_id, updates):
+        return CtxPagedScatterFuncPage.apply(data, block_id, updates)
+
+    @staticmethod
+    def gather_paged_kv_dp(data, block_ids):
+        pages, rows = block_ids.shape
+        ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
+        gathered = data[ids.long(), torch.arange(rows, device=data.device).view(1, rows)]
+        return gathered.permute(1, 0, 2, 3).reshape(1, rows, pages * data.shape[2], data.shape[3])
+
     def write_only_sparse(self, key_states, value_states, layer_idx, cache_kwargs):
         """Write sparse-layer KV states using paged block/address metadata.
 
@@ -1461,9 +1503,9 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
 
             block_id = block_id.to(dtype=torch.int32, device=layer.keys.device)
             addr = addr.to(dtype=torch.int32, device=layer.keys.device)
-            layer.keys = CtxPagedScatterFunc.apply(layer.keys, block_id, addr, key_states)
+            layer.keys = self.paged_scatter(layer.keys, block_id, addr, key_states)
             layer.keys = layer.keys.reshape(cache_shape)
-            layer.values = CtxPagedScatterFunc.apply(layer.values, block_id, addr, value_states)
+            layer.values = self.paged_scatter(layer.values, block_id, addr, value_states)
             layer.values = layer.values.reshape(cache_shape)
             layer._mark_initialized(layer.keys)
 

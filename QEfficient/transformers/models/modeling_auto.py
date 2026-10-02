@@ -2345,6 +2345,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: bool = False,
         skip_lang: bool = False,
         artifacts: bool = False,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray, Path]:
         """
@@ -2378,6 +2380,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         artifacts : bool, optional
             Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+        profiling_type : str, optional
+            Runtime profiling mode for direct KV-offload execution, such as ``"trace"``.
+        profiling_output_dir : str or Path, optional
+            Directory for runtime profiling output. Defaults to a ``profiling_output``
+            directory inside the language QPC directory.
         Returns
         -------
         CloudAI100ExecInfoNew or np.ndarray
@@ -2434,7 +2441,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+            inputs=inputs,
+            device_ids=device_ids,
+            streamer=streamer,
+            generation_len=generation_len,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
         )
 
     def kv_offload_generate(
@@ -2443,6 +2455,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         streamer: TextStreamer | None = None,
         device_ids: list[int] | None = None,
         generation_len: int | None = None,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
     ):
         """
         Performs generation for multimodal models with KV offloading to CPU.
@@ -2460,6 +2474,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             IDs of devices for running the QPC. Defaults to `[0]` if not specified.
         generation_len : int, optional
             The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+        profiling_type : str, optional
+            Runtime profiling mode for the language QPC, such as ``"trace"``.
+        profiling_output_dir : str or Path, optional
+            Directory for runtime profiling output.
 
         Returns
         -------
@@ -2476,7 +2494,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
-        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+        if profiling_type is not None and profiling_output_dir is None:
+            profiling_output_dir = Path(self.lang_model.qpc_path) / "profiling_output"
+        lang_session = QAICInferenceSession(
+            self.lang_model.qpc_path,
+            device_ids,
+            activate=False,
+            profiling_type=profiling_type,
+            profiling_output_dir=profiling_output_dir,
+        )
 
         if self.vision_model.qpc_path:
             vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
@@ -2597,6 +2623,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.vision_model.qpc_path:
             vision_session.deactivate()
         lang_session.activate()
+        if profiling_type is not None:
+            lang_session.start_profiling()
 
         lang_session.set_buffers(vision_outputs)
 
@@ -2768,6 +2796,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 streamer.put(lang_inputs["input_ids"][0])
 
         decode_end = perf_counter()
+        if profiling_type is not None:
+            lang_session.stop_profiling()
         if streamer:
             streamer.end()
 

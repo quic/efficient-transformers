@@ -147,6 +147,10 @@ def _configure_minimax_prefill_export(
     msa_q_chunk = int(blocking_config.msa_q_chunk or compile_seq_len)
     num_cores = int(blocking_config.num_cores_per_device or 1)
     num_kv_heads = int(require_value(getattr(text_config, "num_key_value_heads", None), "num KV heads"))
+    dedicated_gqa = blocking_config.mode == BlockingMode.KV_MINIMAX_DEDICATED
+    gqa_num_q_blocks = max(1, int(blocking_config.num_q_blocks or 1))
+    gqa_q_blocks_per_outer = max(1, int(blocking_config.n_rep_chunk or 1))
+    gqa_head_chunk = max(1, int(blocking_config.head_block_size or 1))
 
     if msa_q_chunk <= 0:
         raise ValueError("MiniMax MSA prefill requires msa_q_chunk to be positive.")
@@ -170,6 +174,16 @@ def _configure_minimax_prefill_export(
         raise ValueError("MiniMax serial indexer prefill requires indexer_q_size divisible by num_cores_per_device.")
     if num_cores % num_kv_heads:
         raise ValueError("MiniMax MSA prefill requires num_cores_per_device divisible by num_key_value_heads.")
+    if dedicated_gqa:
+        num_attention_heads = int(
+            require_value(getattr(text_config, "num_attention_heads", None), "num attention heads")
+        )
+        if gqa_num_q_blocks % gqa_q_blocks_per_outer:
+            raise ValueError("Dedicated MiniMax GQA requires num_q_blocks divisible by n_rep_chunk.")
+        if num_attention_heads % num_cores:
+            raise ValueError("Dedicated MiniMax GQA requires num_cores_per_device to divide num_attention_heads.")
+        if (num_attention_heads // num_cores) % gqa_head_chunk:
+            raise ValueError("Dedicated MiniMax GQA requires head_block_size to divide query heads per core.")
 
     cores_per_kv_head = num_cores // num_kv_heads
     full_msa_chunks = _chunk_lengths(compile_seq_len, msa_q_chunk)
@@ -183,9 +197,10 @@ def _configure_minimax_prefill_export(
         compile_seq_len // math.gcd(compile_seq_len, indexer_q_size),
         compile_seq_len // math.gcd(compile_seq_len, indexer_q_chunk),
         compile_seq_len // math.gcd(compile_seq_len, msa_q_chunk),
+        gqa_num_q_blocks if dedicated_gqa else 1,
     )
     indexer_q_proj_num_chunks = math.ceil(compile_seq_len / _MINIMAX_INDEX_Q_PROJ_CHUNK)
-    minimum_export_seq_len = indexer_q_proj_num_chunks
+    minimum_export_seq_len = max(indexer_q_proj_num_chunks, gqa_num_q_blocks if dedicated_gqa else 1)
     export_seq_len = ((minimum_export_seq_len + scale_denominator - 1) // scale_denominator) * scale_denominator
     full_index_signature = tuple(chunk_len // indexer_q_size for chunk_len in full_index_chunks)
 
@@ -485,6 +500,8 @@ def build_transformer_blocking_config_for_transform(
     # BlockingMode member, so it must be stripped before resolving the base mode via the enum.
     base_blocking_mode = str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
     blocking_mode = BlockingMode.resolve(base_blocking_mode)
+    if blocking_mode == BlockingMode.KV_MINIMAX_DEDICATED and not _is_minimax_m3_config(model_config):
+        raise ValueError("blocking_mode 'kv_minimax_dedicated' is supported only for MiniMax-M3 models.")
 
     required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])
     provided_keys = [key for key in required_keys if qaic_config.get(key)]
@@ -502,12 +519,19 @@ def build_transformer_blocking_config_for_transform(
         # substring is still visible to build_transformer_blocking_config's own paged detection.
         blocking_config = build_transformer_blocking_config(
             model_config,
-            blocking_mode=str(requested_blocking_mode),
+            blocking_mode=(
+                BlockingMode.KV.value
+                if blocking_mode == BlockingMode.KV_MINIMAX_DEDICATED
+                else str(requested_blocking_mode)
+            ),
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
             compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
         )
+        if blocking_mode == BlockingMode.KV_MINIMAX_DEDICATED:
+            blocking_config.mode = BlockingMode.KV_MINIMAX_DEDICATED
+            blocking_config.head_block_size = 1
     # if we have been passed all number of blocks via qaic_config, set each in blocking config
     else:
         blocking_config = AttentionBlockingConfig()
@@ -533,6 +557,8 @@ def build_transformer_blocking_config_for_transform(
     # optional blocking parameters to set if given in qaic_config
     for param in (
         "skip_kv",
+        "num_q_blocks",
+        "head_block_size",
         "n_rep_chunk",
         "ctx_len",
         "kv_block_unroll",
@@ -552,6 +578,9 @@ def build_transformer_blocking_config_for_transform(
         "msa_num_kv_blocks",
         "msa_q_chunk",
         "page_block_size",
+        "gqa_page_block_size",
+        "msa_indexer_page_block_size",
+        "msa_attn_page_block_size",
         "num_logical_pages",
         "msa_indexer_num_logical_pages",
         "msa_attn_num_logical_pages",

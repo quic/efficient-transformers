@@ -38,6 +38,7 @@ class BlockingMode(str, Enum):
     AUTO = "auto"  # We choose the best blocking mode based on the input configuration
     # decode
     KV = "kv"
+    KV_MINIMAX_DEDICATED = "kv_minimax_dedicated"
     KV_HEADPAR = "kv_headpar"
     KV_BATCH_FOLD = "kv_batch_fold"
     Q = "q"
@@ -162,6 +163,9 @@ class AttentionBlockingConfig:
     prefill_compile_seq_len: Optional[int] = None
     prefill_export_seq_len: Optional[int] = None
     page_block_size: Optional[int] = None
+    gqa_page_block_size: Optional[int] = None
+    msa_indexer_page_block_size: Optional[int] = None
+    msa_attn_page_block_size: Optional[int] = None
     num_logical_pages: Optional[int] = None
     msa_indexer_num_logical_pages: Optional[int] = None
     msa_attn_num_logical_pages: Optional[int] = None
@@ -277,6 +281,7 @@ def recurrent_gdn_decode_forward(
 BLOCKING_MODE_REQUIRED_PARAMS: Dict[BlockingMode, list] = {
     # decode
     BlockingMode.KV: ["num_kv_blocks"],
+    BlockingMode.KV_MINIMAX_DEDICATED: ["num_kv_blocks"],
     BlockingMode.KV_BATCH_FOLD: ["num_kv_blocks"],
     BlockingMode.KV_HEADPAR: ["num_kv_blocks"],
     BlockingMode.Q: ["num_q_blocks"],
@@ -480,8 +485,11 @@ def generic_blocked_attention_interface(
             skip_kv=blocking_config.skip_kv or False,
             attn_dp=blocking_config.attn_dp or 1,
             attn_cp=blocking_config.attn_cp or 1,
-            page_block_size=blocking_config.page_block_size,
+            page_block_size=blocking_config.gqa_page_block_size or blocking_config.page_block_size,
             num_cores_per_device=blocking_config.num_cores_per_device or 1,
+            num_q_blocks=blocking_config.num_q_blocks or 1,
+            q_blocks_per_outer=blocking_config.n_rep_chunk or 1,
+            head_block_size=blocking_config.head_block_size or 1,
         )
 
     attn_output, attn_weights = strategy(

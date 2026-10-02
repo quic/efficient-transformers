@@ -1412,13 +1412,14 @@ class PagedAttentionMinimax(PytorchTransform):
             indexer_cp = get_config("msa_indexer_cp", 1)
             indexer_dp = get_config("msa_indexer_dp", 1)
             indexer_hkv = get_config("indexer_n_head", 1)
-            page_block_size = get_config("page_block_size", config.index_block_size)
+            page_block_size = get_config(
+                "msa_indexer_page_block_size",
+                get_config("page_block_size", config.index_block_size),
+            )
             num_logical_pages = get_config("msa_indexer_num_logical_pages", get_config("num_logical_pages"))
             num_cores = get_config("num_cores_per_device", 1)
             if ctx_len is None or num_kv_blocks is None:
                 raise ValueError("Paged MiniMax attention requires ctx_len and num_kv_blocks.")
-            if page_block_size != config.index_block_size:
-                raise ValueError("Paged MiniMax decode requires page_block_size == index_block_size.")
             logical_ctx_len = ctx_len if num_logical_pages is None else int(num_logical_pages) * page_block_size
             if logical_ctx_len < ctx_len:
                 raise ValueError(
