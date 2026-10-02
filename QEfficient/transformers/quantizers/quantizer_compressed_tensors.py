@@ -327,6 +327,7 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
         self.quantization_config = quantization_config
         self.run_compressed = quantization_config.run_compressed
+        self.use_fp8_kernel = False
         # -- Handle extra kwargs below --
         self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
         self.modules_to_not_convert = list(
@@ -610,6 +611,7 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
                     f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}"
                 )
             self.run_compressed = quantization_config.run_compressed
+            self.use_fp8_kernel = False
             self.quantization_config = quantization_config
 
             # -- Handle extra kwargs below --
