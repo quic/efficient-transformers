@@ -43,6 +43,10 @@ def create_logger() -> logging.Logger:
     Creates a logger object with Colored QEffFormatter.
     """
     logger = logging.getLogger("QEfficient")
+    # Without this the logger stays at NOTSET and inherits the root logger's
+    # level (WARNING by default), so INFO records are never created and the
+    # handler level below has no effect.
+    logger.setLevel(logging.INFO)
 
     # create console handler and set level to debug
     ch = logging.StreamHandler()
