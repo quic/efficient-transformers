@@ -177,6 +177,11 @@ def main() -> None:
         action="store_true",
         help="Skip KV blocks that are entirely in the future (disabled by default).",
     )
+    parser.add_argument(
+        "--non-dynamic-cache",
+        action="store_true",
+        help="Export MiniMax KV-cache inputs and outputs without dynamic axes.",
+    )
     parser.add_argument("--indexer-n-head", type=int, default=1)
     parser.add_argument("--num-devices", type=int, default=16)
     parser.add_argument(
@@ -361,6 +366,7 @@ def main() -> None:
         "indexer_num_blocks": args.indexer_num_blocks,
         "msa_num_kv_blocks": args.msa_num_kv_blocks,
         "skip_kv": args.skip_kv,
+        "non_dynamic_cache": args.non_dynamic_cache,
         "msa_indexer_dp": args.msa_indexer_dp,
         "msa_indexer_cp": args.msa_indexer_cp,
         "msa_attn_dp": args.msa_attn_dp,
@@ -393,6 +399,8 @@ def main() -> None:
         node_precision_info=True,
         use_onnx_subfunctions=True,
         mxint8_kv_cache=True,
+        retain_full_kv=True,
+        split_model_io=True,
         qaic_config=qaic_config,
     )
     print(f"[timing] compile: {time.perf_counter() - t0:.2f}s")
