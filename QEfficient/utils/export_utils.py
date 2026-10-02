@@ -162,8 +162,14 @@ def convert_dynamic_axes_to_dynamic_shapes(
     past_values: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
+    index_key_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
+        # ONNX dynamic_axes may include outputs so retained-state pairs share
+        # identical symbolic dimensions. torch.export dynamic_shapes accepts
+        # inputs only, so do not interpret retained outputs as cache inputs.
+        if input_name.endswith(("_RetainedState", "_InternalRetainedState")):
+            continue
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
         if input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
@@ -173,6 +179,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
             k_pe_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("index_key."):
+            index_key_layers[int(input_name.split(".")[1])] = resolved
         else:
             dynamic_shapes[input_name] = resolved
 
@@ -186,6 +194,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
         max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
         dynamic_shapes["compressed_kvs"] = [
             (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
+        
+    if index_key_layers:
+        dynamic_shapes["index_keys"] = [
+            index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)
         ]
 
     return dynamic_shapes
@@ -569,20 +582,29 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     # TorchScript renames _RetainedState → _InternalRetainedState; dynamo keeps _RetainedState for PreserveNestedCacheRetainedStateTransform.
     if not dynamo:
         if "output_names" in kwargs:
-            kwargs["output_names"] = [
-                re.sub("_RetainedState", "_InternalRetainedState", name)
-                if name.endswith("_RetainedState")
-                and (
-                    "key" in name
-                    or "value" in name
-                    or "compressed_kv" in name
-                    or "k_pe" in name
-                    or "conv" in name
-                    or "recurrent" in name
+            output_name_map = {}
+            rewritten_output_names = []
+            for name in kwargs["output_names"]:
+                rewritten_name = (
+                    re.sub("_RetainedState", "_InternalRetainedState", name)
+                    if name.endswith("_RetainedState")
+                    and (
+                        "key" in name
+                        or "value" in name
+                        or "compressed_kv" in name
+                        or "k_pe" in name
+                        or "conv" in name
+                        or "recurrent" in name
+                    )
+                    else name
                 )
-                else name
-                for name in kwargs["output_names"]
-            ]
+                output_name_map[name] = rewritten_name
+                rewritten_output_names.append(rewritten_name)
+            kwargs["output_names"] = rewritten_output_names
+            if "dynamic_axes" in kwargs:
+                kwargs["dynamic_axes"] = {
+                    output_name_map.get(name, name): axes for name, axes in kwargs["dynamic_axes"].items()
+                }
         else:
             warnings.warn(
                 "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "

@@ -48,6 +48,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     GatedDeltaConfigTransform,
     OptimizedMoETransform,
+    PagedAttentionMinimax,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -125,6 +126,23 @@ def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: L
             continue
         if current_name.isdigit() or "_InternalRetainedState" in current_name or "_RetainedState" in current_name:
             _rename_graph_value(model.graph, current_name, expected_name)
+
+
+def _align_retained_state_output_shapes(model: onnx.ModelProto) -> None:
+    """Make retained outputs inherit the complete shape contract of their paired inputs."""
+    inputs_by_name = {value.name: value for value in model.graph.input}
+    for output in model.graph.output:
+        state_input_name = output.name
+        for suffix in ("_InternalRetainedState", "_RetainedState"):
+            if state_input_name.endswith(suffix):
+                state_input_name = state_input_name[: -len(suffix)]
+                break
+        else:
+            continue
+        state_input = inputs_by_name.get(state_input_name)
+        if state_input is None:
+            continue
+        output.type.tensor_type.shape.CopyFrom(state_input.type.tensor_type.shape)
 
 
 def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
@@ -578,6 +596,14 @@ class QEFFBaseModel(ABC):
                                 f"k_pe.{i}",
                             ]
                         )
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
 
@@ -657,10 +683,9 @@ class QEFFBaseModel(ABC):
             onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-            # Keep this strictly layerwise-scoped so regular non-layerwise export
-            # remains backward compatible.
-            if QEFFBaseModel._layerwise_active:
-                _restore_retained_state_output_names(model, output_names)
+            # Restore retained-state names when exporters or transforms assign numeric aliases.
+            _restore_retained_state_output_names(model, output_names)
+            _align_retained_state_output_shapes(model)
 
             transform_names = [transform.__name__ for transform in self._pytorch_transforms + active_transforms]
             model.metadata_props.append(
@@ -929,6 +954,14 @@ class QEFFBaseModel(ABC):
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
                         input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                elif param == "index_keys":
+                    if hasattr(self.model, "get_onnx_index_key_names"):
+                        input_names.extend(self.model.get_onnx_index_key_names())
+                    elif isinstance(example_inputs.get("index_keys"), (list, tuple)):
+                        for i in range(len(example_inputs["index_keys"])):
+                            input_names.append(f"index_key.{i}")
+                    else:
+                        input_names.append(param)
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
@@ -982,6 +1015,7 @@ class QEFFBaseModel(ABC):
         # Layer windows are stitched by name, so preserve the requested output
         # names after transforms normalize function/custom-op outputs.
         _restore_output_names_exact(model, output_names)
+        _align_retained_state_output_shapes(model)
 
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
@@ -1034,6 +1068,8 @@ class QEFFBaseModel(ABC):
         else:
             self.hash_params.pop("gated_delta_kwargs", None)
         if qaic_config is not None:
+            if qaic_config.get("paged_kv", False):
+                self.model, _ = PagedAttentionMinimax.apply(self.model, qaic_config, ctx_len)
             self.hash_params["qaic_config"] = qaic_config
         else:
             self.hash_params.pop("qaic_config", None)
