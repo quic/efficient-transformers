@@ -16,6 +16,7 @@ e.g. QEfficient/exporter/weight_free/checkpoint_transforms.py.
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Type
@@ -23,6 +24,7 @@ from typing import Dict, List, Type
 import torch
 
 from QEfficient.utils.checkpoint_utils import convert_bin_to_safetensors, read_weight_map
+from QEfficient.utils.logging_utils import logger
 
 # Marks a prepared checkpoint directory as complete, so re-runs can skip work.
 CHECKPOINT_PREPARED_SENTINEL = ".checkpoint_prepared"
@@ -79,6 +81,23 @@ def _manifest_matches(out: Path, expected: dict) -> bool:
         return json.loads(manifest_path.read_text()) == expected
     except (OSError, json.JSONDecodeError):
         return False
+
+
+def _prepared_checkpoint_is_readable(out: Path) -> bool:
+    """Return True when every indexed prepared checkpoint shard is readable."""
+    try:
+        weight_map = read_weight_map(out)
+    except (OSError, json.JSONDecodeError, KeyError):
+        return False
+
+    if not weight_map:
+        return False
+
+    for shard_name in set(weight_map.values()):
+        shard_path = out / shard_name
+        if not shard_path.is_file() or not os.access(shard_path, os.R_OK):
+            return False
+    return True
 
 
 def _write_manifest(out: Path, manifest: dict) -> None:
@@ -169,7 +188,9 @@ class CheckpointTransformPipeline:
 
         expected_manifest = _checkpoint_manifest(src, source_dir, target_dtype, self.transforms)
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
-            return out
+            if _prepared_checkpoint_is_readable(out):
+                return out
+            logger.warning("Prepared checkpoint at %s is incomplete or unreadable; rebuilding.", out)
         _clear_stale_prepared_dir(out, src, source_dir)
 
         weight_map = read_weight_map(source_dir)
