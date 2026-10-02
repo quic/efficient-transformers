@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -150,11 +151,16 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
     try:
         tokenizer = load_tokenizer(model_id)
         model_hf = load_hf_model(model_id)
+        if model_type == "gpt_oss":
+            model_hf = model_hf.to(torch.float32)
+            model_hf.config.torch_dtype = torch.float32
+            model_hf.config.dtype = torch.float32
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     # Legacy/dynamo leg — real weights, no weight-free export.
     qeff_legacy = QEFFAutoModelForCausalLM(model_hf)
+
     legacy_onnx_path = exported_onnx_path(
         qeff_legacy.export(
             tmp_export_dir / "legacy_export",
