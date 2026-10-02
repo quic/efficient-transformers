@@ -21,6 +21,7 @@ from QEfficient.generation.cloud_infer import (
     QAICInferenceSession,
     is_retained_state_name,
 )
+from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QWEN3_5_DFLASH_CHUNK_SIZE
 from QEfficient.utils.logging_utils import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ from QEfficient.utils.logging_utils import logger
 MODEL_MAP = {
     "gemma-4-31B-it": ("google/gemma-4-31B-it", "z-lab/gemma-4-31B-it-DFlash"),
     "Qwen3-4B": ("Qwen/Qwen3-4B", "z-lab/Qwen3-4B-DFlash-b16"),
+    "Qwen3.5-4B": ("Qwen/Qwen3.5-4B", "z-lab/Qwen3.5-4B-DFlash"),
+    "Qwen3.6-27B": ("Qwen/Qwen3.6-27B", "z-lab/Qwen3.6-27B-DFlash"),
     "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
     "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
     "Qwen3-VL-32B-Instruct": (
@@ -80,7 +83,10 @@ def validate_spd_decode_specialization(tlm_session: QAICInferenceSession, block_
     """Require a TLM specialization that verifies one complete DFlash block."""
     input_index = tlm_session.binding_index_map["input_ids"]
     sequence_lengths = sorted({shape[input_index][1][1] for shape in tlm_session.allowed_shapes})
-    logger.info(f"TLM input_ids seq_lens (allowed shapes): {sequence_lengths}")
+    if not sequence_lengths:
+        # Single-specialization QPCs report their fixed shape only in bindings.
+        sequence_lengths = [tlm_session.bindings[input_index].dims[1]]
+    logger.info(f"TLM input_ids seq_lens: {sequence_lengths}")
     if block_size not in sequence_lengths:
         raise ValueError(
             f"TLM QPC has no decode specialization with seq_len={block_size} "
@@ -159,11 +165,19 @@ def load_dflash_checkpoint(dflash_model_path: str) -> tuple[dict, dict]:
     return state_dict, cfg
 
 
+def get_dflash_block_size(config):
+    config = config if isinstance(config, dict) else config.to_dict()
+    block_size = config.get("block_size") or config.get("dflash_config", {}).get("block_size")
+    if not isinstance(block_size, int) or block_size < 2:
+        raise ValueError("DFlash config must provide block_size >= 2 (top-level or under dflash_config).")
+    return block_size
+
+
 def read_dlm_meta(dlm_repo: str, hf_token: str | None = None):
     """Load a DFlash checkpoint and return (state_dict, target_layer_ids, block_size)."""
     state_dict, cfg = load_dflash_checkpoint(dlm_repo)
     target_layer_ids = cfg.get("dflash_config", {}).get("target_layer_ids", [])
-    block_size = cfg.get("block_size", None)
+    block_size = get_dflash_block_size(cfg)
     return state_dict, target_layer_ids, block_size
 
 
@@ -336,7 +350,7 @@ def compile_qwen3vl_vlm_qpcs(
     width: int | None = None,
     hf_token: str | None = None,
 ) -> tuple[str, str]:
-    """Build the qwen3-vl TLM — vision encoder + language decoder — and compile it for
+    """Build the Qwen3-VL or Qwen3.5 TLM vision encoder + language decoder for
     SPD. Returns ``(lang_qpc, vision_qpc)``.
 
     Same DFlashTLMTransform-attaches-random / inject-real-weights pattern as
@@ -357,6 +371,16 @@ def compile_qwen3vl_vlm_qpcs(
 
     logger.info(f"[compile_qwen3vl_tlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
     config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=hf_token)
+    is_qwen35 = config.model_type == "qwen3_5"
+    if is_qwen35:
+        if prefill_seq_len != QWEN3_5_DFLASH_CHUNK_SIZE:
+            logger.warning(
+                f"Qwen3.5 DFlash uses prefill_seq_len={QWEN3_5_DFLASH_CHUNK_SIZE} for its fixed gated-delta chunk."
+            )
+            prefill_seq_len = QWEN3_5_DFLASH_CHUNK_SIZE
+        if block_size != QWEN3_5_DFLASH_CHUNK_SIZE:
+            raise ValueError(f"Qwen3.5 DFlash currently requires block_size={QWEN3_5_DFLASH_CHUNK_SIZE}.")
+        logger.warning("Qwen3.5 DFlash uses accepted-prefix replay; target timing includes the extra commit pass.")
     tlm_qeff = QEFFAutoModelForImageTextToText.from_pretrained(
         tlm_repo,
         config=config,
@@ -379,6 +403,9 @@ def compile_qwen3vl_vlm_qpcs(
         text_model.fc.weight.data.div_(s)
     text_model.hidden_norm.weight.data.copy_(state_dict["hidden_norm.weight"].to(torch.float32))
     logger.info(f"[compile_qwen3vl_tlm] fc/hidden_norm injected (fc scale s={s:.6f})")
+    if is_qwen35:
+        # The fixed chunk and matrix solve change the graph, not its I/O names.
+        tlm_qeff.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_chunk16_matrix_replay_v3"
 
     compile_kwargs = {
         "prefill_seq_len": prefill_seq_len,
@@ -386,19 +413,23 @@ def compile_qwen3vl_vlm_qpcs(
         "num_cores": num_cores,
         "num_devices": num_devices,
         "mxfp6_matmul": True,
-        "mxint8_kv_cache": True,
+        # Keep hybrid verification/replay state in FP16 until MXINT8 is validated.
+        "mxint8_kv_cache": not is_qwen35,
         "mos": 1,
         "use_onnx_subfunctions": False,
         "split_model_io": True,
         "dflash_block_size": block_size,
     }
+    if is_qwen35:
+        # Verification and replay use the same 16-token shape as prefill.
+        compile_kwargs["prefill_only"] = True
     if height is not None:
         compile_kwargs["height"] = height
     if width is not None:
         compile_kwargs["width"] = width
 
     qpc = tlm_qeff.compile(**compile_kwargs)
-    lang_qpc = str(qpc["lang_qpc_path"])
+    lang_qpc = str(qpc["lang_prefill_qpc_path"] if is_qwen35 else qpc["lang_qpc_path"])
     vision_qpc = str(qpc["vision_qpc_path"])
     logger.info(f"[compile_qwen3vl_tlm] lang_qpc={lang_qpc}  vision_qpc={vision_qpc}")
     return lang_qpc, vision_qpc
@@ -571,7 +602,7 @@ def compile_qwen3vl_vlm_dlm_qpc(
     num_devices: int,
     hf_token: str | None = None,
 ) -> str:
-    """Build + compile the DFlash DLM (draft) for the qwen3-vl TLM.
+    """Build + compile the DFlash DLM for a Qwen3-VL or Qwen3.5 TLM.
 
     Same VLM-aware lm_head/embed injection as ``compile_gemma_vlm_dlm_qpc``, kept as a
     separate function since qwen3-vl's config is not registered under
