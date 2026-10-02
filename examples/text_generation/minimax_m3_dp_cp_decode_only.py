@@ -30,8 +30,8 @@ def _expand_batch(inputs, batch_size: int):
     return expanded
 
 
-def _execution_batch_size(batch_size: int, msa_indexer_dp: int, msa_attn_dp: int) -> int:
-    return batch_size * math.lcm(msa_indexer_dp, msa_attn_dp)
+def _execution_batch_size(batch_size: int, msa_indexer_dp: int, msa_attn_dp: int, attn_dp: int) -> int:
+    return batch_size * math.lcm(msa_indexer_dp, msa_attn_dp, attn_dp)
 
 
 def _run_pytorch_parity_test(
@@ -48,6 +48,8 @@ def _run_pytorch_parity_test(
     msa_indexer_cp: int = 1,
     msa_attn_dp: int = 1,
     msa_attn_cp: int = 1,
+    attn_dp: int = 1,
+    attn_cp: int = 1,
     indexer_n_head: int = 1,
     batch_size: int = 1,
     skip_kv: bool = False,
@@ -72,7 +74,7 @@ def _run_pytorch_parity_test(
         return_tensors="pt",
     )
     last_token_ids = inputs["input_ids"][:, -1:]
-    execution_batch_size = _execution_batch_size(batch_size, msa_indexer_dp, msa_attn_dp)
+    execution_batch_size = _execution_batch_size(batch_size, msa_indexer_dp, msa_attn_dp, attn_dp)
     last_token_ids = last_token_ids.repeat(execution_batch_size, 1)
 
     with torch.no_grad():
@@ -80,7 +82,11 @@ def _run_pytorch_parity_test(
     expected_token = int(hf_logits.argmax(-1)[0, 0])
 
     qaic_config = {
+        "blocking_mode": "kv_minimax_dedicated",
+        "num_kv_blocks": num_kv_blocks,
         "skip_kv": skip_kv,
+        "attn_dp": attn_dp,
+        "attn_cp": attn_cp,
         "moe_config": {
             "flavour": "expert_parallel",
             "expert_parallel_chunk_size": expert_parallel_chunk_size,
@@ -89,8 +95,6 @@ def _run_pytorch_parity_test(
         },
     }
     if msa_indexer_dp > 1 or msa_attn_dp > 1 or msa_attn_cp > 1:
-        qaic_config["blocking_mode"] = "kv_headpar"
-        qaic_config["num_kv_blocks"] = num_kv_blocks
         if msa_indexer_dp > 1 or msa_indexer_cp > 1:
             qaic_config["msa_indexer_dp"] = msa_indexer_dp
             qaic_config["msa_indexer_cp"] = msa_indexer_cp
@@ -198,6 +202,18 @@ def main():
         help="CP factor for GP attention cache layout.",
     )
     parser.add_argument(
+        "--attn-dp",
+        type=int,
+        default=1,
+        help="DP factor for dense GQA attention and its cache layout.",
+    )
+    parser.add_argument(
+        "--attn-cp",
+        type=int,
+        default=1,
+        help="CP factor for dense GQA attention and its cache layout.",
+    )
+    parser.add_argument(
         "--indexer-n-head",
         type=int,
         default=1,
@@ -213,7 +229,12 @@ def main():
         parser.error("--batch-size must be positive")
     if args.num_kv_blocks < 1:
         parser.error("--num-kv-blocks must be positive")
-    execution_batch_size = _execution_batch_size(args.batch_size, args.msa_indexer_dp, args.msa_attn_dp)
+    for name in ("msa_indexer_dp", "msa_indexer_cp", "msa_attn_dp", "msa_attn_cp", "attn_dp", "attn_cp"):
+        if getattr(args, name) < 1:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    execution_batch_size = _execution_batch_size(
+        args.batch_size, args.msa_indexer_dp, args.msa_attn_dp, args.attn_dp
+    )
 
     if args.test:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -231,6 +252,8 @@ def main():
                 msa_indexer_cp=args.msa_indexer_cp,
                 msa_attn_dp=args.msa_attn_dp,
                 msa_attn_cp=args.msa_attn_cp,
+                attn_dp=args.attn_dp,
+                attn_cp=args.attn_cp,
                 indexer_n_head=args.indexer_n_head,
                 batch_size=args.batch_size,
                 skip_kv=args.skip_kv,
@@ -264,9 +287,11 @@ def main():
         offload_pt_weights=False,
         log_times=True,
         qaic_config={
-            "blocking_mode": "kv_headpar",
+            "blocking_mode": "kv_minimax_dedicated",
             "num_kv_blocks": args.num_kv_blocks,
             "skip_kv": args.skip_kv,
+            "attn_dp": args.attn_dp,
+            "attn_cp": args.attn_cp,
             "msa_indexer_dp": args.msa_indexer_dp,
             "msa_indexer_cp": args.msa_indexer_cp,
             "msa_attn_dp": args.msa_attn_dp,

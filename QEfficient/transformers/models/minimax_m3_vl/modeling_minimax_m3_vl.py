@@ -2301,7 +2301,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         num_kv_blocks = max(1, int(blocking_config.num_kv_blocks or 1))
         ctx_len = int(blocking_config.ctx_len or (key_cache.shape[2] * cp))
         skip_kv = bool(blocking_config.skip_kv)
-        batch_local = batch // dp
+        batch_local = int(batch) // dp
         rows = dp * cp * hkv
         ql_eff = n_rep * query_len
         cache_slots = ctx_len // cp
@@ -2311,7 +2311,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             raise ValueError("Dedicated MiniMax GQA decode requires QL=1 and a DP-divisible batch.")
         if ctx_len % cp or cache_slots % num_kv_blocks or cache_block_size % num_cores:
             raise ValueError("Dedicated MiniMax GQA decode requires context/KV blocks divisible by CP and cores.")
-        if tuple(key_cache.shape[:3]) != (batch_local, rows, cache_slots) or tuple(value_cache.shape) != tuple(
+        if tuple(key_cache.shape) != (batch_local, rows, cache_slots, head_dim) or tuple(value_cache.shape) != tuple(
             key_cache.shape
         ):
             raise ValueError(f"Dedicated MiniMax GQA cache must be [{batch_local}, {rows}, {cache_slots}, D].")
@@ -2470,7 +2470,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             return self._gqa_dedicated_prefill(query_states, layer.keys, layer.values, position_ids, blocking_config)
 
         layer = past_key_values.layers[self.layer_idx]
-        batch_local = query_states.shape[0] // dp
+        batch_local = int(query_states.shape[0]) // dp
         hkv = self.config.num_key_value_heads
         rows = dp * cp * hkv
         key_cache = layer.keys.reshape(batch_local, rows, -1, self.head_dim)
@@ -2479,33 +2479,35 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         value_dp = value_states.view(dp, batch_local, hkv, value_states.shape[2], self.head_dim).permute(1, 0, 2, 3, 4)
         key_updates = (
             key_dp.unsqueeze(2)
-            .expand(batch_local, dp, cp, hkv, key_states.shape[2], self.head_dim)
-            .reshape(batch_local, rows, key_states.shape[2], self.head_dim)
+            .expand(batch_local, dp, cp, hkv, 1, self.head_dim)
+            .reshape(batch_local, rows, 1, self.head_dim)
         )
         value_updates = (
             value_dp.unsqueeze(2)
-            .expand(batch_local, dp, cp, hkv, value_states.shape[2], self.head_dim)
-            .reshape(batch_local, rows, value_states.shape[2], self.head_dim)
+            .expand(batch_local, dp, cp, hkv, 1, self.head_dim)
+            .reshape(batch_local, rows, 1, self.head_dim)
         )
-        position_dp = position_ids.view(dp, batch_local, position_ids.shape[1]).permute(1, 0, 2)
+        position_dp = position_ids.view(dp, batch_local, 1).permute(1, 0, 2)
         live_way = (
             (position_dp % cp)[:, :, None, None, :]
-            .expand(batch_local, dp, cp, hkv, position_ids.shape[1])
-            .reshape(batch_local, rows, position_ids.shape[1])
+            .expand(batch_local, dp, cp, hkv, 1)
+            .reshape(batch_local, rows, 1)
         )
         row_way = torch.arange(rows, device=query_states.device).remainder(cp * hkv) // hkv
         row_live = row_way.view(1, rows, 1) == live_way
-        block_id = torch.arange(batch_local, device=query_states.device).view(batch_local, 1, 1)
-        block_id = block_id.expand(batch_local, rows, position_ids.shape[1])
-        block_id = torch.where(row_live, block_id, torch.full_like(block_id, torch.iinfo(torch.int32).max))
         addr = (
             (position_dp // cp)[:, :, None, None, :]
-            .expand(batch_local, dp, cp, hkv, position_ids.shape[1])
-            .reshape(batch_local, rows, position_ids.shape[1])
+            .expand(batch_local, dp, cp, hkv, 1)
+            .reshape(batch_local, rows, 1)
             .to(torch.int32)
         )
+        block_id = torch.arange(batch_local, device=query_states.device).view(batch_local, 1, 1)
+        block_id = block_id.expand(batch_local, rows, 1)
+        block_id = torch.where(row_live, block_id, torch.full_like(block_id, torch.iinfo(torch.int32).max))
         layer.keys = past_key_values.paged_scatter(key_cache, block_id.to(torch.int32), addr, key_updates)
         layer.values = past_key_values.paged_scatter(value_cache, block_id.to(torch.int32), addr, value_updates)
+        layer.keys = layer.keys.reshape(batch_local, rows, -1, self.head_dim)
+        layer.values = layer.values.reshape(batch_local, rows, -1, self.head_dim)
         return self._gqa_dedicated_decode(query_states, layer.keys, layer.values, position_ids, blocking_config)
 
     def _msa_attention_prefill(
@@ -4596,18 +4598,16 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         layer_types = getattr(lm_config, "layer_types", None) or ["full_attention"] * lm_config.num_hidden_layers
         for i in range(lm_config.num_hidden_layers):
             is_sparse_layer = i < len(layer_types) and layer_types[i] == "minimax_m3_sparse"
-            # CP-partitioned KV layout is specific to sparse M3 layers. Dense
-            # layers retain standard [batch, Hkv, ctx_len, dim] caches even
-            # when the model's sparse attention uses CP.
-            layer_batch_axis = past_batch_axis if is_sparse_layer else standard_past_batch_axis
-            layer_ctx_axis = past_ctx_axis if is_sparse_layer else "ctx_len"
             layer_cache_axes = (
-                {0: layer_batch_axis, 1: layer_ctx_axis}
-                if is_sparse_layer and use_row_folded_main_kv
+                {0: "gqa_batch_local", 2: "gqa_ctx_len"}
+                if dedicated_gqa and not is_sparse_layer and not paged_kv
                 else (
-                    {0: "gqa_batch_local", 2: "gqa_ctx_len"}
-                    if dedicated_gqa and not is_sparse_layer and not paged_kv
-                    else {0: layer_batch_axis, 2: layer_ctx_axis}
+                    {0: past_batch_axis, 1: past_ctx_axis}
+                    if is_sparse_layer and use_row_folded_main_kv
+                    else {
+                        0: past_batch_axis if is_sparse_layer else standard_past_batch_axis,
+                        2: past_ctx_axis if is_sparse_layer else "ctx_len",
+                    }
                 )
             )
             _set_retained_state_axes(f"past_key.{i}", layer_cache_axes)
