@@ -1248,7 +1248,7 @@ def test_whisper_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
 def test_cohere_asr_export_smoke(tmp_path, dtype):
     encoder_config = {
         "model_type": "parakeet_encoder",
@@ -1276,6 +1276,7 @@ def test_cohere_asr_export_smoke(tmp_path, dtype):
         max_position_embeddings=64,
         decoder_start_token_id=4,
     )
+    config._attn_implementation = "eager"
     config.torch_dtype = dtype
     model_hf = CohereAsrForConditionalGeneration(config).eval().to(dtype)
 

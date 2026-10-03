@@ -569,10 +569,14 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     def prepare_qpc_generation_inputs(self, inputs, input_features_shape):
         inputs = dict(inputs)
         if "feature_lengths" not in inputs:
-            attention_mask = inputs.get("attention_mask")
-            if attention_mask is None:
-                raise RuntimeError("Cohere ASR requires an attention mask to derive `feature_lengths`")
-            inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
+            lengths = inputs.get("length")
+            if lengths is not None:
+                inputs["feature_lengths"] = lengths.to(dtype=torch.int64)
+            else:
+                attention_mask = inputs.get("attention_mask")
+                if attention_mask is None:
+                    raise RuntimeError("Cohere ASR requires `length` or an attention mask to derive `feature_lengths`")
+                inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
 
         input_features = inputs.get("input_features")
         if not isinstance(input_features, torch.Tensor) or input_features.ndim != 3:
@@ -595,9 +599,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         inputs["input_features"] = input_features
         return inputs
 
-    def get_specializations(
-        self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options
-    ):
+    def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
         subsampling_factor = self.config.encoder_config.subsampling_factor
         if encoder_ctx_len is None:
             # encoder_ctx_len = encoder OUTPUT length (after subsampling).

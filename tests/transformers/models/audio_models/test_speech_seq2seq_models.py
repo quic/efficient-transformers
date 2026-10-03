@@ -69,9 +69,19 @@ def load_seq2seq_model(model_config):
         kwargs["use_cache"] = True
     n_layer = model_config.get("n_layer", -1)
     if n_layer != -1:
-        kwargs["num_hidden_layers"] = n_layer
-        kwargs["decoder_layers"] = n_layer
-        kwargs["encoder_layers"] = n_layer
+        if hasattr(config, "encoder_config") or hasattr(config, "decoder_config"):
+            for layer_attr in ("num_hidden_layers", "decoder_layers", "encoder_layers"):
+                if hasattr(config, layer_attr):
+                    setattr(config, layer_attr, n_layer)
+            if hasattr(config, "encoder_config") and hasattr(config.encoder_config, "num_hidden_layers"):
+                config.encoder_config.num_hidden_layers = n_layer
+            if hasattr(config, "decoder_config") and hasattr(config.decoder_config, "num_hidden_layers"):
+                config.decoder_config.num_hidden_layers = n_layer
+            kwargs["config"] = config
+        else:
+            for layer_kwarg in ("num_hidden_layers", "decoder_layers", "encoder_layers"):
+                if hasattr(config, layer_kwarg):
+                    kwargs[layer_kwarg] = n_layer
 
     model_hf = AutoModelForSpeechSeq2Seq.from_pretrained(
         model_path,
@@ -82,6 +92,26 @@ def load_seq2seq_model(model_config):
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
+
+
+def get_feature_lengths(processed_inputs):
+    """Return encoder feature lengths across speech processor output contracts."""
+    feature_lengths = getattr(processed_inputs, "length", None)
+    if feature_lengths is not None:
+        return feature_lengths.to(dtype=torch.int64)
+
+    attention_mask = getattr(processed_inputs, "attention_mask", None)
+    if attention_mask is not None:
+        return attention_mask.sum(dim=-1, dtype=torch.int64)
+
+    raise ValueError("Speech processor must return attention_mask or length")
+
+
+def prepare_qeff_input_features(input_features, config):
+    """Match the runtime feature layout expected by each speech architecture."""
+    if not hasattr(config, "encoder_config"):
+        return input_features.transpose(1, 2)
+    return input_features
 
 
 @pytest.fixture(scope="module")
@@ -882,7 +912,7 @@ def run_seq2seq_pytorch_hf(
     outputs = model(**model_inputs)
 
     # array to hold generated tokens
-    generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+    generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.eos_token_id)
     generated_ids[:, 0] = [model.config.decoder_start_token_id]
     logits = outputs["logits"]
     next_token = logits.argmax(-1)
@@ -903,7 +933,18 @@ def run_seq2seq_pytorch_hf(
     # decoder has its own token history; Whisper-style models with KV cache only need next_token.
     accumulated_ids = torch.tensor([[model.config.decoder_start_token_id]], dtype=torch.int64)
 
-    for num_tokens in range(generation_len):
+    if next_token[0][0] == processor.tokenizer.eos_token_id:
+        return generated_ids[0]
+
+    if pkv is not None:
+        model_inputs["decoder_input_ids"] = next_token
+        model_inputs["decoder_position_ids"] = model_inputs["decoder_position_ids"][:, -1:] + 1
+    else:
+        accumulated_ids = torch.cat([accumulated_ids, next_token], dim=1)
+        model_inputs["decoder_input_ids"] = accumulated_ids
+        model_inputs["decoder_position_ids"] = torch.arange(accumulated_ids.shape[1], dtype=torch.int64).unsqueeze(0)
+
+    for num_tokens in range(1, generation_len):
         outputs = model(**model_inputs)
         logits = outputs["logits"]
         next_token = logits.argmax(-1)[:, -1:]
@@ -973,8 +1014,8 @@ def run_seq2seq_pytorch_with_kv(
     )
     qpc_input_names = {input_info.name for input_info in model.model.get_inputs_info()}
     if "feature_lengths" in qpc_input_names:
-        model_inputs["feature_lengths"] = processed_inputs.attention_mask.sum(dim=-1, dtype=torch.int64)
-        input_features = input_features.transpose(1, 2)
+        model_inputs["feature_lengths"] = get_feature_lengths(processed_inputs)
+        input_features = prepare_qeff_input_features(input_features, config)
         model_inputs["input_features"] = input_features
 
     # prepare dummy past kvs and cross kvs
@@ -994,7 +1035,7 @@ def run_seq2seq_pytorch_with_kv(
     outputs = model.model(**model_inputs)
 
     # array to hold generated tokens
-    generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+    generated_ids = np.full((batch_size, generation_len + 1), config.eos_token_id)
     generated_ids[:, 0] = [config.decoder_start_token_id]
     logits = outputs["logits"]
     next_token = logits.argmax(-1)
@@ -1003,7 +1044,13 @@ def run_seq2seq_pytorch_with_kv(
     model_inputs["input_features"] = torch.zeros((batch_size, input_features.shape[1], 1), dtype=torch.float32)
     model_inputs["past_key_values"] = outputs["past_key_values"]
 
-    for num_tokens in range(generation_len):
+    if next_token[0][0] == processor.tokenizer.eos_token_id:
+        return generated_ids[0]
+
+    model_inputs["input_ids"] = next_token
+    model_inputs["position_ids"] += 1
+
+    for num_tokens in range(1, generation_len):
         outputs = model.model(**model_inputs)
         logits = outputs["logits"]
         next_token = logits.argmax(-1)
@@ -1081,8 +1128,8 @@ def run_seq2seq_ort(
     )
     session_input_names = {session_input.name for session_input in session.get_inputs()}
     if "feature_lengths" in session_input_names:
-        model_inputs["feature_lengths"] = processed_inputs.attention_mask.sum(dim=-1, dtype=torch.int64)
-        input_features = input_features.transpose(1, 2)
+        model_inputs["feature_lengths"] = get_feature_lengths(processed_inputs)
+        input_features = prepare_qeff_input_features(input_features, config)
         model_inputs["input_features"] = input_features
 
     # prepare dummy past kvs and cross kvs
@@ -1106,7 +1153,7 @@ def run_seq2seq_ort(
     outputs = session.run(output_names, {k: v.detach().numpy() for k, v in model_inputs.items()})
 
     # array to hold generated tokens
-    generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+    generated_ids = np.full((batch_size, generation_len + 1), config.eos_token_id)
     generated_ids[:, 0] = [config.decoder_start_token_id]
     logits = outputs[0]
     next_token = logits.argmax(-1)
@@ -1116,7 +1163,13 @@ def run_seq2seq_ort(
     for i, name in enumerate(pkv_names):
         model_inputs[name.split("_RetainedState")[0]] = outputs[1 + i]
 
-    for num_tokens in range(generation_len):
+    if next_token[0][0] == processor.tokenizer.eos_token_id:
+        return generated_ids[0]
+
+    model_inputs["input_ids"] = next_token
+    model_inputs["position_ids"] += 1
+
+    for num_tokens in range(1, generation_len):
         outputs = session.run(
             output_names, {k: (v.detach().numpy() if type(v) is torch.Tensor else v) for k, v in model_inputs.items()}
         )
@@ -1199,6 +1252,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     qeff_model.compile(
         ctx_len=ctx_len,
+        encoder_ctx_len=cross_ctx_len,
         num_devices=num_devices,
         batch_size=batch_size,
     )

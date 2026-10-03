@@ -5182,30 +5182,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    @classmethod
-    @with_replaced_quantizers
-    def from_pretrained(
-        cls, pretrained_model_name_or_path: str, *args, **kwargs
-    ):
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
-        if kwargs.get("attn_implementation") not in {None, "eager"}:
-            logger.warning('Updating attn_implementation="eager"')
-        if kwargs.get("low_cpu_mem_usage"):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        if enable_proxy:
-            kwargs["enable_proxy"] = True
-        return cls(
-            model,
-            pretrained_model_name_or_path=pretrained_model_name_or_path,
-            **kwargs,
-        )
-
     @property
     def get_model_config(self) -> dict:
         """
