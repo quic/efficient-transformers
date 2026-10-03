@@ -639,6 +639,50 @@ def test_glm_blocked_topk_matches_monolithic_after_cache_updates(batch_size, dp,
         torch.testing.assert_close(actual, expected)
 
 
+@pytest.mark.parametrize("parallel", [False, True])
+def test_glm_blocked_prefill_topk_matches_monolithic(parallel):
+    from QEfficient.blocking.glm_attention import blocked_glm_dsa_prefill_topk
+    from QEfficient.transformers.cache_utils import glm_dsa_scatter_cache
+
+    torch.manual_seed(23)
+    batch_size, query_length, context_length = 2, 4, 16
+    dp, cp, num_heads, head_dim = 1, 2, 2, 4
+    folded_cache = torch.zeros(batch_size, dp * cp, context_length // cp, head_dim)
+    logical_keys = torch.rand(batch_size, context_length, head_dim)
+    cache_positions = torch.arange(context_length).view(1, -1).expand(batch_size, -1)
+    folded_cache = glm_dsa_scatter_cache(folded_cache, cache_positions, logical_keys, dp=dp, cp=cp)
+    query = torch.rand(batch_size, query_length, num_heads, head_dim)
+    head_weights = torch.rand(batch_size, query_length, num_heads)
+    position_ids = torch.arange(8, 12).view(1, -1).expand(batch_size, -1)
+    attention_mask = torch.arange(context_length).view(1, 1, -1) > position_ids.unsqueeze(-1)
+    attention_mask = attention_mask.clone()
+    attention_mask[:, :, 1] = True
+
+    actual = blocked_glm_dsa_prefill_topk(
+        query,
+        head_weights,
+        folded_cache,
+        attention_mask,
+        position_ids,
+        scale=head_dim**-0.5,
+        dp=dp,
+        cp=cp,
+        num_blocks=2,
+        num_cores_per_device=2,
+        query_chunk_size=4,
+        query_block_size=4,
+        topk_blocking=2,
+        parallel=parallel,
+        final_topk=4,
+    )
+
+    scores = torch.einsum("bqhd,btd->bqht", query.float(), logical_keys.float()) * (head_dim**-0.5)
+    scores = (torch.relu(scores) * head_weights.unsqueeze(-1)).sum(dim=2)
+    scores = scores.masked_fill(attention_mask, float("-inf"))
+    expected = scores.topk(4, dim=-1).indices.to(torch.int32)
+    torch.testing.assert_close(torch.sort(actual, dim=-1).values, torch.sort(expected, dim=-1).values)
+
+
 @pytest.mark.parametrize(
     ("batch_size", "context_length", "num_devices", "error"),
     [
@@ -765,6 +809,71 @@ def test_glm_tiled_sparse_attention_matches_flat_selected_softmax():
     latent = torch.einsum("bhst,btd->bhsd", probs, flat_ckv)
     expected = torch.matmul(latent, module.per_head_v_up[0]).transpose(1, 2).contiguous()
 
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_glm_tiled_sparse_prefill_attention_matches_selected_softmax():
+    from types import SimpleNamespace
+
+    from QEfficient.blocking.glm_attention import _glm_tiled_sparse_mla_attention_prefill
+    from QEfficient.transformers.cache_utils import glm_dsa_scatter_cache
+
+    torch.manual_seed(29)
+    batch_size, query_length, context_length = 2, 4, 8
+    num_heads, kv_lora_rank, rope_dim = 4, 3, 2
+    layer_config = SimpleNamespace(
+        attn_dp=1,
+        attn_cp=2,
+        num_cores_per_device=2,
+        sparse_q_block_size=4,
+        sparse_kv_num_blocks=2,
+    )
+    module = SimpleNamespace(
+        scaling=(kv_lora_rank + rope_dim) ** -0.5,
+        per_head_v_up=torch.randn(1, num_heads, kv_lora_rank, kv_lora_rank),
+    )
+    logical_ckv = torch.randn(batch_size, context_length, kv_lora_rank)
+    logical_rope = torch.randn(batch_size, context_length, rope_dim)
+    positions = torch.arange(context_length).view(1, -1).expand(batch_size, -1)
+    ckv_cache = torch.zeros(batch_size, 2, context_length // 2, kv_lora_rank)
+    rope_cache = torch.zeros(batch_size, 2, context_length // 2, rope_dim)
+    ckv_cache = glm_dsa_scatter_cache(ckv_cache, positions, logical_ckv, dp=1, cp=2)
+    rope_cache = glm_dsa_scatter_cache(rope_cache, positions, logical_rope, dp=1, cp=2)
+    query_latent = torch.randn(batch_size, num_heads, query_length, kv_lora_rank)
+    query_rope = torch.randn(batch_size, num_heads, query_length, rope_dim)
+    topk_indices = torch.tensor([[[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 6]]], dtype=torch.int32).expand(
+        batch_size, -1, -1
+    )
+    valid_topk = torch.ones_like(topk_indices, dtype=torch.bool)
+
+    actual, weights = _glm_tiled_sparse_mla_attention_prefill(
+        module=module,
+        query_latent=query_latent,
+        query_rope=query_rope,
+        ckv_cache=ckv_cache,
+        k_pe_cache=rope_cache,
+        topk_indices=topk_indices,
+        valid_topk=valid_topk,
+        layer_config=layer_config,
+    )
+    assert weights is None
+
+    selected_ckv = (
+        logical_ckv.unsqueeze(1)
+        .expand(-1, query_length, -1, -1)
+        .gather(2, topk_indices.long().unsqueeze(-1).expand(-1, -1, -1, kv_lora_rank))
+    )
+    selected_rope = (
+        logical_rope.unsqueeze(1)
+        .expand(-1, query_length, -1, -1)
+        .gather(2, topk_indices.long().unsqueeze(-1).expand(-1, -1, -1, rope_dim))
+    )
+    query = torch.cat((query_latent, query_rope), dim=-1).permute(0, 2, 1, 3)
+    keys = torch.cat((selected_ckv, selected_rope), dim=-1)
+    scores = torch.einsum("bqhd,bqkd->bqhk", query, keys) * module.scaling
+    probs = torch.softmax(scores, dim=-1, dtype=torch.float32)
+    latent = torch.einsum("bqhk,bqkr->bqhr", probs, selected_ckv)
+    expected = torch.einsum("bqhr,hrv->bqhv", latent, module.per_head_v_up[0]).reshape(batch_size, query_length, -1)
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
