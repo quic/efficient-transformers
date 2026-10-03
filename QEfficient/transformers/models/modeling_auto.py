@@ -5177,8 +5177,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
+        model.config.use_cache = True
         super().__init__(model, **kwargs)
-        self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -5284,7 +5284,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
         full_batch_size : int, optional
-            Not supported for this speech-model path.
+            Not yet supported for this model.
         kv_cache_batch_size : int, optional
             Not yet supported for this model.
         num_speculative_tokens : int, optional
@@ -5318,6 +5318,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             ctx_len,
             **compiler_options,
         )
+
+        if full_batch_size:
+            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
 
         if kv_cache_batch_size:
             logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
