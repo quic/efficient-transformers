@@ -85,15 +85,9 @@ def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     batch_size, seq_len = T2Ei.shape
     int32_max = torch.iinfo(torch.int32).max
     token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    if torch.compiler.is_compiling():
-        # A torch.tensor created on a FakeTensor device is captured as a fake
-        # initializer inside Dynamo ONNX subfunctions and cannot be serialized.
-        # Derive the same scalar from a graph value so it remains executable IR.
-        int32_max_scalar = token_idx[0, 0] * 0 + int32_max
-    else:
-        int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1, dtype=torch.int32)
     valid_dest = valid_prefix - 1
+    int32_max_scalar = torch.full_like(valid_dest, int32_max)
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
     # NOTE: expand_as(...) instead of torch.full_like(...) is the compiler-preferred
     # workaround for ConstantOfShape(INT32_MAX); both produce identical traced Ctx ops.
