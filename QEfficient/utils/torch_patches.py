@@ -32,6 +32,7 @@ Patches removed (upstreamed to PyTorch):
   - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
 """
 
+import importlib
 import inspect
 import os
 import threading
