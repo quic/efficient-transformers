@@ -39,7 +39,6 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
     ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-    GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
@@ -106,10 +105,11 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger, log_from_pretrained_call, log_generate_call
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
+logger = QEFFLogger.get_logger("MODEL")
 CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
@@ -2373,6 +2373,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.qpc_paths.update({qpc_key: lang_qpc_path})
         return self.qpc_paths
 
+    @log_generate_call
     def generate(
         self,
         inputs: torch.Tensor | None = None,
@@ -3562,6 +3563,7 @@ class QEFFAutoModelForImageTextToText:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, qaic_config=qaic_config, **kwargs)
 
     @classmethod
+    @log_from_pretrained_call
     @with_replaced_quantizers
     def from_pretrained(
         cls,
