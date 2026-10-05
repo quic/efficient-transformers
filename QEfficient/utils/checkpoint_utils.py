@@ -128,13 +128,22 @@ def read_weight_map(src: Path) -> dict[str, str]:
 
 
 def checkpoint_files_complete(src: Path) -> bool:
-    """Return True when a checkpoint directory has all shards referenced by its weight map."""
+    """Return True when all indexed checkpoint shards are present and readable."""
     try:
         weight_map = read_weight_map(src)
     except Exception:
         return False
 
-    return all((src / shard_name).is_file() for shard_name in set(weight_map.values()))
+    for shard_name in set(weight_map.values()):
+        shard_path = src / shard_name
+        if not shard_path.is_file() or not os.access(shard_path, os.R_OK):
+            return False
+        try:
+            with safe_open(str(shard_path), framework="pt"):
+                pass
+        except Exception:
+            return False
+    return True
 
 
 @cache
@@ -262,6 +271,10 @@ def atomic_save(tensors: dict[str, torch.Tensor], dst: Path) -> None:
     tmp = dst.with_suffix(dst.suffix + ".tmp")
     save_file({k: v.contiguous() for k, v in tensors.items()}, str(tmp))
     tmp.replace(dst)
+    try:
+        dst.chmod(dst.stat().st_mode | 0o660)
+    except OSError:
+        pass
 
 
 def write_index(out: Path, weight_map: dict[str, str]) -> None:

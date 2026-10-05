@@ -246,7 +246,9 @@ class TestWeightFreeCheckpointTransforms:
         prepared = pipeline.apply(src, out, target_dtype=torch.float32)
 
         assert prepared == out
-        (out / "model.safetensors").unlink()
+        prepared_index = json.loads((out / "model.safetensors.index.json").read_text())
+        first_shard = next(iter(prepared_index["weight_map"].values()))
+        (out / first_shard).unlink()
         assert (out / CHECKPOINT_PREPARED_MANIFEST).is_file()
         assert (out / CHECKPOINT_PREPARED_SENTINEL).is_file()
 
@@ -895,6 +897,21 @@ class TestWeightFreeCheckpointTransforms:
                 {checkpoint_name: "model.safetensors"},
                 backbone,
                 MoEExpertStackingCheckpointTransform,
+            )
+            == checkpoint_name
+        )
+
+    def test_resolver_accepts_granitemoe_router_layer_alias(self):
+        checkpoint_name = "model.layers.0.block_sparse_moe.router.layer.weight"
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key(
+                "model.layers.0.block_sparse_moe.router.weight",
+                {checkpoint_name: "model.safetensors"},
+                backbone,
+                GraniteMoeFusedExpertSplitCheckpointTransform,
             )
             == checkpoint_name
         )
