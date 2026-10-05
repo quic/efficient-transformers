@@ -17,7 +17,9 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 from QEfficient.utils._utils import hf_download
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def load_checkpoint_weights(checkpoint_path: str, keys: set[str]) -> dict[str, torch.Tensor]:

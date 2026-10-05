@@ -30,7 +30,9 @@ import psutil
 import torch
 
 from QEfficient.utils.checkpoint_utils import copy_checkpoint_aux_files, read_weight_map, write_index
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 
 @dataclass(frozen=True)
