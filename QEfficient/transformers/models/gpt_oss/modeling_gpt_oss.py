@@ -49,7 +49,9 @@ from QEfficient.transformers.moe import (
     gptoss_clamped_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def override_gptoss_prefill_chunking(
