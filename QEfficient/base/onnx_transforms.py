@@ -327,14 +327,54 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         }
     )
 
-    @staticmethod
-    def _scatter_sort_key(n) -> int:
-        output_name = n.output[0] if n.output else ""
-        if "key" in output_name:
-            return 0
-        if "value" in output_name:
-            return 1
-        return 2
+    @classmethod
+    def _resolve_kv_scatter_outputs(cls, fn, node, layer_idx: str) -> dict[str, str] | None:
+        """Resolve nested KV scatter outputs from the function-call data flow.
+
+        ONNX function-call inputs bind positionally. Each cache scatter consumes
+        the cache buffer as its first input, so the matching scatter is identified
+        from that buffer's function argument rather than output names or node order.
+        """
+        function_cache_inputs: dict[str, str] = {}
+        for input_index, input_name in enumerate(node.input):
+            match = cls._KV_INPUT_RE.match(input_name)
+            if match is None:
+                continue
+            kind, input_layer_idx = match.groups()
+            if input_layer_idx != layer_idx:
+                continue
+            if input_index >= len(fn.input):
+                raise ValueError(
+                    f"Nested function '{fn.name}' has no input at position {input_index} for "
+                    f"call-node cache input '{input_name}'."
+                )
+            function_cache_inputs[kind] = fn.input[input_index]
+
+        if set(function_cache_inputs) != {"key", "value"}:
+            return None
+
+        scatter_outputs = {}
+        for kind, function_input in function_cache_inputs.items():
+            writers = [
+                fn_node
+                for fn_node in fn.node
+                if fn_node.op_type in cls._SCATTER_OP_TYPES
+                and fn_node.input
+                and fn_node.input[0] == function_input
+                and fn_node.output
+            ]
+            if len(writers) != 1:
+                writer_names = [
+                    f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})" for writer in writers
+                ]
+                raise ValueError(
+                    f"Could not uniquely resolve the nested past_{kind}.{layer_idx} cache writer in function "
+                    f"'{fn.name}': expected one CtxScatter* with data input '{function_input}', "
+                    f"found {len(writers)} ({writer_names})."
+                )
+            scatter_outputs[kind] = writers[0].output[0]
+
+        return scatter_outputs
 
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
@@ -354,27 +394,6 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             fn = fn_by_name.get(node.op_type)
             if fn is None:
                 continue
-
-            # Collect scatter nodes that write back the KV cache.
-            # Sort by first-input name so the key scatter reliably precedes the
-            # value scatter: dynamo names function-body args generically (arg7_1
-            # etc.), so we sort by the scatter output name instead — dynamo
-            # preserves "key"/"value" in output tensor names even when input
-            # argument names are opaque.
-            scatter_nodes = [
-                fn_node for fn_node in fn.node if fn_node.op_type in cls._SCATTER_OP_TYPES and fn_node.output
-            ]
-            if len(scatter_nodes) != 2:
-                logger.debug(
-                    "PreserveNestedCacheRetainedStateTransform: function '%s' has %d scatter node(s), expected 2 — skipping.",
-                    node.op_type,
-                    len(scatter_nodes),
-                )
-                continue
-
-            scatter_nodes.sort(key=cls._scatter_sort_key)
-            # Only the first two scatter outputs map to key / value respectively.
-            scatter_outputs = [n.output[0] for n in scatter_nodes[:2]]
 
             # Identify layer index from KV inputs on this call node.
             layer_idx = None
@@ -403,10 +422,21 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if not any(name in dangling_retained_outputs for name in desired_outputs):
                 continue
 
+            if not all(name in dangling_retained_outputs for name in desired_outputs):
+                raise ValueError(
+                    f"Nested function '{fn.name}' has partially dangling KV retained-state outputs for layer "
+                    f"{layer_idx}: expected both {desired_outputs}."
+                )
+
+            scatter_outputs = cls._resolve_kv_scatter_outputs(fn, node, layer_idx)
+            if scatter_outputs is None:
+                continue
+
             # Expose scatter outputs in the function's output list, rename KV
-            # inputs and append retained-state output names to the call node —
-            # all in one pass over the two key/value pairs.
-            for kind, scatter_output, desired_output in zip(("key", "value"), scatter_outputs, desired_outputs):
+            # inputs and append retained-state output names to the call node.
+            # Both writers are resolved before this block, so graph rewiring is atomic.
+            for kind, desired_output in zip(("key", "value"), desired_outputs):
+                scatter_output = scatter_outputs[kind]
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
@@ -953,6 +983,226 @@ class RenameWsubNodesTransform(BaseOnnxTransform):
         return transformed
 
 
+class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
+    """Move constant ReduceSum axes from ONNX function arguments into the function body.
+
+    ONNX subfunction export can lift a constant axes tensor out of a FunctionProto
+    and make it a formal argument. That is semantically valid ONNX, but downstream
+    compilation then sees ReduceSum axes as a runtime parameter. This transform is
+    intentionally narrow: it only rewrites ReduceSum input-1 when that value is a
+    function input and every top-level call site passes the same integer constant.
+    """
+
+    _INTEGER_TENSOR_TYPES = {
+        TensorProto.INT8,
+        TensorProto.INT16,
+        TensorProto.INT32,
+        TensorProto.INT64,
+        TensorProto.UINT8,
+        TensorProto.UINT16,
+        TensorProto.UINT32,
+        TensorProto.UINT64,
+    }
+
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        """Localize eligible ReduceSum axes constants for all functions in ``model``.
+
+        Returns ``True`` only when a function signature and its call nodes were
+        rewritten. Unsupported cases, including dynamic axes, mismatched constants,
+        nested function call sites, and non-ReduceSum uses of the same formal input,
+        are left unchanged.
+        """
+        transformed = False
+        graph_constants = cls._collect_graph_constants(model.graph)
+
+        for function in model.functions:
+            function_inputs = list(function.input)
+            if not function_inputs or cls._has_nested_call_site(model, function):
+                continue
+
+            call_sites = cls._find_graph_call_sites(model, function)
+            if not call_sites:
+                continue
+
+            axes_inputs = cls._find_reduce_sum_axes_inputs(function, function_inputs)
+            for axes_name, reduce_nodes in sorted(
+                axes_inputs.items(), key=lambda item: function_inputs.index(item[0]), reverse=True
+            ):
+                formal_index = function_inputs.index(axes_name)
+                axes_tensor = cls._resolve_shared_axes_tensor(call_sites, graph_constants, formal_index)
+                if axes_tensor is None:
+                    continue
+
+                local_axes_name = cls._insert_axes_constant(function, axes_name, axes_tensor)
+                for reduce_node in reduce_nodes:
+                    reduce_node.input[1] = local_axes_name
+
+                del function.input[formal_index]
+                for call_node in call_sites:
+                    del call_node.input[formal_index]
+                transformed = True
+
+        return transformed
+
+    @classmethod
+    def _find_reduce_sum_axes_inputs(
+        cls, function: onnx.FunctionProto, function_inputs: List[str]
+    ) -> Dict[str, List[onnx.NodeProto]]:
+        """Return formal inputs used only as ReduceSum axes inside ``function``.
+
+        If a formal input is consumed by any other node or by any ReduceSum input
+        other than input 1, removing it from the function signature could change
+        graph semantics. Such inputs are excluded.
+        """
+        formal_inputs = set(function_inputs)
+        axes_inputs: Dict[str, List[onnx.NodeProto]] = {}
+        unsafe_inputs = set()
+
+        for node in function.node:
+            for input_index, input_name in enumerate(node.input):
+                if input_name not in formal_inputs:
+                    continue
+                if node.op_type == "ReduceSum" and input_index == 1:
+                    axes_inputs.setdefault(input_name, []).append(node)
+                else:
+                    unsafe_inputs.add(input_name)
+
+        for input_name in unsafe_inputs:
+            axes_inputs.pop(input_name, None)
+        return axes_inputs
+
+    @staticmethod
+    def _find_graph_call_sites(model: ModelProto, function: onnx.FunctionProto) -> List[onnx.NodeProto]:
+        """Find top-level graph nodes that call ``function``."""
+        return [node for node in model.graph.node if node.op_type == function.name and node.domain == function.domain]
+
+    @staticmethod
+    def _has_nested_call_site(model: ModelProto, function: onnx.FunctionProto) -> bool:
+        """Return whether ``function`` is called from another FunctionProto.
+
+        The pass intentionally resolves constants only in the main graph. If a
+        function is also called from another function, all call sites cannot be
+        proven to pass the same graph constant, so the function is skipped.
+        """
+        for caller_function in model.functions:
+            for node in caller_function.node:
+                if node.op_type == function.name and node.domain == function.domain:
+                    return True
+        return False
+
+    @classmethod
+    def _collect_graph_constants(cls, graph: onnx.GraphProto) -> Dict[str, TensorProto]:
+        """Collect graph-scope constants addressable by value name.
+
+        This supports the common exported ``Constant -> FunctionCall`` form and
+        small initializer-backed axes. It does not load external tensor data or
+        fold producer subgraphs.
+        """
+        constants_by_name = {initializer.name: initializer for initializer in graph.initializer}
+        for node in graph.node:
+            if node.op_type != "Constant" or len(node.output) != 1:
+                continue
+            for attr in node.attribute:
+                if attr.name == "value" and attr.HasField("t"):
+                    constants_by_name[node.output[0]] = attr.t
+                    break
+        return constants_by_name
+
+    @classmethod
+    def _resolve_shared_axes_tensor(
+        cls, call_sites: List[onnx.NodeProto], constants_by_name: Dict[str, TensorProto], formal_index: int
+    ) -> Optional[TensorProto]:
+        """Return the shared integer axes tensor passed by every call site.
+
+        ``None`` means at least one call site is dynamic, missing the argument,
+        passes a non-integer/non-vector tensor, or passes a different value.
+        """
+        shared_value = None
+        shared_tensor = None
+
+        for call_node in call_sites:
+            if len(call_node.input) <= formal_index:
+                return None
+
+            axes_tensor = constants_by_name.get(call_node.input[formal_index])
+            axes_value = cls._to_integer_axes_value(axes_tensor) if axes_tensor is not None else None
+            if axes_value is None:
+                return None
+
+            if shared_value is None:
+                shared_value = axes_value
+                shared_tensor = axes_tensor
+            elif not np.array_equal(shared_value, axes_value):
+                return None
+
+        return shared_tensor
+
+    @classmethod
+    def _to_integer_axes_value(cls, tensor: TensorProto) -> Optional[np.ndarray]:
+        """Convert a TensorProto to a valid ReduceSum axes value, or ``None``.
+
+        Valid axes are scalar or 1-D integer tensors. Empty tensors and non-integer
+        tensors are rejected because they do not represent an explicit static axes
+        list for this transform.
+        """
+        if tensor.data_type not in cls._INTEGER_TENSOR_TYPES:
+            return None
+        try:
+            value = numpy_helper.to_array(tensor)
+        except Exception:
+            return None
+        if value.ndim > 1 or value.size == 0 or not np.issubdtype(value.dtype, np.integer):
+            return None
+        return value.astype(np.int64, copy=False)
+
+    @classmethod
+    def _insert_axes_constant(cls, function: onnx.FunctionProto, axes_name: str, axes_tensor: TensorProto) -> str:
+        """Insert a local Constant node and return its output name."""
+        local_axes_name = cls._make_unique_value_name(function, f"{axes_name}_local")
+        constant_tensor = TensorProto()
+        constant_tensor.CopyFrom(axes_tensor)
+        constant_tensor.name = local_axes_name
+
+        function.node.insert(
+            0,
+            onnx.helper.make_node(
+                "Constant",
+                inputs=[],
+                outputs=[local_axes_name],
+                name=cls._make_unique_node_name(function, f"{local_axes_name}_Constant"),
+                value=constant_tensor,
+            ),
+        )
+        return local_axes_name
+
+    @staticmethod
+    def _make_unique_value_name(function: onnx.FunctionProto, base_name: str) -> str:
+        """Return a value name that does not collide with values in ``function``."""
+        used_names = set(function.input) | set(function.output)
+        for node in function.node:
+            used_names.update(node.input)
+            used_names.update(node.output)
+
+        candidate = base_name
+        suffix = 0
+        while candidate in used_names:
+            suffix += 1
+            candidate = f"{base_name}_{suffix}"
+        return candidate
+
+    @staticmethod
+    def _make_unique_node_name(function: onnx.FunctionProto, base_name: str) -> str:
+        """Return a node name that does not collide with named nodes in ``function``."""
+        used_names = {node.name for node in function.node if node.name}
+        candidate = base_name
+        suffix = 0
+        while candidate in used_names:
+            suffix += 1
+            candidate = f"{base_name}_{suffix}"
+        return candidate
+
+
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
@@ -1028,6 +1278,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if RenameWsubNodesTransform in requested:
             applied[RenameWsubNodesTransform] = RenameWsubNodesTransform.apply(model)
+
+        if LocalizeFunctionReduceSumAxesTransform in requested:
+            applied[LocalizeFunctionReduceSumAxesTransform] = LocalizeFunctionReduceSumAxesTransform.apply(model)
 
         if PreserveNestedCacheRetainedStateTransform in requested:
             applied[PreserveNestedCacheRetainedStateTransform] = PreserveNestedCacheRetainedStateTransform.apply(model)

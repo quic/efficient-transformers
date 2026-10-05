@@ -19,7 +19,9 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.peft.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.hash_utils import to_hashable
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("FT")
 
 
 class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
@@ -395,7 +397,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
         prompt_to_adapter_mapping: List[str] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         runtime: Optional[str] = "AI_100",
         **kwargs,
     ):
@@ -410,7 +412,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): Tokenizer used for inference.
             prompts (List[str]): List of prompts to generate outputs for.
             prompt_to_adapter_mapping (List[str]): List of adapter names to use for each prompt. Use "base" for the base model (no adapter).
-            device_id (List[int], optional): Device IDs to use for execution. If `None`, auto-device-picker is used.
+            device_ids (List[int], optional): Device IDs to use for execution. If `None`, auto-device-picker is used.
             runtime (str, optional): Runtime to use. Only "AI_100" is currently supported. Default is "AI_100".
             **kwargs: Additional generation parameters.
 
@@ -440,7 +442,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             tokenizer,
             self.qpc_path,
             prompt=prompts,
-            device_id=device_id,
+            device_ids=device_ids,
             generation_len=generation_len,
             prompt_to_lora_id_mapping=[
                 self.active_adapter_to_id[name] if name != "base" else 0 for name in prompt_to_adapter_mapping

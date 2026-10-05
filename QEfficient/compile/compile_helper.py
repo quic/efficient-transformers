@@ -15,7 +15,9 @@ from typing import List, Optional, Tuple
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json, load_yaml, to_named_specializations
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def create_and_dump_specializations(
@@ -268,6 +270,13 @@ def compile(
         This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.
 
     """
+
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
 
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")

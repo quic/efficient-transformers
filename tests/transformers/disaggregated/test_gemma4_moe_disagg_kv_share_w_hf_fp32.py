@@ -590,7 +590,7 @@ def _compile_kv_share_lang(
 
 @pytest.mark.skip("for local checking only")
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
     torch.manual_seed(42)
 

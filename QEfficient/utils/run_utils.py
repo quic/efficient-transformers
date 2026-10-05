@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+import warnings
 from typing import List
 
 import numpy as np
@@ -33,7 +34,16 @@ class ApiRunner:
     """
 
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size=None,
+        dtype=torch.float32,
+        qaic_config=None,
     ):
         """
         Initialization
@@ -55,6 +65,7 @@ class ApiRunner:
             ctx_len=ctx_len,
             full_batch_size=full_batch_size,
             dtype=dtype,
+            qaic_config=qaic_config,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
@@ -301,10 +312,17 @@ class ApiRunner:
         Return:
             :numpy.ndarray: Generated output tokens
         """
+        if device_group is not None:
+            warnings.warn(
+                "device_group is deprecated and will be renamed to device_ids in the next release.",
+                FutureWarning,
+                stacklevel=2,
+            )
+
         execinfo = TextGeneration(
             tokenizer=self.input_handler.tokenizer,
             qpc_path=qpc_path,
-            device_id=device_group,
+            device_ids=device_group,
             ctx_len=self.input_handler.ctx_len,
             full_batch_size=self.input_handler.full_batch_size,
         ).generate(prompt=self.input_handler.prompt, generation_len=self.gen_len, stream=False)

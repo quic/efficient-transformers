@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Type, Union
-
 import torch
 from torch import nn
 from transformers.cache_utils import Cache
@@ -33,6 +31,7 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -84,7 +83,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
     **kwargs,
 ):
@@ -109,18 +108,20 @@ class QEffLlamaAttention(LlamaAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None,
+        position_ids: torch.LongTensor | None = None,
+        block_table: torch.LongTensor | None = None,
+        slot_id: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         use_cache: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        num_kv_blocks: Optional[torch.Tensor] = None,
-        cos_cached: Optional[torch.Tensor] = None,
-        sin_cached: Optional[torch.Tensor] = None,
+        cache_position: torch.LongTensor | None = None,
+        num_kv_blocks: torch.Tensor | None = None,
+        cos_cached: torch.Tensor | None = None,
+        sin_cached: torch.Tensor | None = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
@@ -152,6 +153,8 @@ class QEffLlamaAttention(LlamaAttention):
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_seen_tokens=past_seen_tokens,
             )
         else:
@@ -190,17 +193,19 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        block_table: torch.LongTensor | None = None,
+        slot_id: torch.LongTensor | None = None,
+        past_key_value: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        use_cache: bool | None = False,
+        cache_position: torch.LongTensor | None = None,
         sin_cached=None,
         cos_cached=None,
         **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -210,6 +215,8 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
@@ -243,17 +250,19 @@ class QEffLlamaModel(LlamaModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        block_table: torch.LongTensor | None = None,
+        slot_id: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+    ) -> tuple | BaseModelOutputWithPast:
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -288,14 +297,20 @@ class QEffLlamaModel(LlamaModel):
         sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
         cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        self.target_layer_ids = getattr(self, "target_layer_ids", None)
+        target_hidden_list = []
+
+        for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
+            if self.target_layer_ids and idx in self.target_layer_ids:
+                target_hidden_list.append(hidden_states)
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
@@ -315,10 +330,14 @@ class QEffLlamaModel(LlamaModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        target_hidden = None
+        if self.target_layer_ids:
+            target_hidden = compute_dflash_target_hidden_states(target_hidden_list, self.fc, self.hidden_norm)
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
-            hidden_states=all_hidden_states,
+            hidden_states=target_hidden if target_hidden is not None else all_hidden_states,
         )
 
 
@@ -327,7 +346,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     """
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -339,25 +358,33 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        block_table: torch.LongTensor | None = None,
+        slot_id: torch.LongTensor | None = None,
+        past_key_values: Cache | list[torch.FloatTensor] | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
         **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> tuple | CausalLMOutputWithPast:
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
+
+        if getattr(self.model, "target_layer_ids", None):
+            output_hidden_states = False
+
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
@@ -370,6 +397,20 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
 
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+
+        if getattr(self.model, "target_layer_ids", None):
+            target_hidden = outputs.hidden_states
+            hidden_states = outputs.last_hidden_state
+            logits = self.lm_head(hidden_states).float()
+            predicted_token_ids = logits.argmax(dim=-1).to(torch.int32)
+            return CausalLMOutputWithPast(
+                loss=None,
+                logits=predicted_token_ids,
+                past_key_values=outputs.past_key_values,
+                hidden_states=target_hidden,
+                attentions=outputs.attentions,
+            )
+
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).float()
 

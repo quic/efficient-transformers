@@ -20,8 +20,10 @@ CPU-only. No QAIC hardware required.
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 from onnx import TensorProto, helper
 from transformers import LlamaConfig, LlamaForCausalLM
@@ -35,11 +37,41 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
+from QEfficient.utils.torch_patches import preserve_subfunction_source_lines, temporarily_enable_nested_compile_regions
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _InterpreterSpy:
+    def __init__(self, graph_module):
+        self.graph_module = graph_module
+
+    def run(self, *operands):
+        return self.graph_module(*operands)
+
+
+def test_preserve_subfunction_source_lines_interprets_graph_modules(monkeypatch):
+    invoke_subgraph = importlib.import_module("torch._higher_order_ops.invoke_subgraph")
+    original_reenter_make_fx = invoke_subgraph.reenter_make_fx
+    graph_module = torch.fx.symbolic_trace(torch.nn.Identity())
+    calls = []
+
+    def fake_reenter_make_fx(fn, *args, **kwargs):
+        calls.append((fn, args, kwargs))
+        return fn(*args)
+
+    monkeypatch.setattr(invoke_subgraph, "reenter_make_fx", fake_reenter_make_fx)
+    monkeypatch.setattr(torch.fx, "Interpreter", _InterpreterSpy)
+
+    with preserve_subfunction_source_lines():
+        result = invoke_subgraph.reenter_make_fx(graph_module, torch.ones(2))
+        assert torch.equal(result, torch.ones(2))
+        assert calls and calls[0][0] is not graph_module
+
+    assert invoke_subgraph.reenter_make_fx is fake_reenter_make_fx
+    assert original_reenter_make_fx is not invoke_subgraph.reenter_make_fx
 
 
 def make_tiny_llama():
@@ -268,13 +300,15 @@ class TestPreserveNestedCacheRetainedStateTransform:
         changed = PreserveNestedCacheRetainedStateTransform.apply(model)
         assert not changed, "Transform should be a no-op when there are no dangling _RetainedState outputs"
 
-    def test_noop_when_scatter_count_not_two(self):
+    def test_rejects_missing_cache_writer_without_partial_rewire(self):
         # Build model where function has only 1 scatter node
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=1, scatter_count_per_fn=1)
-        PreserveNestedCacheRetainedStateTransform.apply(model)
-        # The key invariant: no crash; the function with only 1 scatter is skipped
+        with pytest.raises(ValueError, match="Could not uniquely resolve"):
+            PreserveNestedCacheRetainedStateTransform.apply(model)
+        # The key invariant: the function call is not partially rewired.
         fn = model.functions[0]
         assert len(fn.output) == 1, f"Function with 1 scatter should not have outputs added, got {list(fn.output)}"
+        assert not model.graph.node[0].output
 
 
 # ---------------------------------------------------------------------------

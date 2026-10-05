@@ -17,7 +17,10 @@ import QEfficient
 from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
 from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
+
 
 script_dir = Path(__file__).resolve().parent
 so_folder_path = script_dir / "build"
@@ -131,7 +134,7 @@ def main(
         qpc_path=qpc_dir_path,
         prompt_len=prompt_len,
         prompt=prompt,
-        device_id=device_group,
+        device_ids=device_group,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
         full_batch_size=full_batch_size,
@@ -144,19 +147,19 @@ def cloud_ai_100_exec_kv_cpp(
     prompt_len: int,
     prompt: Optional[List[str]] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
     full_batch_size: Optional[int] = None,
 ):
-    batch_size, ctx_len = get_compilation_dims(qpc_path)
+    batch_size, ctx_len, _, _ = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
     InferenceSetIOBuffer.generatePrompt(
-        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id
+        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_ids
     )
 
 

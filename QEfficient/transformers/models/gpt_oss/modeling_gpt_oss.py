@@ -49,7 +49,9 @@ from QEfficient.transformers.moe import (
     gptoss_clamped_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def override_gptoss_prefill_chunking(
@@ -336,7 +338,7 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
 
         # Apply routing weights AFTER expert computation (This is before on Llama4)
         experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
+        experts_out = experts_out.sum(dim=1)
 
         return experts_out, router_logits
 
@@ -629,6 +631,8 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -709,6 +713,8 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -784,6 +790,8 @@ class QEffGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -821,6 +829,8 @@ class QEffGptOssAttention(GptOssAttention):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_seen_tokens=past_seen_tokens,
                 sliding_window=self.sliding_window,
                 sinks=self.sinks,
@@ -836,6 +846,11 @@ class QEffGptOssAttention(GptOssAttention):
                 batch_index=batch_index,
                 position_ids=position_ids,
                 sliding_window=self.sliding_window,
+                sliding_window_len=(
+                    past_key_values.get_sliding_window_len(self.layer_idx)
+                    if self.sliding_window is not None and past_key_values is not None
+                    else None
+                ),
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
@@ -861,6 +876,8 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -879,6 +896,8 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
@@ -916,6 +935,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -989,6 +1010,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
                 hidden_states,
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_key_value=past_key_values,
                 batch_index=batch_index,
                 use_cache=use_cache,
@@ -1028,6 +1051,8 @@ class QEffGptOssModel(GptOssModel):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -1095,6 +1120,8 @@ class QEffGptOssModel(GptOssModel):
                 hidden_states,
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
+                block_table=block_table,
+                slot_id=slot_id,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
@@ -1140,6 +1167,8 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -1192,6 +1221,8 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            block_table=block_table,
+            slot_id=slot_id,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
