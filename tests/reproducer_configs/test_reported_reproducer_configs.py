@@ -98,7 +98,7 @@ OFFICIAL_MODEL_ENV = "QEFF_REPRODUCER_USE_OFFICIAL_MODELS"
 REPORT_PATH_ENV = "QEFF_REPRODUCER_REPORT_MD"
 SCENARIO_FILTER_ENV = "QEFF_REPRODUCER_SCENARIO"
 DEFAULT_REPORT_PATH = Path("tests/reproducer_configs/reproducer_config_results.md")
-EXPECTED_SCENARIO_COUNT = 51
+EXPECTED_SCENARIO_COUNT = 52
 EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
     {
         "height",
@@ -751,6 +751,54 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
             "num_devices": 1,
             "num_cores": 16,
             "use_onnx_subfunctions": True,
+        },
+    ),
+    RegressionScenario(
+        name="qwen3vl-moe-batch-fold-subfunction",
+        stage="compile",
+        source_model_card="Qwen/Qwen3-VL-235B-A22B-Instruct",
+        tiny_model_id=TINY_QWEN3_VL_MOE,
+        official_model_id="Qwen/Qwen3-VL-235B-A22B-Instruct",
+        summary="batch-folded decode range ops must remain inside Qwen3-VL-MoE decoder subfunctions",
+        model_api="image_text_to_text",
+        load_kwargs={
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "continuous_batching": True,
+            "dtype": torch.float16,
+            "num_hidden_layers": 4,
+            "layerwise": False,
+        },
+        compile_kwargs={
+            "batch_size": 256,
+            "full_batch_size": 256,
+            "kv_cache_batch_size": 256,
+            "prefill_seq_len": 1,
+            "ctx_len": 10240,
+            "height": 354,
+            "width": 536,
+            "num_cores": 16,
+            "num_devices": 16,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "split_model_io": True,
+            "user_tiled": True,
+            "prefill_only": False,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "layerwise": False,
+            "offload_pt_weights": False,
+            "qaic_config": {
+                "blocking_mode": "kv_batch_fold",
+                "num_kv_blocks": 4,
+                "ctx_len": 10240,
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "tree_reduce": False,
+                    "cores_per_expert": 2,
+                    "expert_parallel_chunk_size": 128,
+                },
+            },
         },
     ),
     RegressionScenario(

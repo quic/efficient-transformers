@@ -387,7 +387,10 @@ def generic_blocked_attention_interface(
     # preserves position_ids while anchoring the graph to this layer's cache.
     if blocking_mode == BlockingMode.KV_BATCH_FOLD and past_key_value is not None and position_ids is not None:
         layers = getattr(past_key_value, "layers", None)
-        layer = layers[layer_idx] if layers is not None else None
+        # Dynamic caches can start with no layer entries during initial tracing.
+        # In that case, there is no cache tensor to use as a graph dependency;
+        # leave position_ids unchanged until the requested layer is available.
+        layer = layers[layer_idx] if layers is not None and layer_idx is not None and layer_idx < len(layers) else None
         layer_keys = getattr(layer, "keys", None)
         if layer_keys is not None:
             cache_shape = torch._shape_as_tensor(layer_keys)
