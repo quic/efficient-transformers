@@ -290,6 +290,10 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     # (plain, _RetainedState, or _<prefix>_RetainedState for kv_cache_prefix).
     _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)")
 
+    # GLM-MoE-DSA uses three cache families and a dedicated scatter op. Match
+    # only complete public cache names so unrelated MoE scatters are ignored.
+    _GLM_CACHE_INPUT_RE = re.compile(r"^(compressed_kv|k_pe|indexer_key)\.(\d+)(_RetainedState)?$")
+
     # All scatter op_type names that write back a KV cache tensor.
     # Keep in sync with CustomOpTransform._custom_ops and the dynamo
     # custom_translation_table in base/modeling_qeff.py.
@@ -329,6 +333,40 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
             if fn is None:
+                continue
+
+            # Dynamo gives function parameters generic names (arg10_1, etc.).
+            # Map those formal parameters back to the cache names supplied by
+            # this call, then expose only direct GlmPagedScatter cache writes.
+            formal_to_actual = dict(zip(fn.input, node.input))
+            glm_cache_updates = []
+            for fn_node in fn.node:
+                if fn_node.op_type != "GlmPagedScatter" or not fn_node.input or not fn_node.output:
+                    continue
+                actual_input = formal_to_actual.get(fn_node.input[0])
+                match = cls._GLM_CACHE_INPUT_RE.match(actual_input or "")
+                if match is None:
+                    continue
+                cache_kind, layer_idx, retained_suffix = match.groups()
+                plain_input = f"{cache_kind}.{layer_idx}"
+                desired_output = f"{plain_input}_RetainedState"
+                if desired_output in dangling_retained_outputs:
+                    glm_cache_updates.append(
+                        (fn_node.output[0], actual_input, plain_input, desired_output, retained_suffix is not None)
+                    )
+
+            if glm_cache_updates:
+                for scatter_output, actual_input, plain_input, desired_output, input_is_retained in glm_cache_updates:
+                    if scatter_output not in fn.output:
+                        fn.output.append(scatter_output)
+                        changed = True
+                    if desired_output not in node.output:
+                        node.output.append(desired_output)
+                        changed = True
+                    if input_is_retained:
+                        kv_rename_map[actual_input] = plain_input
+                # GLM decoder functions can also contain CtxScatter3D nodes
+                # used by MoE internals. They are not retained cache outputs.
                 continue
 
             # Collect scatter nodes that write back the KV cache.
