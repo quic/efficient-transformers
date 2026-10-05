@@ -39,6 +39,10 @@ _COMPUTED_INITIALIZER_NAMES = {
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "_mask_causal",
+    "_mask_strict",
+    "_ones_lower",
+    "_eye",
 }
 
 
@@ -138,7 +142,9 @@ def find_checkpoint_key(
         candidates.append(f"{prefix}.{stripped}")
 
     if prefix and stripped.startswith(f"{prefix}."):
-        candidates.append(stripped[len(f"{prefix}.") :])
+        unprefixed = stripped[len(f"{prefix}.") :]
+        candidates.append(unprefixed)
+        candidates.append(f"{prefix}.language_model.{unprefixed}")
 
     key = _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
     if key is not None:

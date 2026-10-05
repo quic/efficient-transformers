@@ -175,6 +175,11 @@ class TestGenerationModuleImportability:
 
         assert QEfficient.generation.text_generation_inference is not None
 
+    def test_retained_state_name_accepts_subfunction_prefix(self):
+        from QEfficient.generation.cloud_infer import is_retained_state_name
+
+        assert is_retained_state_name("repeated_subgraph0/past_key.0_InternalRetainedState")
+
     def test_vlm_generation_importable(self):
         import QEfficient.generation.vlm_generation
 
@@ -949,6 +954,49 @@ class TestContinuousBatching:
         obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
         assert len(prompt_queue) == 0
 
+    def test_full_batch_prefill_uses_full_batch_bindings(self):
+        obj, _, mock_session = self._make_cb_instance(full_batch_size=2)
+        obj.initialize_decode_inputs(2, 2, CTX_LEN)
+        prompt_queue = deque(["Hello", "World"])
+
+        obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
+
+        prefill_inputs = mock_session.run.call_args_list[0][0][0]
+        assert prefill_inputs["input_ids"].shape == (2, PREFILL_LEN)
+        assert prefill_inputs["position_ids"].shape == (2, PREFILL_LEN)
+        assert prefill_inputs["batch_index"].shape == (2, 1)
+        assert prefill_inputs["batch_index"].tolist() == [[0], [1]]
+
+    def test_full_batch_prefill_supports_decode_sized_chunks(self):
+        obj, _, mock_session = self._make_cb_instance(full_batch_size=2)
+        obj._prefill_seq_len = 1
+        obj.initialize_decode_inputs(2, 2, CTX_LEN)
+        prompt_queue = deque(["Hello", "World"])
+
+        obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
+
+        first_chunk_inputs = mock_session.run.call_args_list[0][0][0]
+        assert first_chunk_inputs["input_ids"].shape == (2, 1)
+        assert first_chunk_inputs["position_ids"].shape == (2, 1)
+        assert first_chunk_inputs["batch_index"].shape == (2, 1)
+
+    def test_full_batch_prefill_sends_block_table_and_slot_id_when_kv_blocked(self):
+        obj, _, mock_session = self._make_cb_instance(full_batch_size=2)
+        obj._prefill_seq_len = 1
+        obj.num_kv_blocks = 2
+        obj.kv_block_size = 16
+        obj.block_table = np.arange(4, dtype=np.int64).reshape(2, 2)
+        obj.initialize_decode_inputs(2, 2, CTX_LEN)
+        prompt_queue = deque(["Hello", "World"])
+
+        obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
+
+        first_chunk_inputs = mock_session.run.call_args_list[0][0][0]
+        assert first_chunk_inputs["block_table"].shape == (2, 2)
+        assert first_chunk_inputs["block_table"].tolist() == [[0, 1], [2, 3]]
+        assert first_chunk_inputs["slot_id"].shape == (2,)
+        assert first_chunk_inputs["slot_id"].tolist() == [0, 0]
+
 
 # ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id
@@ -1117,6 +1165,45 @@ def test_binding_is_bfloat16_uses_compiled_binding_type(monkeypatch):
     assert session.binding_is_bfloat16("pixel_values") is True
     assert session.binding_is_bfloat16("image_masks") is False
     assert session.binding_is_bfloat16("missing") is False
+
+
+def test_build_outputs_skips_explicitly_skipped_prefixed_internal_retained_state_buffers(monkeypatch):
+    from QEfficient.generation import cloud_infer
+
+    class FakeQBuffer:
+        def __init__(self, payload, size=None):
+            self.payload = payload
+            self.size = len(payload) if size is None else size
+
+        def __bytes__(self):
+            return self.payload
+
+    class UnreadableQBuffer:
+        size = 16
+
+        def __bytes__(self):
+            raise AssertionError("retained-state buffers must not be materialized")
+
+    monkeypatch.setattr(cloud_infer, "aicapi", SimpleNamespace(BUFFER_IO_TYPE_OUTPUT="output"), raising=False)
+    session = object.__new__(cloud_infer.QAICInferenceSession)
+    session.bindings = [
+        SimpleNamespace(name="repeated_subgraph0/past_key.0_InternalRetainedState", index=0, type=1, dir="output"),
+        SimpleNamespace(name="logits", index=1, type=1, dir="output"),
+    ]
+    session.binding_index_map = {
+        "repeated_subgraph0/past_key.0_InternalRetainedState": 0,
+        "logits": 1,
+    }
+    session.aic_to_np_dtype_mapping = {1: np.dtype(np.float32)}
+    session._skipped_buffer_names = cloud_infer._retained_state_name_aliases("past_key.0_RetainedState")
+    qbuffers = [FakeQBuffer(b"\x00" * 16), FakeQBuffer(b"\x00" * 4)]
+    output_qbuffers = [UnreadableQBuffer(), FakeQBuffer(np.array([3.0], dtype=np.float32).tobytes())]
+    buf_dims = [(4, (1,)), (4, (1,))]
+
+    outputs = session._build_outputs(output_qbuffers, qbuffers, buf_dims)
+
+    assert list(outputs) == ["logits"]
+    np.testing.assert_array_equal(outputs["logits"], np.array([3.0], dtype=np.float32))
 
 
 # ---------------------------------------------------------------------------

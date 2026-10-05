@@ -12,6 +12,7 @@ from collections import deque
 from time import perf_counter
 
 import numpy as np
+import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
@@ -37,43 +38,101 @@ MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 STAGES = 4
 PREFILL_NUM_DEVICES = 8
 DECODE_NUM_DEVICES = 4
+BLOCKING_MODES = ("h", "q", "kv", "qkv", "hqkv", "bhqkv", "kv_headpar")
 
 
-def _build_config(model_id: str, num_hidden_layers: int = None):
-    """Load the model config, optionally reducing ``num_hidden_layers``."""
-    if num_hidden_layers is None:
+def _parse_blocking_modes(values):
+    if not values or values == ["none"]:
+        return [None]
+    if len(values) == 1 and values[0] == "all":
+        return list(BLOCKING_MODES)
+    return values
+
+
+def _blocking_config(mode: str, num_kv_blocks: int, num_q_blocks: int, head_block_size: int, headpar_split: int):
+    if mode is None:
         return None
+
+    qaic_config = {"blocking_mode": mode}
+    if mode in {"h", "hqkv", "bhqkv"}:
+        qaic_config["head_block_size"] = head_block_size
+    if mode in {"kv", "qkv", "hqkv", "bhqkv", "kv_headpar"}:
+        qaic_config["num_kv_blocks"] = num_kv_blocks
+    if mode in {"q", "qkv", "hqkv", "bhqkv"}:
+        qaic_config["num_q_blocks"] = num_q_blocks
+    if mode == "bhqkv":
+        qaic_config["num_batch_blocks"] = 1
+    if mode == "kv_headpar":
+        qaic_config["headpar_split"] = headpar_split
+    return qaic_config
+
+
+def _build_config(model_id: str, num_hidden_layers: int = None, dtype=torch.float16):
+    """Load the model config, optionally reducing ``num_hidden_layers``."""
     config = AutoConfig.from_pretrained(model_id)
-    config.num_hidden_layers = num_hidden_layers
+    config.dtype = dtype
+    config.torch_dtype = dtype
+    if num_hidden_layers is not None:
+        config.num_hidden_layers = num_hidden_layers
     return config
 
 
-def _compile_sessions(
+def _format_prompt(tokenizer, prompt: str) -> str:
+    if not hasattr(tokenizer, "apply_chat_template"):
+        return prompt
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant. Answer directly and concisely."},
+        {"role": "user", "content": prompt},
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        reasoning_effort="low",
+    )
+
+
+def _decode_generated_response(tokenizer, token_ids) -> str:
+    raw_text = tokenizer.decode(token_ids, skip_special_tokens=False)
+    final_marker = "<|channel|>final<|message|>"
+    if final_marker in raw_text:
+        final_text = raw_text.rsplit(final_marker, 1)[-1]
+        for stop_marker in ("<|end|>", "<|return|>"):
+            final_text = final_text.split(stop_marker, 1)[0]
+        return final_text.strip()
+
+    text = tokenizer.decode(token_ids, skip_special_tokens=True).strip()
+    if "assistantfinal" in text:
+        return text.rsplit("assistantfinal", 1)[-1].strip()
+    if text.startswith("analysis") and "final" in text:
+        return text.rsplit("final", 1)[-1].strip()
+    return text
+
+
+def _next_token_ids_from_logits(logits) -> np.ndarray:
+    logits = np.asarray(logits)
+    if logits.ndim == 1:
+        return np.array([logits.argmax()], dtype=np.int64)
+    if logits.ndim == 2:
+        return logits.argmax(axis=-1).astype(np.int64)
+    return logits.reshape(logits.shape[0], -1, logits.shape[-1])[:, -1, :].argmax(axis=-1).astype(np.int64)
+
+
+def _set_eval(qeff_model):
+    if hasattr(qeff_model, "model"):
+        qeff_model.model.eval()
+
+
+def _compile_prefill_session(
     qeff_model,
     prefill_seq_len,
     ctx_len,
     full_batch_size,
     stages,
     prefill_num_devices,
-    decode_num_devices,
-    subfunc_npi,
-    non_subfunc_npi,
+    dynamo,
 ):
-    """Compile decode/prefill QPCs (CB flags) and open kv_dma_share sessions."""
-    decode_qpc_path = qeff_model.compile(
-        prefill_seq_len=1,
-        ctx_len=ctx_len,
-        full_batch_size=full_batch_size,
-        num_cores=NUM_CORES,
-        num_devices=decode_num_devices,
-        mos=1,
-        aic_enable_depth_first=True,
-        num_speculative_tokens=None,
-        offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation
-        split_retained_state_io=True,
-        retain_full_kv=True,  # required for DMA slice writes into full KV
-        use_onnx_subfunctions=True,
-    )
+    """Compile the chunked prefill QPC and open its kv_dma_share session."""
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -90,49 +149,55 @@ def _compile_sessions(
         enable_chunking=True,
         retain_full_kv=True,
         use_onnx_subfunctions=True,
+        dynamo=dynamo,
     )
     prefill_session = QAICInferenceSession(
         prefill_qpc_path, kv_dma_share=True, stages=stages, full_batch_size=full_batch_size, cluster_id="prefill"
     )
+    return prefill_session
+
+
+def _compile_decode_session(
+    qeff_model,
+    ctx_len,
+    full_batch_size,
+    decode_num_devices,
+    decode_qaic_config,
+    dynamo,
+):
+    """Compile one decode QPC and open its kv_dma_share session."""
+    decode_qpc_path = qeff_model.compile(
+        prefill_seq_len=1,
+        ctx_len=ctx_len,
+        full_batch_size=full_batch_size,
+        num_cores=NUM_CORES,
+        num_devices=decode_num_devices,
+        mos=1,
+        aic_enable_depth_first=True,
+        num_speculative_tokens=None,
+        offload_pt_weights=False,
+        split_retained_state_io=True,
+        retain_full_kv=True,  # required for DMA slice writes into full KV
+        use_onnx_subfunctions=True,
+        qaic_config=decode_qaic_config,
+        dynamo=dynamo,
+        user_tiled=False,
+    )
     decode_session = QAICInferenceSession(
         decode_qpc_path, kv_dma_share=True, full_batch_size=full_batch_size, cluster_id="decode"
     )
-    return prefill_session, decode_session
+    return decode_session
 
 
-def run(
-    model_id: str = DEFAULT_MODEL_ID,
-    prompts=None,
-    prefill_seq_len: int = DEFAULT_PREFILL_SEQ_LEN,
-    ctx_len: int = DEFAULT_CTX_LEN,
-    generation_len: int = DEFAULT_GENERATION_LEN,
-    full_batch_size: int = DEFAULT_FULL_BATCH_SIZE,
-    stages: int = STAGES,
-    prefill_num_devices: int = PREFILL_NUM_DEVICES,
-    decode_num_devices: int = DECODE_NUM_DEVICES,
-    num_hidden_layers: int = None,
-    subfunc_npi: str = DEFAULT_SUBFUNC_NPI,
-    non_subfunc_npi: str = DEFAULT_NON_SUBFUNC_NPI,
+def _run_sessions(
+    tokenizer,
+    prefill_session,
+    decode_session,
+    prompts,
+    prefill_seq_len,
+    generation_len,
+    full_batch_size,
 ):
-    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff."""
-    prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-
-    config = _build_config(model_id, num_hidden_layers)
-    from_pretrained_kwargs = {"config": config} if config is not None else {}
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True, **from_pretrained_kwargs)
-    prefill_session, decode_session = _compile_sessions(
-        qeff_model,
-        prefill_seq_len,
-        ctx_len,
-        full_batch_size,
-        stages,
-        prefill_num_devices,
-        decode_num_devices,
-        subfunc_npi,
-        non_subfunc_npi,
-    )
-
     assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"
 
     # Shared host KV arrays, allocated once in decode-map order. Under CB the leading batch
@@ -150,12 +215,13 @@ def run(
         Returns ``(lang_inputs, num_chunks)`` where ``lang_inputs`` carries ``input_ids`` /
         ``position_ids`` (``-1`` at pad positions).
         """
-        enc = tokenizer(prompt, return_tensors="np", padding=True)
+        formatted_prompt = _format_prompt(tokenizer, prompt)
+        enc = tokenizer(formatted_prompt, return_tensors="np", padding=True)
         prompt_len = enc["input_ids"].shape[1]
         num_chunks = -(prompt_len // -prefill_seq_len)  # ceil divide without float
         padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
 
-        enc = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+        enc = tokenizer(formatted_prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         lang_inputs = {"input_ids": enc["input_ids"]}
         lang_inputs["position_ids"] = np.where(enc["attention_mask"], np.arange(padded_len), -1)
         return lang_inputs, num_chunks
@@ -184,7 +250,7 @@ def run(
             prefill_session.complete_inf(exec_idx, is_prefill=True)
 
         prefill_out = prefill_session.get_outputs(index=exec_idx)
-        first_token = int(np.argmax(prefill_out["logits"]))
+        first_token = int(_next_token_ids_from_logits(prefill_out["logits"])[0])
         next_pos = int(np.max(lang_inputs["position_ids"])) + 1
         return first_token, next_pos
 
@@ -278,9 +344,97 @@ def run(
     for idx, prompt in enumerate(prompts):
         toks = results[idx] or []
         first_tokens.append(toks[0] if toks else None)
-        print(f"\ninput [{idx}]\n{prompt}\noutput\n{tokenizer.decode(toks)}")
+        print(f"\ninput [{idx}]\n{prompt}\noutput\n{_decode_generated_response(tokenizer, toks)}")
 
     return {"first_tokens": first_tokens, "tokens": results}
+
+
+def run(
+    model_id: str = DEFAULT_MODEL_ID,
+    prompts=None,
+    prefill_seq_len: int = DEFAULT_PREFILL_SEQ_LEN,
+    ctx_len: int = DEFAULT_CTX_LEN,
+    generation_len: int = DEFAULT_GENERATION_LEN,
+    full_batch_size: int = DEFAULT_FULL_BATCH_SIZE,
+    stages: int = STAGES,
+    prefill_num_devices: int = PREFILL_NUM_DEVICES,
+    decode_num_devices: int = DECODE_NUM_DEVICES,
+    num_hidden_layers: int = None,
+    subfunc_npi: str = DEFAULT_SUBFUNC_NPI,
+    non_subfunc_npi: str = DEFAULT_NON_SUBFUNC_NPI,
+    decode_blocking_modes=None,
+    weight_free: bool = True,
+    dynamo: bool = True,
+    num_kv_blocks: int = 2,
+    num_q_blocks: int = 2,
+    head_block_size: int = 8,
+    headpar_split: int = 2,
+):
+    """Run CB (chunked-prefill + batched decode) over ``prompts`` with the DMA KV handoff."""
+    prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    decode_blocking_modes = _parse_blocking_modes(decode_blocking_modes)
+
+    config = _build_config(model_id, num_hidden_layers)
+    from_pretrained_kwargs = {"config": config, "dtype": torch.float16}
+    prefill_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_id,
+        continuous_batching=True,
+        trust_remote_code=True,
+        weight_free=weight_free,
+        **from_pretrained_kwargs,
+    )
+    _set_eval(prefill_model)
+    prefill_session = _compile_prefill_session(
+        prefill_model,
+        prefill_seq_len,
+        ctx_len,
+        full_batch_size,
+        stages,
+        prefill_num_devices,
+        dynamo,
+    )
+
+    mode_results = {}
+    for mode in decode_blocking_modes:
+        decode_qaic_config = _blocking_config(mode, num_kv_blocks, num_q_blocks, head_block_size, headpar_split)
+        label = mode or "unblocked"
+        print(f"\n===== decode blocking mode: {label} =====")
+        if decode_qaic_config is not None:
+            print(f"decode qaic_config: {decode_qaic_config}")
+
+        decode_config = _build_config(model_id, num_hidden_layers)
+        decode_kwargs = {"config": decode_config, "dtype": torch.float16}
+        decode_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id,
+            continuous_batching=True,
+            trust_remote_code=True,
+            weight_free=weight_free,
+            qaic_config=decode_qaic_config,
+            **decode_kwargs,
+        )
+        _set_eval(decode_model)
+        decode_session = _compile_decode_session(
+            decode_model,
+            ctx_len,
+            full_batch_size,
+            decode_num_devices,
+            decode_qaic_config,
+            dynamo,
+        )
+        mode_results[label] = _run_sessions(
+            tokenizer,
+            prefill_session,
+            decode_session,
+            prompts,
+            prefill_seq_len,
+            generation_len,
+            full_batch_size,
+        )
+
+    return mode_results
 
 
 if __name__ == "__main__":
@@ -308,6 +462,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--non-subfunc-npi", default=DEFAULT_NON_SUBFUNC_NPI, help="decode (non-subfunction) NPI yaml path"
     )
+    parser.add_argument(
+        "--decode-blocking-modes",
+        nargs="+",
+        choices=("none", "all", *BLOCKING_MODES),
+        default=["all"],
+        help="Decode blocking modes to compile/run. Use 'none' for the unblocked baseline.",
+    )
+    parser.add_argument("--num-kv-blocks", type=int, default=4)
+    parser.add_argument("--num-q-blocks", type=int, default=2)
+    parser.add_argument("--head-block-size", type=int, default=8)
+    parser.add_argument("--headpar-split", type=int, default=2)
+    parser.add_argument("--no-weight-free", dest="weight_free", action="store_false")
+    parser.add_argument("--no-dynamo", dest="dynamo", action="store_false")
+    parser.set_defaults(weight_free=True, dynamo=True)
     args = parser.parse_args()
 
     run(
@@ -323,4 +491,11 @@ if __name__ == "__main__":
         num_hidden_layers=args.num_hidden_layers,
         subfunc_npi=args.subfunc_npi,
         non_subfunc_npi=args.non_subfunc_npi,
+        decode_blocking_modes=args.decode_blocking_modes,
+        weight_free=args.weight_free,
+        dynamo=args.dynamo,
+        num_kv_blocks=args.num_kv_blocks,
+        num_q_blocks=args.num_q_blocks,
+        head_block_size=args.head_block_size,
+        headpar_split=args.headpar_split,
     )

@@ -20,8 +20,7 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import pytest
-from transformers import AutoConfig
-
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.exporter.weight_free import resolve_weight_spec_path
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
@@ -31,18 +30,26 @@ from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     PROMPT_LEN,
+    WEIGHT_FREE_BLOCKING_MODE_CASES,
     WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
+    assert_blocked_kv_ops_for_mode,
     assert_has_subfunctions,
     assert_no_int64_kv_cache_inputs,
     assert_retained_state_outputs,
     assert_subfunction_names_match_decoder_class,
     assert_unique_graph_input_names,
     exported_onnx_path,
+    load_causal_lm_config,
     load_hf_model,
     load_tokenizer,
     run_weight_free_ort,
     skip_on_model_fetch_error,
 )
+
+_BLOCKING_EXPORT_CASES = [
+    pytest.param("llama", blocking_key, id=f"llama-{blocking_key}")
+    for blocking_key in WEIGHT_FREE_BLOCKING_MODE_CASES
+]
 
 
 @pytest.mark.weight_free
@@ -65,7 +72,7 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
         # Build meta-device model — no weights loaded, only shapes.
         # pretrained_model_name_or_path is carried in the QEff model so the export
         # can write weight_spec.json pointing at the HF cache checkpoint.
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config = load_causal_lm_config(model_id)
         config.num_hidden_layers = 2
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
@@ -88,6 +95,42 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
     # Weight-free-specific regression guards
     assert_unique_graph_input_names(onnx_path)
     assert_no_int64_kv_cache_inputs(onnx_path)
+
+
+@pytest.mark.weight_free
+@pytest.mark.weight_free_export
+@pytest.mark.parametrize("model_id_or_type,blocking_key", _BLOCKING_EXPORT_CASES)
+def test_weight_free_export_applies_causal_lm_blocking_from_qaic_config(model_id_or_type, blocking_key, tmp_export_dir):
+    """Direct CausalLM weight-free export honors qaic_config blocking modes."""
+    use_onnx_subfunctions = True
+    model_id = WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.get(model_id_or_type, model_id_or_type)
+    qaic_config = dict(WEIGHT_FREE_BLOCKING_MODE_CASES[blocking_key])
+    try:
+        config = load_causal_lm_config(model_id)
+        config.num_hidden_layers = 2
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id,
+            config=config,
+            weight_free=True,
+            qaic_config=qaic_config,
+        )
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    onnx_path = exported_onnx_path(
+        qeff_model.export(
+            tmp_export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            offload_pt_weights=False,
+        )
+    )
+
+    blocking_config = qeff_model.hash_params.get("blocking_kwargs")
+    assert blocking_config is not None
+    assert blocking_config.mode == BlockingMode(qaic_config["blocking_mode"])
+    if use_onnx_subfunctions:
+        assert_has_subfunctions(onnx_path, qeff_model)
+    assert_blocked_kv_ops_for_mode(onnx_path, qeff_model, blocking_key)
 
 
 @pytest.mark.weight_free
@@ -132,7 +175,7 @@ def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
     # The exported model must have the same layer count as model_hf, or the
     # HF PT and ORT token streams come from architecturally different models.
     try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config = load_causal_lm_config(model_id)
         config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
