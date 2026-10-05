@@ -683,7 +683,7 @@ from QEfficient.utils.constants import (
     MOE_PREFILL_PACKED_CHUNK_SIZE,
     ONNX_EXPORT_EXAMPLE_SEQ_LEN,
 )
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.repeat_kv_utils import (
     duplicate_kv_projection_weights,
     get_attention_module,
@@ -692,6 +692,7 @@ from QEfficient.utils.repeat_kv_utils import (
     is_mla_model,
 )
 
+logger = QEFFLogger.get_logger("MODEL")
 SPD_TARGET = "target"
 
 
