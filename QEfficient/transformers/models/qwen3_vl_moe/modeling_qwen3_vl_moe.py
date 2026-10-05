@@ -1127,7 +1127,12 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         continuous_batching: bool = False,
         **kwargs,
     ):
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE + 1
+        if kwargs.get("weight_free", False):
+            bs = 2
+        else:
+            bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+            if bs > 1:
+                bs = 2
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         if continuous_batching and kwargs.get("batch_fold", False):
             bs = fbs

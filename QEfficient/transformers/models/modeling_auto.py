@@ -1760,6 +1760,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             kv_offload=True,
             continuous_batching=self.continuous_batching,
             comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            weight_free=getattr(self, "_weight_free", False),
             **onnx_kwargs,
         )
         dynamic_axes = self.model.get_onnx_dynamic_axes(**dynamic_axes_kwargs)

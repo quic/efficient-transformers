@@ -132,8 +132,10 @@ class TestInternalVLMClassesStructure:
 
         class _QwenLikeVLM:
             config = SimpleNamespace(model_type="qwen2_5_vl")
+            dummy_input_kwargs = None
 
             def get_dummy_inputs(self, **kwargs):
+                self.dummy_input_kwargs = kwargs
                 return {"vision": {}, "lang": {"input_ids": torch.zeros((1, 1), dtype=torch.long)}}
 
             def get_onnx_dynamic_axes(self, **kwargs):
@@ -163,9 +165,11 @@ class TestInternalVLMClassesStructure:
         qeff_model.vision_model = _Vision()
         qeff_model.continuous_batching = False
         qeff_model.comp_ctx_lengths_decode = None
+        qeff_model._weight_free = True
 
         qeff_model.export(skip_vision=True)
 
+        assert qeff_model.model.dummy_input_kwargs["weight_free"] is True
         assert qeff_model.lang_model.exported_inputs["past_repetition_penalty_buffer"].shape == (1, 97)
 
     def test_single_qpc_class_has_compile_method(self):
