@@ -1187,7 +1187,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
-        self.model.config = self.config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
@@ -2026,7 +2025,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: str | None = None,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         dynamo: bool = False,
         artifacts: bool = False,
         **compiler_options,
