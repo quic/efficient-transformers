@@ -326,6 +326,56 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
     return model
 
 
+def _make_minimal_glm_onnx_with_repeated_subgraph():
+    """Build a GLM function with three cache writes and one unrelated MoE scatter."""
+    cache_names = ["compressed_kv.0", "k_pe.0", "indexer_key.0"]
+    formal_names = ["arg10_1", "arg12_1", "arg18_1"]
+    nodes = [
+        helper.make_node(
+            "GlmPagedScatter",
+            [formal, "updates", "position_ids"],
+            [f"{cache_name}_updated"],
+            domain="qti.aisw",
+        )
+        for cache_name, formal in zip(cache_names, formal_names)
+    ]
+    nodes.append(
+        helper.make_node(
+            "CtxScatter3D",
+            ["moe_buffer", "updates", "position_ids"],
+            ["moe_scatter_output"],
+            domain="qti.aisw",
+        )
+    )
+    fn = helper.make_function(
+        "",
+        "repeated_subgraph0",
+        [*formal_names, "moe_buffer", "updates", "position_ids"],
+        [],
+        nodes,
+        [helper.make_opsetid("", 17), helper.make_opsetid("qti.aisw", 1)],
+    )
+    retained_names = [f"{name}_RetainedState" for name in cache_names]
+    call = helper.make_node(
+        "repeated_subgraph0",
+        [*retained_names, "moe_buffer", "updates", "position_ids"],
+        [],
+    )
+    inputs = [helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in retained_names]
+    inputs.extend(
+        helper.make_tensor_value_info(name, dtype, None)
+        for name, dtype in (
+            ("moe_buffer", TensorProto.FLOAT),
+            ("updates", TensorProto.FLOAT),
+            ("position_ids", TensorProto.INT64),
+        )
+    )
+    outputs = [helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in retained_names]
+    model = helper.make_model(helper.make_graph([call], "glm_test_graph", inputs, outputs))
+    model.functions.append(fn)
+    return model
+
+
 # ---------------------------------------------------------------------------
 # TestTemporarilyEnableNestedCompileRegions
 # ---------------------------------------------------------------------------
@@ -416,6 +466,28 @@ class TestPreserveNestedCacheRetainedStateTransform:
         # The key invariant: no crash; the function with only 1 scatter is skipped
         fn = model.functions[0]
         assert len(fn.output) == 1, f"Function with 1 scatter should not have outputs added, got {list(fn.output)}"
+
+    def test_wires_glm_cache_outputs_and_ignores_moe_scatter(self):
+        model = _make_minimal_glm_onnx_with_repeated_subgraph()
+
+        assert PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        expected_inputs = ["compressed_kv.0", "k_pe.0", "indexer_key.0"]
+        expected_outputs = [f"{name}_RetainedState" for name in expected_inputs]
+        assert list(model.graph.node[0].input[:3]) == expected_inputs
+        assert list(model.graph.node[0].output) == expected_outputs
+        assert list(model.functions[0].output) == [
+            "compressed_kv.0_updated",
+            "k_pe.0_updated",
+            "indexer_key.0_updated",
+        ]
+        assert "moe_scatter_output" not in model.functions[0].output
+        assert [value.name for value in model.graph.input[:3]] == expected_inputs
+
+    def test_glm_transform_is_idempotent(self):
+        model = _make_minimal_glm_onnx_with_repeated_subgraph()
+        assert PreserveNestedCacheRetainedStateTransform.apply(model)
+        assert not PreserveNestedCacheRetainedStateTransform.apply(model)
 
 
 # ---------------------------------------------------------------------------
