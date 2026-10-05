@@ -2058,15 +2058,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             compiler_options["artifacts"] = True
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
-        _get_gdn_full_state_update_kwargs(
-            self.model,
-            qaic_config,
-            prefill_only=prefill_only,
-            batch_size=batch_size,
-            full_batch_size=full_batch_size,
-        )
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        if qaic_config and qaic_config.get("gdn_full_state_update") is True:
+            _get_gdn_full_state_update_kwargs(
+                self.model,
+                qaic_config,
+                prefill_only=prefill_only,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+            )
 
         if layerwise:
             if skip_lang and not skip_vision:
