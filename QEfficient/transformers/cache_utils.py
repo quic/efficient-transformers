@@ -485,11 +485,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         gather_limit = torch.where(block_indices < 0, 0, gather_limit)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
-
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         k_out = CtxGatherFuncPagedAttention.apply(k_out, block_indices, ctx_indices)
@@ -1611,7 +1607,7 @@ class QEffSlidingWindowCache:
                 kv_position_ids = position_ids
 
             if batch_index is not None:
-                if torch.onnx.is_in_onnx_export():
+                if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                     invalid_scatter_index = torch.iinfo(torch.int32).max
                     scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
                 else:
@@ -1751,10 +1747,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
@@ -1782,10 +1775,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
@@ -1824,7 +1814,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         )
 
         if batch_index is not None:
-            if torch.onnx.is_in_onnx_export():
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
             else:
@@ -1867,8 +1857,10 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
 
         # Scatter
         if batch_index is not None:
-            if torch.onnx.is_in_onnx_export():
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                 scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
+            else:
+                scatter_position_ids = position_ids
             self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
             self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
         else:
@@ -1904,8 +1896,10 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         if batch_index is not None:
-            if torch.onnx.is_in_onnx_export():
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                 scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
+            else:
+                scatter_position_ids = position_ids
             self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
             self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
         else:
