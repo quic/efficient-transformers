@@ -4404,9 +4404,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         dedicated_gqa = self._uses_dedicated_gqa()
         dedicated_gqa_ctx_len = ctx_len // gqa_attn_cp if dedicated_gqa else None
         indexer_kv_batch_size = kv_batch_size // indexer_dp if use_context_indexer_kv else None
-        indexer_kv_rows = (
-            indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
-        )
+        indexer_kv_rows = indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
         dp_multiplier = lcm(indexer_dp, msa_attn_dp, gqa_attn_dp)
         if export_batch_size < dp_multiplier or export_batch_size % dp_multiplier:
             raise ValueError(
