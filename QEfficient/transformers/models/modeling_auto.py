@@ -1679,6 +1679,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: bool | None = False,
         skip_lang: bool | None = False,
         prefill_seq_len: int | None = None,
+        ctx_len: int | None = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
@@ -1724,7 +1725,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **kwargs,
             )
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         gdn_export_kwargs = _get_gdn_full_state_update_kwargs(
             self.model,
@@ -1737,7 +1738,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs, "ctx_len": ctx_len}
         dynamic_axes_kwargs = {
             "kv_offload": True,
             "continuous_batching": self.continuous_batching,
@@ -1821,6 +1822,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 num_cores=num_cores,
                 prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
                 qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -2251,6 +2253,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     prefill_only=prefill_only,
                     enable_chunking=enable_chunking,
                     prefill_seq_len=prefill_seq_len,
+                    ctx_len=ctx_len,
                     num_cores=num_cores,
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
