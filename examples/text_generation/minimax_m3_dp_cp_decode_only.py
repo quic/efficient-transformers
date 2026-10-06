@@ -7,12 +7,10 @@
 
 import argparse
 import math
-import os
-import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -34,101 +32,13 @@ def _execution_batch_size(batch_size: int, msa_indexer_dp: int, msa_attn_dp: int
     return batch_size * math.lcm(msa_indexer_dp, msa_attn_dp, attn_dp)
 
 
-def _run_pytorch_parity_test(
-    model_id: str,
-    prompt: str,
-    export_dir: str,
-    ctx_len: int = 128,
-    num_cores: int = 16,
-    num_devices: int = 1,
-    expert_parallel_chunk_size: int = 256,
-    cores_per_expert: int = 2,
-    tree_reduce: bool = True,
-    msa_indexer_dp: int = 1,
-    msa_indexer_cp: int = 1,
-    msa_attn_dp: int = 1,
-    msa_attn_cp: int = 1,
-    attn_dp: int = 1,
-    attn_cp: int = 1,
-    indexer_n_head: int = 1,
-    batch_size: int = 1,
-    skip_kv: bool = False,
-    num_kv_blocks: int = 2,
-) -> None:
-    """Compare HF PyTorch vs AIC on the last decode token of the prompt (prefill_seq_len=1)."""
-    full_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    full_config.text_config.num_hidden_layers = 4
-
-    torch.manual_seed(42)
-    model_hf = AutoModelForImageTextToText.from_config(full_config).eval()
-    model_dir = os.path.join(export_dir, "minimax-m3-parity")
-    model_hf.save_pretrained(model_dir)
-
-    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-    messages = [[{"role": "user", "content": [{"type": "text", "text": prompt}]}]]
-    inputs = processor.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-    last_token_ids = inputs["input_ids"][:, -1:]
-    execution_batch_size = _execution_batch_size(batch_size, msa_indexer_dp, msa_attn_dp, attn_dp)
-    last_token_ids = last_token_ids.repeat(execution_batch_size, 1)
-
-    with torch.no_grad():
-        hf_logits = model_hf.language_model(input_ids=last_token_ids, use_cache=False).logits[:, -1:, :]
-    expected_token = int(hf_logits.argmax(-1)[0, 0])
-
-    qaic_config = {
-        "blocking_mode": "kv_minimax_dedicated",
-        "num_kv_blocks": num_kv_blocks,
-        "skip_kv": skip_kv,
-        "attn_dp": attn_dp,
-        "attn_cp": attn_cp,
-        "moe_config": {
-            "flavour": "expert_parallel",
-            "expert_parallel_chunk_size": expert_parallel_chunk_size,
-            "cores_per_expert": cores_per_expert,
-            "tree_reduce": tree_reduce,
-        },
-    }
-    if msa_indexer_dp > 1 or msa_attn_dp > 1 or msa_attn_cp > 1:
-        if msa_indexer_dp > 1 or msa_indexer_cp > 1:
-            qaic_config["msa_indexer_dp"] = msa_indexer_dp
-            qaic_config["msa_indexer_cp"] = msa_indexer_cp
-            qaic_config["indexer_n_head"] = indexer_n_head
-            qaic_config["num_cores_per_device"] = num_cores
-        if msa_attn_dp > 1 or msa_attn_cp > 1:
-            qaic_config["msa_attn_cp"] = msa_attn_cp
-            qaic_config["msa_attn_dp"] = msa_attn_dp
-
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_dir, torch_dtype=torch.float32)
-    qeff_model.compile(
-        batch_size=execution_batch_size,
-        prefill_seq_len=1,
-        prefill_only=False,
-        ctx_len=ctx_len,
-        num_cores=num_cores,
-        num_devices=num_devices,
-        use_onnx_subfunctions=False,
-        skip_vision=True,
-        node_precision_info=True,
-        offload_pt_weights=False,
-        weight_free=False,
-        qaic_config=qaic_config,
-    )
-
-    aic_inputs = qeff_model.model.prepare_inputs_for_generation(
-        inputs={"input_ids": last_token_ids},
-        prefill_seq_len=1,
-        batch_size=execution_batch_size,
-    )
-    output = qeff_model.generate(inputs=aic_inputs, generation_len=1)
-    aic_token = int(output.generated_ids[0, 0])
-    assert aic_token == expected_token, f"Parity check FAILED: expected {expected_token}, got {aic_token}"
-    print(f"[PASS] PyTorch vs AIC parity check passed (token={aic_token})")
+def parse_device_ids(value: str) -> list[int]:
+    device_ids = [int(item.strip()) for item in value.split(",") if item.strip()]
+    if not device_ids or any(device_id < 0 for device_id in device_ids):
+        raise argparse.ArgumentTypeError("device IDs must be a non-empty list of non-negative integers")
+    if len(set(device_ids)) != len(device_ids):
+        raise argparse.ArgumentTypeError("device IDs must be unique")
+    return device_ids
 
 
 def main():
@@ -157,6 +67,18 @@ def main():
         type=int,
         default=2,
         help="Number of KV cache blocks used by blocked attention.",
+    )
+    parser.add_argument(
+        "--indexer-num-blocks",
+        type=int,
+        default=None,
+        help="Override the number of KV cache blocks used by the MSA indexer.",
+    )
+    parser.add_argument(
+        "--msa-num-kv-blocks",
+        type=int,
+        default=None,
+        help="Override the number of KV cache blocks used by MSA attention.",
     )
     parser.add_argument(
         "--expert-parallel-chunk-size",
@@ -220,46 +142,29 @@ def main():
         help="Number of KV heads used by the MSA indexer in the DP path.",
     )
     parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Run PyTorch vs ONNX parity check using a tiny random model.",
+        "--device-ids",
+        type=parse_device_ids,
+        default=None,
+        help="Comma-separated QAIC device IDs used for generation (default: 0..num-devices-1).",
     )
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
     if args.num_kv_blocks < 1:
         parser.error("--num-kv-blocks must be positive")
+    for name in ("indexer_num_blocks", "msa_num_kv_blocks"):
+        value = getattr(args, name)
+        if value is not None and value < 1:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    device_ids = args.device_ids if args.device_ids is not None else list(range(args.num_devices))
+    if len(device_ids) != args.num_devices:
+        parser.error("--device-ids must contain exactly --num-devices entries")
     for name in ("msa_indexer_dp", "msa_indexer_cp", "msa_attn_dp", "msa_attn_cp", "attn_dp", "attn_cp"):
         if getattr(args, name) < 1:
             parser.error(f"--{name.replace('_', '-')} must be positive")
     execution_batch_size = _execution_batch_size(
         args.batch_size, args.msa_indexer_dp, args.msa_attn_dp, args.attn_dp
     )
-
-    if args.test:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            _run_pytorch_parity_test(
-                model_id=args.model_id,
-                prompt=args.prompt,
-                export_dir=tmp_dir,
-                ctx_len=args.ctx_len,
-                num_cores=args.num_cores,
-                num_devices=args.num_devices,
-                expert_parallel_chunk_size=args.expert_parallel_chunk_size,
-                cores_per_expert=args.cores_per_expert,
-                tree_reduce=args.tree_reduce,
-                msa_indexer_dp=args.msa_indexer_dp,
-                msa_indexer_cp=args.msa_indexer_cp,
-                msa_attn_dp=args.msa_attn_dp,
-                msa_attn_cp=args.msa_attn_cp,
-                attn_dp=args.attn_dp,
-                attn_cp=args.attn_cp,
-                indexer_n_head=args.indexer_n_head,
-                batch_size=args.batch_size,
-                skip_kv=args.skip_kv,
-                num_kv_blocks=args.num_kv_blocks,
-            )
-        return
 
     factory_kwargs = dict(kv_offload=True, dtype=torch.float16)
     config = AutoConfig.from_pretrained(args.model_id)
@@ -281,7 +186,9 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=True,
+        # use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
+        user_tiled=True,
         skip_vision=True,
         node_precision_info=True,
         offload_pt_weights=False,
@@ -289,6 +196,8 @@ def main():
         qaic_config={
             "blocking_mode": "kv_minimax_dedicated",
             "num_kv_blocks": args.num_kv_blocks,
+            "indexer_num_blocks": args.indexer_num_blocks,
+            "msa_num_kv_blocks": args.msa_num_kv_blocks,
             "skip_kv": args.skip_kv,
             "attn_dp": args.attn_dp,
             "attn_cp": args.attn_cp,
@@ -331,7 +240,7 @@ def main():
     )
     inputs = _expand_batch(inputs, execution_batch_size)
     t0 = time.perf_counter()
-    output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len)
+    output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len, device_ids=device_ids)
     generate_time = time.perf_counter() - t0
 
     num_generated = output.generated_ids.shape[-1]

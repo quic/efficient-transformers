@@ -1178,8 +1178,11 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         batch_local = batch // dp
         rows = dp * cp * hkv
         num_page_groups = _num_page_groups(num_pages, cp)
+        physical_pages = getattr(blocking_config, "msa_indexer_physical_pages", None)
+        if physical_pages is None:
+            physical_pages = dp * batch_local * num_page_groups
         expected_cache_shape = (
-            dp * batch_local * num_page_groups,
+            int(physical_pages),
             rows,
             page_block_size,
             dim,
@@ -2134,20 +2137,20 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         """Read one block from the microbenchmark's [B_local, DP*CP*Hkv, T/CP, D] cache."""
         batch_local, rows, _, _ = cache.shape
         dp = position_ids_dp.shape[1]
-        hkv = rows // (dp * cp)
+        heads_per_dp = rows // dp
+        hkv = heads_per_dp // cp
         block_len = end_index - start_index
-        position_max = position_ids_dp.max(dim=-1).values
+        pos_max = position_ids_dp.max(dim=-1).values
         way = torch.arange(rows, device=cache.device).remainder(cp * hkv) // hkv
-        gather_limit = ((position_max[:, :, None] - way.view(1, dp, cp * hkv)) // cp).reshape(batch_local, rows, 1)
-        indices = torch.arange(start_index, end_index, device=cache.device).view(1, 1, block_len)
-        invalid = indices > gather_limit
-        invalid_value = torch.iinfo(torch.int32).max if torch.onnx.is_in_onnx_export() else 0
-        indices = torch.where(invalid, torch.full_like(indices, invalid_value), indices)
-        indices = indices.expand(batch_local, rows, block_len).to(torch.int32)
-        block = CtxGatherFuncBlockedKVDP.apply(cache, indices)
-        if zero_invalid:
-            block = torch.where(invalid.unsqueeze(-1), torch.zeros_like(block), block)
-        return block
+        gather_limit = ((pos_max[:, :, None] - way.view(1, dp, hkv * cp)) // cp).reshape(
+            batch_local, rows, 1
+        )
+        ctx_indices = torch.arange(start=start_index, end=end_index, device=cache.device)[None, None, :]
+        invalid_mask = ctx_indices > gather_limit
+        invalid_idx_value = torch.iinfo(torch.int32).max if torch.compiler.is_exporting() else 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices).to(torch.int32)
+        ctx_indices = ctx_indices.expand(batch_local, rows, block_len)
+        return QEffMiniMaxSparseCache.gather_blocked_kv_dp(cache, ctx_indices)
 
     def _gqa_dedicated_prefill(
         self,
@@ -4402,7 +4405,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         dedicated_gqa_ctx_len = ctx_len // gqa_attn_cp if dedicated_gqa else None
         indexer_kv_batch_size = kv_batch_size // indexer_dp if use_context_indexer_kv else None
         indexer_kv_rows = (
-            indexer_kv_batch_size * indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
+            indexer_dp * indexer_cp * indexer_hkv if use_context_indexer_kv else None
         )
         dp_multiplier = lcm(indexer_dp, msa_attn_dp, gqa_attn_dp)
         if export_batch_size < dp_multiplier or export_batch_size % dp_multiplier:
@@ -4410,6 +4413,25 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 f"batch_size ({export_batch_size}) must be at least and divisible by "
                 f"the combined MSA DP factor ({dp_multiplier})."
             )
+
+        # Physical KV-pool capacity is independent from the logical page
+        # table. Keep the old product as a fallback for existing callers, but
+        # allow the benchmark-style pool sizes to be supplied explicitly.
+        if paged_kv:
+            def _physical_page_count(name: str, fallback: int) -> int:
+                value = qaic_config.get(name)
+                value = fallback if value is None else int(value)
+                if value < 1:
+                    raise ValueError(f"{name} must be positive, got {value}.")
+                return value
+
+            indexer_physical_pages = _physical_page_count(
+                "msa_indexer_physical_pages", kv_batch_size * indexer_page_groups
+            )
+            attn_physical_pages = _physical_page_count(
+                "msa_attn_physical_pages", kv_batch_size * attn_page_groups
+            )
+            gqa_physical_pages = _physical_page_count("gqa_physical_pages", kv_batch_size * gqa_page_groups)
 
         def _build_spec(seq_len, comp_ctx_lengths=None):
             spec = {
@@ -4444,9 +4466,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 spec["indexer_page_groups"] = indexer_page_groups
                 spec["attn_page_groups"] = attn_page_groups
                 spec["gqa_page_groups"] = gqa_page_groups
-                spec["indexer_physical_pages"] = cache_batch_size * indexer_page_groups
-                spec["attn_physical_pages"] = cache_batch_size * attn_page_groups
-                spec["gqa_physical_pages"] = cache_batch_size * gqa_page_groups
+                spec["indexer_physical_pages"] = indexer_physical_pages
+                spec["attn_physical_pages"] = attn_physical_pages
+                spec["gqa_physical_pages"] = gqa_physical_pages
                 spec["indexer_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_indexer_dp", 1) or 1)
                 spec["attn_batch_local"] = spec["batch_size"] // int(qaic_config.get("msa_attn_dp", 1) or 1)
                 spec["gqa_batch_local"] = spec["batch_size"] // gqa_attn_dp
@@ -4493,9 +4515,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 spec["indexer_page_groups"] = indexer_page_groups
                 spec["attn_page_groups"] = attn_page_groups
                 spec["gqa_page_groups"] = gqa_page_groups
-                spec["indexer_physical_pages"] = cache_batch_size * indexer_page_groups
-                spec["attn_physical_pages"] = cache_batch_size * attn_page_groups
-                spec["gqa_physical_pages"] = cache_batch_size * gqa_page_groups
+                spec["indexer_physical_pages"] = indexer_physical_pages
+                spec["attn_physical_pages"] = attn_physical_pages
+                spec["gqa_physical_pages"] = gqa_physical_pages
                 spec["gqa_batch_local"] = spec["batch_size"] // gqa_attn_dp
             if continuous_batching:
                 spec["full_batch_size"] = kv_cache_batch_size
@@ -4561,7 +4583,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                 }
         # The index-key cache has two possible export layouts:
         #   prefill / CP=1: [batch, hkv, ctx_len, head_dim]
-        #   decode / CP>1:  [rows, ctx_len / cp, head_dim]
+        #   decode / CP>1:  [batch / dp, dp * cp * hkv, ctx_len / cp, head_dim]
         # Keep the dynamic axes tied to the same layout choice used by
         # get_dummy_index_keys above.
         use_context_indexer_kv = int(qaic_config.get("msa_indexer_cp", 1) or 1) > 1 and not paged_kv
@@ -4604,8 +4626,12 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             _set_retained_state_axes(f"past_value.{i}", layer_cache_axes)
             if is_sparse_layer:
                 if use_context_indexer_kv:
-                    # Compact CP index cache: [rows, ctx_len / cp, dim].
-                    index_cache_axes = {0: "indexer_kv_rows", 1: "indexer_kv_ctx_len"}
+                    # Compact CP index cache: [batch_local, rows, ctx_len / cp, dim].
+                    index_cache_axes = {
+                        0: "indexer_kv_batch_size",
+                        1: "indexer_kv_rows",
+                        2: "indexer_kv_ctx_len",
+                    }
                 else:
                     # Reference prefill index cache: [batch, hkv, ctx_len, dim].
                     index_cache_axes = {0: indexer_batch_axis, 2: indexer_ctx_axis}
@@ -4618,17 +4644,17 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
                     for cache_name in ("past_key", "past_value"):
                         _set_retained_state_axes(
                             f"{cache_name}.{i}",
-                            {0: "attn_page_groups", 2: page_axis_names["attn"]},
+                            {0: "attn_physical_pages", 2: page_axis_names["attn"]},
                         )
                     _set_retained_state_axes(
                         f"index_key.{i}",
-                        {0: "indexer_page_groups", 2: page_axis_names["indexer"]},
+                        {0: "indexer_physical_pages", 2: page_axis_names["indexer"]},
                     )
                 else:
                     for cache_name in ("past_key", "past_value"):
                         _set_retained_state_axes(
                             f"{cache_name}.{i}",
-                            {0: "gqa_page_groups", 2: page_axis_names["gqa"]},
+                            {0: "gqa_physical_pages", 2: page_axis_names["gqa"]},
                         )
             if not non_dynamic_cache:
                 lang_dynamic_axes["gqa_block_table"] = {1: "gqa_batch_local", 2: "gqa_page_groups"}
@@ -4683,12 +4709,14 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         page_block_size=128,
         num_logical_pages=None,
         page_groups=None,
+        physical_pages=None,
         gqa_paged=False,
         gqa_dp=1,
         gqa_cp=1,
         gqa_page_block_size=None,
         gqa_num_logical_pages=None,
         gqa_page_groups=None,
+        gqa_physical_pages=None,
         hkv=None,
         gqa_dedicated=False,
         prefill=False,
@@ -4704,7 +4732,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             (seq_len + page_block_size - 1) // page_block_size if num_logical_pages is None else int(num_logical_pages)
         )
         page_groups = _num_page_groups(num_pages, cp) if page_groups is None else int(page_groups)
-        physical_pages = dp * batch_local * page_groups
+        physical_pages = (
+            dp * batch_local * page_groups if physical_pages is None else int(physical_pages)
+        )
         gqa_batch_local = batch_size // gqa_dp
         gqa_page_block_size = page_block_size if gqa_page_block_size is None else int(gqa_page_block_size)
         gqa_num_pages = (
@@ -4715,7 +4745,21 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         gqa_page_groups = (
             _num_page_groups(gqa_num_pages, gqa_cp) if gqa_page_groups is None else int(gqa_page_groups)
         )
-        gqa_physical_pages = gqa_dp * gqa_batch_local * gqa_page_groups
+        gqa_physical_pages = (
+            gqa_dp * gqa_batch_local * gqa_page_groups
+            if gqa_physical_pages is None
+            else int(gqa_physical_pages)
+        )
+        if physical_pages < dp * batch_local * page_groups:
+            raise ValueError(
+                "physical_pages must hold every logical block-table entry: "
+                f"{physical_pages} < {dp * batch_local * page_groups}."
+            )
+        if gqa_physical_pages < gqa_dp * gqa_batch_local * gqa_page_groups:
+            raise ValueError(
+                "gqa_physical_pages must hold every logical block-table entry: "
+                f"{gqa_physical_pages} < {gqa_dp * gqa_batch_local * gqa_page_groups}."
+            )
         past_key_values = []
         for layer_idx in range(config.num_hidden_layers):
             layer_type = layer_types[layer_idx] if layer_idx < len(layer_types) else "full_attention"
@@ -4762,6 +4806,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         page_block_size=128,
         num_logical_pages=None,
         page_groups=None,
+        physical_pages=None,
         hkv=None,
         prefill=False,
     ):
@@ -4772,7 +4817,12 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             (seq_len + page_block_size - 1) // page_block_size if num_logical_pages is None else int(num_logical_pages)
         )
         page_groups = _num_page_groups(num_pages, cp) if page_groups is None else int(page_groups)
-        physical_pages = dp * batch_local * page_groups
+        physical_pages = dp * batch_local * page_groups if physical_pages is None else int(physical_pages)
+        if physical_pages < dp * batch_local * page_groups:
+            raise ValueError(
+                "physical_pages must hold every logical block-table entry: "
+                f"{physical_pages} < {dp * batch_local * page_groups}."
+            )
         # MSA prefill uses the reference rank-4 cache layout consumed by
         # M3CtxScatter: [batch, indexer_kv_heads, ctx_len, head_dim].  The
         # compact [rows, ctx_len / cp, head_dim] layout is decode-only.
@@ -4872,6 +4922,25 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         indexer_page_groups = _num_page_groups(indexer_num_pages, indexer_cp)
         attn_page_groups = _num_page_groups(attn_num_pages, attn_cp)
         gqa_page_groups = _num_page_groups(gqa_num_pages, gqa_cp)
+        dummy_cache_batch_size = cache_batch_size if continuous_batching else batch_size
+
+        # The physical KV pool is independent from the logical page table.
+        # If no pool size is supplied, preserve the historical fallback so
+        # existing callers remain compatible.
+        def _physical_page_count(name: str, fallback: int) -> int:
+            value = qaic_config.get(name)
+            value = fallback if value is None else int(value)
+            if value < 1:
+                raise ValueError(f"{name} must be positive, got {value}.")
+            return value
+
+        indexer_physical_pages = _physical_page_count(
+            "msa_indexer_physical_pages", dummy_cache_batch_size * indexer_page_groups
+        )
+        attn_physical_pages = _physical_page_count(
+            "msa_attn_physical_pages", dummy_cache_batch_size * attn_page_groups
+        )
+        gqa_physical_pages = _physical_page_count("gqa_physical_pages", dummy_cache_batch_size * gqa_page_groups)
         patch_dim = (
             self.config.vision_config.num_channels
             * self.config.vision_config.temporal_patch_size
@@ -4902,12 +4971,14 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             page_block_size=attn_page_size,
             num_logical_pages=attn_num_pages if paged_kv else None,
             page_groups=attn_page_groups if paged_kv else None,
+            physical_pages=attn_physical_pages if paged_kv else None,
             gqa_paged=paged_kv,
             gqa_dp=gqa_dp,
             gqa_cp=gqa_cp,
             gqa_page_block_size=gqa_page_size,
             gqa_num_logical_pages=gqa_num_pages if paged_kv else None,
             gqa_page_groups=gqa_page_groups if paged_kv else None,
+            gqa_physical_pages=gqa_physical_pages if paged_kv else None,
             gqa_dedicated=self._uses_dedicated_gqa(),
             prefill=prefill,
         )
@@ -4922,6 +4993,7 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             page_block_size=indexer_page_size,
             num_logical_pages=indexer_num_pages if paged_kv else None,
             page_groups=indexer_page_groups if paged_kv else None,
+            physical_pages=indexer_physical_pages if paged_kv else None,
             hkv=int(qaic_config.get("indexer_n_head", 1) or 1),
             prefill=prefill,
         )

@@ -14,8 +14,12 @@ from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
+    CtxGatherFuncBlockRangeKVDP,
+    CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVBatch,
     CtxGatherFuncBlockedKVDP,
+    CtxGatherFuncPagedKVDP,
+    CtxGatherFuncPagedKVHeads,
     CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     CtxPagedScatterFuncPage,
     CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
@@ -1367,19 +1371,151 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         self.index_keys: dict[int, Optional[torch.Tensor]] = {}
 
     @staticmethod
+    def _use_cache_custom_op() -> bool:
+        return torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling()
+
+    @staticmethod
+    def _cache_call(op, args, eager):
+        if QEffMiniMaxSparseCache._use_cache_custom_op():
+            return op(*args) if not hasattr(op, "apply") else op.apply(*args)
+        return eager(*args)
+
+    @staticmethod
+    def ctx_scatter(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+        """data [B, H, T, D][b, h, position_ids[b, s]] = updates."""
+
+        def eager(data, position_ids, updates):
+            out = data.clone()
+            b = torch.arange(data.shape[0]).view(-1, 1, 1)
+            h = torch.arange(data.shape[1]).view(1, -1, 1)
+            out[b, h, position_ids.long().unsqueeze(1)] = updates
+            return out
+
+        return QEffMiniMaxSparseCache._cache_call(
+            m3_ctx_scatter, (data, position_ids.to(torch.int32), updates), eager
+        )
+
+    @staticmethod
     def paged_scatter(data, block_id, addr, updates):
-        return CtxPagedScatterFunc.apply(data, block_id, addr, updates)
+        """data [P, R, T, D][block_id, r, addr] = updates [B, R, S, D]."""
+
+        def eager(data, block_id, addr, updates):
+            out = data.clone()
+            rows = torch.arange(updates.shape[1]).view(1, -1, 1).expand_as(block_id)
+            valid = block_id != torch.iinfo(torch.int32).max
+            out[block_id[valid].long(), rows[valid], addr[valid].long()] = updates[valid]
+            return out
+
+        return QEffMiniMaxSparseCache._cache_call(
+            CtxPagedScatterFunc, (data, block_id, addr, updates), eager
+        )
 
     @staticmethod
     def paged_scatter_page(data, block_id, updates):
-        return CtxPagedScatterFuncPage.apply(data, block_id, updates)
+        """data [P, H, page, D][block_id[p, h], h] = updates [pages, H, page, D]."""
+
+        def eager(data, block_id, updates):
+            out = data.clone()
+            heads = torch.arange(updates.shape[1]).view(1, -1).expand_as(block_id)
+            valid = block_id != torch.iinfo(torch.int32).max
+            out[block_id[valid].long(), heads[valid]] = updates[valid]
+            return out
+
+        return QEffMiniMaxSparseCache._cache_call(
+            CtxPagedScatterFuncPage, (data, block_id, updates), eager
+        )
 
     @staticmethod
     def gather_paged_kv_dp(data, block_ids):
         pages, rows = block_ids.shape
-        ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
-        gathered = data[ids.long(), torch.arange(rows, device=data.device).view(1, rows)]
-        return gathered.permute(1, 0, 2, 3).reshape(1, rows, pages * data.shape[2], data.shape[3])
+
+        def eager(data, block_ids):
+            ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids).long()
+            out = data[ids, torch.arange(rows).view(1, rows)]
+            return out.permute(1, 0, 2, 3).reshape(1, rows, pages * data.shape[2], data.shape[3])
+
+        return QEffMiniMaxSparseCache._cache_call(
+            CtxGatherFuncPagedKVDP, (data, block_ids.to(torch.int32)), eager
+        )
+
+    @staticmethod
+    def _gather_blocked(op, data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+        def eager(data, ctx_indices):
+            idx = torch.where(
+                ctx_indices == torch.iinfo(torch.int32).max, torch.zeros_like(ctx_indices), ctx_indices
+            ).long()
+            b = torch.arange(data.shape[0]).view(-1, 1, 1)
+            r = torch.arange(data.shape[1]).view(1, -1, 1)
+            return data[b, r, idx]
+
+        return QEffMiniMaxSparseCache._cache_call(op, (data, ctx_indices.to(torch.int32)), eager)
+
+    @staticmethod
+    def gather_blocked_kv_dp(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+        """Gather ``[B, rows, T, D]`` using per-row DP/CP indices."""
+        return QEffMiniMaxSparseCache._gather_blocked(CtxGatherFuncBlockedKVDP, data, ctx_indices)
+
+    @staticmethod
+    def gather_blocked_kv(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+        """Gather ``[B, Hkv, T, D]`` using per-head indices."""
+        return QEffMiniMaxSparseCache._gather_blocked(CtxGatherFuncBlockedKV, data, ctx_indices)
+
+    @staticmethod
+    def gather_blocked_kv_blocks(
+        data: torch.Tensor, block_ids: torch.Tensor, block_size: int
+    ) -> torch.Tensor:
+        """Gather complete contiguous blocks using one index per block."""
+        if data.shape[2] % block_size:
+            raise ValueError(f"cache length {data.shape[2]} must be divisible by block size {block_size}.")
+        blocked = data.reshape(data.shape[0], data.shape[1], data.shape[2] // block_size, block_size, data.shape[3])
+
+        def eager(blocked, block_ids):
+            ids = torch.where(
+                block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids
+            ).long()
+            b = torch.arange(blocked.shape[0], device=blocked.device).view(-1, 1, 1)
+            r = torch.arange(blocked.shape[1], device=blocked.device).view(1, -1, 1)
+            return blocked[b, r, ids]
+
+        return QEffMiniMaxSparseCache._cache_call(
+            CtxGatherFuncBlockRangeKVDP, (blocked, block_ids.to(torch.int32)), eager
+        )
+
+    @staticmethod
+    def gather_paged_kv_heads(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+        """Physical pages [P, H, page, D] at block_ids [pages, H] -> [1, H, pages*page, D]."""
+        pages, heads = block_ids.shape
+
+        def eager(data, block_ids):
+            valid = block_ids != torch.iinfo(torch.int32).max
+            ids = torch.where(valid, block_ids, torch.zeros_like(block_ids)).long()
+            out = data[ids, torch.arange(heads).view(1, heads)]
+            out = torch.where(valid[..., None, None], out, torch.zeros_like(out))
+            return out.permute(1, 0, 2, 3).reshape(1, heads, pages * data.shape[2], data.shape[3])
+
+        return QEffMiniMaxSparseCache._cache_call(
+            CtxGatherFuncPagedKVHeads, (data, block_ids.to(torch.int32)), eager
+        )
+
+    @staticmethod
+    def gather_paged_kv_batch_with_heads(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+        """block_ids [B, pages] shared by all heads -> [B, H, pages*page, D]."""
+        batch, num_pages = block_ids.shape
+        num_heads = data.shape[1]
+        outputs = []
+        for batch_idx in range(batch):
+            ids = block_ids[batch_idx].to(torch.int32).view(num_pages, 1).expand(num_pages, num_heads)
+            outputs.append(QEffMiniMaxSparseCache.gather_paged_kv_heads(data, ids))
+        return torch.cat(outputs, dim=0)
+
+    @staticmethod
+    def gather_paged_kv_selected_heads(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
+        """block_ids [B, H, pages] -> [B, H, pages*page, D]."""
+        outputs = []
+        for batch_idx in range(block_ids.shape[0]):
+            ids = block_ids[batch_idx].transpose(0, 1).contiguous().to(torch.int32)
+            outputs.append(QEffMiniMaxSparseCache.gather_paged_kv_heads(data, ids))
+        return torch.cat(outputs, dim=0)
 
     def write_only_sparse(self, key_states, value_states, layer_idx, cache_kwargs):
         """Write sparse-layer KV states using paged block/address metadata.

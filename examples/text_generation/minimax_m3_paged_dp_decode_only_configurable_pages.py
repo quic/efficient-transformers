@@ -32,20 +32,27 @@ def build_block_table(
     batch_size: int,
     num_logical_pages: int,
     generator: torch.Generator,
+    physical_pages: int | None = None,
 ) -> torch.Tensor:
-    """Build a DP-major table with one physical page per CP page group."""
+    """Build a DP-major logical-to-physical page table."""
     if batch_size % dp:
         raise ValueError("batch_size must be divisible by dp")
     batch_local = batch_size // dp
     num_page_groups = math.ceil(num_logical_pages / cp)
-    physical_pages_per_dp = batch_local * num_page_groups
+    required_pages = batch_local * num_page_groups
+    physical_pages = required_pages if physical_pages is None else int(physical_pages)
+    if physical_pages < required_pages:
+        raise ValueError(
+            f"physical page capacity ({physical_pages}) is smaller than the required logical entries "
+            f"({required_pages})."
+        )
     table = torch.empty((dp, batch_local, num_page_groups), dtype=torch.int32)
     for dp_idx in range(dp):
         table[dp_idx] = torch.randperm(
-            physical_pages_per_dp,
+            physical_pages,
             dtype=torch.int32,
             generator=generator,
-        ).view(batch_local, num_page_groups)
+        )[:required_pages].view(batch_local, num_page_groups)
     return table
 
 
@@ -110,6 +117,46 @@ def parse_device_ids(value: str) -> list[int]:
     return device_ids
 
 
+def _build_qaic_config(
+    args: argparse.Namespace,
+    gqa_page_block_size: int,
+    indexer_page_block_size: int,
+    attn_page_block_size: int,
+) -> dict:
+    return {
+        "blocking_mode": "kv_minimax_dedicated",
+        "num_kv_blocks": args.num_kv_blocks,
+        "attn_dp": args.attn_dp,
+        "attn_cp": args.attn_cp,
+        "indexer_num_blocks": args.indexer_num_blocks,
+        "msa_num_kv_blocks": args.msa_num_kv_blocks,
+        "skip_kv": args.skip_kv,
+        "non_dynamic_cache": args.non_dynamic_cache,
+        "msa_indexer_dp": args.msa_indexer_dp,
+        "msa_indexer_cp": args.msa_indexer_cp,
+        "msa_attn_dp": args.msa_attn_dp,
+        "msa_attn_cp": args.msa_attn_cp,
+        "indexer_n_head": args.indexer_n_head,
+        "num_cores_per_device": args.num_cores,
+        "paged_kv": True,
+        "gqa_page_block_size": gqa_page_block_size,
+        "msa_indexer_page_block_size": indexer_page_block_size,
+        "msa_attn_page_block_size": attn_page_block_size,
+        "gqa_num_logical_pages": args.gqa_num_pages,
+        "msa_indexer_num_logical_pages": args.msa_indexer_num_logical_pages,
+        "msa_attn_num_logical_pages": args.msa_attn_num_logical_pages,
+        "gqa_physical_pages": args.gqa_physical_pages,
+        "msa_indexer_physical_pages": args.msa_indexer_physical_pages,
+        "msa_attn_physical_pages": args.msa_attn_physical_pages,
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
+            "cores_per_expert": args.cores_per_expert,
+            "tree_reduce": args.tree_reduce,
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="MiniMax-M3 paged decode with independently configurable cache page sizes and counts."
@@ -161,6 +208,24 @@ def main() -> None:
         type=int,
         default=64,
         help="Logical pages per sequence in the full attention K/V cache.",
+    )
+    parser.add_argument(
+        "--gqa-physical-pages",
+        type=int,
+        default=None,
+        help="Physical page capacity of the dense GQA KV pool.",
+    )
+    parser.add_argument(
+        "--msa-attn-physical-pages",
+        type=int,
+        default=None,
+        help="Physical page capacity of the sparse MSA attention KV pool.",
+    )
+    parser.add_argument(
+        "--msa-indexer-physical-pages",
+        type=int,
+        default=None,
+        help="Physical page capacity of the sparse indexer KV pool.",
     )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--attn-dp", type=int, default=1, help="Dense GQA decode data-parallel factor.")
@@ -272,6 +337,15 @@ def main() -> None:
         )
     ):
         parser.error("All logical-page counts must be positive")
+    if any(
+        value is not None and value < 1
+        for value in (
+            args.gqa_physical_pages,
+            args.msa_indexer_physical_pages,
+            args.msa_attn_physical_pages,
+        )
+    ):
+        parser.error("All physical-page capacities must be positive")
     if args.gqa_num_pages * gqa_page_block_size < args.ctx_len:
         parser.error("GQA logical-page capacity must be at least --ctx-len")
     if args.msa_indexer_num_logical_pages * indexer_page_block_size < args.ctx_len:
@@ -314,6 +388,7 @@ def main() -> None:
         execution_batch_size,
         args.gqa_num_pages,
         table_generator,
+        args.gqa_physical_pages,
     )
     indexer_table = build_block_table(
         args.msa_indexer_dp,
@@ -321,6 +396,7 @@ def main() -> None:
         execution_batch_size,
         args.msa_indexer_num_logical_pages,
         table_generator,
+        args.msa_indexer_physical_pages,
     )
     attention_table = build_block_table(
         args.msa_attn_dp,
@@ -328,6 +404,7 @@ def main() -> None:
         execution_batch_size,
         args.msa_attn_num_logical_pages,
         table_generator,
+        args.msa_attn_physical_pages,
     )
     print_page_layout("gqa", gqa_table, args.attn_cp, args.gqa_num_pages, gqa_page_block_size)
     print_page_layout(
@@ -358,35 +435,7 @@ def main() -> None:
         dtype=torch.float16,
         **({"enable_proxy": True} if args.enable_proxy else {}),
     )
-    qaic_config = {
-        "blocking_mode": "kv_minimax_dedicated",
-        "num_kv_blocks": args.num_kv_blocks,
-        "attn_dp": args.attn_dp,
-        "attn_cp": args.attn_cp,
-        "indexer_num_blocks": args.indexer_num_blocks,
-        "msa_num_kv_blocks": args.msa_num_kv_blocks,
-        "skip_kv": args.skip_kv,
-        "non_dynamic_cache": args.non_dynamic_cache,
-        "msa_indexer_dp": args.msa_indexer_dp,
-        "msa_indexer_cp": args.msa_indexer_cp,
-        "msa_attn_dp": args.msa_attn_dp,
-        "msa_attn_cp": args.msa_attn_cp,
-        "indexer_n_head": args.indexer_n_head,
-        "num_cores_per_device": args.num_cores,
-        "paged_kv": True,
-        "gqa_page_block_size": gqa_page_block_size,
-        "msa_indexer_page_block_size": indexer_page_block_size,
-        "msa_attn_page_block_size": attn_page_block_size,
-        "gqa_num_logical_pages": args.gqa_num_pages,
-        "msa_indexer_num_logical_pages": args.msa_indexer_num_logical_pages,
-        "msa_attn_num_logical_pages": args.msa_attn_num_logical_pages,
-        "moe_config": {
-            "flavour": "expert_parallel",
-            "expert_parallel_chunk_size": args.expert_parallel_chunk_size,
-            "cores_per_expert": args.cores_per_expert,
-            "tree_reduce": args.tree_reduce,
-        },
-    }
+    qaic_config = _build_qaic_config(args, gqa_page_block_size, indexer_page_block_size, attn_page_block_size)
 
     t0 = time.perf_counter()
     qpc_paths = qeff_model.compile(
@@ -397,10 +446,13 @@ def main() -> None:
         num_devices=args.num_devices,
         skip_vision=True,
         node_precision_info=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
+        # use_onnx_subfunctions=True,
         mxint8_kv_cache=True,
+        mxfp6_matmul=True,
         retain_full_kv=True,
         split_model_io=True,
+        user_tiled=True,
         qaic_config=qaic_config,
     )
     print(f"[timing] compile: {time.perf_counter() - t0:.2f}s")

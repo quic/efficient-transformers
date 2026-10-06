@@ -169,6 +169,9 @@ class AttentionBlockingConfig:
     num_logical_pages: Optional[int] = None
     msa_indexer_num_logical_pages: Optional[int] = None
     msa_attn_num_logical_pages: Optional[int] = None
+    gqa_physical_pages: Optional[int] = None
+    msa_indexer_physical_pages: Optional[int] = None
+    msa_attn_physical_pages: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:

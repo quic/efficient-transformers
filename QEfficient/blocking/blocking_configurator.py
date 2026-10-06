@@ -584,6 +584,9 @@ def build_transformer_blocking_config_for_transform(
         "num_logical_pages",
         "msa_indexer_num_logical_pages",
         "msa_attn_num_logical_pages",
+        "gqa_physical_pages",
+        "msa_indexer_physical_pages",
+        "msa_attn_physical_pages",
         "num_cores_per_device",
     ):
         if qaic_config.get(param) is not None:
