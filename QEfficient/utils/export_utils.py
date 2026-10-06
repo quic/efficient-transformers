@@ -341,10 +341,10 @@ def export_wrapper(func):
                 if use_onnx_subfunctions and dynamo
                 else nullcontext()
             )
+            grad_context = torch.no_grad() if use_onnx_subfunctions and dynamo else nullcontext()
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch, grad_context:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(
