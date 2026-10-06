@@ -591,12 +591,11 @@
     },
     {
       "id": "gemma3_text",
-      "model_name": "google/gemma-3-4b-pt",
+      "model_name": "tiny-random/gemma-3",
       "model_type": "gemma3_text",
       "is_moe": false,
       "supports_blocking": false,
       "use_text_config": true,
-      "known_bf16_compile_issue": "Gemma-3 bf16 compilation fails because qaic-compile glow error",
       "layer_types": [
         "sliding_attention",
         "full_attention"
