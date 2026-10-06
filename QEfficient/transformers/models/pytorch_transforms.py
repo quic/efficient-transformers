@@ -1405,7 +1405,6 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "MultiHeadDotProductAttention": {
             "forward": QEffMultiHeadDotProductAttention.forward,
         },
-        # Mapping for MolmoPoint remote code
         "MolmoPointForConditionalGeneration": {
             "__qeff_init__": QEffMolmoPointForConditionalGeneration.__qeff_init__,
             "forward": QEffMolmoPointForConditionalGeneration.forward,

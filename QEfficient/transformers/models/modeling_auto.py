@@ -2203,8 +2203,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if output_name.startswith("past_"):
                 custom_io_vision[output_name] = kv_cache_dtype
             else:
-                # Non-KV outputs cross the dual-QPC host boundary and must not
-                # be rounded separately from their language-graph inputs.
                 custom_io_vision[output_name] = "float"
 
         if vision_onnx_path:
@@ -2548,9 +2546,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         for k, v in inputs.items():
             inputs[k] = np.array(v)
 
-        # Keep model-specific vision inputs (for example MolmoPoint's
-        # ``image_token_pooling``) by filtering against the compiled session
-        # contract rather than a fixed cross-model allowlist.
         vision_input_names = set(vision_session.input_names) if self.vision_model.qpc_path else set()
         vision_inputs = {k: v for k, v in inputs.items() if k in vision_input_names}
 

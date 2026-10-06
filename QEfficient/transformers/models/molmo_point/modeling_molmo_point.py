@@ -192,9 +192,6 @@ def eager_attention_forward(
         attention_weights = torch.where(attention_mask, masked, attention_weights)
     attention_weights = F.softmax(attention_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     if attention_mask is not None:
-        # SDPA returns zeros for fully masked query rows.  An explicit softmax
-        # over an all-negative-infinity row returns NaNs instead, which can
-        # leak from padded prefill tokens into the next layer's retained cache.
         attention_weights = torch.where(attention_mask, torch.zeros_like(attention_weights), attention_weights)
     attention_output = torch.matmul(attention_weights, value).transpose(1, 2).contiguous()
     return attention_output, attention_weights
@@ -266,9 +263,6 @@ class QEffMolmoPointAttention(nn.Module):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            # Keep the cache-update inputs in real FP32.  MXINT8 KV compilation
-            # quantizes the retained cache after this boundary; feeding the
-            # update with FP16 can compound the conversion error on decode.
             key_states = key_states.float()
             value_states = value_states.float()
             key_states, value_states, attention_mask, _ = past_key_value_update(
@@ -403,11 +397,6 @@ class QEffMolmoPointTextModel(nn.Module):
         if target_length == 0:
             target_length = inputs_embeds.shape[1]
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
-        # MolmoPoint gives the image-token block bidirectional attention during
-        # prefill.  The remote reference expresses this through
-        # ``token_type_ids_mask_function``; materialize the equivalent static
-        # mask so it survives ONNX export.  Decode inputs are a single normal
-        # token, so they intentionally retain the ordinary causal mask.
         if token_type_ids is not None and inputs_embeds.shape[1] != 1:
             key_token_types = F.pad(
                 token_type_ids.to(torch.bool),
@@ -504,10 +493,6 @@ class QEffMolmoPointVisionAttention(nn.Module):
             query.permute(0, 2, 1, 3) / math.sqrt(self.head_dim),
             key.permute(0, 2, 3, 1),
         )
-        # Match the Hub model's eager implementation exactly. Although its
-        # connector passes ``attn_mask``, the eager attention branch does not
-        # apply it; introducing the mask here changes real-weight logits and
-        # can flip greedy tokens.
         probabilities = F.softmax(scores, dim=-1, dtype=torch.float32).to(value.dtype)
         attention_output = torch.matmul(probabilities, value.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
         attention_output = attention_output.to(original_dtype).reshape(
@@ -547,9 +532,6 @@ def _vision_forward(model, pixel_values: torch.Tensor, image_token_pooling: torc
     pooled_features = model.model.connector.image_pooling_2d(query, flat_features, attn_mask=attention_mask)
     vision_embeds = model.model.connector.image_projector(pooled_features)
     vision_embeds = vision_embeds.reshape(batch_size, image_token_count, model.config.text_config.hidden_size)
-    # The projector can approach the fp16 limit. Keep the dual-QPC bridge in
-    # a numerically conditioned range; the language wrapper restores this
-    # exact power-of-two scale before consuming the embeddings.
     vision_embeds = vision_embeds.clamp(-57000.0, 57000.0) / VISION_EMBEDS_BRIDGE_SCALE
     subpatch_keys = model.model.point_predictor.subpatch_k(vision_features)
     subpatch_keys = subpatch_keys.clamp(-57000.0, 57000.0)
@@ -587,11 +569,6 @@ def _language_forward(
     block_table=None,
     slot_id=None,
 ):
-    # Keep the visual and point state bridge explicitly in FP32 before the
-    # decoder consumes it.  These tensors are retained state, not KV-cache
-    # entries; making the boundary explicit prevents a mixed-precision
-    # compiler path from inferring a narrower state type before custom IO is
-    # applied.
     vision_embeds = vision_embeds.float()
     vision_embeds_vit_features = vision_embeds_vit_features.float()
     vision_embeds_vit_mask = vision_embeds_vit_mask.float()
@@ -712,10 +689,6 @@ def _language_forward(
     language_weights = torch.cat((model.lm_head.output_embeddings, model.lm_head.new_output_embeddings), dim=0)
     logits = F.linear(hidden_states, language_weights).float()
 
-    # Keep branch-only retained inputs live in prefill through the always-live
-    # language logits.  QAIC prunes the point-logit path during prefill, so
-    # using it as a keepalive is insufficient even though it is an output of
-    # the combined graph.  These exact zero dependencies do not change logits.
     logits = logits + vision_embeds[:, :1, :1] * 0
     logits = logits + vision_embeds_patch_k[:, :1, :1] * 0
     logits = logits + vision_embeds_patch_mask[:, :1, None] * 0
@@ -772,9 +745,6 @@ def _language_forward(
     )
     logits = torch.cat((logits, emitted_patch_logits, subpatch_logits, location_logits), dim=-1)
 
-    # Keep this retained pair live in every specialization.  Prefill still resets
-    # the state to -1, but the minimum preserves a real input dependency so the
-    # compiler cannot replace the retained output with a disconnected constant.
     current_patch_id = torch.where(
         is_patch[:, -1:], patch_ids[:, -1:], vision_embeds_last_patch_id.to(torch.int64)
     )
@@ -865,15 +835,7 @@ class QEffMolmoPointForConditionalGeneration(nn.Module):
     """QEff export interface for MolmoPoint single- and dual-QPC execution."""
 
     def __qeff_init__(self):
-        # The standard export path inlines CtxGather when ONNX subfunctions are
-        # disabled.  In that mode InvalidIndexProvider's legacy INT32_MAX
-        # sentinel reaches GatherND and is rejected by ORT/QAIC.  Zero is
-        # safe because the corresponding entries are masked immediately after
-        # the gather; enable the cache's export-safe sentinel for this graph.
         InvalidIndexProvider.enable_subfunc()
-        # Transformers can materialize this remote-code, nonpersistent buffer
-        # from a meta-device load as uninitialized memory. Reconstruct it from
-        # config before the child transform builds the static lookup tables.
         _reset_molmo_point_patch_rope(self)
 
     def get_qeff_vision_encoder(self):
@@ -943,10 +905,6 @@ class QEffMolmoPointForConditionalGeneration(nn.Module):
         vision_batch_size: Optional[int] = None,
         **compiler_options,
     ):
-        # ``img_size`` is a generic VLM compile hint.  MolmoPoint's vision
-        # dimensions are fully represented by the explicit specialization
-        # symbols below, and the installed QAIC compiler has no -img-size
-        # option, so do not leak this unused hint into compiler options.
         compiler_options.pop("img_size", None)
         prefill_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len or constants.ONNX_EXPORT_CTX_LEN

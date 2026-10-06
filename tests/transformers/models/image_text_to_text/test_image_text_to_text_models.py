@@ -264,11 +264,6 @@ def _assert_molmo_point_outputs_close(reference, actual, boundary, base_vocab_si
         actual_value = actual[name]
         assert reference_value.shape == actual_value.shape, f"{boundary}/{name}: shape mismatch"
         if name == "logits":
-            # The extended patch range contains one live slot selected by an
-            # argmax over point logits. Tiny floating-point differences can
-            # move that slot while the emitted token remains a base token.
-            # Compare the continuous base logits here; token parity below
-            # covers the discrete extended range when it is actually emitted.
             reference_value = reference_value[..., :base_vocab_size]
             actual_value = actual_value[..., :base_vocab_size]
         if np.issubdtype(reference_value.dtype, np.floating):
@@ -372,9 +367,6 @@ def _report_molmo_point_qpc_delta(reference, actual, boundary, base_vocab_size):
             live_slots = reference["vision_embeds_patch_mask_RetainedState"] > 0
             reference_value = reference_value[live_slots]
             actual_value = actual_value[live_slots]
-        # The point-vocabulary mask is -100000 in fp32 ONNX and becomes -inf
-        # when the fp16 QPC lowers it.  Those values are intentionally masked;
-        # compare only the finite, semantically live portion of the tensor.
         masked = reference_value <= -60000
         assert np.all(actual_value[masked] <= -60000), f"{boundary}/{name}: masked values became live"
         live_actual = actual_value[~masked]
@@ -624,28 +616,15 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
         else:
             if model_name == "allenai/MolmoPoint-8B":
-                # QEff replaces the remote eager ViT implementation. Force the
-                # HF reference onto that same path because its SDPA variant
-                # applies a pooling mask that eager intentionally ignores.
                 config._attn_implementation = "eager"
             model_hf = load_vlm_model(config)
             if model_name == "allenai/MolmoPoint-8B":
-                # The remote buffer is nonpersistent and may be materialized
-                # as uninitialized memory after reduced-checkpoint loading.
                 _reset_molmo_point_patch_rope(model_hf)
-                # The reduced two-layer config reinitializes checkpoint
-                # tensors whose full-model shapes no longer match.  Reuse
-                # the HF instance so the reference and QEff graph share
-                # those deterministic tiny-model weights.
                 qeff_model = QEFFAutoModelForImageTextToText(
                     copy.deepcopy(model_hf),
                     kv_offload=kv_offload,
                     config=model_hf.config,
                     qaic_config=qaic_config,
-                    # Keep the Hub model in float32 for its CPU reference
-                    # path: MolmoPoint intentionally promotes vision features
-                    # before the connector.  QAIC receives fp16 via the
-                    # compiler conversion flag, as for the other VLMs.
                     torch_dtype=torch.float32,
                     ignore_mismatched_sizes=True,
                 )
@@ -864,9 +843,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
-        # MolmoPoint's vision symbols are carried by its explicit
-        # specializations; the installed QAIC compiler does not accept the
-        # generic -img-size flag.
         if model_name != "allenai/MolmoPoint-8B":
             compile_kwargs["img_size"] = img_size
 
@@ -898,9 +874,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             pytorch_step_outputs,
         )
         _assert_runtime_token_parity(pytorch_kv_tokens, ort_tokens)
-        # Compile the exact graphs just compared above. Re-exporting here can
-        # produce different tensors for reduced checkpoints whose mismatched
-        # weights were initialized locally, invalidating the four-stage chain.
         compile_kwargs["vision_onnx_path"] = str(onnx_model_path[0])
         compile_kwargs["lang_onnx_path"] = str(onnx_model_path[1])
 
@@ -1023,9 +996,6 @@ def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, ma
 def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    # MolmoPoint has several reduced-checkpoint layers that are reinitialized.
-    # Seed 7 avoids near-tied greedy logits after fp16 lowering while retaining
-    # deterministic coverage of the same image, point, and decoder paths.
     torch.manual_seed(7 if model_name == "allenai/MolmoPoint-8B" else 42)
     hf_config = None
     if is_kimi_k25(model_name):
