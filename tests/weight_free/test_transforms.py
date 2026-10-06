@@ -456,6 +456,47 @@ class TestWeightFreeCheckpointTransforms:
         assert tensors[f"{moe_prefix}.down_bias"].dtype == torch.bfloat16
         assert tensors["model.embed_tokens.weight"].dtype == torch.bfloat16
 
+    def test_pipeline_prefers_fused_layout_when_auxiliary_per_expert_keys_exist(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        main_prefix = "model.language_model.layers.0.mlp.experts"
+        auxiliary_prefix = "mtp.layers.0.mlp.experts"
+        canonical_prefix = "model.language_model.layers.0.mlp.moe_weights"
+        tensors = {
+            f"{main_prefix}.gate_up_proj": torch.ones((2, 4, 4)),
+            f"{main_prefix}.down_proj": torch.ones((2, 2, 4)),
+            f"{canonical_prefix}.gate": torch.ones((2, 4, 2)),
+            f"{canonical_prefix}.up": torch.ones((2, 4, 2)),
+            f"{canonical_prefix}.down": torch.ones((2, 2, 4)),
+        }
+        for expert_index in range(2):
+            tensors.update(
+                {
+                    f"{auxiliary_prefix}.{expert_index}.gate_proj.weight": torch.ones((2, 4)),
+                    f"{auxiliary_prefix}.{expert_index}.up_proj.weight": torch.ones((2, 4)),
+                    f"{auxiliary_prefix}.{expert_index}.down_proj.weight": torch.ones((4, 2)),
+                }
+            )
+        _write_safetensors_checkpoint(src, tensors)
+
+        pipeline = CheckpointTransformPipeline(
+            [
+                MoEExpertStackingCheckpointTransform,
+                MoEFusedExpertSplitCheckpointTransform,
+                DtypeConversionCheckpointTransform,
+            ]
+        )
+        plan, active_group_id = pipeline.build_plan(
+            src,
+            torch.float32,
+            config=SimpleNamespace(num_local_experts=2, model_type="qwen3_5_moe"),
+        )
+
+        assert active_group_id == MoEFusedExpertSplitCheckpointTransform.TRANSFORM_ID
+        assert MoEExpertStackingCheckpointTransform.TRANSFORM_ID not in plan.transform_ids
+        output_refs = [ref for task in plan.tasks for ref in task.output_refs]
+        assert len(output_refs) == len(set(output_refs))
+
     @pytest.mark.parametrize("layout", ["mixtral", "granite"])
     def test_pipeline_groups_fused_experts_across_source_shards(self, tmp_path, layout):
         src = tmp_path / "src"
