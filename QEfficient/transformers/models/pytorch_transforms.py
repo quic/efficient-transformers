@@ -1619,7 +1619,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "_moe_flavour": MoEFlavour.DECODE_BMM,
             "supported_moe_flavours": QEffGrok1MoeBlock.supported_moe_flavours,
             "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
-            "__qeff_init__": QEffMoEBlockMixin.__qeff_init__,
+            "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__,
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
@@ -1697,11 +1697,6 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
         num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
-        if compile_seq_len % expert_parallel_chunk_size != 0:
-            logger.warning(
-                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
-                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
-            )
 
         transformed = False
         flavour = None
@@ -1742,6 +1737,12 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
                 module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
             transformed = True
+
+        if uses_expert_parallel and compile_seq_len % expert_parallel_chunk_size != 0:
+            logger.warning(
+                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
+                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
+            )
 
         if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
             logger.warning(
@@ -1830,6 +1831,33 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
         return model, transformed
 
 
+class FFNBlockingTransform(PytorchTransform):
+    """Configure optional token tiling for optimized routed MoE FFNs."""
+
+    _VALID_MODES = {"default", "token"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        if token_block_size is not None and (
+            not isinstance(token_block_size, int) or isinstance(token_block_size, bool) or token_block_size < 1
+        ):
+            raise ValueError("qaic_config['ffn_token_block_size'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffMoEBlockMixin):
+                module.configure_ffn_blocking(mode, token_block_size)
+                transformed = True
+        return model, transformed
+
+
 class OptimizedMoETransform(PytorchTransform):
     """Compatibility facade for MoE mapping discovery, weights, and export config."""
 
@@ -1845,9 +1873,14 @@ class OptimizedMoETransform(PytorchTransform):
         prefill_seq_len: Optional[int] = None,
         hash_params: Optional[dict] = None,
     ) -> Tuple[nn.Module, bool]:
-        _, mapped = OptimizedMoEMapperTransform.apply(model)
-        _, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
-        _, weights_ready = OptimizedMoEWeightsTransform.apply(model)
+        model, mapped = OptimizedMoEMapperTransform.apply(model)
+        model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
+        if not (mapped or external_mapped):
+            return model, False
+
+        model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
+
+        model, weights_ready = OptimizedMoEWeightsTransform.apply(model)
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
@@ -1858,7 +1891,14 @@ class OptimizedMoETransform(PytorchTransform):
             hash_params=hash_params,
         )
         _, expert_parallel_weights_ready = OptimizedMoEExpertParallelWeightsTransform.apply(model)
-        return model, mapped or external_mapped or weights_ready or export_configured or expert_parallel_weights_ready
+        return model, (
+            mapped
+            or external_mapped
+            or ffn_blocking_configured
+            or weights_ready
+            or export_configured
+            or expert_parallel_weights_ready
+        )
 
 
 class SimpleDecodeMoeTransform(OptimizedMoETransform):
