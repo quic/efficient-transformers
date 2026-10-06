@@ -82,6 +82,12 @@ def make_qeff_inputs(input_ids, config, ctx_len=CTX_LEN):
     return {"input_ids": input_ids, "position_ids": position_ids, "past_key_values": past_key_values}
 
 
+def make_transformed_qeff_model(model, continuous_batching=False):
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=continuous_batching)
+    qeff_model.transform(ctx_len=CTX_LEN, seq_len=SEQ_LEN, bs=1)
+    return qeff_model
+
+
 # ---------------------------------------------------------------------------
 # Tiny model factories
 # ---------------------------------------------------------------------------
@@ -257,7 +263,7 @@ class TestQEffCausalLMAccuracyVsHF:
             hf_logits = model(input_ids=input_ids).logits[:, -1, :]
         hf_token = hf_logits.argmax(-1).item()
 
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
             qeff_logits = qeff_model.model(**qeff_inputs).logits[:, -1, :]
@@ -274,7 +280,7 @@ class TestQEffCausalLMAccuracyVsHF:
         with torch.no_grad():
             hf_logits = model(input_ids=input_ids).logits[:, -1, :]
 
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
             qeff_logits = qeff_model.model(**qeff_inputs).logits[:, -1, :]
@@ -338,7 +344,7 @@ class TestQEffCausalLMAccuracyVsHF:
             (make_tiny_phi3, "Phi3"),
         ]:
             model, cfg = factory()
-            qeff_model = QEFFAutoModelForCausalLM(model)
+            qeff_model = make_transformed_qeff_model(model)
             input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
             qeff_inputs = make_qeff_inputs(input_ids, cfg)
             with torch.no_grad():
@@ -348,7 +354,7 @@ class TestQEffCausalLMAccuracyVsHF:
     def test_qeff_past_key_values_returned(self):
         """QEff model must return past_key_values for the decode step."""
         model, cfg = make_tiny_gpt2()
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
@@ -363,7 +369,7 @@ class TestQEffCausalLMAccuracyVsHF:
         with torch.no_grad():
             hf_top5 = set(model(input_ids=input_ids).logits[:, -1, :].topk(5).indices.squeeze().tolist())
 
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
             qeff_top5 = set(qeff_model.model(**qeff_inputs).logits[:, -1, :].topk(5).indices.squeeze().tolist())
@@ -384,7 +390,7 @@ class TestQEffDecodeStepAccuracy:
 
     def _run_prefill_then_decode(self, model, cfg, n_decode_steps=3, input_ids=None):
         """Run prefill + n decode steps, return list of generated token IDs."""
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         if input_ids is None:
             input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
@@ -448,7 +454,7 @@ class TestQEffDecodeStepAccuracy:
         with torch.no_grad():
             hf_next = model(input_ids=input_ids).logits[:, -1, :].argmax(-1).item()
 
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
             qeff_next = qeff_model.model(**qeff_inputs).logits[:, -1, :].argmax(-1).item()
@@ -462,7 +468,7 @@ class TestQEffDecodeStepAccuracy:
         with torch.no_grad():
             hf_next = model(input_ids=input_ids).logits[:, -1, :].argmax(-1).item()
 
-        qeff_model = QEFFAutoModelForCausalLM(model)
+        qeff_model = make_transformed_qeff_model(model)
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
             qeff_next = qeff_model.model(**qeff_inputs).logits[:, -1, :].argmax(-1).item()
@@ -495,13 +501,13 @@ class TestContinuousBatchingMode:
 
     def test_gpt2_continuous_batching_wraps_without_error(self):
         model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff = make_transformed_qeff_model(model, continuous_batching=True)
         assert qeff is not None
         assert qeff.continuous_batching is True
 
     def test_llama_continuous_batching_wraps_without_error(self):
         model, cfg = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff = make_transformed_qeff_model(model, continuous_batching=True)
         assert qeff is not None
         assert qeff.continuous_batching is True
 
@@ -510,7 +516,7 @@ class TestContinuousBatchingMode:
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
 
         model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff = make_transformed_qeff_model(model, continuous_batching=True)
         assert isinstance(qeff.model, QEffGPT2LMHeadModel)
 
     def test_continuous_batching_false_is_default(self):
@@ -521,7 +527,7 @@ class TestContinuousBatchingMode:
     def test_continuous_batching_model_produces_finite_logits(self):
         """Continuous batching model must produce finite logits."""
         model, cfg = make_tiny_llama()
-        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff = make_transformed_qeff_model(model, continuous_batching=True)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():

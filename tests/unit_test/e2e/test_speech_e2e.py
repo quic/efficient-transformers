@@ -125,6 +125,7 @@ class TestQEffWhisperArchitecture:
 
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform(ctx_len=MAX_TARGET_POS, seq_len=1, bs=1)
         assert isinstance(qeff_model.model, QEffWhisperForConditionalGeneration), (
             f"Expected QEffWhisperForConditionalGeneration, got {type(qeff_model.model)}"
         )
@@ -134,6 +135,7 @@ class TestQEffWhisperArchitecture:
 
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform(ctx_len=MAX_TARGET_POS, seq_len=1, bs=1)
         assert isinstance(qeff_model.model.model.encoder, QEffWhisperEncoder), (
             f"Expected QEffWhisperEncoder, got {type(qeff_model.model.model.encoder)}"
         )
@@ -143,6 +145,7 @@ class TestQEffWhisperArchitecture:
 
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform(ctx_len=MAX_TARGET_POS, seq_len=1, bs=1)
         assert isinstance(qeff_model.model.model.decoder, QEffWhisperDecoder), (
             f"Expected QEffWhisperDecoder, got {type(qeff_model.model.model.decoder)}"
         )
@@ -152,6 +155,7 @@ class TestQEffWhisperArchitecture:
 
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform(ctx_len=MAX_TARGET_POS, seq_len=1, bs=1)
         has_qeff_attn = any(isinstance(m, QEffWhisperAttention) for m in qeff_model.model.modules())
         assert has_qeff_attn, "QEff Whisper must have QEffWhisperAttention layers"
 
@@ -160,6 +164,7 @@ class TestQEffWhisperArchitecture:
 
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+        qeff_model.transform(ctx_len=MAX_TARGET_POS, seq_len=1, bs=1)
         has_pos_emb = any(isinstance(m, QEffWhisperPositionalEmbedding) for m in qeff_model.model.modules())
         assert has_pos_emb, "QEff Whisper must have QEffWhisperPositionalEmbedding"
 

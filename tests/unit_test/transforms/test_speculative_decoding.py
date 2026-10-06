@@ -618,11 +618,11 @@ class TestSpDONNXStructure:
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         model, cfg = make_tiny_llama()
-        qeff_model = QEFFAutoModelForCausalLM(
-            model,
+        qeff_model = QEFFAutoModelForCausalLM(model)
+        onnx_path = qeff_model.export(
+            export_dir=str(tmp_export_dir),
             qaic_config={"speculative_model_type": "target"},
         )
-        onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
         onnx_model = onnx.load(str(onnx_path))
 
         input_names = [inp.name for inp in onnx_model.graph.input]
@@ -639,11 +639,11 @@ class TestSpDONNXStructure:
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         model, cfg = make_tiny_llama()
-        qeff_model = QEFFAutoModelForCausalLM(
-            model,
+        qeff_model = QEFFAutoModelForCausalLM(model)
+        onnx_path = qeff_model.export(
+            export_dir=str(tmp_export_dir),
             qaic_config={"speculative_model_type": "target"},
         )
-        onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
         onnx_model = onnx.load(str(onnx_path))
 
         output_names = [out.name for out in onnx_model.graph.output]
