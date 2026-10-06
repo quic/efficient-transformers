@@ -1831,6 +1831,33 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
         return model, transformed
 
 
+class FFNBlockingTransform(PytorchTransform):
+    """Configure optional token tiling for optimized routed MoE FFNs."""
+
+    _VALID_MODES = {"default", "token"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        if token_block_size is not None and (
+            not isinstance(token_block_size, int) or isinstance(token_block_size, bool) or token_block_size < 1
+        ):
+            raise ValueError("qaic_config['ffn_token_block_size'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffMoEBlockMixin):
+                module.configure_ffn_blocking(mode, token_block_size)
+                transformed = True
+        return model, transformed
+
+
 class OptimizedMoETransform(PytorchTransform):
     """Compatibility facade for MoE mapping discovery, weights, and export config."""
 
@@ -1851,6 +1878,8 @@ class OptimizedMoETransform(PytorchTransform):
         if not (mapped or external_mapped):
             return model, False
 
+        model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
+
         model, weights_ready = OptimizedMoEWeightsTransform.apply(model)
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
@@ -1862,7 +1891,14 @@ class OptimizedMoETransform(PytorchTransform):
             hash_params=hash_params,
         )
         _, expert_parallel_weights_ready = OptimizedMoEExpertParallelWeightsTransform.apply(model)
-        return model, mapped or external_mapped or weights_ready or export_configured or expert_parallel_weights_ready
+        return model, (
+            mapped
+            or external_mapped
+            or ffn_blocking_configured
+            or weights_ready
+            or export_configured
+            or expert_parallel_weights_ready
+        )
 
 
 class SimpleDecodeMoeTransform(OptimizedMoETransform):
