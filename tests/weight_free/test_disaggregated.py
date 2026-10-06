@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -18,21 +19,39 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
 from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeForCausalLM
 
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
-from ._helpers import skip_on_model_fetch_error
+from ._helpers import (
+    WEIGHT_FREE_BLOCKING_MODE_CASES,
+    assert_blocked_kv_ops_for_mode,
+    assert_has_subfunctions,
+    skip_on_model_fetch_error,
+)
 
+DISAGG_MODEL_IDS = (
+    ("glm4_moe", "tiny-random/glm-4-moe"),
+    ("qwen3_moe", "tiny-random/qwen3-moe"),
+    ("gpt_oss", "tiny-random/gpt-oss-mxfp4"),
+)
 DISAGG_MODEL_PARAMS = [
-    pytest.param("glm4_moe", "tiny-random/glm-4-moe", id="glm4-moe"),
-    pytest.param("qwen3_moe", "tiny-random/qwen3-moe", id="qwen3-moe"),
-    pytest.param("gpt_oss", "tiny-random/gpt-oss-mxfp4", id="gpt-oss"),
+    pytest.param(model_type, model_id, id=model_type.replace("_", "-"))
+    for model_type, model_id in DISAGG_MODEL_IDS
+]
+WEIGHT_FREE_DISAGG_DECODE_BLOCKING_CASES = [
+    pytest.param(model_type, model_id, blocking_key, id=f"{model_type.replace('_', '-')}-{blocking_key}")
+    for model_type, model_id in DISAGG_MODEL_IDS
+    for blocking_key in WEIGHT_FREE_BLOCKING_MODE_CASES
 ]
 
 CTX_LEN = 128
 PREFILL_SEQ_LEN = 32
 MOE_PREFILL_PACKED_CHUNK_SIZE = 16
 MDP_NUM_PARTITIONS = 2
+DECODE_BLOCKING_PREFILL_NUM_DEVICES = 4
+DECODE_BLOCKING_DECODE_NUM_DEVICES = 1
+DECODE_BLOCKING_PREFILL_STAGES = 2
 
 
 def _compile_dir(tmp_export_dir, name):
@@ -40,6 +59,31 @@ def _compile_dir(tmp_export_dir, name):
     compile_dir = tmp_export_dir / name
     compile_dir.mkdir(parents=True, exist_ok=True)
     return str(compile_dir)
+
+
+def _directory_size_bytes(path: Path) -> int:
+    return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+
+
+def _build_disagg_decode_blocking_qaic_config(blocking_key: str) -> dict:
+    qaic_config = dict(WEIGHT_FREE_BLOCKING_MODE_CASES[blocking_key])
+    qaic_config["ctx_len"] = CTX_LEN
+    return qaic_config
+
+
+def _assert_disagg_blocking_artifact(
+    onnx_path: Path,
+    qeff_model: QEFFAutoModelForCausalLM,
+    blocking_key: str,
+    qaic_config: dict,
+    use_onnx_subfunctions: bool,
+) -> None:
+    blocking_config = qeff_model.hash_params.get("blocking_kwargs")
+    assert blocking_config is not None
+    assert blocking_config.mode == BlockingMode(qaic_config["blocking_mode"])
+    if use_onnx_subfunctions:
+        assert_has_subfunctions(onnx_path, qeff_model)
+    assert_blocked_kv_ops_for_mode(onnx_path, qeff_model, blocking_key, continuous_batching=True)
 
 
 PREFILL_NUM_DEVICES = 2
@@ -239,7 +283,7 @@ def test_weight_free_disaggregated_prefill_and_decode(model_type, model_id, tmp_
     """Compile weight-free decode and chunked-prefill QPCs for disaggregated serving."""
     try:
         qeff_model = _load_weight_free_model(model_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         skip_on_model_fetch_error(exc, model_id)
 
     moe_config = {"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}}
@@ -281,7 +325,7 @@ def test_weight_free_disaggregated_continuous_batching(model_type, model_id, tmp
     """Compile CB decode and chunked-prefill QPCs for weight-free disaggregated serving."""
     try:
         qeff_model = _load_weight_free_model(model_id, continuous_batching=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         skip_on_model_fetch_error(exc, model_id)
 
     full_batch_size = 2
@@ -315,6 +359,108 @@ def test_weight_free_disaggregated_continuous_batching(model_type, model_id, tmp
 
     assert decode_qpc
     assert prefill_qpc
+
+
+@pytest.mark.weight_free
+@pytest.mark.weight_free_blocking
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.disagg_dma
+@pytest.mark.parametrize("model_type,model_id,decode_blocking_key", WEIGHT_FREE_DISAGG_DECODE_BLOCKING_CASES)
+def test_weight_free_decode_blocked_disaggregated_compile_and_artifact_metrics(
+    model_type,
+    model_id,
+    decode_blocking_key,
+    tmp_export_dir,
+    record_property,
+):
+    """Compile decode-blocked weight-free disaggregated QPCs and record artifact metrics."""
+    use_onnx_subfunctions = True
+    decode_qaic_config = _build_disagg_decode_blocking_qaic_config(decode_blocking_key)
+    prefill_qaic_config = {"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}}
+
+    try:
+        qeff_model = _load_weight_free_model(model_id, continuous_batching=True)
+    except Exception as exc:  # noqa: BLE001
+        skip_on_model_fetch_error(exc, model_id)
+
+    full_batch_size = 2
+    common = {
+        "ctx_len": CTX_LEN,
+        "full_batch_size": full_batch_size,
+        "num_cores": 4,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
+        "split_retained_state_io": True,
+        "retain_full_kv": True,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
+        "offload_pt_weights": True,
+    }
+
+    decode_compile_start = time.perf_counter()
+    decode_qpc = Path(
+        qeff_model.compile(
+            compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_blocked_{decode_blocking_key}_cb_decode"),
+            prefill_seq_len=1,
+            num_devices=DECODE_BLOCKING_DECODE_NUM_DEVICES,
+            qaic_config=decode_qaic_config,
+            **common,
+        )
+    )
+    decode_compile_seconds = time.perf_counter() - decode_compile_start
+    decode_onnx_path = _assert_onnx_path(qeff_model.onnx_path, "decode")
+    _assert_disagg_blocking_artifact(
+        decode_onnx_path,
+        qeff_model,
+        decode_blocking_key,
+        decode_qaic_config,
+        use_onnx_subfunctions,
+    )
+
+    prefill_compile_start = time.perf_counter()
+    prefill_qpc = Path(
+        qeff_model.compile(
+            compile_dir=_compile_dir(tmp_export_dir, f"{model_type}_decode_blocked_{decode_blocking_key}_cb_prefill"),
+            prefill_seq_len=PREFILL_SEQ_LEN,
+            prefill_only=True,
+            enable_chunking=True,
+            num_devices=DECODE_BLOCKING_PREFILL_NUM_DEVICES,
+            mdp_num_partitions=DECODE_BLOCKING_PREFILL_STAGES,
+            qaic_config=prefill_qaic_config,
+            **common,
+        )
+    )
+    prefill_compile_seconds = time.perf_counter() - prefill_compile_start
+    prefill_onnx_path = _assert_onnx_path(qeff_model.onnx_path, "prefill")
+    if use_onnx_subfunctions:
+        assert_has_subfunctions(prefill_onnx_path, qeff_model)
+
+    assert decode_qpc
+    assert prefill_qpc
+    assert decode_qpc.exists(), f"decode QPC path does not exist: {decode_qpc}"
+    assert prefill_qpc.exists(), f"prefill QPC path does not exist: {prefill_qpc}"
+    assert decode_onnx_path != prefill_onnx_path
+
+    metrics = {
+        "decode_onnx_size_bytes": decode_onnx_path.stat().st_size,
+        "decode_qpc_compile_seconds": decode_compile_seconds,
+        "decode_qpc_size_bytes": _directory_size_bytes(decode_qpc),
+        "prefill_onnx_size_bytes": prefill_onnx_path.stat().st_size,
+        "prefill_qpc_compile_seconds": prefill_compile_seconds,
+        "prefill_qpc_size_bytes": _directory_size_bytes(prefill_qpc),
+    }
+    for name, value in metrics.items():
+        record_property(name, value)
+    print(
+        f"weight_free_disagg_decode_blocking_metrics model={model_type} "
+        f"decode_mode={decode_blocking_key} use_onnx_subfunctions={use_onnx_subfunctions} "
+        f"decode_qpc_compile_seconds={decode_compile_seconds:.3f} "
+        f"decode_onnx_size_bytes={metrics['decode_onnx_size_bytes']} "
+        f"decode_qpc_size_bytes={metrics['decode_qpc_size_bytes']} "
+        f"prefill_qpc_compile_seconds={prefill_compile_seconds:.3f} "
+        f"prefill_onnx_size_bytes={metrics['prefill_onnx_size_bytes']} "
+        f"prefill_qpc_size_bytes={metrics['prefill_qpc_size_bytes']}"
+    )
 
 
 @pytest.mark.weight_free
@@ -525,7 +671,7 @@ def test_weight_free_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(
         config = _build_gpt_oss_parity_config(dtype="float32")
         hf_model = _load_gpt_oss_parity_hf_model(config)
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         skip_on_model_fetch_error(exc, model_id)
 
     checkpoint_dir = tmp_path / "gpt_oss_fp32_checkpoint"

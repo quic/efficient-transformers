@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import platform
 import sys
 from contextlib import contextmanager
@@ -27,6 +28,23 @@ def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -
     """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
     for binding in bindings:
         binding_index_map.setdefault(binding.name.rsplit("/", 1)[-1], binding.index)
+
+
+def _retained_state_name_aliases(name: str) -> set[str]:
+    """Return public/internal retained-state aliases for a binding name."""
+    aliases = {name}
+    basename = name.rsplit("/", 1)[-1]
+    aliases.add(basename)
+    for candidate in (name, basename):
+        public_name = _public_retained_state_name(candidate)
+        if public_name is not None:
+            aliases.add(public_name)
+            aliases.add(public_name.rsplit("/", 1)[-1])
+        elif candidate.endswith("_RetainedState"):
+            internal_name = candidate[: -len("_RetainedState")] + "_InternalRetainedState"
+            aliases.add(internal_name)
+            aliases.add(internal_name.rsplit("/", 1)[-1])
+    return aliases
 
 
 try:
@@ -177,6 +195,7 @@ class QAICInferenceSession:
         self.bindings = iodesc.selected_set.bindings
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
         _add_basename_binding_aliases(self.binding_index_map, self.bindings)
+        self._skipped_buffer_names = set()
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.dataPathTimeoutMs = data_path_timeout_ms
@@ -376,6 +395,12 @@ class QAICInferenceSession:
             :skipped_buffer_name: List[str]. List of buffer name to be skipped.
         """
 
+        for buffer_name in skipped_buffer_names:
+            if buffer_name not in self.binding_index_map:
+                continue
+            actual_name = self.bindings[self.binding_index_map[buffer_name]].name
+            self._skipped_buffer_names.update(_retained_state_name_aliases(buffer_name))
+            self._skipped_buffer_names.update(_retained_state_name_aliases(actual_name))
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -436,17 +461,31 @@ class QAICInferenceSession:
         """Decode device output buffers into a name-keyed dict of numpy arrays."""
         outputs = {}
         for output_name in self.output_names:
+            output_basename = output_name.rsplit("/", 1)[-1]
             buffer_index = self.binding_index_map[output_name]
+            skipped_buffer_names = getattr(self, "_skipped_buffer_names", set())
+            if _retained_state_name_aliases(output_name) & skipped_buffer_names:
+                continue
             # Skip unmapped outputs and DMA-wired RetainedState buffers, whose data
             # goes straight to the caller's host arrays so getData returns empty.
             if qbuffers[buffer_index].size == 0 or output_qbuffers[buffer_index].size == 0:
                 continue
+            if os.getenv("QEFF_DEBUG_QAIC_OUTPUTS"):
+                dtype = self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type]
+                expected_size = int(np.prod(buf_dims[buffer_index][1])) * np.dtype(dtype).itemsize
+                print(
+                    "QEFF_DEBUG_QAIC_OUTPUT "
+                    f"name={output_name!r} index={buffer_index} "
+                    f"qbuffer_size={qbuffers[buffer_index].size} "
+                    f"output_qbuffer_size={output_qbuffers[buffer_index].size} "
+                    f"expected_size={expected_size} dims={buf_dims[buffer_index][1]}",
+                    flush=True,
+                )
             output = np.frombuffer(
                 bytes(output_qbuffers[buffer_index]),
                 self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
             ).reshape(buf_dims[buffer_index][1])
             outputs[output_name] = output
-            output_basename = output_name.rsplit("/", 1)[-1]
             outputs.setdefault(output_basename, output)
             public_name = _public_retained_state_name(output_name)
             if public_name is not None:

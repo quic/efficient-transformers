@@ -13,13 +13,13 @@ import torch
 from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 from QEfficient.customop import (
-    CtxChunkScatterBatchFunc,
-    CtxGatherFuncBlockedKVBatch,
     CtxGatherFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
     CtxScatterFuncPagedAttention,  # TODO: apply the dynamo related changes coming from latest mainline
+    ctx_chunk_scatter_batch,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
+    ctx_gather_blocked_kv_batch,
     ctx_gather_blocked_kv_cb,
     ctx_gather_cb,
     ctx_gather_cb_3d,
@@ -240,7 +240,9 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = k_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
@@ -300,26 +302,35 @@ class QEffDynamicLayer(CacheLayerMixin):
         if k_out is not None:
             self._mark_initialized(k_out)
         position_ids = cache_kwargs.get("position_ids")
-        # batch_index = cache_kwargs.get("batch_index", None)
+        batch_index = cache_kwargs.get("batch_index", None)
         full_batch_size, Hkv, ctx_len, head_dim = k_out.shape
         cache_bh = full_batch_size * Hkv
         if folded_cache is None:
             k_out = k_out.reshape(1, cache_bh, ctx_len, head_dim)
         else:
             k_out = folded_cache
+        if batch_index is not None:
+            folded_head_indices = (
+                batch_index.reshape(-1, 1) * Hkv
+                + torch.arange(Hkv, dtype=batch_index.dtype, device=batch_index.device).reshape(1, -1)
+            ).reshape(-1)
+            k_out = k_out.index_select(1, folded_head_indices)
         T_block = end_index - start_index
 
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
         gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
+        active_bh = gather_limit.shape[1]
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
-        k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
+        ctx_indices = ctx_indices.expand(1, active_bh, T_block)
+        k_out = ctx_gather_blocked_kv_batch(k_out, ctx_indices)
 
         return k_out
 
@@ -345,7 +356,9 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = v_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
@@ -383,25 +396,34 @@ class QEffDynamicLayer(CacheLayerMixin):
         # Gather
         v_out = self.values
         position_ids = cache_kwargs.get("position_ids")
-        # batch_index = cache_kwargs.get("batch_index", None)
+        batch_index = cache_kwargs.get("batch_index", None)
         full_batch_size, Hkv, ctx_len, head_dim = v_out.shape
         cache_bh = full_batch_size * Hkv
         if folded_cache is None:
             v_out = v_out.reshape(1, cache_bh, ctx_len, head_dim)
         else:
             v_out = folded_cache
+        if batch_index is not None:
+            folded_head_indices = (
+                batch_index.reshape(-1, 1) * Hkv
+                + torch.arange(Hkv, dtype=batch_index.dtype, device=batch_index.device).reshape(1, -1)
+            ).reshape(-1)
+            v_out = v_out.index_select(1, folded_head_indices)
         T_block = end_index - start_index
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
         gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
+        active_bh = gather_limit.shape[1]
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
-        v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
+        ctx_indices = ctx_indices.expand(1, active_bh, T_block)
+        v_out = ctx_gather_blocked_kv_batch(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
@@ -597,16 +619,22 @@ class QEffDynamicLayer(CacheLayerMixin):
             cache_bh = full_batch_size * Hkv
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
+            batch_index = cache_kwargs.get("batch_index", None)
 
-            # batch_index = cache_kwargs.get("batch_index")
-            keys_folded = self.keys.reshape(1, cache_bh, ctx_len, head_dim)
-            values_folded = self.values.reshape(1, cache_bh, ctx_len, head_dim)
+            if batch_index is not None:
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+                self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
+                self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
+            else:
+                keys_folded = self.keys.reshape(1, cache_bh, ctx_len, head_dim)
+                values_folded = self.values.reshape(1, cache_bh, ctx_len, head_dim)
 
-            keys_folded = CtxChunkScatterBatchFunc.apply(keys_folded, position_ids, key_states)
-            values_folded = CtxChunkScatterBatchFunc.apply(values_folded, position_ids, value_states)
+                keys_folded = ctx_chunk_scatter_batch(keys_folded, position_ids, key_states)
+                values_folded = ctx_chunk_scatter_batch(values_folded, position_ids, value_states)
 
-            self.keys = keys_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
-            self.values = values_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
+                self.keys = keys_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
+                self.values = values_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
 
     def update(
         self,
@@ -1734,17 +1762,21 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         self,
         start_idx: torch.Tensor,
         end_idx: torch.Tensor,
-        layer_idx: int,
-        cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        cache_kwargs: Optional[Dict[str, Any]],
+    ) -> torch.Tensor:
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
-        k_out = self.key_cache[layer_idx]
+        k_out = self.keys
 
         batch, num_kv_heads, _, _ = k_out.shape
 
-        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_idx,
+            end=end_idx,
+            dtype=position_ids.dtype,
+            device=position_ids.device,
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -1762,17 +1794,21 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         self,
         start_idx: torch.Tensor,
         end_idx: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
-        v_out = self.value_cache[layer_idx]
+        v_out = self.values
 
         batch, num_kv_heads, _, _ = v_out.shape
 
-        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        ctx_indices = torch.arange(
+            start=start_idx,
+            end=end_idx,
+            dtype=position_ids.dtype,
+            device=position_ids.device,
+        )[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -1784,7 +1820,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
             v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
 
     def update(
