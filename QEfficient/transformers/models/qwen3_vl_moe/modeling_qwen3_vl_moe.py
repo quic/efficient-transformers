@@ -78,37 +78,6 @@ def _batch_index_gather(tensor: torch.Tensor, batch_index: torch.Tensor) -> torc
     return tensor.index_select(0, batch_index.reshape(-1).long())
 
 
-# def qeff_apply_interleaved_mrope(freqs, mrope_section):
-#     """Apply interleaved MRoPE to 3D rotary embeddings.
-#     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
-#     interleaved [THWTHWTHW...TT], preserving frequency continuity.
-#     args:
-#         x: (3, bs, seq_len, head_dim // 2)
-#         mrope_section: (3,)
-#     returns:
-#         x_t: (bs, seq_len, head_dim // 2)
-#     """
-#     freq_idx = torch.arange(freqs.shape[-1], device=freqs.device)
-#     half_shape = freqs.shape[-1] // 2
-
-#     h_mask = (freq_idx >= 1) & (freq_idx < mrope_section[1] * 3) & ((freq_idx - 1) % 3 == 0)
-#     h_mask = h_mask | (
-#         (freq_idx >= half_shape + 1)
-#         & (freq_idx < half_shape + mrope_section[1] * 3)
-#         & ((freq_idx - half_shape - 1) % 3 == 0)
-#     )
-#     w_mask = (freq_idx >= 2) & (freq_idx < mrope_section[2] * 3) & ((freq_idx - 2) % 3 == 0)
-#     w_mask = w_mask | (
-#         (freq_idx >= half_shape + 2)
-#         & (freq_idx < half_shape + mrope_section[2] * 3)
-#         & ((freq_idx - half_shape - 2) % 3 == 0)
-#     )
-
-#     freqs_t = torch.where(h_mask, freqs[1], freqs[0])
-#     freqs_t = torch.where(w_mask, freqs[2], freqs_t)
-#     return freqs_t
-
-
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to

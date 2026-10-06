@@ -97,6 +97,54 @@ class TestQEFFAutoModelForImageTextToTextStructure:
         assert hasattr(QEFFAutoModelForImageTextToText, "__new__")
 
 
+def test_weight_free_vlm_rejects_single_qpc():
+    from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
+
+    with pytest.raises(
+        NotImplementedError,
+        match=r"weight-free export is only supported with kv_offload=True \(dual-QPC mode\)",
+    ):
+        QEFFAutoModelForImageTextToText.from_pretrained.__func__.__wrapped__(
+            QEFFAutoModelForImageTextToText,
+            "dummy-model",
+            kv_offload=False,
+            weight_free=True,
+        )
+
+
+def test_weight_free_vlm_defaults_to_dual_qpc(monkeypatch):
+    from QEfficient.transformers.models import modeling_auto
+    from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
+
+    meta_model = object()
+    dual_wrapper = object()
+    dual_calls = []
+
+    monkeypatch.setattr(modeling_auto, "validate_dynamo_export_requirements", lambda feature_name: None)
+    monkeypatch.setattr(modeling_auto, "_build_meta_model", lambda *args, **kwargs: meta_model)
+
+    def build_dual(model, continuous_batching=False, qaic_config=None, **kwargs):
+        dual_calls.append((model, continuous_batching, qaic_config, kwargs))
+        return dual_wrapper
+
+    monkeypatch.setattr(modeling_auto, "_QEffAutoModelForImageTextToTextDualQPC", build_dual)
+    monkeypatch.setattr(
+        modeling_auto,
+        "_QEFFAutoModelForImageTextToTextSingleQPC",
+        lambda *args, **kwargs: pytest.fail("weight-free VLM must not select the single-QPC wrapper"),
+    )
+
+    result = QEFFAutoModelForImageTextToText.from_pretrained.__func__.__wrapped__(
+        QEFFAutoModelForImageTextToText,
+        "dummy-model",
+        weight_free=True,
+    )
+
+    assert result is dual_wrapper
+    assert dual_calls[0][0] is meta_model
+    assert dual_calls[0][3]["weight_free"] is True
+
+
 # ---------------------------------------------------------------------------
 # Tests: Internal VLM classes structure
 # ---------------------------------------------------------------------------

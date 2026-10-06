@@ -3565,9 +3565,13 @@ class QEFFAutoModelForImageTextToText:
         kv_offload : bool, optional
             If True, uses the dual QPC approach (vision encoder KV offloaded).
             If False, uses the single QPC approach (entire model in one QPC).
-            If None, the default behavior of the internal classes is used (typically dual QPC).
+            If None, weight-free mode selects dual QPC; otherwise the internal
+            class default is used.
         qaic_config : dict, optional
             A dictionary for QAIC-specific configurations.
+        weight_free : bool, optional
+            Build the model with meta tensors and load checkpoint weights during
+            compilation. Weight-free VLM export requires dual-QPC mode.
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
 
@@ -3582,13 +3586,17 @@ class QEFFAutoModelForImageTextToText:
         Raises
         ------
         NotImplementedError
-            If `continuous_batching` is provided as True.
+            If `continuous_batching` is provided as True, or if weight-free
+            export is requested with single-QPC mode.
         """
         if layerwise and weight_free:
             raise ValueError(
                 "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
             )
+        if weight_free and kv_offload is False:
+            raise NotImplementedError("VLM weight-free export is only supported with kv_offload=True (dual-QPC mode).")
         if weight_free:
+            kv_offload = True
             validate_dynamo_export_requirements("weight_free=True")
 
         enable_proxy = kwargs.pop("enable_proxy", False)
