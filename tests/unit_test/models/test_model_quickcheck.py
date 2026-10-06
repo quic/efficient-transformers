@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import tempfile
+from collections import Counter
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from io import StringIO
@@ -50,6 +51,7 @@ from transformers import (
     LlamaConfig,
     Qwen2Config,
 )
+from transformers.models.gpt_oss.configuration_gpt_oss import GptOssConfig
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
@@ -380,6 +382,12 @@ def _function_op_types(onnx_model, function_names: Set[str]) -> Set[str]:
         if function_proto.name in function_names
         for node in function_proto.node
     }
+
+
+def _function_call_counts(onnx_model, function_names: Set[str]) -> Counter:
+    nodes = list(onnx_model.graph.node)
+    nodes.extend(node for function_proto in onnx_model.functions for node in function_proto.node)
+    return Counter(node.op_type for node in nodes if node.op_type in function_names)
 
 
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
@@ -1559,6 +1567,210 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
     assert any("QEffGPT2Block" in func.name for func in onnx_model.functions)
 
 
+@pytest.mark.llm_model
+def test_gpt_oss_proxy_repeats_each_decoder_subfunction(tmp_path):
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt_oss"]
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            enable_proxy=True,
+            torch_dtype=torch.float32,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    assert qeff_model.model.config.num_hidden_layers == 4
+    assert Counter(qeff_model.model.config.layer_types) == Counter({"sliding_attention": 2, "full_attention": 2})
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "gpt-oss-proxy-subfunctions", use_onnx_subfunctions=True)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    function_names = _decoder_block_subfunction_names(onnx_model, qeff_model)
+    call_counts = _function_call_counts(onnx_model, function_names)
+
+    assert len(function_names) == 2
+    assert call_counts.keys() == function_names
+    assert sorted(call_counts.values()) == [2, 2]
+
+
+def test_proxy_subfunction_validation_rejects_single_call_function(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyLayer:
+        pass
+
+    class DummyModel:
+        def get_submodules_for_export(self):
+            return {DummyLayer}
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyModel()
+
+    graph = helper.make_graph(
+        [helper.make_node("DummyLayer", ["x"], ["y"])],
+        "proxy_subfunction_single_call",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyLayer",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "single_call.onnx"
+    onnx.save(model, onnx_path)
+
+    with pytest.raises(RuntimeError, match="must be invoked more than once"):
+        _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
+def test_proxy_subfunction_validation_accepts_repeated_function_calls(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyLayer:
+        pass
+
+    class DummyModel:
+        def get_submodules_for_export(self):
+            return {DummyLayer}
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyModel()
+
+    graph = helper.make_graph(
+        [
+            helper.make_node("DummyLayer", ["x"], ["mid"]),
+            helper.make_node("DummyLayer", ["mid"], ["y"]),
+        ],
+        "proxy_subfunction_repeated_call",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyLayer",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "repeated_call.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
+def test_proxy_subfunction_validation_ignores_single_use_vision_functions(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyDecoderLayer:
+        pass
+
+    class DummyVisionBlock:
+        pass
+
+    class DummyLanguageDecoder:
+        def get_submodules_for_export(self):
+            return {DummyDecoderLayer}
+
+    class DummyVlmModel:
+        def get_submodules_for_export(self):
+            return {DummyDecoderLayer, DummyVisionBlock}
+
+        def get_qeff_language_decoder(self):
+            return DummyLanguageDecoder()
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyVlmModel()
+
+    graph = helper.make_graph(
+        [
+            helper.make_node("DummyVisionBlock", ["x"], ["vision"]),
+            helper.make_node("DummyDecoderLayer", ["vision"], ["mid"]),
+            helper.make_node("DummyDecoderLayer", ["mid"], ["y"]),
+        ],
+        "proxy_subfunction_mixed_vlm",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    functions = [
+        helper.make_function(
+            "",
+            "DummyVisionBlock",
+            ["x"],
+            ["y"],
+            [helper.make_node("Identity", ["x"], ["y"])],
+            [helper.make_operatorsetid("", 17)],
+        ),
+        helper.make_function(
+            "",
+            "DummyDecoderLayer",
+            ["x"],
+            ["y"],
+            [helper.make_node("Identity", ["x"], ["y"])],
+            [helper.make_operatorsetid("", 17)],
+        ),
+    ]
+    model = helper.make_model(graph, functions=functions, opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "mixed_vlm.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
+def test_proxy_subfunction_validation_skips_vision_encoder_exports(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyVisionBlock:
+        pass
+
+    class DummyVisionModel:
+        def get_submodules_for_export(self):
+            return {DummyVisionBlock}
+
+    class QEffVisionEncoderForTextImageToTextModel:
+        _enable_proxy = True
+        model = DummyVisionModel()
+
+    graph = helper.make_graph(
+        [helper.make_node("DummyVisionBlock", ["x"], ["y"])],
+        "proxy_subfunction_vision_only",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyVisionBlock",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "vision_only.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(QEffVisionEncoderForTextImageToTextModel(), onnx_path)
+
+
 def test_subfunction_export_restores_onnx_transforms_on_failure():
     from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
     from QEfficient.transformers.cache_utils import InvalidIndexProvider
@@ -1644,6 +1856,183 @@ def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+def test_proxy_layer_config_preserves_repeated_layer_types():
+    from transformers import LlamaForCausalLM
+
+    from QEfficient.proxy.modeling_utils import apply_proxy_layer_config, prepare_proxy_config
+
+    llama_config = LlamaConfig(num_hidden_layers=16)
+    assert apply_proxy_layer_config(llama_config) == 2
+    assert llama_config.num_hidden_layers == 2
+
+    gpt_oss_config = GptOssConfig(num_hidden_layers=16)
+    assert apply_proxy_layer_config(gpt_oss_config) == 4
+    assert gpt_oss_config.layer_types == [
+        "sliding_attention",
+        "full_attention",
+        "sliding_attention",
+        "full_attention",
+    ]
+
+    qwen_moe_config = Qwen3MoeConfig(num_hidden_layers=16)
+    assert apply_proxy_layer_config(qwen_moe_config) == 2
+
+    mixed_qwen_moe_config = Qwen3MoeConfig(num_hidden_layers=16, decoder_sparse_step=2)
+    assert apply_proxy_layer_config(mixed_qwen_moe_config) == 4
+
+    qwen3_5_moe_config = Qwen3_5MoeTextConfig(num_hidden_layers=16)
+    qwen3_5_moe_config.num_hidden_layers = 2
+    assert apply_proxy_layer_config(qwen3_5_moe_config) == 8
+    assert qwen3_5_moe_config.layer_types == ["linear_attention"] * 3 + ["full_attention"] + [
+        "linear_attention"
+    ] * 3 + ["full_attention"]
+
+    kwargs = {"config": GptOssConfig(num_hidden_layers=16), "num_hidden_layers": 2}
+    prepare_proxy_config("unused-local-config", kwargs)
+    assert kwargs["config"].num_hidden_layers == 2
+    assert "num_hidden_layers" not in kwargs
+
+    llama_kwargs = {
+        "config": LlamaConfig(
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_hidden_layers=8,
+            num_key_value_heads=2,
+            vocab_size=32,
+        ),
+        "num_hidden_layers": 3,
+    }
+    prepare_proxy_config("unused-local-config", llama_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(
+        LlamaForCausalLM(llama_kwargs["config"]).eval(),
+        enable_proxy=True,
+    )
+    assert "num_hidden_layers" not in llama_kwargs
+    assert qeff_model.hash_params["proxy_num_hidden_layers"] == 3
+
+
+@pytest.mark.llm_model
+@pytest.mark.mdp
+def test_proxy_compile_artifacts_generate_disagg_mdp_config_for_tiny_model(tmp_path):
+    from transformers import LlamaForCausalLM
+
+    from QEfficient.proxy.modeling_utils import prepare_proxy_config
+
+    model_kwargs = {
+        "config": LlamaConfig(
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_hidden_layers=4,
+            num_key_value_heads=2,
+            vocab_size=32,
+            max_position_embeddings=32,
+            torch_dtype=torch.float32,
+        )
+    }
+    prepare_proxy_config("unused-local-config", model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(
+        LlamaForCausalLM(model_kwargs["config"]).eval(),
+        enable_proxy=True,
+        torch_dtype=torch.float32,
+    )
+
+    artifacts_dir = Path(
+        qeff_model.compile(
+            compile_dir=str(tmp_path / "proxy-mdp"),
+            prefill_seq_len=4,
+            ctx_len=8,
+            batch_size=1,
+            num_devices=2,
+            mdp_num_partitions=2,
+            artifacts=True,
+            offload_pt_weights=False,
+        )
+    )
+
+    assert qeff_model.num_layers == 2
+    assert qeff_model.hash_params["proxy_num_hidden_layers"] == 2
+    assert qeff_model.qpc_path is None
+    assert qeff_model.compile_artifacts_path == artifacts_dir
+
+    mdp_path = artifacts_dir / "mdp_disagg_2d_2p.json"
+    assert mdp_path.is_file()
+    mdp_data = json.loads(mdp_path.read_text())
+    assert len(mdp_data["partitions"]) == 2
+    assert [device["deviceId"] for device in mdp_data["partitions"][0]["devices"]] == [0]
+    assert [device["deviceId"] for device in mdp_data["partitions"][1]["devices"]] == [1]
+
+    replay_script = artifacts_dir / "qaic-compile.sh"
+    assert replay_script.is_file()
+    replay_command = replay_script.read_text()
+    assert "-mdp-load-partition-config=mdp_disagg_2d_2p.json" in replay_command
+    assert "-aic-binary-dir=qpc" in replay_command
+
+
+def test_proxy_layer_config_only_reduces_vlm_language_layers():
+    from QEfficient.proxy.modeling_utils import apply_proxy_layer_config
+
+    # Proxy layer reduction is language-only; vision layers must remain untouched.
+    config = Qwen3VLMoeConfig(
+        text_config=Qwen3VLMoeTextConfig(num_hidden_layers=16),
+        vision_config=Qwen3VLMoeVisionConfig(depth=8),
+    )
+
+    assert apply_proxy_layer_config(config) == 2
+    assert config.text_config.num_hidden_layers == 2
+
+    explicit_config = Qwen3VLMoeConfig(
+        text_config=Qwen3VLMoeTextConfig(num_hidden_layers=16),
+        vision_config=Qwen3VLMoeVisionConfig(depth=16),
+    )
+    assert apply_proxy_layer_config(explicit_config, num_hidden_layers=3) == 3
+    assert explicit_config.text_config.num_hidden_layers == 3
+    assert explicit_config.vision_config.depth == 16
+    assert config.vision_config.depth == 8
+
+
+def test_proxy_module_transform_leaves_vision_embedding_unchanged():
+    from QEfficient.proxy import QeffProxyEmbedding, QeffProxyLinear
+    from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
+
+    class DummyVlm(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_decoder = nn.Module()
+            self.language_decoder.token_embedding = nn.Embedding(32, 8)
+            self.language_decoder.lm_head = nn.Linear(8, 32, bias=False)
+            self.vision_embedding = nn.Embedding(16, 8)
+
+        def get_qeff_language_decoder(self):
+            return self.language_decoder
+
+        def get_input_embeddings(self):
+            return self.language_decoder.token_embedding
+
+        def get_output_embeddings(self):
+            return self.language_decoder.lm_head
+
+    model = DummyVlm()
+    model, transformed = QeffProxyModuleTransform.apply(model)
+
+    assert transformed
+    assert isinstance(model.language_decoder.token_embedding, QeffProxyEmbedding)
+    assert isinstance(model.language_decoder.lm_head, QeffProxyLinear)
+    assert type(model.vision_embedding) is nn.Embedding
+
+    causal_model = nn.Module()
+    causal_model.token_embedding = nn.Embedding(32, 8)
+    causal_model.position_embedding = nn.Embedding(16, 8)
+    causal_model.lm_head = nn.Linear(8, 32, bias=False)
+    causal_model, transformed = QeffProxyModuleTransform.apply(causal_model)
+
+    assert transformed
+    assert isinstance(causal_model.token_embedding, QeffProxyEmbedding)
+    assert isinstance(causal_model.position_embedding, QeffProxyEmbedding)
+    assert isinstance(causal_model.lm_head, QeffProxyLinear)
 
 
 @pytest.mark.llm_model
