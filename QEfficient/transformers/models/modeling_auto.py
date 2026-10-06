@@ -4101,7 +4101,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     self.hash_params["retain_full_kv"] = True
         #######################################################################
 
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        bs: int = export_batch_size or constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
@@ -4193,8 +4193,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "input_ids": {0: "batch_size"} if is_deepseek_v4 else {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size"} if is_deepseek_v4 else {0: "batch_size", 1: "seq_len"},
         }
 
         if getattr(self, "dflash_dlm", None):
@@ -4207,7 +4207,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             dynamic_axes["target_hidden"] = {0: "batch_size", 1: "seq_len"}
             dynamic_axes["position_ids_target"] = {0: "batch_size", 1: "seq_len"}
-
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
