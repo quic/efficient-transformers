@@ -15,6 +15,8 @@ Patches kept here:
     for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
     context managers for dynamo export path subgraph boundary management.
+  - preserve_subfunction_source_lines: preserve FX source metadata while Dynamo
+    retraces GraphModule subfunctions.
 
 Patches removed (upstreamed to PyTorch):
   - FunctionalTensorMode.__torch_dispatch__ tracker-entry KeyError
@@ -26,6 +28,7 @@ Patches removed (upstreamed to PyTorch):
   - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
 """
 
+import importlib
 import inspect
 import os
 import threading
@@ -422,6 +425,41 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
 
 
 _DYNAMO_ENV_LOCK = threading.RLock()
+_SUBFUNCTION_SOURCE_PATCH_LOCK = threading.RLock()
+
+
+@contextmanager
+def preserve_subfunction_source_lines():
+    """Preserve original FX source metadata while retracing Dynamo subfunctions.
+
+    PyTorch's generated GraphModule code does not preserve the original source
+    locations when an ``invoke_subgraph`` GraphModule is retraced. Running the
+    GraphModule through ``torch.fx.Interpreter`` under ``preserve_node_meta``
+    keeps the metadata available to the ONNX exporter.
+
+    This patches a private PyTorch API for the duration of one export. The
+    patch is process-global, so the lock serializes callers and the original
+    function is always restored on exit.
+    """
+    with _SUBFUNCTION_SOURCE_PATCH_LOCK:
+        module = importlib.import_module("torch._higher_order_ops.invoke_subgraph")
+        original = module.reenter_make_fx
+
+        def retrace(fn, *args, **kwargs):
+            if not isinstance(fn, torch.fx.GraphModule):
+                return original(fn, *args, **kwargs)
+
+            def interpreted(*operands):
+                with torch.fx.traceback.preserve_node_meta():
+                    return torch.fx.Interpreter(fn).run(*operands)
+
+            return original(interpreted, *args, **kwargs)
+
+        module.reenter_make_fx = retrace
+        try:
+            yield
+        finally:
+            module.reenter_make_fx = original
 
 
 @contextmanager

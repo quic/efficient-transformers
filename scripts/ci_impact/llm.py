@@ -22,9 +22,10 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .core import SCHEMA_VERSION, STAGES, ImpactPlan, TestCase
+from .core import SCHEMA_VERSION, STAGES, ImpactPlan, TestCase, is_hard_full_path
 
-DEFAULT_MODEL = "azure::gpt-5.5"
+DEFAULT_COORDINATOR_MODEL = "gpt-5.5"
+DEFAULT_SUBAGENT_MODEL = "gpt-5.6-terra"
 DEFAULT_REASONING_EFFORT = "high"
 MAX_PROMPT_BYTES = 400_000
 MAX_RESPONSE_BYTES = 1_000_000
@@ -36,13 +37,6 @@ SYSTEM_PROMPT_PATH = Path(__file__).with_name("SYSTEM_PROMPT.md")
 QUERY_TOOL_PATH = Path(__file__).with_name("query.py")
 TOOL_POLICY_PATH = Path(__file__).with_name("tool_policy.py")
 HOOK_AUDIT_NAME = ".ci-impact-qgenie-audit.jsonl"
-LLM_REFINABLE_FULL_REASONS = (
-    "global pytest behavior changed:",
-    "source snapshot generation failed",
-    "unsafe static analysis for ",
-    "unclassified production/configuration changes",
-    "unparsable model inventory:",
-)
 
 
 class LLMStageError(RuntimeError):
@@ -412,7 +406,8 @@ def _trusted_tool_paths(temporary: Path) -> tuple[Path, Path]:
 def _run_external_selector(
     repo: Path,
     command: str,
-    model: str,
+    coordinator_model: str,
+    subagent_model: str,
     context: str,
     catalog_path: Path,
     plan_path: Path,
@@ -481,7 +476,7 @@ def _run_external_selector(
             "--config",
             f"agents.max_concurrent_threads_per_session={MAX_SUBAGENTS}",
             "--config",
-            f'agents.default_subagent_model="{model}"',
+            f'agents.default_subagent_model="{subagent_model}"',
             "--config",
             f'agents.default_subagent_reasoning_effort="{DEFAULT_REASONING_EFFORT}"',
             "--enable",
@@ -494,7 +489,7 @@ def _run_external_selector(
             "--output-last-message",
             str(output_path),
             "--model",
-            model,
+            coordinator_model,
             "-",
         ]
         try:
@@ -590,7 +585,11 @@ def select_tests(
     catalog_path: Path | None = None,
     deterministic_plan_path: Path | None = None,
 ) -> LLMSelection:
-    model = model or os.environ.get("LLM_CI_MODEL", DEFAULT_MODEL)
+    coordinator_model = model or os.environ.get(
+        "LLM_CI_COORDINATOR_MODEL",
+        os.environ.get("LLM_CI_MODEL", DEFAULT_COORDINATOR_MODEL),
+    )
+    subagent_model = os.environ.get("LLM_CI_SUBAGENT_MODEL", DEFAULT_SUBAGENT_MODEL)
     selector_command = os.environ.get("LLM_SELECTOR_COMMAND")
     if selector_command:
         catalog_path = catalog_path or repo / ".ci-impact-catalog.json"
@@ -600,13 +599,14 @@ def select_tests(
         output_text = _run_external_selector(
             repo,
             selector_command,
-            model,
+            coordinator_model,
+            subagent_model,
             context,
             catalog_path,
             deterministic_plan_path,
         )
         response_id = "external-cli"
-        response_model = model
+        response_model = coordinator_model
         attempts = 1
     else:
         context, context_incomplete = _prompt(repo, deterministic, catalog)
@@ -616,10 +616,10 @@ def select_tests(
         api_base = api_base or os.environ.get("LLM_API_BASE")
         if not api_base:
             raise LLMStageError("LLM_API_BASE is required for mandatory LLM test selection")
-        response, attempts = _post(api_base, api_key, _request_payload(model, context))
+        response, attempts = _post(api_base, api_key, _request_payload(coordinator_model, context))
         output_text = _output_text(response)
         response_id = str(response.get("id", ""))
-        response_model = str(response.get("model", model))
+        response_model = str(response.get("model", coordinator_model))
     try:
         decision = json.loads(output_text)
     except json.JSONDecodeError as error:
@@ -700,11 +700,7 @@ def merge_selection(
             plan.stages[stage]["enabled"] = True
         return plan
 
-    if (
-        plan.mode == "full"
-        and plan.reasons
-        and all(reason.startswith(LLM_REFINABLE_FULL_REASONS) for reason in plan.reasons)
-    ):
+    if plan.mode == "full" and not any(is_hard_full_path(path) for path in plan.changed_files):
         for stage in STAGES:
             plan.stages[stage]["enabled"] = False
         plan.reasons.append("LLM bounded a deterministic static-analysis full-CI fallback")

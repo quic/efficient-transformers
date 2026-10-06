@@ -16,8 +16,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import ModelConfig
 
 from ..check_model_results import dump_and_compare_results
@@ -46,8 +45,6 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     manual_cleanup: callable,
     seq_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
     pooling: Optional[str] = None,
     compare_results: Optional[bool] = False,
 ):
@@ -94,10 +91,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     print("Mad for onnx and PyTorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
-    qeff_model.compile(
-        enable_qnn=enable_qnn,
-        qnn_config=qnn_config,
-    )
+    qeff_model.compile()
     ai100_output = qeff_model.generate(inputs=inputs)
     qeff_ai100_embeddings = (
         ai100_output["output"] if pooling else ai100_output["output"][:, : inputs["input_ids"].shape[1], :]
@@ -113,7 +107,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     if compare_results is False:
         return
 
-    compile_params = {"enable_qnn": enable_qnn, "qnn_config": qnn_config, "pooling": pooling, "seq_len": seq_len}
+    compile_params = {"pooling": pooling, "seq_len": seq_len}
     assert dump_and_compare_results(
         model_name,
         compile_params,
@@ -127,7 +121,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
@@ -142,7 +136,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
@@ -161,7 +155,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
@@ -175,7 +169,7 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manua
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
@@ -189,7 +183,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
@@ -203,7 +197,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
@@ -213,74 +207,4 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cle
         pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=[32, 20], n_layer=1, manual_cleanup=manual_cleanup
-    )
-
-
-##########  QNN TESTS ##############
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model_name", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model_name["model_name"],
-        seq_len=32,
-        n_layer=1,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"],
-        seq_len=32,
-        n_layer=1,
-        pooling=model["pooling"],
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model", [embed_test_models[0]])
-def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"],
-        seq_len=[32, 20],
-        n_layer=1,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
     )

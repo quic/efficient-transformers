@@ -975,6 +975,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)

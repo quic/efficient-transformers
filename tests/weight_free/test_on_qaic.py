@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -32,7 +33,7 @@ from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     PROMPT_LEN,
-    WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
+    WEIGHT_FREE_QAIC_MODEL_PARAMS,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
@@ -42,13 +43,8 @@ from ._helpers import (
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end weight-free export -> compile -> generate on real QAIC hardware."""
     try:
@@ -85,13 +81,8 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
     """HF PT tokens == weight-free QAIC FP16 tokens (exact equality)."""
     from QEfficient.utils.run_utils import ApiRunner
@@ -153,23 +144,23 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize(
-    "model_type,model_id",
-    sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
-)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
 def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir):
     """Weight-free-compiled and legacy dynamo-compiled QPCs produce identical tokens on QAIC."""
     try:
         tokenizer = load_tokenizer(model_id)
         model_hf = load_hf_model(model_id)
+        if model_type == "gpt_oss":
+            model_hf = model_hf.to(torch.float32)
+            model_hf.config.torch_dtype = torch.float32
+            model_hf.config.dtype = torch.float32
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     # Legacy/dynamo leg — real weights, no weight-free export.
     qeff_legacy = QEFFAutoModelForCausalLM(model_hf)
+
     legacy_onnx_path = exported_onnx_path(
         qeff_legacy.export(
             tmp_export_dir / "legacy_export",

@@ -21,7 +21,9 @@ from transformers.models.pixtral.modeling_pixtral import PixtralVisionModel, pos
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def custom_cumsum(tensor):
@@ -432,6 +434,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         if img_size is None and hasattr(self.config.vision_config, "image_size"):

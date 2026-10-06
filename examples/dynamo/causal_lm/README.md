@@ -20,7 +20,7 @@ pip install -e .
 pip install -r examples/dynamo/causal_lm/requirements.txt
 ```
 
-> **Note:** `requirements.txt` installs PyTorch 2.13 CPU wheels and `onnxscript`/`compressed-tensors`. These override any existing torch installation. For x86_64 and aarch64 — Python 3.9–3.12.
+> **Note:** `requirements.txt` installs PyTorch 2.13 CPU wheels and `onnxscript`/`compressed-tensors`. These override any existing torch installation. For x86_64 and aarch64 — Python 3.10–3.12.
 
 ### 3. HuggingFace authentication (gated models)
 ```bash
@@ -54,7 +54,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
     --prefill-seq-len 128 \
     --ctx-len 128 \
     --num-cores 16 \
-    --use-weight-free-export
+    --weight-free
 ```
 
 **Parameters:**
@@ -69,12 +69,12 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 | `--num-cores` | `16` | Number of AI 100 cores |
 | `--aic-hw-version` | `ai100` | Hardware version |
 | `--num-hidden-layers` | `-1` | Override model depth (for debugging) |
-| `--use-weight-free-export` | `False` | Build a meta-device model and load weights during compile |
+| `--weight-free` | `False` | Build a meta-device model and load weights during compile |
 | `--device-group` | `None` | Device IDs, e.g. `[0,1]` |
 
 This example:
 - Loads the model normally by default
-- Builds the model with meta tensors when `--use-weight-free-export` is set
+- Builds the model with meta tensors when `--weight-free` is set
 - Exports using `torch.export` with ONNX subfunctions enabled
 - Compiles to a QPC binary for Cloud AI 100
 - Runs token generation and prints the output
@@ -86,3 +86,35 @@ This example:
 - [QEfficient Documentation](../../../docs/source/index.rst)
 - [Text Generation Examples (TorchScript path)](../../text_generation/README.md)
 - [Validated Models](../../../docs/source/validate.md)
+
+
+## Disaggregated weight-free serving
+
+`disagg_weight_free_inference.py` compiles separate prefill and decode QPCs for
+disaggregated serving. It supports the same weight-free flow for dense and MoE
+causal language models, and `--continuous-batching` enables the CB graph with
+retained KV state and split retained-state IO.
+
+Standard disaggregated compile:
+
+```bash
+python examples/dynamo/causal_lm/disagg_weight_free_inference.py \
+    --model-name tiny-random/qwen3-moe \
+    --prefill-seq-len 32 \
+    --ctx-len 128 \
+    --num-cores 4
+```
+
+Continuous-batching disaggregated compile:
+
+```bash
+python examples/dynamo/causal_lm/disagg_weight_free_inference.py \
+    --model-name tiny-random/gpt-oss-mxfp4 \
+    --continuous-batching \
+    --full-batch-size 2 \
+    --prefill-seq-len 32 \
+    --ctx-len 128 \
+    --num-cores 4
+```
+
+The script prints separate QPC paths for the prefill and decode workers. In standard mode it then runs a prompt through prefill, transfers the retained KV state to decode, and prints generated text. With `--continuous-batching`, it compiles the CB QPCs and leaves the runtime KV-DMA handoff to the serving integration.

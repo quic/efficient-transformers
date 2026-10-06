@@ -26,7 +26,8 @@ Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 
 import logging
 import os
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -51,6 +52,8 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForCTC,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
+    _QEffAutoModelForImageTextToTextDualQPC,
+    _QEFFAutoModelForImageTextToTextSingleQPC,
 )
 
 # ---------------------------------------------------------------------------
@@ -60,7 +63,7 @@ from QEfficient.transformers.models.modeling_auto import (
 VOCAB_SIZE = 500
 CTX_LEN = 32
 SEQ_LEN = 8
-
+UNSUPPORTED_WEIGHT_FREE_WARNING = "weight_free=True is only supported for QEFFAutoModelForCausalLM"
 
 # ---------------------------------------------------------------------------
 # Tiny model factories
@@ -223,6 +226,61 @@ class TestQEFFTransformersBase:
         assert not hasattr(model.config, "quantization_config")
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff is not None
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_from_pretrained_disables_unsupported_weight_free(self, wrapper_cls, model_factory, monkeypatch, caplog):
+        """Non-CausalLM from_pretrained paths warn and do not forward weight_free."""
+        captured_kwargs = {}
+
+        def fake_from_pretrained(_model_id, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return model_factory()[0]
+
+        monkeypatch.setattr(wrapper_cls._hf_auto_class, "from_pretrained", fake_from_pretrained)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls.from_pretrained("dummy-model", weight_free=True)
+
+        assert "weight_free" not in captured_kwargs
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    @pytest.mark.parametrize(
+        ("wrapper_cls", "model_factory"),
+        [
+            pytest.param(QEFFAutoModel, make_tiny_bert, id="automodel"),
+            pytest.param(QEFFAutoModelForSequenceClassification, make_tiny_bert_seq_cls, id="sequence-classification"),
+            pytest.param(QEFFAutoModelForSpeechSeq2Seq, make_tiny_whisper, id="speech-seq2seq"),
+            pytest.param(QEFFAutoModelForCTC, make_tiny_wav2vec2, id="ctc"),
+        ],
+    )
+    def test_direct_init_disables_unsupported_weight_free(self, wrapper_cls, model_factory, caplog):
+        """Non-CausalLM direct construction must not enable the weight-free export path."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = wrapper_cls(model_factory()[0], weight_free=True)
+
+        assert qeff_model._weight_free is False
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING in caplog.text
+        assert wrapper_cls.__name__ in caplog.text
+
+    def test_causal_lm_direct_init_preserves_weight_free(self, caplog):
+        """CausalLM remains the only wrapper that accepts weight_free=True."""
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model = QEFFAutoModelForCausalLM(make_tiny_llama()[0], weight_free=True)
+
+        assert qeff_model._weight_free is True
+        assert UNSUPPORTED_WEIGHT_FREE_WARNING not in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +516,40 @@ class TestQEFFAutoModelForCausalLMCompileValidation:
         qeff = QEFFAutoModelForCausalLM(model)
         with pytest.raises(TypeError, match="prefill_only"):
             qeff.compile(prefill_seq_len=32, ctx_len=128, prefill_only="yes")
+
+    @pytest.mark.parametrize(
+        ("compile_kwargs", "expected_graph_names"),
+        [
+            pytest.param({"prefill_seq_len": 32}, ["Prefill", "Decode"], id="combined"),
+            pytest.param({"prefill_only": False, "prefill_seq_len": 32}, ["Decode"], id="explicit-decode-nonunit"),
+        ],
+    )
+    def test_weight_free_compile_allows_supported_modes(
+        self, tmp_path, monkeypatch, compile_kwargs, expected_graph_names
+    ):
+        """weight_free=True allows compile modes outside the unsupported disaggregated boundary."""
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, weight_free=True)
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff, "_compile", fake_compile)
+
+        qpc_path = qeff.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            ctx_len=128,
+            **compile_kwargs,
+        )
+
+        assert qpc_path == tmp_path / "qpc"
+        assert captured_kwargs["prefill_only"] == compile_kwargs.get("prefill_only")
+        assert [spec["_graph_name"] for spec in captured_kwargs["specializations"]] == expected_graph_names
 
     def test_compile_prefill_only_true_continuous_batching_requires_kv_cache_batch_size(self):
         """compile raises ValueError when prefill_only=True + continuous_batching=True + no kv_cache_batch_size."""
@@ -822,8 +914,6 @@ class TestQEFFAutoModel:
         """pytorch_feature_generate runs the model and returns output."""
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
-        # _write_io_dir must be initialised before calling pytorch_feature_generate directly
-        qeff._write_io_dir = None
         inputs = {
             "input_ids": torch.zeros((1, SEQ_LEN), dtype=torch.int64),
             "attention_mask": torch.ones((1, SEQ_LEN), dtype=torch.int64),
@@ -1312,3 +1402,96 @@ class TestTLMMultiSpecSpecializations:
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 1, f"Expected 1 decode spec for scalar 0, got: {decode_specs}"
         assert decode_specs[0]["seq_len"] == 1  # k=0 → seq_len=1
+
+
+@pytest.mark.cpu_only
+class TestArtifactsGenerationAPIs:
+    def test_causal_lm_compile_artifacts_reaches_base_compile(self, tmp_path):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        expected = tmp_path / "qpc"
+        with patch.object(qeff, "_compile", return_value=expected) as compile_model:
+            result = qeff.compile(prefill_seq_len=8, ctx_len=32, artifacts=True)
+        assert result == expected
+        assert compile_model.call_args.kwargs["artifacts"] is True
+
+    def test_causal_lm_proxy_writes_artifact_bundle(self, tmp_path):
+        import numpy as np
+
+        class FakeTokenizer:
+            padding_side = "right"
+            pad_token_id = 0
+            eos_token_id = 0
+
+            def __call__(self, prompt, return_tensors, padding, max_length=None):
+                del prompt, return_tensors
+                input_ids = np.array([[1, 2]], dtype=np.int64)
+                attention_mask = np.ones_like(input_ids)
+                if padding == "max_length":
+                    pad_width = max_length - input_ids.shape[1]
+                    input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                    attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+                return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, enable_proxy=True)
+        compile_dir = qeff.compile(
+            compile_dir=tmp_path,
+            prefill_seq_len=8,
+            ctx_len=32,
+            artifacts=True,
+            offload_pt_weights=False,
+        )
+        io_dir = qeff.generate(tokenizer=FakeTokenizer(), prompts=["hello"], artifacts=True)
+
+        assert compile_dir == qeff.compile_artifacts_path
+        assert (compile_dir / "qaic-compile.sh").is_file()
+        assert (io_dir / "aic_batch_io.json").is_file()
+
+    def test_causal_lm_artifacts_delegates_without_runtime(self, tmp_path):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.qpc_path = tmp_path / "qpc"
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_causal_lm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = qeff.generate(tokenizer=MagicMock(), prompts=["hello"], artifacts=True)
+        assert result == expected
+        writer.assert_called_once()
+
+    def test_single_qpc_vlm_artifacts_delegates_without_runtime(self, tmp_path):
+        model = SimpleNamespace()
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_single_qpc_vlm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = _QEFFAutoModelForImageTextToTextSingleQPC.generate(
+                model,
+                processor=MagicMock(),
+                images=["image"],
+                prompts=["prompt"],
+                artifacts=True,
+            )
+        assert result == expected
+        writer.assert_called_once()
+
+    def test_dual_qpc_vlm_artifacts_delegates_without_runtime(self, tmp_path):
+        model = SimpleNamespace()
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_dual_qpc_vlm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = _QEffAutoModelForImageTextToTextDualQPC.generate(
+                model,
+                processor=MagicMock(),
+                images=["image"],
+                prompts=["prompt"],
+                skip_lang=True,
+                artifacts=True,
+            )
+        assert result == expected
+        writer.assert_called_once()

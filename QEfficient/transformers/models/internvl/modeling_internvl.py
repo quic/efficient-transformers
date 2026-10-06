@@ -13,7 +13,9 @@ import torch.nn.functional as F
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class QEffInternEncoderWrapper(nn.Module):
@@ -114,6 +116,7 @@ class QEffInternVLModel(nn.Module):
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        vision_batch_size: Optional[int] = None,  # Kept for the uniform VLM hook interface
         **compiler_options,
     ):
         num_patches = compiler_options.pop("num_patches", None)
