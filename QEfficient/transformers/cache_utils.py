@@ -1546,25 +1546,16 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                 cache_shape = tuple(layer.keys.shape)
                 if tuple(layer.values.shape) != cache_shape:
                     raise ValueError("CP sparse key and value cache shapes must match.")
-                if layer.keys.ndim == 3:
-                    expected_rows = batch_local * rows
-                    if layer.keys.shape[0] != expected_rows or layer.keys.shape[2] != head_dim:
-                        raise ValueError(
-                            f"Row-folded CP sparse cache shape {cache_shape} does not match "
-                            f"({expected_rows}, local_ctx_len, {head_dim})."
-                        )
-                    local_ctx_len = layer.keys.shape[1]
-                elif layer.keys.ndim == 4:
-                    if tuple(layer.keys.shape[:2]) != (batch_local, rows) or layer.keys.shape[3] != head_dim:
-                        raise ValueError(
-                            f"CP sparse cache shape {cache_shape} does not match "
-                            f"({batch_local}, {rows}, local_ctx_len, {head_dim})."
-                        )
-                    local_ctx_len = layer.keys.shape[2]
-                else:
-                    raise ValueError(f"CP sparse caches must have rank 3 or 4, got shape {cache_shape}.")
-                cache_keys = layer.keys.reshape(batch_local, rows, local_ctx_len, head_dim)
-                cache_values = layer.values.reshape(batch_local, rows, local_ctx_len, head_dim)
+                if (
+                    layer.keys.ndim != 4
+                    or tuple(layer.keys.shape[:2]) != (batch_local, rows)
+                    or layer.keys.shape[3] != head_dim
+                ):
+                    raise ValueError(
+                        f"CP sparse cache shape {cache_shape} does not match "
+                        f"({batch_local}, {rows}, local_ctx_len, {head_dim})."
+                    )
+                local_ctx_len = layer.keys.shape[2]
                 key_dp = key_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
                 value_dp = value_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
                 key_updates = (
@@ -1591,25 +1582,14 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                     .reshape(batch_local, rows, query_len)
                     .to(torch.int32)
                 )
-                flat_keys = cache_keys.reshape(batch_local * rows, local_ctx_len, head_dim)
-                flat_values = cache_values.reshape(batch_local * rows, local_ctx_len, head_dim)
-                flat_addr = torch.where(row_live, addr, torch.zeros_like(addr)).reshape(batch_local * rows, query_len)
-                flat_key_updates = torch.where(
-                    row_live.unsqueeze(-1),
-                    key_updates,
-                    ctx_gather_3d(flat_keys, torch.zeros_like(flat_addr)).reshape(
-                        batch_local, rows, query_len, head_dim
-                    ),
-                ).reshape(batch_local * rows, query_len, head_dim)
-                flat_value_updates = torch.where(
-                    row_live.unsqueeze(-1),
-                    value_updates,
-                    ctx_gather_3d(flat_values, torch.zeros_like(flat_addr)).reshape(
-                        batch_local, rows, query_len, head_dim
-                    ),
-                ).reshape(batch_local * rows, query_len, head_dim)
-                layer.keys = ctx_scatter_3d(flat_keys, flat_addr, flat_key_updates).reshape(cache_shape)
-                layer.values = ctx_scatter_3d(flat_values, flat_addr, flat_value_updates).reshape(cache_shape)
+                batch_idx = torch.arange(batch_local, device=layer.keys.device).view(batch_local, 1, 1)
+                block_id = torch.where(
+                    row_live,
+                    batch_idx.expand(batch_local, rows, query_len),
+                    torch.iinfo(torch.int32).max,
+                ).to(torch.int32)
+                layer.keys = self.paged_scatter(layer.keys, block_id, addr, key_updates)
+                layer.values = self.paged_scatter(layer.values, block_id, addr, value_updates)
                 layer._mark_initialized(layer.keys)
                 return
             rows = dp * hkv
