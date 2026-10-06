@@ -596,7 +596,7 @@
       "is_moe": false,
       "supports_blocking": false,
       "use_text_config": true,
-      "known_ccl_export_or_compile_issue": "Gemma3 CCL subfunction compilation fails because the attention mask and attention weights have incompatible context dimensions.",
+      "known_bf16_compile_issue": "Gemma-3 bf16 compilation fails because qaic-compile glow error",
       "layer_types": [
         "sliding_attention",
         "full_attention"
