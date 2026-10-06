@@ -4112,23 +4112,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         supports_paged_attention = False
-        # increase seq_len if using a larger number of blocks and set PagedAttention params if required
+        # Paged attention stores KV cache in fixed-size blocks, so export one KV block at a time.
+        # Query-axis blocking padding is handled below after the cache shape is established.
         if self.hash_params.get("blocking_kwargs", None):
             blocking_kwargs = self.hash_params["blocking_kwargs"]
-            block_counts = [
-                blocking_kwargs.num_q_blocks,
-                blocking_kwargs.num_kv_blocks,
-                blocking_kwargs.num_batch_blocks,
-            ]
-            max_blocks = max([b for b in block_counts if b is not None], default=1)
-            block_size = -(-seq_len // max_blocks)
-            seq_len = block_size * max_blocks
-            num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
-            supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
-
-            seq_len = kv_block_size = (
-                -(-blocking_kwargs.ctx_len // num_kv_blocks) if supports_paged_attention else seq_len
-            )
+            num_kv_blocks = blocking_kwargs.num_kv_blocks
+            supports_paged_attention = blocking_kwargs.paged_attention
+            if supports_paged_attention:
+                seq_len = kv_block_size = -(-blocking_kwargs.ctx_len // num_kv_blocks)
 
         # TODO: Remove this hack ##################
         if dynamo:
