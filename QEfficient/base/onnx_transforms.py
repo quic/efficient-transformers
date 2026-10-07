@@ -305,6 +305,8 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     # Match past_key.N / past_value.N regardless of any suffix that follows
     # (plain, _RetainedState, or _<prefix>_RetainedState for kv_cache_prefix).
     _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)")
+    # Sparse-attention layers also carry an index_key.N cache that is scattered into the same way.
+    _INDEX_KEY_INPUT_RE = re.compile(r"^index_key\.(\d+)")
 
     # All scatter op_type names that write back a KV cache tensor.
     # Keep in sync with CustomOpTransform._custom_ops and the dynamo
@@ -329,11 +331,18 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         from that buffer's function argument rather than output names or node order.
         """
         function_cache_inputs: dict[str, str] = {}
+        cache_names: dict[str, str] = {}
         for input_index, input_name in enumerate(node.input):
             match = cls._KV_INPUT_RE.match(input_name)
-            if match is None:
-                continue
-            kind, input_layer_idx = match.groups()
+            if match is not None:
+                kind, input_layer_idx = match.groups()
+                cache_name = f"past_{kind}.{input_layer_idx}"
+            else:
+                match = cls._INDEX_KEY_INPUT_RE.match(input_name)
+                if match is None:
+                    continue
+                kind, input_layer_idx = "index_key", match.group(1)
+                cache_name = f"index_key.{input_layer_idx}"
             if input_layer_idx != layer_idx:
                 continue
             if input_index >= len(fn.input):
@@ -342,8 +351,9 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                     f"call-node cache input '{input_name}'."
                 )
             function_cache_inputs[kind] = fn.input[input_index]
+            cache_names[kind] = cache_name
 
-        if set(function_cache_inputs) != {"key", "value"}:
+        if not {"key", "value"} <= set(function_cache_inputs):
             return None
 
         scatter_outputs = {}
@@ -361,7 +371,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                     f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})" for writer in writers
                 ]
                 raise ValueError(
-                    f"Could not uniquely resolve the nested past_{kind}.{layer_idx} cache writer in function "
+                    f"Could not uniquely resolve the nested {cache_names[kind]} cache writer in function "
                     f"'{fn.name}': expected one CtxScatter* with data input '{function_input}', "
                     f"found {len(writers)} ({writer_names})."
                 )
@@ -425,19 +435,34 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if scatter_outputs is None:
                 continue
 
-            # Expose scatter outputs in the function's output list, rename KV
+            cache_inputs = {"key": kv_inputs["key"], "value": kv_inputs["value"]}
+            plain_inputs = {kind: f"past_{kind}.{layer_idx}" for kind in cache_inputs}
+            index_input = next(
+                (
+                    name
+                    for name in node.input
+                    if (match := cls._INDEX_KEY_INPUT_RE.match(name)) is not None and match.group(1) == layer_idx
+                ),
+                None,
+            )
+            index_output = f"index_key.{layer_idx}_RetainedState"
+            if index_input is not None and index_output in dangling_retained_outputs:
+                cache_inputs["index_key"] = index_input
+                plain_inputs["index_key"] = f"index_key.{layer_idx}"
+                desired_outputs.append(index_output)
+
+            # Expose scatter outputs in the function's output list, rename cache
             # inputs and append retained-state output names to the call node.
-            # Both writers are resolved before this block, so graph rewiring is atomic.
-            for kind, desired_output in zip(("key", "value"), desired_outputs):
+            # All writers are resolved before this block, so graph rewiring is atomic.
+            for kind, desired_output in zip(cache_inputs, desired_outputs):
                 scatter_output = scatter_outputs[kind]
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
 
-                retained_input = kv_inputs[kind]
-                plain_input = f"past_{kind}.{layer_idx}"
+                retained_input = cache_inputs[kind]
                 if retained_input.endswith("_RetainedState"):
-                    kv_rename_map[retained_input] = plain_input
+                    kv_rename_map[retained_input] = plain_inputs[kind]
 
                 if desired_output not in node.output:
                     node.output.append(desired_output)
@@ -566,8 +591,27 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
         cls._rename_op_types(model.graph.node, old_to_new)
         for fn in model.functions:
             cls._rename_op_types(fn.node, old_to_new)
+        cls._rename_node_names(model, old_to_new)
 
         return True
+
+    @classmethod
+    def _rename_node_names(cls, model: ModelProto, old_to_new: Dict[str, str]) -> None:
+        """Give call nodes readable names (``<Layer>.<n>``) and drop stale subgraph names from inner nodes."""
+        new_op_types = set(old_to_new.values())
+        call_ordinal = 0
+        for node in model.graph.node:
+            if node.op_type in new_op_types:
+                node.name = f"{node.op_type}.{call_ordinal}"
+                call_ordinal += 1
+
+        # Longest names first so loop-body names are replaced before their parent subgraph name.
+        replacements = sorted(old_to_new.items(), key=lambda item: len(item[0]), reverse=True)
+        for fn in model.functions:
+            for node in cls._iter_all_nodes(fn.node):
+                for old, new in replacements:
+                    if old in node.name:
+                        node.name = node.name.replace(old, new)
 
 
 class AdapterWeightsToInputsTransform(BaseOnnxTransform):
