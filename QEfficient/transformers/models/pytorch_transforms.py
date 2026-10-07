@@ -241,7 +241,16 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
 )
-from transformers.models.qwen4_exp.modeling_qwen4_exp import Qwen4ExpForCausalLM
+from transformers.models.qwen4_exp.modeling_qwen4_exp import (
+    Qwen4ExpForCausalLM,
+    Qwen4ExpTextAttention,
+    Qwen4ExpTextDecoderLayer,
+    Qwen4ExpTextExperts,
+    Qwen4ExpTextGatedDeltaNet,
+    Qwen4ExpTextModel,
+    Qwen4ExpTextPLELayer,
+    Qwen4ExpTextSparseMoeBlock,
+)
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeDecoderLayer,
@@ -591,7 +600,16 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
 )
-from QEfficient.transformers.models.qwen4_exp.modeling_qwen4_exp import QEffQwen4ExpForCausalLM
+from QEfficient.transformers.models.qwen4_exp.modeling_qwen4_exp import (
+    QEffQwen4ExpForCausalLM,
+    QEffQwen4ExpTextAttention,
+    QEffQwen4ExpTextDecoderLayer,
+    QEffQwen4ExpTextExperts,
+    QEffQwen4ExpTextGatedDeltaNet,
+    QEffQwen4ExpTextModel,
+    QEffQwen4ExpTextPLELayer,
+    QEffQwen4ExpTextSparseMoeBlock,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
@@ -903,6 +921,13 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
         # Qwen4-Exp text-only decode
         Qwen4ExpForCausalLM: QEffQwen4ExpForCausalLM,
+        Qwen4ExpTextModel: QEffQwen4ExpTextModel,
+        Qwen4ExpTextDecoderLayer: QEffQwen4ExpTextDecoderLayer,
+        Qwen4ExpTextAttention: QEffQwen4ExpTextAttention,
+        Qwen4ExpTextGatedDeltaNet: QEffQwen4ExpTextGatedDeltaNet,
+        Qwen4ExpTextPLELayer: QEffQwen4ExpTextPLELayer,
+        Qwen4ExpTextSparseMoeBlock: QEffQwen4ExpTextSparseMoeBlock,
+        Qwen4ExpTextExperts: QEffQwen4ExpTextExperts,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,

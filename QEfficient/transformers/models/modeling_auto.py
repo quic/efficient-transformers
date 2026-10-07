@@ -4099,7 +4099,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         #######################################################################
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = (
+            self.model.get_export_seq_len()
+            if hasattr(self.model, "get_export_seq_len")
+            else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        )
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         supports_paged_attention = False
@@ -4356,6 +4360,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
+        if hasattr(self.model, "prepare_export_inputs"):
+            example_inputs, dynamic_axes = self.model.prepare_export_inputs(example_inputs, dynamic_axes)
 
         # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
         # inputs for tracing and bridge to cache objects inside a temporary wrapper.
@@ -4938,23 +4945,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
         custom_io = {}
         if not cache_compressed:
-            kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
-            retained_state_names = (
-                self.model.get_retained_state_names()
-                if hasattr(self.model, "get_retained_state_names")
-                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
-            )
-            for state_name in retained_state_names:
-                output_name = _compile_io_name(
-                    f"{state_name}{kv_infix}_RetainedState",
-                    use_onnx_subfunctions=use_onnx_subfunctions,
+            if hasattr(self.model, "get_custom_io") and not kv_cache_prefix and not use_onnx_subfunctions:
+                custom_io = self.model.get_custom_io(dtype=kv_cache_dtype)
+            else:
+                kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
+                retained_state_names = (
+                    self.model.get_retained_state_names()
+                    if hasattr(self.model, "get_retained_state_names")
+                    else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
                 )
-                _add_retained_state_custom_io(
-                    custom_io,
-                    output_name,
-                    dtype=kv_cache_dtype,
-                    use_onnx_subfunctions=False,
-                )
+                for state_name in retained_state_names:
+                    output_name = _compile_io_name(
+                        f"{state_name}{kv_infix}_RetainedState",
+                        use_onnx_subfunctions=use_onnx_subfunctions,
+                    )
+                    _add_retained_state_custom_io(
+                        custom_io,
+                        output_name,
+                        dtype=kv_cache_dtype,
+                        use_onnx_subfunctions=False,
+                    )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
