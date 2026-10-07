@@ -309,7 +309,7 @@ def generic_blocked_attention_interface(
                         "is_sliding": sliding_window is not None,
                         "sliding_window": past_key_value.get_sliding_window_len(),
                     }
-            )
+                )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = _uses_blocked_kv_cache(mode) and supports_blocked_kv(past_key_value)

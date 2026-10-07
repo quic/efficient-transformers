@@ -303,18 +303,6 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             start_index, end_index, cache_kwargs, folded_cache=folded_cache
         )
 
-    def read_only_blocked_K(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
-        layer = self.kv_layers[layer_idx]
-        if layer is None:
-            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
-        return layer.read_only_blocked_K(start_index, end_index, cache_kwargs)
-
-    def read_only_blocked_V(self, start_index: int, end_index: int, layer_idx: int, cache_kwargs: dict):
-        layer = self.kv_layers[layer_idx]
-        if layer is None:
-            raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
-        return layer.read_only_blocked_V(start_index, end_index, cache_kwargs)
-
     def write_only(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int, cache_kwargs: dict):
         layer = self.kv_layers[layer_idx]
         if layer is None:
@@ -566,7 +554,7 @@ def qeff_torch_causal_conv1d_update(
     pos_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
     hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    is_decode = (pos_ids[:, :1] == pos_ids[:, -1:]).reshape(-1, 1, 1)
+    is_decode = (pos_ids[:, :1] == pos_ids[:, -1:]).reshape(-1, *([1] * (conv_state.ndim - 1)))
 
     # Decode is a fixed shift. Keep this branch tensor-only so the compiler can
     # select it for both BS1 and folded decode graphs.
@@ -915,16 +903,18 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # QAIC's LoadPad kernel only supports float32/int32/int64 inputs, so bf16/fp16
         # tensors are padded via torch.cat with a zero tensor instead of F.pad.
         query = torch.cat(
-            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype)],
+            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype, device=query.device)],
             dim=2,
         )
-        key = torch.cat([key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype)], dim=2)
+        key = torch.cat(
+            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype, device=key.device)], dim=2
+        )
         value = torch.cat(
-            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype)],
+            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype, device=value.device)],
             dim=2,
         )
-        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype)], dim=2)
-        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype)], dim=2)
+        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype, device=beta.device)], dim=2)
+        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype, device=g.device)], dim=2)
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (self.head_k_dim**0.5)
         query = query * scale

@@ -56,9 +56,10 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
+    ReplicateKVHeadCheckpointTransform,
 )
-from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_free_ort_inputs
 from QEfficient.exporter.weight_free.export import _resolve_weight_free_target_dtype
+from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_free_ort_inputs
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
@@ -233,6 +234,85 @@ def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_pipeline_limits_checkpoint_to_configured_decoder_layers(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.embed_tokens.weight": torch.ones(2, 2),
+                "model.layers.0.self_attn.q_proj.weight": torch.ones(2, 2),
+                "model.layers.1.self_attn.q_proj.weight": torch.ones(2, 2),
+                "model.layers.2.self_attn.q_proj.weight": torch.ones(2, 2),
+            },
+        )
+
+        CheckpointTransformPipeline([DtypeConversionCheckpointTransform]).apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            config=SimpleNamespace(num_hidden_layers=2),
+        )
+
+        assert set(_load_prepared_tensors(out)) == {
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.1.self_attn.q_proj.weight",
+        }
+
+    def test_pipeline_replicates_kv_projection_weights_and_tracks_plan_parameters(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        k_proj = torch.arange(16, dtype=torch.float16).reshape(4, 4)
+        v_bias = torch.arange(4, dtype=torch.float16)
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.layers.0.self_attn.k_proj.weight": k_proj,
+                "model.layers.0.self_attn.v_proj.bias": v_bias,
+                "model.layers.0.self_attn.q_proj.weight": torch.ones(4, 4, dtype=torch.float16),
+            },
+        )
+
+        pipeline = CheckpointTransformPipeline([ReplicateKVHeadCheckpointTransform])
+        common_kwargs = {
+            "config": SimpleNamespace(num_hidden_layers=1),
+            "target_dtype": torch.float16,
+        }
+        plan_repeat_2, _ = pipeline.build_plan(
+            src,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 2},
+            **common_kwargs,
+        )
+        plan_repeat_4, _ = pipeline.build_plan(
+            src,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 4},
+            **common_kwargs,
+        )
+        assert plan_repeat_2.fingerprint_payload() != plan_repeat_4.fingerprint_payload()
+
+        pipeline.apply(
+            src,
+            out,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 2},
+            **common_kwargs,
+        )
+        prepared = _load_prepared_tensors(out)
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.k_proj.weight"],
+            torch.repeat_interleave(k_proj.reshape(2, 2, 4), 2, dim=0).reshape(8, 4),
+        )
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.v_proj.bias"],
+            torch.repeat_interleave(v_bias.reshape(2, 2), 2, dim=0).reshape(8),
+        )
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.q_proj.weight"],
+            torch.ones(4, 4, dtype=torch.float16),
+        )
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"

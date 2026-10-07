@@ -206,8 +206,11 @@ class ReplicateKVHeadCheckpointTransform(BaseCheckpointTransform):
         hash_params = kwargs.get("hash_params", {})
         repeat = int(hash_params.get("num_replicate_kv_heads", 1) or 1)
         orig_kv_heads = hash_params.get("orig_kv_heads")
-        return repeat > 1 and isinstance(orig_kv_heads, int) and orig_kv_heads > 0 and any(
-            _KV_PROJ_RE.search(key) for key in weight_map
+        return (
+            repeat > 1
+            and isinstance(orig_kv_heads, int)
+            and orig_kv_heads > 0
+            and any(_KV_PROJ_RE.search(key) for key in weight_map)
         )
 
     @classmethod
