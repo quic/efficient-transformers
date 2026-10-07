@@ -5210,7 +5210,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: str | None = None, dynamo: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -5224,13 +5224,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        dynamo: bool, optional
+            whether to enable dynamo during export.
 
         Returns
         -------
         str
             Path to the generated ONNX graph file.
         """
-        dynamo = kwargs.get("dynamo", self._weight_free)
+        dynamo = dynamo or self._weight_free
         inputs = self.model.get_dummy_inputs(dynamo=dynamo)
         dynamic_axes = self.model.get_onnx_dynamic_axes(dynamo=dynamo)
         output_names = self.model.get_output_names()
@@ -5618,7 +5620,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: str | None = None, dynamo: bool = False, **kwargs) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -5626,6 +5628,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
            :export_dir (str, optional): The directory path to store ONNX-graph.
            :use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+           :dynamo: bool, optional
+            whether to enable dynamo during export.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -5633,7 +5637,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
 
-        dynamo = kwargs.get("dynamo", self._weight_free)
+        dynamo = dynamo or self._weight_free
         if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
             bs = max(2, bs)

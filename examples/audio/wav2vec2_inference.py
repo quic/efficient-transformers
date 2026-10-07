@@ -35,12 +35,12 @@ def main():
     parser.add_argument(
         "--dynamo",
         action="store_true",
-        help="Build the model on meta tensors and load weights at compile time",
+        help="Export via dynamo",
     )
     parser.add_argument(
         "--use-onnx-subfunction",
         action="store_true",
-        help="Build the model on meta tensors and load weights at compile time",
+        help="Use ONNX subfunctions while exporting",
     )
     args = parser.parse_args()
 
@@ -67,7 +67,7 @@ def main():
         seq_len=args.seq_len,
         num_cores=args.num_cores,
         dynamo=True if args.weight_free else args.dynamo,
-        use_onnx_subfunctions=args.use_onnx_subfunctions,
+        use_onnx_subfunctions=args.use_onnx_subfunction,
     )
 
     ## STEP 4 -- Run the model and generate the output
