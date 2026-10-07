@@ -210,6 +210,20 @@ io_dir = model.generate(
 
 The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` and node precision info (NPI) files when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
 
+## Dump executed inference inputs
+
+To replay the exact inputs used by a Cloud AI 100 inference, pass `dump_inputs_path` to `generate()` or set the `QEFFICIENT_DUMP_INPUTS` environment variable before constructing runtime sessions:
+
+```python
+exec_info = model.generate(
+    tokenizer=tokenizer,
+    prompts=["Hello"],
+    dump_inputs_path="./input-dumps",
+)
+```
+
+The dump directory contains one subdirectory per QPC session, such as `text`, `vision`, or `vision_text`. Each session directory includes an `aic_batch_io.json` descriptor and raw inputs under `data/`, with one descriptor entry for every runtime invocation. Chunked prefill writes every prefill chunk, decode writes every decode step, and multimodal generation writes inputs for each active model. Disaggregated serving paths that use KV-cache slice handoff also write slice metadata and KV-cache buffer snapshots in `manifest.json`.
+
 For weight-free CausalLM export, instantiate the model with `weight_free=True`
 and pass `artifacts=True` to `compile()`. The returned compile directory
 includes the ONNX model, `weight_spec.json`, the replay script, and compile

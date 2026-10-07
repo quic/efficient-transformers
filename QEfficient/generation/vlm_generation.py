@@ -99,6 +99,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         return_pdfs: bool = False,
         include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
+        dump_inputs_path: str | bool | None = None,
     ):
         """
         Initialize vision-language generation with enhanced capabilities
@@ -148,6 +149,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
             activate=False,  # vision components need to be initialized first
+            dump_inputs_path=dump_inputs_path,
+            dump_component_name="text",
         )
 
         # Physical KV block table for paged attention on the language QPC. None (default)
@@ -180,6 +183,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._vision_qpc_path = vision_qpc_path
         self.device_ids = device_ids  # Store device_ids for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
+        self.dump_inputs_path = dump_inputs_path
         self._vision_outputs_cache = LRUCache(max_size=100)  # LRU cache for vision outputs
         self._vision_cache = {}  # Cache for vision outputs across batches
         self._init_vision_components()
@@ -198,7 +202,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         """Initialize vision-specific components"""
         # Vision session (separate from base class language session)
         self._vision_session = QAICInferenceSession(
-            self._vision_qpc_path, self.device_ids, activate=False, enable_debug_logs=self.enable_debug_logs
+            self._vision_qpc_path,
+            self.device_ids,
+            activate=False,
+            enable_debug_logs=self.enable_debug_logs,
+            dump_inputs_path=self.dump_inputs_path,
+            dump_component_name="vision",
         )
 
         # Vision handler with language session coordination

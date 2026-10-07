@@ -2322,6 +2322,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: bool = False,
         skip_lang: bool = False,
         artifacts: bool = False,
+        dump_inputs_path: str | bool | None = None,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray, Path]:
         """
@@ -2395,6 +2396,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
+                dump_inputs_path=dump_inputs_path,
                 **kwargs,
             )
 
@@ -2411,7 +2413,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+            inputs=inputs,
+            device_ids=device_ids,
+            streamer=streamer,
+            generation_len=generation_len,
+            dump_inputs_path=dump_inputs_path,
         )
 
     def kv_offload_generate(
@@ -2420,6 +2426,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         streamer: TextStreamer | None = None,
         device_ids: list[int] | None = None,
         generation_len: int | None = None,
+        dump_inputs_path: str | bool | None = None,
     ):
         """
         Performs generation for multimodal models with KV offloading to CPU.
@@ -2453,10 +2460,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
-        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+        lang_session = QAICInferenceSession(
+            self.lang_model.qpc_path,
+            device_ids,
+            activate=False,
+            dump_inputs_path=dump_inputs_path,
+            dump_component_name="text",
+        )
 
         if self.vision_model.qpc_path:
-            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+            vision_session = QAICInferenceSession(
+                self.vision_model.qpc_path,
+                device_ids,
+                dump_inputs_path=dump_inputs_path,
+                dump_component_name="vision",
+            )
 
         batch_size, ctx_len, _fbs, num_kv_blocks = get_compilation_dims(self.lang_model.qpc_path)
 
@@ -3141,6 +3159,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         images: List[str] = None,
         prompts: List[str] = None,
         artifacts: bool = False,
+        dump_inputs_path: str | bool | None = None,
     ) -> Union[torch.Tensor, np.ndarray, Path]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
@@ -3179,7 +3198,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         return self.cloud_ai_100_generate(
-            inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
+            inputs=inputs,
+            device_ids=device_ids,
+            generation_len=generation_len,
+            streamer=streamer,
+            dump_inputs_path=dump_inputs_path,
         )
 
     def cloud_ai_100_generate(
@@ -3189,6 +3212,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         enable_debug_logs: bool = False,
         generation_len: int | None = None,
         streamer: TextStreamer | None = None,
+        dump_inputs_path: str | bool | None = None,
     ) -> np.ndarray:
         """
         Performs generation for multimodal models using a single QPC on Cloud AI 100 hardware.
@@ -3218,7 +3242,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         """
         inputs = self.auto_correct_inputs(inputs)
         qpc_session = QAICInferenceSession(
-            self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
+            self.qpc_path,
+            device_ids,
+            enable_debug_logs=enable_debug_logs,
+            activate=False,
+            dump_inputs_path=dump_inputs_path,
+            dump_component_name="vision_text",
         )
         batch_size, ctx_len, _fbs, _ = get_compilation_dims(self.qpc_path)
         pad_token_id = 1
@@ -5001,6 +5030,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
         artifacts: bool = False,
+        dump_inputs_path: str | bool | None = None,
         **kwargs,
     ) -> Union[CloudAI100ExecInfoNew, Path]:
         """
@@ -5059,6 +5089,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
+                dump_inputs_path=dump_inputs_path,
                 **kwargs,
             )
         else:
