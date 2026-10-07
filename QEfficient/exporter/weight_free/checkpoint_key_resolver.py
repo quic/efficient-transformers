@@ -203,6 +203,10 @@ def find_checkpoint_key(
             candidates.append(candidate.replace(".visual.", ".vision_model.", 1))
         elif candidate.startswith("visual."):
             candidates.append(candidate.replace("visual.", "vision_model.", 1))
+        if candidate.startswith("model.visual."):
+            candidates.append(candidate.replace("model.visual.", "model.language_model.visual.", 1))
+        elif candidate.startswith("visual."):
+            candidates.append(f"model.language_model.{candidate}")
 
     if stripped.startswith("model.lm_head."):
         candidates.append(stripped.removeprefix("model."))

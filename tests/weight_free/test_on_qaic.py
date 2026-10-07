@@ -21,14 +21,20 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
+import onnx
 import pytest
 import torch
 from PIL import Image
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 
+from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
+from QEfficient.utils.test_utils import load_vlm_model_from_config
 
 from ._helpers import (
     BATCH_SIZE,
@@ -43,13 +49,99 @@ from ._helpers import (
     skip_on_model_fetch_error,
 )
 
+_VLM_CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "image_text_model_configs.json"
+with _VLM_CONFIG_PATH.open() as config_file:
+    _VLM_MODEL_CONFIGS = {entry["model_type"]: entry for entry in json.load(config_file)["image_text_models"]}
+
+WEIGHT_FREE_VLM_QAIC_MODEL_PARAMS = [
+    pytest.param("qwen3_vl", id="qwen3-vl"),
+    pytest.param("qwen3_vl_moe", id="qwen3-vl-moe"),
+    pytest.param("qwen3_5", id="qwen3.5"),
+    pytest.param("qwen3_5_moe", id="qwen3.5-moe"),
+]
+VLM_GENERATION_LEN = 2
 VLM_PREFILL_SEQ_LEN = 64
 VLM_CTX_LEN = 512
 VLM_IMAGE_HEIGHT = 354
 VLM_IMAGE_WIDTH = 536
 VLM_NUM_CORES = 4
-VLM_GENERATION_LEN = 2
 VLM_PROMPT = "Describe this image."
+
+
+def _build_vlm_test_checkpoint(model_type: str, checkpoint_dir: Path):
+    model_config = _VLM_MODEL_CONFIGS[model_type]
+    config = AutoConfig.for_model(
+        model_type,
+        trust_remote_code=True,
+        **model_config.get("additional_params", {}),
+    )
+    config.name_or_path = model_config["model_name"]
+    torch.manual_seed(42)
+    model = load_vlm_model_from_config(config)
+    model.save_pretrained(checkpoint_dir, safe_serialization=True)
+    return model, model_config
+
+
+def _prepare_vlm_test_inputs(processor, model, qeff_model, model_config):
+    image = Image.new("RGB", (224, 224), color=(32, 96, 160))
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": model_config["text_prompt"]},
+                {"type": "image"},
+            ],
+        }
+    ]
+    prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+    hf_inputs = processor(images=image, text=prompt, return_tensors="pt")
+    qeff_inputs = {key: value.clone() if isinstance(value, torch.Tensor) else value for key, value in hf_inputs.items()}
+    if qeff_model is not None:
+        qeff_inputs = qeff_model.prepare_inputs_for_generation(
+            inputs=qeff_inputs,
+            prefill_seq_len=model_config["prompt_len"],
+            batch_size=model_config["batch_size"],
+        )
+    if "pixel_values" in hf_inputs:
+        hf_inputs["pixel_values"] = hf_inputs["pixel_values"].to(torch.float32)
+    if "pixel_values" in qeff_inputs:
+        qeff_inputs["pixel_values"] = qeff_inputs["pixel_values"].to(torch.float32)
+    return hf_inputs, qeff_inputs
+
+
+def _assert_vlm_weight_free_graph(model_type: str, language_onnx: Path) -> None:
+    graph = onnx.load(str(language_onnx), load_external_data=False)
+    function_names = [function.name for function in graph.functions]
+    expected_functions = {
+        "qwen3_vl": ("QEffQwen3VLTextDecoderLayer",),
+        "qwen3_vl_moe": ("QEffQwen3VLMoeTextDecoderLayer",),
+        "qwen3_5": (
+            "QEffQwen3_5LinearAttentionDecoderLayer",
+            "QEffQwen3_5FullAttentionDecoderLayer",
+        ),
+        "qwen3_5_moe": (
+            "QEffQwen3_5MoeLinearAttentionDecoderLayer",
+            "QEffQwen3_5MoeFullAttentionDecoderLayer",
+        ),
+    }[model_type]
+    missing_functions = [
+        expected for expected in expected_functions if not any(expected in name for name in function_names)
+    ]
+    assert not missing_functions, f"Missing subfunctions {missing_functions} in {language_onnx}: {function_names}"
+
+    retained_outputs = {output.name for output in graph.graph.output if output.name.endswith("_RetainedState")}
+    assert retained_outputs, f"No retained-state outputs found in {language_onnx}"
+    if model_type in {"qwen3_5", "qwen3_5_moe"}:
+        assert any(name.startswith("conv_state.") for name in retained_outputs)
+        assert any(name.startswith("recurrent_state.") for name in retained_outputs)
+    else:
+        assert any(name.startswith("past_key.") for name in retained_outputs)
+        assert any(name.startswith("past_value.") for name in retained_outputs)
+
+
+def _assert_weight_spec(onnx_path: Path) -> None:
+    weight_spec = onnx_path.with_name("weight_spec.json")
+    assert weight_spec.is_file(), f"Missing weight-free spec next to {onnx_path}"
 
 
 def _load_vlm_hf_reference(model_id: str):
@@ -346,3 +438,71 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
             f"Weight-free vs legacy QAIC parity failed for {model_id}: "
             f"legacy={legacy_tokens.tolist()}, weight_free={weight_free_tokens.tolist()}"
         )
+
+
+@pytest.mark.weight_free
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_type", WEIGHT_FREE_VLM_QAIC_MODEL_PARAMS)
+def test_weight_free_vlm_hf_qaic_parity(model_type, tmp_export_dir):
+    """Validate one compact weight-free VLM export, compile, and HF/QAIC parity run."""
+    model_config = _VLM_MODEL_CONFIGS[model_type]
+    model_id = model_config["model_name"]
+    checkpoint_dir = tmp_export_dir / f"{model_type}_checkpoint"
+
+    try:
+        processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        hf_model, model_config = _build_vlm_test_checkpoint(model_type, checkpoint_dir)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    hf_inputs, _ = _prepare_vlm_test_inputs(processor, hf_model, None, model_config)
+
+    with torch.inference_mode():
+        hf_output = hf_model.generate(
+            **hf_inputs,
+            min_new_tokens=VLM_GENERATION_LEN,
+            max_new_tokens=VLM_GENERATION_LEN,
+            do_sample=False,
+        )
+    hf_tokens = hf_output[0, hf_inputs["input_ids"].shape[1] :].cpu().numpy()
+
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        str(checkpoint_dir),
+        kv_offload=True,
+        weight_free=True,
+        dtype=torch.float32,
+    )
+    hf_inputs, qeff_inputs = _prepare_vlm_test_inputs(processor, hf_model, qeff_model.model, model_config)
+    export_paths = qeff_model.export(
+        tmp_export_dir / "weight_free_vlm_export",
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+        prefill_seq_len=model_config["prompt_len"],
+        ctx_len=model_config["ctx_len"],
+    )
+    vision_onnx, language_onnx = (Path(export_paths[0]), Path(export_paths[-1]))
+    assert vision_onnx.is_file()
+    assert language_onnx.is_file()
+    _assert_weight_spec(vision_onnx)
+    _assert_weight_spec(language_onnx)
+    _assert_vlm_weight_free_graph(model_type, language_onnx)
+
+    qeff_model.compile(
+        img_size=model_config["img_size"],
+        prefill_seq_len=model_config["prompt_len"],
+        ctx_len=model_config["ctx_len"],
+        height=224,
+        width=224,
+        mm_processor_kwargs={"min_pixels": 256 * 256, "max_pixels": 256 * 256},
+        num_devices=1,
+        num_cores=16,
+        mxfp6_matmul=False,
+        use_onnx_subfunctions=True,
+    )
+    qaic_output = qeff_model.generate(inputs=qeff_inputs, generation_len=VLM_GENERATION_LEN)
+    assert qaic_output.generated_ids is not None
+    qaic_tokens = np.asarray(qaic_output.generated_ids)[0, :VLM_GENERATION_LEN]
+    assert np.array_equal(hf_tokens[:VLM_GENERATION_LEN], qaic_tokens), (
+        f"Weight-free HF/QAIC parity failed for {model_type}: HF={hf_tokens.tolist()}, QAIC={qaic_tokens.tolist()}"
+    )

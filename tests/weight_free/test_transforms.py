@@ -1058,6 +1058,19 @@ class TestWeightFreeCheckpointTransforms:
             == "visual.patch_embed.proj.weight"
         )
 
+    def test_resolver_maps_nested_qwen35_visual_prefix(self):
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key(
+                "model.model.visual.patch_embed.proj.weight",
+                {"model.language_model.visual.patch_embed.proj.weight": "model.safetensors"},
+                backbone,
+            )
+            == "model.language_model.visual.patch_embed.proj.weight"
+        )
+
     def test_resolver_strips_language_model_wrapper_for_tied_vlm_weights(self):
         backbone = MagicMock()
         backbone.base_model_prefix = "model"
