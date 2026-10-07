@@ -411,28 +411,6 @@ def execute_checkpoint_plan(
 # Marks a prepared checkpoint directory as complete, so re-runs can skip work.
 CHECKPOINT_PREPARED_SENTINEL = ".checkpoint_prepared"
 CHECKPOINT_PREPARED_MANIFEST = ".checkpoint_prepared.json"
-_LAYER_KEY_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
-
-
-def _configured_num_hidden_layers(config) -> Optional[int]:
-    """Return the decoder layer count selected by the export configuration."""
-    for candidate in (config, getattr(config, "text_config", None), getattr(config, "llm_config", None)):
-        num_hidden_layers = getattr(candidate, "num_hidden_layers", None)
-        if isinstance(num_hidden_layers, int) and num_hidden_layers >= 0:
-            return num_hidden_layers
-    return None
-
-
-def _filter_weight_map_for_configured_layers(weight_map: dict[str, str], config) -> dict[str, str]:
-    """Exclude checkpoint tensors belonging to decoder layers not present in the export config."""
-    num_hidden_layers = _configured_num_hidden_layers(config)
-    if num_hidden_layers is None:
-        return weight_map
-    return {
-        key: shard_name
-        for key, shard_name in weight_map.items()
-        if (match := _LAYER_KEY_RE.search(key)) is None or int(match.group(1)) < num_hidden_layers
-    }
 
 
 def _checkpoint_files(root: Path) -> List[Path]:
@@ -674,7 +652,7 @@ class CheckpointTransformPipeline:
     ) -> tuple[CheckpointPlan, str]:
         """Collect transform stages, fuse each tensor group, and return the execution plan."""
         src = Path(src)
-        weight_map = _filter_weight_map_for_configured_layers(read_weight_map(src), config)
+        weight_map = read_weight_map(src)
         hash_params = hash_params or {}
 
         from QEfficient.exporter.weight_free.checkpoint_transforms import (
