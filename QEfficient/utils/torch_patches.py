@@ -43,7 +43,9 @@ import torch.onnx.utils as onnx_utils
 import torch.utils._pytree as pytree
 from torch import _C
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 try:
     from torch.onnx._internal.torchscript_exporter import utils as ts_utils

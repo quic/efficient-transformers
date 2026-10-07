@@ -43,7 +43,9 @@ from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_stat
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def _should_export_embedding_output(module) -> bool:
