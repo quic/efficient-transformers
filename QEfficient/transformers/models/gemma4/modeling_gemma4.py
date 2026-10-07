@@ -230,7 +230,7 @@ def eager_attention_forward_text(
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask,
-            torch.tensor(constants.MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype),
+            torch.tensor(constants.FP16_SAFE_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype, device=attn_weights.device),
             attn_weights,
         )
 
