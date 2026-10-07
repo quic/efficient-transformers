@@ -505,7 +505,7 @@ def eager_attention_forward(
     if attention_mask is not None:
         attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
@@ -900,16 +900,21 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # QAIC's LoadPad kernel only supports float32/int32/int64 inputs, so bf16/fp16
         # tensors are padded via torch.cat with a zero tensor instead of F.pad.
         query = torch.cat(
-            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype)],
+            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype, device=query.device)],
             dim=2,
         )
-        key = torch.cat([key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype)], dim=2)
+        key = torch.cat(
+            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype, device=key.device)], dim=2
+        )
         value = torch.cat(
-            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype)],
+            [
+                value,
+                torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype, device=value.device),
+            ],
             dim=2,
         )
-        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype)], dim=2)
-        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype)], dim=2)
+        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype, device=beta.device)], dim=2)
+        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype, device=g.device)], dim=2)
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (self.head_k_dim**0.5)
         query = query * scale
@@ -947,7 +952,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
 
         last_recurrent_state = (
-            torch.zeros(batch_size, num_heads, k_head_dim, v_head_dim).to(value)
+            torch.zeros(batch_size, num_heads, k_head_dim, v_head_dim, dtype=value.dtype, device=value.device)
             if initial_state is None
             else initial_state.to(value)
         )
@@ -1103,9 +1108,11 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                         conv_state_all.shape[2],
                         conv_state_all.shape[3],
                     )
-                cache_params.conv_states[self.layer_idx] = scattered_conv
+                updated_conv_state = scattered_conv
             else:
-                cache_params.conv_states[self.layer_idx] = new_conv_state
+                updated_conv_state = new_conv_state
+            if not return_cache_states:
+                cache_params.conv_states[self.layer_idx] = updated_conv_state
         else:
             recurrent_state = None
             mixed_qkv = F.silu(self.conv1d(mixed_qkv)[:, :, :seq_len])
@@ -1175,14 +1182,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
-                cache_params.recurrent_states[self.layer_idx] = ctx_scatter_cb(
+                updated_recurrent_state = ctx_scatter_cb(
                     recurrent_state_all,
                     recurrent_batch_index,
                     recurrent_position_ids,
                     last_recurrent_state.to(recurrent_state_all.dtype),
                 )
             else:
-                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
+                updated_recurrent_state = last_recurrent_state
+            if not return_cache_states:
+                cache_params.recurrent_states[self.layer_idx] = updated_recurrent_state
 
         else:
             # No cache — prefill only, no state needed
@@ -1207,7 +1216,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
         output = self.out_proj(core_attn_out)
         if return_cache_states:
-            return output, cache_params.conv_states[self.layer_idx], cache_params.recurrent_states[self.layer_idx]
+            return output, updated_conv_state, updated_recurrent_state
         return output
 
     @staticmethod
@@ -1890,7 +1899,7 @@ class QEffQwen3_5MoeVisionAttention(Qwen3_5MoeVisionAttention):
         v = v.transpose(0, 1)
         attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
         attn_weights = attn_weights + attention_mask
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=self.config.torch_dtype).to(q.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v)
         attn_output = attn_output.transpose(0, 1)
         attn_output = attn_output.reshape(seq_length, -1)
