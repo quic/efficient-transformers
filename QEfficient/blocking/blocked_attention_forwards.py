@@ -468,9 +468,9 @@ def blocked_kv_attention_forward_headpar_offline(
 
         skip_future = None
         if skip_kv:
-            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            skip_future = (start_index > current_position).all()
             # Eager mode Only
-            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing() and not torch._dynamo.is_compiling():
                 if skip_future.item():
                     break
 
@@ -517,7 +517,7 @@ def blocked_kv_attention_forward_headpar_offline(
 
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             max_block = torch.where(skip_future, torch.full_like(max_block, HEADPAR_MASKED_ATTENTION_VALUE), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
@@ -527,7 +527,7 @@ def blocked_kv_attention_forward_headpar_offline(
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
         sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, value_5d)
-        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
             out_block = torch.where(skip_future, torch.zeros_like(out_block), out_block)
 
@@ -781,7 +781,7 @@ def blocked_qkv_attention_forward_prefill_online(
     )
 
     q_fold = query.reshape(B, num_cores, n_rep_per_core, QL, D)
-    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing() or torch._dynamo.is_compiling()
     t_chunks = []
     for t_start in range(0, QL, ql_chunk):
         t_end = min(t_start + ql_chunk, QL)
@@ -818,7 +818,7 @@ def blocked_qkv_attention_forward_prefill_online(
 
             skip_future = None
             if skip_kv:
-                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+                skip_future = (start_index > current_position).all()
                 if not is_export and skip_future.item():
                     break
 

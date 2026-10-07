@@ -141,6 +141,26 @@ class AttentionBlockingConfig:
     kv_block_unroll: Optional[int] = 1
     num_cores_per_device: Optional[int] = None
     paged_attention: Optional[bool] = False
+    # MiniMax M3 MSA-specific options
+    msa_attn_dp: Optional[int] = None
+    msa_attn_cp: Optional[int] = None
+    msa_attn_dp_local_batch_size: Optional[int] = None
+    msa_indexer_dp: Optional[int] = None
+    msa_indexer_cp: Optional[int] = None
+    indexer_n_head: Optional[int] = None
+    indexer_q_size: Optional[int] = None
+    indexer_q_chunk: Optional[int] = None
+    indexer_q_proj_num_chunks: Optional[int] = None
+    indexer_prefill_parallel: Optional[bool] = None
+    indexer_num_blocks: Optional[int] = None
+    msa_num_kv_blocks: Optional[int] = None
+    msa_q_chunk: Optional[int] = None
+    prefill_compile_seq_len: Optional[int] = None
+    prefill_export_seq_len: Optional[int] = None
+    page_block_size: Optional[int] = None
+    num_logical_pages: Optional[int] = None
+    msa_indexer_num_logical_pages: Optional[int] = None
+    msa_attn_num_logical_pages: Optional[int] = None
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
@@ -408,8 +428,16 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
-            use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_mode == BlockingMode.KV_BATCH_FOLD:
+            mode = blocking_config.mode
+            use_kv_blocked = (
+                mode == BlockingMode.KV
+                or mode == BlockingMode.KV_HEADPAR
+                or mode == BlockingMode.QKV
+                or mode == BlockingMode.HKV
+                or mode == BlockingMode.HQKV
+                or mode == BlockingMode.BHQKV
+            ) and supports_blocked_kv(past_key_value)
+            if mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)

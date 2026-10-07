@@ -82,7 +82,52 @@ def _router_gate_aliases(name: str) -> List[str]:
         return [name[: -len(".mlp.gate.weight")] + ".mlp.router.weight"]
     if name.endswith(".mlp.router.weight"):
         return [name[: -len(".mlp.router.weight")] + ".mlp.gate.weight"]
+    if name.endswith(".mlp.gate.e_score_correction_bias"):
+        return [name[: -len(".mlp.gate.e_score_correction_bias")] + ".mlp.e_score_correction_bias"]
     return []
+
+
+def _vlm_language_model_aliases(name: str) -> List[str]:
+    """Return checkpoint aliases for language weights exported through a VLM wrapper.
+
+    A VLM decoder wrapper can expose the transformed text model through paths such
+    as ``model.model.language_model.layers.*`` while Hugging Face stores the same
+    weights under ``language_model.model.layers.*``. Keep this as a fallback so
+    exact causal-LM checkpoint names continue to take precedence.
+    """
+    aliases = []
+    language_model_marker = "language_model."
+    if language_model_marker in name:
+        suffix = name.split(language_model_marker, 1)[1]
+        suffix = suffix.removeprefix("model.")
+        aliases.extend(
+            [
+                f"language_model.{suffix}",
+                f"language_model.model.{suffix}",
+                f"model.language_model.{suffix}",
+                f"model.language_model.model.{suffix}",
+            ]
+        )
+    elif ".lm_head." in name or name.startswith("lm_head."):
+        suffix = name.split("lm_head.", 1)[1]
+        aliases.extend(
+            [
+                f"language_model.lm_head.{suffix}",
+                f"model.language_model.lm_head.{suffix}",
+            ]
+        )
+    return aliases
+
+
+def _minimax_indexer_aliases(name: str) -> List[str]:
+    """Return checkpoint aliases for MiniMax indexer parameters nested during export."""
+    marker = ".self_attn.indexer."
+    if marker not in name:
+        return []
+    prefix, suffix = name.split(marker, 1)
+    if suffix not in {"q_proj.weight", "k_proj.weight", "q_norm.weight", "k_norm.weight"}:
+        return []
+    return [f"{prefix}.self_attn.index_{suffix}"]
 
 
 def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
@@ -124,9 +169,11 @@ def find_checkpoint_key(
 
     Resolution order:
     1. Universal HF prefix rules (base_model., base_model_prefix).
-    2. Legacy sparse-MoE router/gate spelling fallback.
-    3. Transform-specific explicit mapping via resolve_onnx_key().
-    4. Legacy MoE weight aliases fallback for old checkpoints.
+    2. VLM language-model wrapper aliases.
+    3. MiniMax indexer module aliases.
+    4. Legacy sparse-MoE router/gate spelling fallback.
+    5. Transform-specific explicit mapping via resolve_onnx_key().
+    6. Legacy MoE weight aliases fallback for old checkpoints.
     """
     # 1. Universal HF prefix rules
     candidates = [onnx_name]
@@ -144,22 +191,40 @@ def find_checkpoint_key(
     if key is not None:
         return key
 
-    # 2. Keep the historic sparse-MoE router/gate compatibility after exact lookup.
-    router_gate_candidates = [alias for candidate in candidates for alias in _router_gate_aliases(candidate)]
+    # 2. VLM wrappers add module nesting that is absent from the checkpoint
+    # namespace. Expand those aliases only after the exact causal-LM paths fail.
+    vlm_candidates = [alias for candidate in candidates for alias in _vlm_language_model_aliases(candidate)]
+    key = _find_checkpoint_key(vlm_candidates, checkpoint_index, onnx_name)
+    if key is not None:
+        return key
+
+    all_candidates = [*candidates, *vlm_candidates]
+
+    # 3. MiniMax checkpoints flatten the indexer projection/norm parameters into
+    # self_attn, while the transformed module exposes them through self_attn.indexer.
+    indexer_candidates = [alias for candidate in all_candidates for alias in _minimax_indexer_aliases(candidate)]
+    key = _find_checkpoint_key(indexer_candidates, checkpoint_index, onnx_name)
+    if key is not None:
+        return key
+
+    all_candidates.extend(indexer_candidates)
+
+    # 4. Keep the historic sparse-MoE router/gate compatibility after exact lookup.
+    router_gate_candidates = [alias for candidate in all_candidates for alias in _router_gate_aliases(candidate)]
     key = _find_checkpoint_key(router_gate_candidates, checkpoint_index, onnx_name)
     if key is not None:
         return key
 
-    # 3. Transform-specific explicit mapping
+    # 5. Transform-specific explicit mapping
     if active_transform is not None and hasattr(active_transform, "resolve_onnx_key"):
-        for candidate in [onnx_name, *_router_gate_aliases(onnx_name)]:
+        for candidate in [*all_candidates, *router_gate_candidates]:
             key = active_transform.resolve_onnx_key(candidate, checkpoint_index)
             if key is not None:
                 return key
 
-    # 4. Legacy MoE weight aliases (kept for old prepared checkpoints)
+    # 6. Legacy MoE weight aliases (kept for old prepared checkpoints)
     return _find_checkpoint_key(
-        [alias for c in candidates for alias in _moe_weight_aliases(c)],
+        [alias for candidate in all_candidates for alias in _moe_weight_aliases(candidate)],
         checkpoint_index,
         onnx_name,
     )
@@ -267,7 +332,6 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     return WeightSpec(
         model_name=model_name,
         model_id=model_ref,
-        external_data_root=str(root) if root is not None else None,
         files=relative_checkpoint_files,
         inputs=promoted_inputs,
     )
