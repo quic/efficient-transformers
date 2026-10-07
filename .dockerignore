@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+qeff_env/
+.venv/
+venv/
+
+# Local caches
+_cache/
+.cache/
+
+# HuggingFace
+huggingface/
+**/huggingface/
+
+# Model artifacts
+qeff_models/
+examples/**/qeff_models/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+
+# User files
+temp_home/
+
+# Secrets
