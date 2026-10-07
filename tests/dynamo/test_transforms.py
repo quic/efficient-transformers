@@ -500,6 +500,62 @@ class TestPreserveNestedCacheRetainedStateTransform:
         changed = PreserveNestedCacheRetainedStateTransform.apply(model)
         assert not changed, "Transform should be a no-op when there are no dangling _RetainedState outputs"
 
+    def test_exposes_index_key_retained_state_for_sparse_layers(self):
+        layer_idx = 3
+        fn = helper.make_function(
+            domain="",
+            fname="repeated_subgraph0",
+            inputs=["index_key_arg", "past_key_arg", "past_value_arg", "update"],
+            outputs=["hidden_out"],
+            nodes=[
+                helper.make_node(
+                    "M3CtxScatter", ["index_key_arg", "pos", "update"], ["index_scatter"], domain="qti.aisw"
+                ),
+                helper.make_node("CtxScatter", ["past_key_arg", "pos", "update"], ["key_scatter"], domain="qti.aisw"),
+                helper.make_node(
+                    "CtxScatter", ["past_value_arg", "pos", "update"], ["value_scatter"], domain="qti.aisw"
+                ),
+                helper.make_node("Identity", ["update"], ["hidden_out"]),
+            ],
+            opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid("qti.aisw", 1)],
+        )
+        call_inputs = [
+            f"index_key.{layer_idx}_RetainedState",
+            f"past_key.{layer_idx}",
+            f"past_value.{layer_idx}",
+            "update",
+        ]
+        graph = helper.make_graph(
+            [helper.make_node("repeated_subgraph0", call_inputs, ["hidden_out"])],
+            "sparse_graph",
+            [helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in call_inputs],
+            [
+                helper.make_tensor_value_info(name, TensorProto.FLOAT, None)
+                for name in (
+                    "hidden_out",
+                    f"past_key.{layer_idx}_RetainedState",
+                    f"past_value.{layer_idx}_RetainedState",
+                    f"index_key.{layer_idx}_RetainedState",
+                )
+            ],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        model.functions.append(fn)
+
+        assert PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert list(model.functions[0].output) == ["hidden_out", "key_scatter", "value_scatter", "index_scatter"]
+        call_node = model.graph.node[0]
+        assert list(call_node.output) == [
+            "hidden_out",
+            f"past_key.{layer_idx}_RetainedState",
+            f"past_value.{layer_idx}_RetainedState",
+            f"index_key.{layer_idx}_RetainedState",
+        ]
+        input_names = [value.name for value in model.graph.input]
+        assert f"index_key.{layer_idx}" in input_names
+        assert f"index_key.{layer_idx}_RetainedState" not in input_names
+
     def test_rejects_missing_cache_writer_without_partial_rewire(self):
         # Build model where function has only 1 scatter node
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=1, scatter_count_per_fn=1)
@@ -530,6 +586,29 @@ class TestRenameRepeatedSubgraphTransform:
         node_op_types = [n.op_type for n in model.graph.node]
         assert "QEffLlamaDecoderLayer" in node_op_types
         assert "QEffLlamaDecoderLayer_1" in node_op_types
+
+        # Call nodes get readable names instead of dynamo's invoke_subgraph names
+        assert [n.name for n in model.graph.node] == ["QEffLlamaDecoderLayer.0", "QEffLlamaDecoderLayer_1.1"]
+
+    def test_renames_stale_subgraph_names_inside_loop_bodies(self):
+        model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=1)
+        body = helper.make_function(
+            domain="",
+            fname="repeated_subgraph0__while_loop_cond_graph_0",
+            inputs=["x"],
+            outputs=["y"],
+            nodes=[
+                helper.make_node("Identity", ["x"], ["y"], name="node_repeated_subgraph0__while_loop_cond_graph_0_7")
+            ],
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        model.functions.append(body)
+
+        RenameRepeatedSubgraphTransform.apply(model, target_classnames=["QEffLlamaDecoderLayer"])
+
+        body_fn = next(fn for fn in model.functions if fn.name.endswith("__while_loop_cond_graph_0"))
+        assert body_fn.name == "QEffLlamaDecoderLayer__while_loop_cond_graph_0"
+        assert body_fn.node[0].name == "node_QEffLlamaDecoderLayer__while_loop_cond_graph_0_7"
 
     def test_noop_on_empty_classnames(self):
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2)
