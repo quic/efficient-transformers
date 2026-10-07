@@ -563,8 +563,10 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     split = configured_split
     num_kv_blocks = max(1, num_kv_blocks)
     kv_block_size = -(-ctx_len // num_kv_blocks)
-    n_rep_chunk = num_kv_groups
-    ql_chunk = -(-ctx_len // num_q_blocks)
+    n_rep_chunk = kwargs.get("n_rep_chunk")
+    if n_rep_chunk is None:
+        n_rep_chunk = num_kv_groups
+    ql_chunk = -(-seq_len // num_q_blocks)
     position_ids = cache_kwargs.get("position_ids")
 
     query_folded = query.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim)
