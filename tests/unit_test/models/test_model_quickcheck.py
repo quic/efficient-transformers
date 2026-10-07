@@ -2853,6 +2853,37 @@ def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
     assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
 
 
+def test_qwen3_5_moe_get_specializations_accepts_qeff_logger_adapter():
+    """Ensure constrained vision-size logging works with a LoggerAdapter."""
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe import modeling_qwen3_5_moe
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeForConditionalGeneration,
+    )
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1),
+        text_config=SimpleNamespace(num_hidden_layers=1, layer_types=[]),
+    )
+
+    assert isinstance(modeling_qwen3_5_moe.logger, logging.LoggerAdapter)
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=512,
+        ctx_len=14336,
+        height=[354],
+        width=[536],
+        num_frames=[1],
+        vision_size=1,
+        kv_offload=True,
+    )
+
+    assert len(specs["vision"]) == 1
+    assert specs["lang"][0]["vision_size"] == 1
+
+
 def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
     from types import SimpleNamespace
 
