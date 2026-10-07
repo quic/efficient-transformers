@@ -27,7 +27,9 @@ from torch._guards import detect_fake_mode
 from torch._subclasses.fake_tensor import extract_tensor_metadata
 from torch.fx.experimental.proxy_tensor import disable_proxy_modes_tracing
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 _DEAD_SCALAR_OPS = frozenset(
     {
