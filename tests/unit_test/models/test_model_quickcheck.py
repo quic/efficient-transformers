@@ -2647,6 +2647,75 @@ class _BlockedPrefillCache:
         return self.value[:, :, start_index:end_index, :]
 
 
+@pytest.mark.parametrize("n_rep_chunk", [None, 1, 2])
+def test_blocked_prefill_qkv_accepts_n_rep_chunk(n_rep_chunk):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_headpar_offline
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 2, 4, 4
+    num_query_heads, num_kv_groups = 4, 2
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_query_heads // num_kv_groups, ctx_len, head_dim)
+
+    output, attention_weights = blocked_qkv_attention_forward_prefill_headpar_offline(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=1,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        configured_split=1,
+        n_rep_chunk=n_rep_chunk,
+    )
+
+    assert output.shape == (batch_size, sequence_length, num_query_heads, head_dim)
+    assert attention_weights is None
+
+
+def test_blocked_prefill_qkv_chunks_queries_by_seq_len(monkeypatch):
+    from QEfficient.blocking import blocked_attention_forwards as blocked
+
+    chunk_lengths = []
+    original_create_causal_mask = blocked._create_causal_mask
+
+    def tracked_create_causal_mask(*args, **kwargs):
+        chunk_lengths.append(kwargs["position_ids"].shape[-1])
+        return original_create_causal_mask(*args, **kwargs)
+
+    monkeypatch.setattr(blocked, "_create_causal_mask", tracked_create_causal_mask)
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 2, 4, 8
+    num_query_heads, num_kv_groups = 4, 2
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_query_heads // num_kv_groups, ctx_len, head_dim)
+
+    blocked.blocked_qkv_attention_forward_prefill_headpar_offline(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=2,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        configured_split=1,
+        n_rep_chunk=None,
+    )
+
+    assert chunk_lengths == [1, 1]
+
+
 @pytest.mark.parametrize(
     "num_query_heads, num_kv_groups, num_cores",
     [
