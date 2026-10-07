@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -57,10 +58,12 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
+from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_free_ort_inputs
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
 from QEfficient.utils import runtime_requirements
+from QEfficient.utils.checkpoint_utils import checkpoint_root
 from QEfficient.utils.export_utils import _generate_export_hash
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
@@ -207,6 +210,23 @@ def _load_prepared_tensors(root):
     return loaded
 
 
+def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
+    hub = tmp_path / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    blob = hub / "models--org--m" / "blobs" / "abc"
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"x")
+    local = tmp_path / "mymodel"
+    local.mkdir()
+    shard = local / "model.safetensors"
+    shard.symlink_to(blob)
+
+    root = checkpoint_root(str(local), [str(shard)])
+
+    assert root == tmp_path
+    assert shard.relative_to(root) == Path("mymodel/model.safetensors")
+
+
 # ---------------------------------------------------------------------------
 # Test checkpoint layout transforms
 # ---------------------------------------------------------------------------
@@ -256,6 +276,36 @@ class TestWeightFreeCheckpointTransforms:
 
         assert prepared == out
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
+    def test_ort_weight_injection_resolves_cache_relative_spec_for_absolute_model_id(self, tmp_path):
+        hf_cache = tmp_path / "hf_cache"
+        prepared = hf_cache / "models--org--model" / "snapshots" / "prepared"
+        export_dir = tmp_path / "export"
+        prepared.mkdir(parents=True)
+        export_dir.mkdir()
+        save_file({"weight": torch.tensor([1.0, 2.0])}, str(prepared / "model.safetensors"))
+
+        weight_spec_path = export_dir / "weight_spec.json"
+        weight_spec_path.write_text(
+            json.dumps(
+                {
+                    "files": [
+                        {
+                            "format": "safetensors",
+                            "path": "models--org--model/snapshots/prepared/model.safetensors",
+                        }
+                    ],
+                    "inputs": [{"name": "weight", "location": {"file": 0, "key": "weight"}}],
+                    "model_id": str(prepared),
+                    "model_name": "tiny",
+                    "version": 5,
+                }
+            )
+        )
+
+        ort_inputs = load_weight_free_ort_inputs(weight_spec_path, {})
+
+        assert ort_inputs["weight"].tolist() == [1.0, 2.0]
 
     def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
@@ -1063,6 +1113,7 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+        assert spec.external_data_root == str(tmp_path)
 
 
 def _fake_export(
