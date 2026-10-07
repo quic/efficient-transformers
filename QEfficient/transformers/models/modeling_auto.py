@@ -2215,7 +2215,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.qpc_paths = {}
         if not skip_vision:
             compiler_options_vision = compiler_options.copy()
-            compiler_options_vision["node_precision_info"] = False
+            npi_val = compiler_options.get("node_precision_info", False)
+            if not isinstance(npi_val, str):
+                compiler_options_vision["node_precision_info"] = False
             vision_qpc_path = self.vision_model._compile(
                 onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
