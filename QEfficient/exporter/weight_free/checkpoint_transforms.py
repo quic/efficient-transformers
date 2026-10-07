@@ -175,6 +175,88 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
 
 
 # ---------------------------------------------------------------------------
+# MiniMax-M3 dense gate/up fusion
+# ---------------------------------------------------------------------------
+
+
+class MiniMaxM3DenseGateUpCheckpointTransform(BaseCheckpointTransform):
+    """Fuse serialized MiniMax-M3 dense gate/up weights for the live model layout."""
+
+    TRANSFORM_ID = "minimax_m3_dense_gate_up_fusion_v1"
+    _GATE_RE = re.compile(r"^(.+\.layers\.\d+\.(?:mlp|block_sparse_moe\.shared_experts))\.gate_proj\.weight$")
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        config = kwargs.get("config")
+        model_types = {
+            getattr(config, "model_type", None),
+            getattr(getattr(config, "text_config", None), "model_type", None),
+        }
+        return bool({"minimax_m3_vl", "minimax_m3_vl_text"} & model_types) and any(
+            cls._GATE_RE.match(key) for key in weight_map
+        )
+
+    @classmethod
+    def plan_tasks(cls, context: CheckpointPlanningContext) -> None:
+        for gate_key, gate_shard in sorted(context.weight_map.items()):
+            match = cls._GATE_RE.match(gate_key)
+            if match is None:
+                continue
+
+            prefix = match.group(1)
+            up_key = f"{prefix}.up_proj.weight"
+            if up_key not in context.weight_map:
+                raise ValueError(f"MiniMax-M3 dense MLP is missing paired weight: {up_key}")
+
+            input_keys = (gate_key, up_key)
+            input_refs = _task_refs(input_keys)
+            output_key = f"{prefix}.gate_up_proj.weight"
+            output_ref = TensorRef(output_key, "fused")
+            layer_match = re.search(r"\.layers\.(\d+)\.", prefix)
+            layer_index = int(layer_match.group(1)) if layer_match else -1
+            component = "shared" if prefix.endswith("block_sparse_moe.shared_experts") else "dense"
+            output_file = f"minimax-gate-up-{component}-layer-{layer_index:05d}.safetensors"
+
+            def runner(get_tensor, target_dtype, input_refs=input_refs, output_ref=output_ref):
+                del target_dtype
+                gate = get_tensor(input_refs[0])
+                up = get_tensor(input_refs[1])
+                if gate.shape != up.shape:
+                    raise ValueError(
+                        f"MiniMax-M3 gate/up weight shapes must match, got {tuple(gate.shape)} and {tuple(up.shape)}."
+                    )
+                return {output_ref: torch.cat((gate, up), dim=0).contiguous()}
+
+            task_plan = CheckpointTaskPlan(
+                task_id=f"{cls.TRANSFORM_ID}:{prefix}",
+                input_refs=input_refs,
+                source_files=tuple(sorted({gate_shard, context.weight_map[up_key]})),
+                output_file=output_file,
+                estimated_peak_bytes=_estimate_task_bytes(
+                    context.source_dir,
+                    context.weight_map,
+                    input_keys,
+                    context.target_dtype,
+                ),
+                params=TaskParams(
+                    cls.TRANSFORM_ID,
+                    _task_values(output_key=output_key, output_file=output_file),
+                ),
+            )
+            task_plan.append_stage(
+                CheckpointStage(
+                    stage_id="fuse_gate_up",
+                    input_refs=input_refs,
+                    output_refs=(output_ref,),
+                    params=TaskParams(cls.TRANSFORM_ID, _task_values(output_key=output_key)),
+                    runner=runner,
+                    labels=("gate_up_fusion",),
+                )
+            )
+            context.add_task_plan(task_plan)
+
+
+# ---------------------------------------------------------------------------
 # Internal stacker helper for MoE layers
 # ---------------------------------------------------------------------------
 

@@ -29,11 +29,7 @@ from typing import Callable, Dict, List, Optional, Type
 import psutil
 import torch
 
-from QEfficient.utils.checkpoint_utils import (
-    copy_checkpoint_aux_files,
-    read_weight_map,
-    write_index,
-)
+from QEfficient.utils.checkpoint_utils import copy_checkpoint_aux_files, read_weight_map, write_index
 from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("INFRA")
@@ -461,23 +457,6 @@ def _manifest_matches(out: Path, expected: dict) -> bool:
         return False
 
 
-def _prepared_checkpoint_is_readable(out: Path) -> bool:
-    """Return True when every indexed prepared checkpoint shard is readable."""
-    try:
-        weight_map = read_weight_map(out)
-    except (OSError, json.JSONDecodeError, KeyError):
-        return False
-
-    if not weight_map:
-        return False
-
-    for shard_name in set(weight_map.values()):
-        shard_path = out / shard_name
-        if not shard_path.is_file() or not os.access(shard_path, os.R_OK):
-            return False
-    return True
-
-
 def _write_manifest(out: Path, manifest: dict) -> None:
     (out / CHECKPOINT_PREPARED_MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
@@ -507,6 +486,19 @@ def _clear_stale_prepared_dir(out: Path, src: Path) -> None:
         shutil.rmtree(out)
     else:
         out.unlink()
+
+
+def _config_num_experts(config) -> Optional[int]:
+    """Return the MoE expert count from top-level or nested text configs."""
+    if config is None:
+        return None
+    for candidate in (config, getattr(config, "text_config", None), getattr(config, "llm_config", None)):
+        if candidate is None:
+            continue
+        num_experts = getattr(candidate, "num_local_experts", None) or getattr(candidate, "num_experts", None)
+        if num_experts:
+            return int(num_experts)
+    return None
 
 
 def detect_group_transform(
@@ -542,9 +534,10 @@ def detect_group_transform(
     if hash_params is None:
         hash_params = {}
 
-    num_experts = None
-    if config is not None:
-        num_experts = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    # num_experts = None
+    # if config is not None:
+    #     num_experts = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    num_experts = _config_num_experts(config)
     if not num_experts:
         return None
 
@@ -771,9 +764,7 @@ class CheckpointTransformPipeline:
             plan_payload,
         )
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
-            if _prepared_checkpoint_is_readable(out):
-                return out
-            logger.warning("Prepared checkpoint at %s is incomplete or unreadable; rebuilding.", out)
+            return out
 
         _clear_stale_prepared_dir(out, src)
         out.mkdir(parents=True, exist_ok=True)

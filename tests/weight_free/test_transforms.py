@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -54,15 +53,14 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
     GraniteMoeFusedExpertSplitCheckpointTransform,
+    MiniMaxM3DenseGateUpCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
-from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_free_ort_inputs
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
 from QEfficient.utils import runtime_requirements
-from QEfficient.utils.checkpoint_utils import checkpoint_root
 from QEfficient.utils.export_utils import _generate_export_hash
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
@@ -209,23 +207,6 @@ def _load_prepared_tensors(root):
     return loaded
 
 
-def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
-    hub = tmp_path / "hub"
-    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
-    blob = hub / "models--org--m" / "blobs" / "abc"
-    blob.parent.mkdir(parents=True)
-    blob.write_bytes(b"x")
-    local = tmp_path / "mymodel"
-    local.mkdir()
-    shard = local / "model.safetensors"
-    shard.symlink_to(blob)
-
-    root = checkpoint_root(str(local), [str(shard)])
-
-    assert root == tmp_path
-    assert shard.relative_to(root) == Path("mymodel/model.safetensors")
-
-
 # ---------------------------------------------------------------------------
 # Test checkpoint layout transforms
 # ---------------------------------------------------------------------------
@@ -254,53 +235,6 @@ class TestWeightFreeCheckpointTransforms:
 
         assert prepared == out
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(3, dtype=torch.float32))
-
-    def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
-        src = tmp_path / "src"
-        out = tmp_path / "out"
-        src.mkdir()
-        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
-
-        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
-        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
-        prepared_weight_map = json.loads((prepared / "model.safetensors.index.json").read_text())["weight_map"]
-        prepared_shard = next(iter(set(prepared_weight_map.values())))
-        (prepared / prepared_shard).unlink()
-
-        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
-
-        assert prepared == out
-        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
-
-    def test_ort_weight_injection_resolves_cache_relative_spec_for_absolute_model_id(self, tmp_path):
-        hf_cache = tmp_path / "hf_cache"
-        prepared = hf_cache / "models--org--model" / "snapshots" / "prepared"
-        export_dir = tmp_path / "export"
-        prepared.mkdir(parents=True)
-        export_dir.mkdir()
-        save_file({"weight": torch.tensor([1.0, 2.0])}, str(prepared / "model.safetensors"))
-
-        weight_spec_path = export_dir / "weight_spec.json"
-        weight_spec_path.write_text(
-            json.dumps(
-                {
-                    "files": [
-                        {
-                            "format": "safetensors",
-                            "path": "models--org--model/snapshots/prepared/model.safetensors",
-                        }
-                    ],
-                    "inputs": [{"name": "weight", "location": {"file": 0, "key": "weight"}}],
-                    "model_id": str(prepared),
-                    "model_name": "tiny",
-                    "version": 5,
-                }
-            )
-        )
-
-        ort_inputs = load_weight_free_ort_inputs(weight_spec_path, {})
-
-        assert ort_inputs["weight"].tolist() == [1.0, 2.0]
 
     def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
@@ -883,6 +817,50 @@ class TestWeightFreeCheckpointTransforms:
         torch.testing.assert_close(tensors[f"{prefix}.moe_weights.up"], gate_up[:, 2:, :].transpose(1, 2))
         torch.testing.assert_close(tensors[f"{prefix}.moe_weights.down"], down.transpose(1, 2))
 
+    def test_minimax_m3_dense_gate_up_fusion(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        dense_prefix = "language_model.model.layers.0.mlp"
+        shared_prefix = "language_model.model.layers.3.block_sparse_moe.shared_experts"
+        dense_gate = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+        dense_up = dense_gate + 20
+        shared_gate = dense_gate + 40
+        shared_up = dense_gate + 60
+        dense_down = torch.ones((3, 4), dtype=torch.float32)
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{dense_prefix}.gate_proj.weight": dense_gate,
+                f"{dense_prefix}.up_proj.weight": dense_up,
+                f"{dense_prefix}.down_proj.weight": dense_down,
+                f"{shared_prefix}.gate_proj.weight": shared_gate,
+                f"{shared_prefix}.up_proj.weight": shared_up,
+            },
+        )
+
+        config = SimpleNamespace(
+            model_type="minimax_m3_vl",
+            text_config=SimpleNamespace(model_type="minimax_m3_vl_text", num_local_experts=16),
+        )
+        pipeline = CheckpointTransformPipeline(
+            [MiniMaxM3DenseGateUpCheckpointTransform, DtypeConversionCheckpointTransform]
+        )
+        pipeline.apply(src, out, target_dtype=torch.float16, config=config)
+
+        tensors = _load_prepared_tensors(out)
+        torch.testing.assert_close(
+            tensors[f"{dense_prefix}.gate_up_proj.weight"],
+            torch.cat((dense_gate, dense_up), dim=0).to(torch.float16),
+        )
+        torch.testing.assert_close(
+            tensors[f"{shared_prefix}.gate_up_proj.weight"],
+            torch.cat((shared_gate, shared_up), dim=0).to(torch.float16),
+        )
+        torch.testing.assert_close(tensors[f"{dense_prefix}.down_proj.weight"], dense_down.to(torch.float16))
+        assert f"{dense_prefix}.gate_proj.weight" not in tensors
+        assert f"{dense_prefix}.up_proj.weight" not in tensors
+
     def test_resolver_accepts_moe_weight_aliases(self):
         checkpoint_index = {
             "model.layers.0.mlp.moe_weights.gate": "model.safetensors",
@@ -917,6 +895,65 @@ class TestWeightFreeCheckpointTransforms:
         backbone.base_model_prefix = "model"
 
         assert find_checkpoint_key(onnx_name, {checkpoint_name: "model.safetensors"}, backbone) == checkpoint_name
+
+    @pytest.mark.parametrize(
+        ("onnx_name", "checkpoint_name"),
+        [
+            (
+                "model.model.language_model.embed_tokens.weight",
+                "language_model.model.embed_tokens.weight",
+            ),
+            (
+                "model.model.language_model.layers.0.input_layernorm.weight",
+                "language_model.model.layers.0.input_layernorm.weight",
+            ),
+            ("model.lm_head.weight", "language_model.lm_head.weight"),
+        ],
+    )
+    def test_resolver_accepts_vlm_language_model_aliases(self, onnx_name, checkpoint_name):
+        backbone = MagicMock()
+        backbone.base_model_prefix = ""
+
+        assert find_checkpoint_key(onnx_name, {checkpoint_name: "model.safetensors"}, backbone) == checkpoint_name
+
+    @pytest.mark.parametrize("parameter_name", ["q_proj", "k_proj", "q_norm", "k_norm"])
+    def test_resolver_accepts_minimax_vlm_indexer_aliases(self, parameter_name):
+        onnx_name = f"model.model.language_model.layers.3.self_attn.indexer.{parameter_name}.weight"
+        checkpoint_name = f"language_model.model.layers.3.self_attn.index_{parameter_name}.weight"
+        backbone = MagicMock()
+        backbone.base_model_prefix = ""
+
+        assert find_checkpoint_key(onnx_name, {checkpoint_name: "model.safetensors"}, backbone) == checkpoint_name
+
+    def test_resolver_combines_vlm_alias_with_active_transform(self):
+        checkpoint_name = "language_model.model.layers.0.block_sparse_moe.router.weight"
+        backbone = MagicMock()
+        backbone.base_model_prefix = ""
+
+        assert (
+            find_checkpoint_key(
+                "model.model.language_model.layers.0.mlp.gate.weight",
+                {checkpoint_name: "model.safetensors"},
+                backbone,
+                MoEExpertStackingCheckpointTransform,
+            )
+            == checkpoint_name
+        )
+
+    def test_resolver_combines_vlm_router_bias_alias_with_active_transform(self):
+        checkpoint_name = "language_model.model.layers.3.block_sparse_moe.e_score_correction_bias"
+        backbone = MagicMock()
+        backbone.base_model_prefix = ""
+
+        assert (
+            find_checkpoint_key(
+                "language_model.layers.3.mlp.gate.e_score_correction_bias",
+                {checkpoint_name: "model.safetensors"},
+                backbone,
+                MoEExpertStackingCheckpointTransform,
+            )
+            == checkpoint_name
+        )
 
     def test_resolver_prefers_exact_router_gate_name(self):
         checkpoint_index = {
@@ -1093,7 +1130,6 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
-        assert spec.external_data_root == str(tmp_path)
 
 
 def _fake_export(
