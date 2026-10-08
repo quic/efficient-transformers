@@ -42,6 +42,7 @@ from QEfficient.compile.mdp_generator import (
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
+from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -62,6 +63,7 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
+from QEfficient.utils.checkpoint_utils import checkpoint_root, huggingface_hub_cache_dir
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.export_utils import export_from_compile, export_wrapper
 from QEfficient.utils.logging_utils import (
@@ -100,6 +102,143 @@ def _copy_existing_compiler_input(command: List[str], flag: str, compile_dir: Pa
         if input_path.resolve() != artifact_path.resolve():
             shutil.copy2(input_path, artifact_path)
         command[index] = f"{flag}={artifact_path}"
+
+
+def _copy_onnx_external_data_files(source_onnx_path: Path, artifact_onnx_path: Path) -> None:
+    """Copy ONNX-native external tensor data referenced by source_onnx_path.
+
+    This handles ONNX ``TensorProto.EXTERNAL`` files that must remain beside the
+    replay ONNX. It intentionally does not copy weight-free checkpoint files;
+    those are resolved through ``AIC_EXTERNAL_DATA_ROOT``.
+    """
+    model = onnx.load(source_onnx_path, load_external_data=False)
+    for tensor in onnx.external_data_helper._get_all_tensors(model):
+        if tensor.data_location != onnx.TensorProto.EXTERNAL:
+            continue
+        location = next((entry.value for entry in tensor.external_data if entry.key == "location"), None)
+        if not location:
+            continue
+        location_path = Path(location)
+        if location_path.is_absolute():
+            source_path = location_path
+            artifact_path = artifact_onnx_path.parent / location_path.name
+        else:
+            source_path = source_onnx_path.parent / location_path
+            artifact_path = artifact_onnx_path.parent / location_path
+        if not source_path.is_file():
+            raise FileNotFoundError(f"ONNX external data file not found at: {source_path}")
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.resolve() != artifact_path.resolve():
+            shutil.copy2(source_path, artifact_path)
+
+
+def _weight_free_input_names(onnx_path: Path) -> set[str]:
+    """Return the input names that refer to constants in a weight-free model."""
+    weight_spec_path = resolve_weight_spec_path(onnx_path)
+    return _weight_free_spec_input_names(weight_spec_path)
+
+
+def _weight_free_spec_input_names(weight_spec_path: Path) -> set[str]:
+    """Return the input names recorded in a weight-free sidecar."""
+    if not weight_spec_path.is_file():
+        return set()
+    return {spec_input.name for spec_input in load_weight_spec(weight_spec_path).inputs}
+
+
+def _copy_weight_free_spec(weight_spec_path: Path, artifact_dir: Path) -> None:
+    """Copy only the weight-free sidecar metadata, not checkpoint weight files.
+
+    The compiler consumes the same extdata metadata embedded in the ONNX and
+    resolves its ``files`` entries from ``AIC_EXTERNAL_DATA_ROOT``. Copying the
+    sidecar keeps the bundle inspectable without creating stale duplicate weight
+    files that still point back to their original cache location.
+    """
+    if not weight_spec_path.is_file():
+        raise FileNotFoundError(f"Weight spec file not found at: {weight_spec_path}")
+
+    artifact_weight_spec_path = artifact_dir / weight_spec_path.name
+    if weight_spec_path.resolve() != artifact_weight_spec_path.resolve():
+        shutil.copy2(weight_spec_path, artifact_weight_spec_path)
+
+
+def _root_containing_weight_free_files(model_id_path: Path, external_files) -> Optional[Path]:
+    """Return the nearest ancestor that resolves all relative weight-spec files."""
+    relative_paths = [
+        Path(external_file.path) for external_file in external_files if not Path(external_file.path).is_absolute()
+    ]
+    if not relative_paths:
+        return None
+
+    for root in (model_id_path, *model_id_path.parents):
+        if all((root / relative_path).exists() for relative_path in relative_paths):
+            return root
+    return None
+
+
+def _weight_free_external_data_root(weight_spec_path: Optional[Union[str, Path]]) -> Optional[Path]:
+    """Return the root for weight-free external data files, if a weight spec exists."""
+    if weight_spec_path is None:
+        return None
+
+    weight_spec_path = Path(weight_spec_path)
+    if not weight_spec_path.is_file():
+        return None
+
+    spec = load_weight_spec(weight_spec_path)
+    if spec.external_data_root:
+        return Path(spec.external_data_root).expanduser()
+
+    model_id_path = Path(spec.model_id).expanduser()
+    if model_id_path.exists():
+        root = _root_containing_weight_free_files(model_id_path, spec.files)
+        if root is not None:
+            return root
+        return checkpoint_root(spec.model_id, [str(model_id_path / external_file.path) for external_file in spec.files])
+
+    return huggingface_hub_cache_dir()
+
+
+def _compiler_env_with_external_data_root(weight_spec_path: Optional[Union[str, Path]]) -> Optional[Dict[str, str]]:
+    """Return a compiler environment containing AIC_EXTERNAL_DATA_ROOT for weight-free models."""
+    compiler_env = os.environ.copy()
+    if compiler_env.get("AIC_EXTERNAL_DATA_ROOT"):
+        return compiler_env
+
+    external_data_root = _weight_free_external_data_root(weight_spec_path)
+    if external_data_root is None:
+        return None
+
+    compiler_env["AIC_EXTERNAL_DATA_ROOT"] = str(external_data_root)
+    return compiler_env
+
+
+def _copy_model_compiler_input(
+    command: List[str],
+    compile_dir: Path,
+    weight_spec_path: Optional[Union[str, Path]] = None,
+) -> None:
+    """Copy the ONNX compiler input and dependent files into compile_dir, updating command."""
+    for index, argument in enumerate(command):
+        option, separator, value = argument.partition("=")
+        if option != "-m" or not separator:
+            continue
+
+        source_onnx_path = Path(value)
+        if not source_onnx_path.is_file():
+            raise FileNotFoundError(f"ONNX file not found at: {source_onnx_path}")
+
+        artifact_onnx_path = compile_dir / source_onnx_path.name
+        if source_onnx_path.resolve() != artifact_onnx_path.resolve():
+            shutil.copy2(source_onnx_path, artifact_onnx_path)
+        _copy_onnx_external_data_files(source_onnx_path, artifact_onnx_path)
+
+        resolved_weight_spec_path = (
+            Path(weight_spec_path) if weight_spec_path is not None else source_onnx_path.with_name("weight_spec.json")
+        )
+        if _weight_free_spec_input_names(resolved_weight_spec_path):
+            _copy_weight_free_spec(resolved_weight_spec_path, compile_dir)
+        command[index] = f"-m={artifact_onnx_path}"
+        return
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -149,6 +288,7 @@ def generate_mdp_compiler_dump(
     specializations: Optional[List[Dict[str, int]]] = None,
     specialization_module_name: Optional[str] = None,
     custom_io: Optional[Dict[str, str]] = None,
+    compiler_env: Optional[Dict[str, str]] = None,
 ) -> str:
     """Generate the compiler MDP dump required by the intersection strategy."""
     # The compiler dump is generated before the final QPC compile hash directory exists.
@@ -192,7 +332,7 @@ def generate_mdp_compiler_dump(
 
     logger.info(f"Running compiler for MDP dump: {' '.join(dump_command)}")
     try:
-        subprocess.run(dump_command, capture_output=True, check=True)
+        subprocess.run(dump_command, capture_output=True, check=True, env=compiler_env)
     except subprocess.CalledProcessError as e:
         raise RuntimeError(
             "\n".join(
@@ -1195,6 +1335,12 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(onnx_path)
         if artifacts:
             self.onnx_path = onnx_path
+        existing_weight_spec_path = getattr(self, "weight_spec_path", None)
+        weight_spec_path = (
+            Path(existing_weight_spec_path) if existing_weight_spec_path else resolve_weight_spec_path(onnx_path)
+        )
+        weight_free_inputs = _weight_free_spec_input_names(weight_spec_path)
+        compiler_env = _compiler_env_with_external_data_root(weight_spec_path) if weight_free_inputs else None
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -1308,6 +1454,7 @@ class QEFFBaseModel(ABC):
                     specializations=specializations,
                     specialization_module_name=specialization_module_name,
                     custom_io=custom_io_for_compiler,
+                    compiler_env=compiler_env,
                 )
             mdp_config_dir = (
                 Path(mdp_compiler_dump_path).parent if mdp_strategy is MdpStrategy.INTERSECTION else compile_dir
@@ -1421,8 +1568,10 @@ class QEFFBaseModel(ABC):
             logger.info(f"Running compiler: {' '.join(command)}")
 
         if artifacts:
+            _copy_model_compiler_input(command, compile_dir, self.weight_spec_path)
             _copy_existing_compiler_input(command, "-node-precision-info", compile_dir)
             _copy_existing_compiler_input(command, "-mdp-load-partition-config", compile_dir)
+            external_data_root = Path(compiler_env["AIC_EXTERNAL_DATA_ROOT"]) if compiler_env is not None else None
             path_flags = {
                 "-aic-binary-dir",
                 "-custom-IO-list-file",
@@ -1434,16 +1583,28 @@ class QEFFBaseModel(ABC):
                 "-ols-config",
             }
             replay_command = [Path(command[0]).name]
+            replay_base_dir = compile_dir.resolve()
             for argument in command[1:]:
                 flag, separator, value = argument.partition("=")
                 if separator and flag in path_flags:
-                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), compile_dir)}"
+                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), replay_base_dir)}"
                 replay_command.append(argument)
             compile_command = shlex.join(replay_command)
             script_lines = (
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'cd -- "$(dirname -- "$0")"',
+                *(
+                    (
+                        'if [[ -z "${AIC_EXTERNAL_DATA_ROOT:-}" ]]; then',
+                        f"  export AIC_EXTERNAL_DATA_ROOT={shlex.quote(str(external_data_root))}",
+                        "else",
+                        "  export AIC_EXTERNAL_DATA_ROOT",
+                        "fi",
+                    )
+                    if external_data_root is not None
+                    else ()
+                ),
                 compile_command,
                 "",
             )
@@ -1457,7 +1618,7 @@ class QEFFBaseModel(ABC):
             return compile_dir
 
         try:
-            subprocess.run(command, capture_output=True, check=True)
+            subprocess.run(command, capture_output=True, check=True, env=compiler_env)
         except subprocess.CalledProcessError as e:
             QEFFLogger.log_api_failure("compile", self.__class__.__name__, e)
             raise RuntimeError(
