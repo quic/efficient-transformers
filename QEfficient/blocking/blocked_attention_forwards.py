@@ -118,6 +118,78 @@ def update_running_softmax_prefill(
     return current_max, current_denominator, output
 
 
+def _read_kv_block(
+    *,
+    past_key_value: Cache,
+    start_index: int,
+    end_index: int,
+    layer_idx: int,
+    kv_block_size: int,
+    paged_attention: bool,
+    kv_block_idx: int,
+    block_table: Optional[torch.Tensor],
+    cache_kwargs: Dict[str, Any],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Read one key/value cache block.
+
+    When ``paged_attention`` is set the block is gathered through the paged-attention
+    block table; otherwise it is read as a contiguous slice of the KV cache.
+    """
+    if paged_attention:
+        position_ids = cache_kwargs.get("position_ids")
+        block_index = block_table[:, kv_block_idx]
+        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == kv_block_idx
+        return past_key_value.read_only_paged_attention(block_index, updated, layer_idx, cache_kwargs)
+    return past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
+
+
+def _prepare_batch_folded_kv_indices(
+    start_index: int,
+    end_index: int,
+    position_ids: torch.Tensor,
+    num_kv_heads: int,
+    cache_bh: int,
+    layer_idx: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Build one masked folded-cache index tensor for a K/V block.
+
+    The range, gather limit, and ``where`` must be traced from the batch-fold
+    attention body. Otherwise TorchScript's common-expression elimination can
+    lift the identical tensors from the first decoder layer and expose them as
+    inputs/outputs of every subsequent ONNX decoder-layer function. That extra
+    function plumbing both creates unnecessary subfunction variants and keeps
+    the AIC compiler from seeing the range bounds inside the function where it
+    performs the gather.
+
+    Returns tensors with shape ``[1, cache_bh, block_size]``. ``ctx_indices``
+    uses zero for positions beyond the current decode position; callers use
+    ``invalid_mask`` to preserve the causal semantics. In particular, the K
+    path is already masked by attention, while the V path explicitly zeros
+    invalid gathered values.
+    """
+    # Add and then subtract layer_idx so the values remain numerically equal to
+    # [start_index, end_index), while the traced range is anchored to the
+    # current decoder layer. This graph-local dependency is required for ONNX
+    # subfunction range analysis; removing it can recreate the regression.
+    ctx_indices = torch.arange(
+        start=start_index + layer_idx,
+        end=end_index + layer_idx,
+        dtype=position_ids.dtype,
+        device=position_ids.device,
+    )[None, None, ...]
+    ctx_indices = ctx_indices - layer_idx
+
+    gather_limit = position_ids.max(1, keepdim=True).values
+    gather_limit = torch.cat([gather_limit] * num_kv_heads, dim=1).reshape(1, -1, 1)
+    invalid_mask = ctx_indices > gather_limit
+    ctx_indices = torch.where(invalid_mask, 0, ctx_indices)
+
+    block_size = end_index - start_index
+    ctx_indices = ctx_indices.expand(1, cache_bh, block_size)
+    invalid_mask = invalid_mask.expand(1, cache_bh, block_size)
+    return ctx_indices, invalid_mask
+
+
 def blocked_kv_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -282,6 +354,11 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     sum_blocks: list = []
     out_blocks: list = []
     key_cache_folded, value_cache_folded = past_key_value.get_batch_folded_kv(layer_idx)
+    # The retained cache is physically folded to [1, FBS * Hkv, T, D]. The
+    # precomputed gather tensors must use that second dimension, not only the
+    # active batch size, because batch_index selects rows from the full folded
+    # cache during continuous/batched decode.
+    cache_bh = key_cache_folded.shape[1]
 
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
@@ -295,9 +372,28 @@ def blocked_kv_attention_forward_decode_headpar_batch(
                 if skip_future.item():
                     break
 
+        # Construct the range/where chain in this layer's attention body and
+        # pass the same tensors to both K and V readers. Keeping this work here
+        # is deliberate: the ONNX exporter then records it inside the current
+        # decoder-layer subfunction instead of lifting it into shared graph
+        # inputs/outputs. The private cache_kwargs entries are consumed only by
+        # the batch-folded readers; all other cache paths retain their existing
+        # behavior.
+        folded_cache_kwargs = dict(cache_kwargs)
+        folded_ctx_indices, folded_invalid_mask = _prepare_batch_folded_kv_indices(
+            start_index,
+            end_index,
+            position_ids,
+            num_kv_heads,
+            cache_bh,
+            layer_idx,
+        )
+        folded_cache_kwargs["_qeff_batch_fold_ctx_indices"] = folded_ctx_indices
+        folded_cache_kwargs["_qeff_batch_fold_invalid_mask"] = folded_invalid_mask
+
         # Read K through the folded [1, BH, T_block, D] view.
         k_block = past_key_value.read_only_blocked_K_batch(
-            start_index, end_index, layer_idx, cache_kwargs, folded_cache=key_cache_folded
+            start_index, end_index, layer_idx, folded_cache_kwargs, folded_cache=key_cache_folded
         )
 
         attn_weights_block = torch.matmul(query_flat, k_block.transpose(3, 2)) * scaling
@@ -326,7 +422,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
         # Read V through the folded [1, BH, T_block, D] view.
         v_block = past_key_value.read_only_blocked_V_batch(
-            start_index, end_index, layer_idx, cache_kwargs, folded_cache=value_cache_folded
+            start_index, end_index, layer_idx, folded_cache_kwargs, folded_cache=value_cache_folded
         )
         sum_block = exp_block.sum(dim=-1)
         out_block = torch.matmul(exp_block, v_block)
