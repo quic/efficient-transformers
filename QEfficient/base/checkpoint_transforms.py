@@ -29,7 +29,11 @@ from typing import Callable, Dict, List, Optional, Type
 import psutil
 import torch
 
-from QEfficient.utils.checkpoint_utils import copy_checkpoint_aux_files, read_weight_map, write_index
+from QEfficient.utils.checkpoint_utils import (
+    copy_checkpoint_aux_files,
+    read_weight_map,
+    write_index,
+)
 from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("INFRA")
@@ -194,8 +198,15 @@ class CheckpointPlanningContext:
         self.claimed_raw_refs.update(raw_refs)
         self.direct_tasks.append(task)
 
+    def superseded_raw_keys(self) -> set[str]:
+        """Return raw keys replaced by outputs from a selected layout transform."""
+        output_keys = {ref.key for task_plan in self.task_plans for ref in task_plan.current_refs if ref.stage != "raw"}
+        claimed_keys = {ref.key for ref in self.claimed_raw_refs}
+        return {key for key in output_keys if key in self.weight_map and key not in claimed_keys}
+
     def remaining_weight_map(self) -> dict[str, str]:
         claimed_keys = {ref.key for ref in self.claimed_raw_refs}
+        claimed_keys.update(self.superseded_raw_keys())
         return {key: shard for key, shard in self.weight_map.items() if key not in claimed_keys}
 
     def materialize_tasks(self) -> list[CheckpointTask]:
@@ -457,6 +468,23 @@ def _manifest_matches(out: Path, expected: dict) -> bool:
         return False
 
 
+def _prepared_checkpoint_is_readable(out: Path) -> bool:
+    """Return True when every indexed prepared checkpoint shard is readable."""
+    try:
+        weight_map = read_weight_map(out)
+    except (OSError, json.JSONDecodeError, KeyError):
+        return False
+
+    if not weight_map:
+        return False
+
+    for shard_name in set(weight_map.values()):
+        shard_path = out / shard_name
+        if not shard_path.is_file() or not os.access(shard_path, os.R_OK):
+            return False
+    return True
+
+
 def _write_manifest(out: Path, manifest: dict) -> None:
     (out / CHECKPOINT_PREPARED_MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
@@ -488,6 +516,19 @@ def _clear_stale_prepared_dir(out: Path, src: Path) -> None:
         out.unlink()
 
 
+def _config_num_experts(config) -> Optional[int]:
+    """Return the MoE expert count from top-level or nested text configs."""
+    if config is None:
+        return None
+    for candidate in (config, getattr(config, "text_config", None), getattr(config, "llm_config", None)):
+        if candidate is None:
+            continue
+        num_experts = getattr(candidate, "num_local_experts", None) or getattr(candidate, "num_experts", None)
+        if num_experts:
+            return int(num_experts)
+    return None
+
+
 def detect_group_transform(
     config,
     weight_map: Dict[str, str],
@@ -496,8 +537,9 @@ def detect_group_transform(
 ) -> Optional[Type["BaseCheckpointTransform"]]:
     """Return the active layout transform class, or None for dense models.
 
-    Scans weight_map key patterns (gated by config.num_experts) to identify
-    which layout transform applies.  DtypeConversionCheckpointTransform is
+    Scans weight_map key patterns (gated by config.num_experts or nested
+    text_config/llm_config expert counts) to identify which layout transform applies.
+    DtypeConversionCheckpointTransform is
     excluded — it always runs unconditionally and is not a layout transform.
 
     Parameters
@@ -521,11 +563,21 @@ def detect_group_transform(
     if hash_params is None:
         hash_params = {}
 
-    num_experts = None
-    if config is not None:
-        num_experts = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    # GptOss is identified by model_type — always uses MXFP4 dequant transform.
+    model_type = getattr(config, "model_type", None) if config else None
+    if model_type == "gpt_oss":
+        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
+
+    num_experts = _config_num_experts(config)
     if not num_experts:
         return None
+
+    # Prefer a complete fused layout when it is present. Qwen 3.5 checkpoints can
+    # contain fused main-model experts together with per-expert auxiliary MTP
+    # tensors; the latter must not cause the main model to select the stacker.
+    fused_cls = _find_transform_by_id("fused_expert_split_v1", transforms)
+    if fused_cls is not None and fused_cls.is_applicable(weight_map):
+        return fused_cls
 
     # Per-expert format: validate expert indices match config declaration.
     expert_indices_per_layer: Dict[int, set] = defaultdict(set)
@@ -544,18 +596,6 @@ def detect_group_transform(
                     "The checkpoint may be incomplete or corrupted."
                 )
         return _find_transform_by_id("moe_expert_stacking_v1", transforms)
-
-    # GptOss is identified by model_type — always uses MXFP4 dequant transform.
-    model_type = getattr(config, "model_type", None) if config else None
-    if model_type == "gpt_oss":
-        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
-
-    # Pre-stacked formats — delegate detection to each transform's is_applicable().
-    # FusedExpertSplitCheckpointTransform handles both Mixtral fused and GraniteMoE
-    # internally via _get_key_remap() — no hardcoded patterns needed here.
-    fused_cls = _find_transform_by_id("fused_expert_split_v1", transforms)
-    if fused_cls is not None and fused_cls.is_applicable(weight_map):
-        return fused_cls
 
     return None
 
@@ -649,6 +689,21 @@ class CheckpointTransformPipeline:
 
         # Source-layout transforms inspect the complete raw checkpoint. Stage transforms
         # run afterwards and consume the staged refs produced by those layout transforms.
+        # A checkpoint may contain auxiliary per-expert tensors alongside the main fused
+        # layout (for example Qwen 3.5 MTP), so select one source layout up front.
+        active_layout = detect_group_transform(
+            config,
+            weight_map,
+            hash_params=hash_params,
+            transforms=self.transforms,
+        )
+        active_layout_id = getattr(active_layout, "TRANSFORM_ID", None)
+        source_layout_ids = {
+            "moe_expert_stacking_v1",
+            "gptoss_mxfp4_dequant_v1",
+            "fused_expert_split_v1",
+        }
+
         seen_transforms = set()
         for transform in self.transforms:
             if transform in seen_transforms or transform in (
@@ -657,6 +712,9 @@ class CheckpointTransformPipeline:
             ):
                 continue
             seen_transforms.add(transform)
+            transform_id = getattr(transform, "TRANSFORM_ID", None)
+            if active_layout_id is not None and transform_id in source_layout_ids and transform_id != active_layout_id:
+                continue
             if transform.is_applicable(
                 weight_map,
                 config=config,
@@ -682,7 +740,7 @@ class CheckpointTransformPipeline:
             raise ValueError("Checkpoint plan contains duplicate output tensor references.")
 
         planned_raw_keys = {ref.key for task in tasks for ref in task.input_refs if ref.stage == "raw"}
-        missing_raw_keys = set(weight_map) - planned_raw_keys
+        missing_raw_keys = set(weight_map) - planned_raw_keys - context.superseded_raw_keys()
         if missing_raw_keys:
             raise ValueError(f"Checkpoint plan does not cover source keys: {sorted(missing_raw_keys)}")
 
@@ -750,7 +808,9 @@ class CheckpointTransformPipeline:
             plan_payload,
         )
         if (out / CHECKPOINT_PREPARED_SENTINEL).exists() and _manifest_matches(out, expected_manifest):
-            return out
+            if _prepared_checkpoint_is_readable(out):
+                return out
+            logger.warning("Prepared checkpoint at %s is incomplete or unreadable; rebuilding.", out)
 
         _clear_stale_prepared_dir(out, src)
         out.mkdir(parents=True, exist_ok=True)

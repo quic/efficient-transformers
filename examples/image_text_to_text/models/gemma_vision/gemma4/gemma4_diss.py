@@ -24,31 +24,10 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 model_id = "google/gemma-4-26B-A4B-it"
-NUM_LANG_HIDDEN_LAYER = 6
-NUM_VISION_HIDDEN_LAYER = 2
 config = AutoConfig.from_pretrained(model_id)
 
-
-def _apply_reduced_layer_config(config, num_lang_layers: int, num_vision_layers: int):
-    config.text_config.num_hidden_layers = num_lang_layers
-    config.vision_config.num_hidden_layers = num_vision_layers
-
-    if hasattr(config.text_config, "layer_types") and config.text_config.layer_types:
-        config.text_config.layer_types = config.text_config.layer_types[:num_lang_layers]
-
-    if hasattr(config.text_config, "num_kv_shared_layers"):
-        # KV sharing to avoid invalid first_kv_shared_layer_idx=0 edge cases.
-        config.text_config.num_kv_shared_layers = 0
-
-    return config
-
-
-# For faster execution user can run with lesser layers, For Testing Purpose Only
-config = _apply_reduced_layer_config(
-    config,
-    num_lang_layers=NUM_LANG_HIDDEN_LAYER,
-    num_vision_layers=NUM_VISION_HIDDEN_LAYER,
-)
+config.text_config.num_hidden_layers = 6
+config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
