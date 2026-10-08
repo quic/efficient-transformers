@@ -33,8 +33,6 @@ from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
     _KNOWN_DECODER_LAYER_ATTR_PATHS,
     _KNOWN_DECODER_LAYER_SUFFIXES,
-    DYNAMO_DIM_MAX_BATCH_SIZE,
-    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import QEFFLogger, log_api_arguments
@@ -714,6 +712,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
+            onnx_transform_kwargs["target_class_modules"] = {
+                cls.__name__: cls.__module__ for cls in decoder_layer_classes
+            }
             kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
         else:
             # TorchScript path: pass class objects for export_modules_as_functions

@@ -88,7 +88,7 @@ def _prepare_vlm_inputs(processor : AutoProcessor,) -> dict:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image},
+                    {"type": "image", "image": VLM_IMAGE_URL},
                     {"type": "text", "text": VLM_PROMPT},
                 ],
             }
