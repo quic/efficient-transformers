@@ -151,7 +151,14 @@ def _build_bidirectional_vision_attention_mask(
     kv_indices = torch.arange(target_length, device=vision_group_ids.device, dtype=torch.int64).view(1, -1)
     seq_len_limit = torch.full_like(kv_indices, vision_group_ids.shape[1] - 1)
     safe_kv_indices = torch.minimum(kv_indices, seq_len_limit)
-    kv_group_ids = torch.gather(vision_group_ids, 1, safe_kv_indices.expand(vision_group_ids.shape[0], -1))
+    batch_zeros = torch.zeros_like(vision_group_ids[:, :1])
+    gather_indices = safe_kv_indices + batch_zeros
+
+    kv_group_ids = torch.gather(
+        vision_group_ids,
+        1,
+        gather_indices,
+    )
     kv_group_ids = torch.where(kv_indices < vision_group_ids.shape[1], kv_group_ids, torch.full_like(kv_group_ids, -1))
 
     same_group = (vision_group_ids.unsqueeze(-1) == kv_group_ids.unsqueeze(1)) & (vision_group_ids.unsqueeze(-1) >= 0)
