@@ -6,7 +6,9 @@
 # -----------------------------------------------------------------------------
 
 from QEfficient.customop.ctx_scatter_gather import (
+    CompressedAttnFunc,
     CtxChunkScatterBatchFunc,
+    CtxGather1DFunc,
     CtxGatherDPCPFunc,
     CtxGatherDPFunc,
     CtxGatherFoldedRowsFunc,
@@ -15,15 +17,16 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncPagedAttention,
     CtxScatterDPCPFunc,
     CtxScatterDPFunc,
     CtxScatterFoldedRowsFunc,
-    CtxGatherFuncPagedAttention,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
     CtxScatterFunc3DInt,
     CtxScatterFuncPagedAttention,
+    V4CtxScatter1DFunc,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherFuncBlockedKVCB,
@@ -67,11 +70,14 @@ __all__ = [
     "GemmaCustomRMSNormAIC",
     # Func classes (for ONNX export symbolic registration and direct use)
     "CtxScatterFunc",
+    "V4CtxScatter1DFunc",
     "CtxScatterFuncPagedAttention",
     "CtxScatterFunc3D",
     "CtxScatterFunc3DGeneralized",
     "CtxScatterFunc3DInt",
     "CtxGatherFunc",
+    "CtxGather1DFunc",
+    "CompressedAttnFunc",
     "CtxGatherFunc3D",
     "CtxGatherFunc3DGeneralized",
     "CtxGatherFuncBlockedKV",

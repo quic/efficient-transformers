@@ -9,6 +9,7 @@ import gc
 import warnings
 from collections.abc import Callable
 from types import MethodType
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -374,6 +375,7 @@ from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     QEffDeepseekV4SparseMoeBlock,
     QEffDeepseekV4TopKRouter,
     QEffDeepseekV4UnweightedRMSNorm,
+)
 from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
     QEffDFlashAttention,
     QEffDFlashDecoderLayer,
@@ -1620,6 +1622,10 @@ class FFNBlockingTransform(PytorchTransform):
             if isinstance(module, QEffDeepseekV4Experts):
                 module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
                 transformed = True
+
+        return model, transformed
+
+
 class GatedDeltaConfigTransform:
     @classmethod
     def apply(cls, model: nn.Module, gated_delta_config: dict | None = None) -> tuple[nn.Module, bool]:
