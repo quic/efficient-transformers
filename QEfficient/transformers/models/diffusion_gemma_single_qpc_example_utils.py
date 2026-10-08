@@ -75,6 +75,12 @@ def _infer_context_length(session: QAICInferenceSession) -> Optional[int]:
     return max(context_lengths) if context_lengths else None
 
 
+def _binding_name(session: QAICInferenceSession, name: str) -> Optional[str]:
+    if name in session.binding_index_map:
+        return name
+    return next((candidate for candidate in session.input_names if candidate.rsplit("/", 1)[-1] == name), None)
+
+
 class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
     def __init__(self, model):
         QEFFBaseModel.__init__(self, model)
@@ -88,8 +94,25 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
         return self.model.model.config.__dict__
 
     def export(self, inputs, output_names, dynamic_axes, qaic_config, **kwargs):
-        # breakpoint()
         return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes)
+
+
+class DiffusionGemmaEncoderQPC(UnifiedQPC):
+    def __init__(self, model):
+        QEFFBaseModel.__init__(self, model)
+        self.model = model.get_qeff_diffusion_encoder()
+        self.model.qaic_config = None
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.continuous_batching = False
+
+
+class DiffusionGemmaDecoderQPC(UnifiedQPC):
+    def __init__(self, model):
+        QEFFBaseModel.__init__(self, model)
+        self.model = model.get_qeff_diffusion_decoder()
+        self.model.qaic_config = None
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.continuous_batching = False
 
 
 class DiffusionGemmaSingleQPCGenerator:
@@ -198,11 +221,16 @@ class DiffusionGemmaSingleQPCGenerator:
         self.input_ids = np.pad(chunk["input_ids"], ((0, 0), (0, padding)), constant_values=self._prompt_pad_token_id)
         self.position_ids = np.pad(chunk["position_ids"], ((0, 0), (0, padding)), constant_values=-1)
         self.mm_token_type_ids = np.pad(chunk["mm_token_type_ids"], ((0, 0), (0, padding)))
-        vision_dims = self._binding_dims("vision_embeds")
-        if vision_dims is not None:
-            self.vision_embeds = np.zeros(vision_dims, dtype=np.float16)
+        input_session = getattr(self, "_input_session", self.session)
+        vision_binding = next(
+            (binding for binding in input_session.bindings if binding.name == "vision_embeds"),
+            None,
+        )
+        if vision_binding is not None:
+            vision_dtype = input_session.aic_to_np_dtype_mapping[vision_binding.type]
+            self.vision_embeds = np.zeros(vision_binding.dims, dtype=vision_dtype)
             if chunk.get("vision_embeds") is not None:
-                vision_embeds = _to_numpy(chunk["vision_embeds"], np.float16)
+                vision_embeds = _to_numpy(chunk["vision_embeds"], vision_dtype)
                 self.vision_embeds[:, : vision_embeds.shape[1], :] = vision_embeds
         self.image_idx = _to_numpy(image_idx, np.int64)
 
@@ -249,7 +277,6 @@ class DiffusionGemmaSingleQPCGenerator:
         return sequence_length
 
     def _build_additive_mask(self, *, cache_length: int, sliding: bool, cache_position_ids, is_encode: bool):
-        # breakpoint()
         block_length = self.prefill_seq_len
         mask = np.full((1, 1, block_length, cache_length + block_length), self._MASK_VALUE, dtype=np.float32)
         current_positions = self.position_ids[0]
@@ -296,7 +323,6 @@ class DiffusionGemmaSingleQPCGenerator:
                     mask[0, 0, query_index, physical_indices] = 0.0
         else:
             mask[:, :, :, cache_length:] = 0.0
-        # breakpoint()
         return mask
 
     def _shared_feed(
@@ -344,6 +370,10 @@ class DiffusionGemmaSingleQPCGenerator:
             "self_conditioning_topk_indices": np.zeros(indices_dims, dtype=np.int64),
         }
 
+    def _run_session(self, feed, *, is_prefill: bool):
+        del is_prefill
+        return self.session.run(_session_feed(self.session, feed))
+
     def prefill(self, debug_callback=None):
         retained_buffers = [
             name
@@ -364,7 +394,7 @@ class DiffusionGemmaSingleQPCGenerator:
             )
             if chunk_index == 0:
                 feed.update(self._initial_self_conditioning_state())
-            outputs = self.session.run(_session_feed(self.session, feed))
+            outputs = self._run_session(feed, is_prefill=True)
             if "image_idx_output" in outputs:
                 self.image_idx = _to_numpy(outputs["image_idx_output"], np.int64)
             self._record_cache_write(self.position_ids)
@@ -414,18 +444,14 @@ class DiffusionGemmaSingleQPCGenerator:
             current_step = max_denoising_steps - step
             temperature = t_min + (t_max - t_min) * current_step / max_denoising_steps
             self.input_ids = canvas
-            outputs = self.session.run(
-                _session_feed(
-                    self.session,
-                    self._shared_feed(
-                        cache_position_ids=no_cache_write,
-                        is_encode=False,
-                        sampling_uniforms=self.rng.uniform(size=(1, self.canvas_length, 1)).astype(np.float32),
-                        temperature=np.full((1, 1), temperature, dtype=np.float32),
-                        use_self_conditioning=step > 0,
-                    ),
-                )
+            feed = self._shared_feed(
+                cache_position_ids=no_cache_write,
+                is_encode=False,
+                sampling_uniforms=self.rng.uniform(size=(1, self.canvas_length, 1)).astype(np.float32),
+                temperature=np.full((1, 1), temperature, dtype=np.float32),
+                use_self_conditioning=step > 0,
             )
+            outputs = self._run_session(feed, is_prefill=False)
             denoiser_canvas = outputs["denoiser_canvas"].astype(np.int64)
             newly_accepted = outputs["newly_accepted_mask"].astype(bool)
             new_canvas = np.where(newly_accepted, denoiser_canvas, canvas)
@@ -492,17 +518,15 @@ class DiffusionGemmaSingleQPCGenerator:
         self.position_ids = np.full((1, self.prefill_seq_len), -1, dtype=np.int64)
         self.position_ids[:, :commit_length] = commit_position_ids
         self.mm_token_type_ids = np.zeros((1, self.prefill_seq_len), dtype=np.int64)
-        outputs = self.session.run(
-            _session_feed(
-                self.session,
-                self._shared_feed(
-                    cache_position_ids=self.position_ids,
-                    is_encode=True,
-                    sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
-                    temperature=np.ones((1, 1), dtype=np.float32),
-                    use_self_conditioning=False,
-                ),
-            )
+        outputs = self._run_session(
+            self._shared_feed(
+                cache_position_ids=self.position_ids,
+                is_encode=True,
+                sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
+                temperature=np.ones((1, 1), dtype=np.float32),
+                use_self_conditioning=False,
+            ),
+            is_prefill=False,
         )
         if "image_idx_output" in outputs:
             self.image_idx = _to_numpy(outputs["image_idx_output"], np.int64)
@@ -571,7 +595,6 @@ class DiffusionGemmaSingleQPCGenerator:
             total_canvas_time = 0.0
             num_blocks = int(math.ceil(target_new_tokens / self.canvas_length))
             print(f"Total number of blocks is {num_blocks}")
-            # breakpoint()
             for block_index in range(num_blocks):
                 emitted_tokens = sum(tokens.shape[1] for tokens in generated)
                 remaining_tokens = target_new_tokens - emitted_tokens
@@ -624,6 +647,83 @@ class DiffusionGemmaSingleQPCGenerator:
             self.session.deactivate()
 
 
+class DiffusionGemmaSplitQPCGenerator(DiffusionGemmaSingleQPCGenerator):
+    """Chunked prefill with DMA handoff into decoder-owned retained KV."""
+
+    def __init__(self, *, model_config, encoder_session: QAICInferenceSession, decoder_session: QAICInferenceSession, seed=1234):
+        super().__init__(model_config=model_config, session=decoder_session, seed=seed)
+        self.encoder_session = encoder_session
+        self._input_session = encoder_session
+        self._kv_caches = [np.zeros(shape, dtype=dtype) for shape, dtype in decoder_session.kv_cache_info]
+        if not self._kv_caches:
+            raise ValueError("Decoder QPC does not expose retained KV input bindings for DMA handoff.")
+        self._decoder_kv_imported = False
+
+    def _prepare_prompt(self, inputs, pad_token_id: int):
+        self._input_session = self.encoder_session
+        return super()._prepare_prompt(inputs, pad_token_id)
+
+    def prefill(self, debug_callback=None):
+        self._input_session = self.encoder_session
+        self._decoder_kv_imported = False
+        retained_kv_count = len(self._kv_caches)
+        start = time.perf_counter()
+        for chunk_index in range(len(self._prompt_chunks)):
+            if chunk_index > 0:
+                self._load_prompt_chunk(chunk_index, self.image_idx)
+            feed = self._shared_feed(
+                cache_position_ids=self.position_ids,
+                is_encode=True,
+                sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
+                temperature=np.ones((1, 1), dtype=np.float32),
+                use_self_conditioning=False,
+            )
+            is_last_chunk = chunk_index == len(self._prompt_chunks) - 1
+            exec_idx = self.encoder_session.np_run_pipeline(
+                _session_feed(self.encoder_session, feed),
+                last_chunk=is_last_chunk,
+                kv_cache_buffers=self._kv_caches if is_last_chunk else None,
+            )
+            self.encoder_session.complete_inf(exec_idx, is_prefill=True)
+            encoder_outputs = self.encoder_session.get_outputs(exec_idx)
+            if "image_idx_output" in encoder_outputs:
+                self.image_idx = _to_numpy(encoder_outputs["image_idx_output"], np.int64)
+            self._record_cache_write(self.position_ids)
+            self._retained_last_position = max(self._retained_last_position, int(self.position_ids.max()))
+            self._emit_debug(
+                debug_callback,
+                {
+                    "phase": "prefill",
+                    "chunk_index": chunk_index,
+                    "cache_position_ids": self.position_ids.copy(),
+                },
+            )
+        return time.perf_counter() - start, retained_kv_count
+
+    def _run_session(self, feed, *, is_prefill: bool):
+        if is_prefill:
+            raise RuntimeError("Split decoder execution cannot use the prefill role.")
+        importing_prefill_kv = not self._decoder_kv_imported
+        if importing_prefill_kv:
+            self.session.set_data_for_kv_handoff(
+                self._kv_caches,
+                [("batch_index", 0), ("ctx_start", 0)],
+                index=self.session.decode_execObj_idx,
+                buff_map=self.session.decode_buff_map,
+            )
+        exec_idx = self.session.np_run(_session_feed(self.session, feed), is_prefill=False)
+        self.session.complete_inf(exec_idx, is_prefill=False)
+        if importing_prefill_kv:
+            self._decoder_kv_imported = True
+        return self.session.get_outputs(exec_idx)
+
+    def generate(self, **kwargs):
+        try:
+            return super().generate(**kwargs)
+        finally:
+            self.encoder_session.deactivate()
+
+
 def diffusion_gemma_generate_single_qpc_chunked(
     *,
     qeff_model,
@@ -643,6 +743,51 @@ def diffusion_gemma_generate_single_qpc_chunked(
     generator = DiffusionGemmaSingleQPCGenerator(
         model_config=qeff_model.model.config,
         session=session,
+        seed=kwargs.pop("seed", 1234),
+    )
+    return generator.generate(
+        inputs=inputs,
+        generation_len=generation_len,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        **kwargs,
+    )
+
+
+def diffusion_gemma_generate_split_qpc_chunked(
+    *,
+    qeff_model,
+    inputs,
+    generation_len: int,
+    encoder_qpc_path,
+    decoder_qpc_path,
+    device_ids=None,
+    **kwargs,
+):
+    generation_config = getattr(qeff_model.model, "generation_config", None)
+    pad_token_id = kwargs.pop("pad_token_id", getattr(generation_config, "pad_token_id", None))
+    eos_token_id = kwargs.pop("eos_token_id", getattr(generation_config, "eos_token_id", None))
+    if pad_token_id is None:
+        pad_token_id = 0
+
+    encoder_session = QAICInferenceSession(
+        str(encoder_qpc_path),
+        device_ids=device_ids,
+        kv_dma_share=True,
+        cluster_id="prefill",
+        full_batch_size=1,
+    )
+    decoder_session = QAICInferenceSession(
+        str(decoder_qpc_path),
+        device_ids=device_ids,
+        kv_dma_share=True,
+        cluster_id="decode",
+        full_batch_size=1,
+    )
+    generator = DiffusionGemmaSplitQPCGenerator(
+        model_config=qeff_model.model.config,
+        encoder_session=encoder_session,
+        decoder_session=decoder_session,
         seed=kwargs.pop("seed", 1234),
     )
     return generator.generate(
@@ -722,6 +867,92 @@ def compile_unified_qpc(
     )
     print(f"  unified QPC: {qpc_path} ({time.time() - start:.0f}s)")
     return qpc_path
+
+
+def compile_split_qpcs(
+    qeff_model,
+    *,
+    prefill_seq_len: int,
+    ctx_len: int,
+    canvas_length: int,
+    num_devices: int,
+    num_cores: int,
+):
+    if prefill_seq_len != canvas_length:
+        raise ValueError("Split DiffusionGemma currently requires matching prefill and canvas lengths.")
+
+    print(f"Compiling split DiffusionGemma QPCs ({num_devices} devices, {num_cores} cores)...")
+    start = time.time()
+    encoder = DiffusionGemmaEncoderQPC(qeff_model)
+    decoder = DiffusionGemmaDecoderQPC(qeff_model)
+    qaic_config_moe = {
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": 128,
+            "tree_reduce": True,
+        }
+    }
+    encoder_specializations, _ = encoder.model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+    )
+    decoder_specializations, _ = decoder.model.get_specializations(
+        batch_size=1,
+        canvas_length=canvas_length,
+        ctx_len=ctx_len,
+    )
+    custom_io = {}
+    for layer_index in range(qeff_model.config.text_config.num_hidden_layers):
+        for kv_name in ("key", "value"):
+            custom_io[f"past_{kv_name}.{layer_index}"] = "mxint8"
+            custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "mxint8"
+    common_compile_kwargs = {
+        "compile_dir": None,
+        "convert_to_fp16": True,
+        "mxfp6_matmul": True,
+        "mdp_ts_num_devices": num_devices,
+        "aic_num_cores": num_cores,
+        "retained_state": True,
+        "retain_full_kv": True,
+        "split_retained_state_io": True,
+        "user_tiled": True,
+        "custom_io": custom_io,
+    }
+    encoder_onnx_path = encoder.get_onnx_path(
+        specializations=encoder_specializations,
+        offload_pt_weights=False,
+        retain_full_kv=True,
+        mdp_ts_num_devices=num_devices,
+        qaic_config=qaic_config_moe,
+        aic_num_cores=num_cores,
+    )
+    print(f"  encoder ONNX: {encoder_onnx_path}")
+    decoder_onnx_path = decoder.get_onnx_path(
+        specializations=decoder_specializations,
+        offload_pt_weights=False,
+        retain_full_kv=True,
+        mdp_ts_num_devices=num_devices,
+        qaic_config=qaic_config_moe,
+        aic_num_cores=num_cores,
+    )
+    print(f"  decoder ONNX: {decoder_onnx_path}")
+    encoder_qpc_path = encoder._compile(
+        onnx_path=encoder_onnx_path,
+        specializations=encoder_specializations,
+        qaic_config=qaic_config_moe,
+        **common_compile_kwargs,
+    )
+    print(f"  encoder QPC: {encoder_qpc_path}")
+    decoder_qpc_path = decoder._compile(
+        onnx_path=decoder_onnx_path,
+        specializations=decoder_specializations,
+        node_precision_info=qeff_model.generate_npi_file(decoder_onnx_path),
+        qaic_config=qaic_config_moe,
+        **common_compile_kwargs,
+    )
+    print(f"  decoder QPC: {decoder_qpc_path} ({time.time() - start:.0f}s)")
+    return encoder_qpc_path, decoder_qpc_path
 
 
 def _vision_embeds_cpu(model_id: str, text_model, vision_inputs):

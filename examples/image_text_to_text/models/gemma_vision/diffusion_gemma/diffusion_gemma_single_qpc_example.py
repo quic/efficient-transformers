@@ -15,6 +15,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
     build_step_callback,
     clean_diffusion_text,
+    compile_split_qpcs,
     compile_unified_qpc,
     prepare_prompt_inputs,
 )
@@ -64,7 +65,8 @@ def load_model_and_processor(model_id: str, canvas_length: int, num_lang_layers:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run DiffusionGemma unified single-QPC inference.")
+    parser = argparse.ArgumentParser(description="Run DiffusionGemma unified or split-QPC inference.")
+    parser.add_argument("--runtime-mode", choices=("unified", "split"), default="unified")
     parser.add_argument("--text-only", action="store_true", help="Run without image tokens.")
     parser.add_argument("--prompt", help="Override the default image or text prompt.")
     parser.add_argument("--seed", type=int, default=1234, help="Use -1 for an unseeded sampler.")
@@ -94,14 +96,29 @@ def main():
         num_lang_layers=args.num_layers,
     )
     print(f"Compiling a {qeff_model.model.config.text_config.num_hidden_layers}-layer DiffusionGemma model.")
-    qpc_path = compile_unified_qpc(
-        qeff_model.model,
-        prefill_seq_len=args.canvas_length,
-        ctx_len=args.ctx_len,
-        canvas_length=args.canvas_length,
-        num_devices=NUM_DEVICES,
-        num_cores=NUM_CORES,
-    )
+    if args.runtime_mode == "unified":
+        qpc_path = compile_unified_qpc(
+            qeff_model.model,
+            prefill_seq_len=args.canvas_length,
+            ctx_len=args.ctx_len,
+            canvas_length=args.canvas_length,
+            num_devices=NUM_DEVICES,
+            num_cores=NUM_CORES,
+        )
+        qpc_kwargs = {"qpc_path": qpc_path}
+    else:
+        encoder_qpc_path, decoder_qpc_path = compile_split_qpcs(
+            qeff_model.model,
+            prefill_seq_len=args.canvas_length,
+            ctx_len=args.ctx_len,
+            canvas_length=args.canvas_length,
+            num_devices=NUM_DEVICES,
+            num_cores=NUM_CORES,
+        )
+        qpc_kwargs = {
+            "encoder_qpc_path": encoder_qpc_path,
+            "decoder_qpc_path": decoder_qpc_path,
+        }
 
     prompt = args.prompt or (TEXT_PROMPT if args.text_only else IMAGE_PROMPT)
     inputs = prepare_prompt_inputs(
@@ -113,11 +130,10 @@ def main():
         image_url=IMAGE_URL,
     )
     print(f"Canvas length is {CANVAS_LENGTH} and input ids is of size {inputs['input_ids'].shape[1]}")
-    # breakpoint()
     result = qeff_model.cloud_ai_100_diffusion_generate(
         inputs=inputs,
         generation_len=args.max_new_tokens,
-        qpc_path=qpc_path,
+        runtime_mode=args.runtime_mode,
         device_ids=device_ids,
         ctx_len=args.ctx_len,
         max_denoising_steps=args.diffusion_steps,
@@ -125,6 +141,7 @@ def main():
         seed=args.seed,
         stop_on_eos=not args.no_stop_on_eos,
         step_callback=build_step_callback(processor.tokenizer, args.verbose_steps),
+        **qpc_kwargs,
     )
 
     raw_output = processor.tokenizer.decode(result.generated_ids[0].tolist(), skip_special_tokens=True)
@@ -143,7 +160,8 @@ def main():
             f"Tokens per second: {clean_token_count/result.total_time:.1f}\n"
             f"Tokens per second(TTFT excluded): {clean_token_count/(result.total_time - result.ttft):.1f}\n"
     )
-    print(f"\nQPC_PATH={qpc_path}")
+    for name, path in qpc_kwargs.items():
+        print(f"\n{name.upper()}={path}")
 
 
 if __name__ == "__main__":

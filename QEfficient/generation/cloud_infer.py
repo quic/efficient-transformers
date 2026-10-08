@@ -22,11 +22,6 @@ def _public_retained_state_name(output_name: str) -> Optional[str]:
     return None
 
 
-def is_retained_state_name(name: str) -> bool:
-    """Return True when an I/O binding participates in retained-state cache flow."""
-    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
-
-
 def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
     """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
     for binding in bindings:
@@ -60,6 +55,9 @@ except ImportError:
         is_qaicrt_imported = False
 
 
+from QEfficient.generation._kv_dma_handoff import KvDmaHandoff, is_retained_state_name  # noqa: E402,F401
+
+
 class QAICInferenceSession:
     def __init__(
         self,
@@ -68,6 +66,10 @@ class QAICInferenceSession:
         activate: bool = True,
         enable_debug_logs: bool = False,
         data_path_timeout_ms: int = 60_000,
+        kv_dma_share: bool = False,
+        stages: Optional[int] = 1,
+        cluster_id: Optional[str] = None,
+        full_batch_size: int = 1,
     ):
         """
         Initialise for QAIC inference Session
@@ -78,6 +80,10 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         :data_path_timeout_ms: int. Host wait timeout (in ms) for a data-path response from the device. Default=60000 (60s).
+        :kv_dma_share: Enable the retained-state DMA handoff API.
+        :stages: Prefill pipeline depth when ``kv_dma_share`` is enabled.
+        :cluster_id: DMA session role: ``"prefill"`` or ``"decode"``.
+        :full_batch_size: Number of KV cache slots available to DMA slicing.
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError(
@@ -98,6 +104,11 @@ class QAICInferenceSession:
             aicapi.INT64_I_TYPE: np.dtype(np.int64),
             aicapi.INT8_TYPE: np.dtype(np.int8),
         }
+        self.kv_dma_share = kv_dma_share
+        self.stages = stages if stages is not None else 1
+        self.cluster_id = cluster_id
+        self.full_batch_size = full_batch_size
+        self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
 
         # Load QPC
         if device_ids is not None:
@@ -140,11 +151,42 @@ class QAICInferenceSession:
         if activate:
             self.activate()
             self.is_active = True
-        # Create input qbuffers and buf_dims
-        self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
-        self.buf_dims = qaicrt.BufferDimensionsVecRef(
-            [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
-        )
+        if self._kv_dma is None:
+            self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
+            self.buf_dims = qaicrt.BufferDimensionsVecRef(
+                [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
+            )
+        else:
+            self.qbuffers = [
+                [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings] for _ in range(self._queue_len)
+            ]
+            self.buf_dims = [
+                qaicrt.BufferDimensionsVecRef(
+                    [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
+                )
+                for _ in range(self._queue_len)
+            ]
+            self._kv_dma.init_buffer_maps()
+
+    @property
+    def _queue_len(self) -> int:
+        return self._kv_dma.queue_len if self._kv_dma is not None else 1
+
+    @property
+    def decode_execObj_idx(self) -> Optional[int]:
+        return self._kv_dma.decode_execObj_idx if self._kv_dma is not None else None
+
+    @property
+    def kv_cache_info(self):
+        return self._kv_dma.kv_cache_info
+
+    @property
+    def decode_buff_map(self):
+        return self._kv_dma.decode_buff_map
+
+    @property
+    def decode_rs_kv_only_buff_map(self):
+        return self._kv_dma.decode_rs_kv_only_buff_map
 
     @property
     def input_names(self) -> List[str]:
@@ -158,7 +200,10 @@ class QAICInferenceSession:
         """Activate qpc"""
         if not self.is_active:
             self.program.activate()
-            self.execObj = qaicrt.ExecObj(self.context, self.program)
+            if self._kv_dma is None:
+                self.execObj = qaicrt.ExecObj(self.context, self.program)
+            else:
+                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
             self.is_active = True
 
     def deactivate(self):
@@ -207,6 +252,9 @@ class QAICInferenceSession:
         Return:
             :Dict[str, np.ndarray]:
         """
+        if self._kv_dma is not None:
+            raise RuntimeError("Use the DMA execution API when `kv_dma_share=True`.")
+
         # Set inputs
         self.set_buffers(inputs)
         if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
@@ -261,3 +309,57 @@ class QAICInferenceSession:
                 outputs[public_name] = output
                 outputs.setdefault(public_name.rsplit("/", 1)[-1], output)
         return outputs
+
+    def _shape_mismatch_message(self, buf_dims) -> str:
+        """Build the existing shape diagnostic for pooled DMA execution."""
+        error_message = "Failed to run"
+        if self.allowed_shapes:
+            error_message += "\n\n"
+            error_message += '(Only if "No matching dimension found" error is present above)'
+            error_message += "\nAllowed shapes:"
+            for index, allowed_shape in enumerate(self.allowed_shapes):
+                error_message += f"\n{index}\n"
+                for binding, (element_size, shape), (_, passed_shape) in zip(self.bindings, allowed_shape, buf_dims):
+                    if passed_shape == [0]:
+                        if not binding.is_partial_buf_allowed:
+                            warn(f"Partial buffer not allowed for: {binding.name}")
+                        continue
+                    error_message += f"{binding.name}:\t{element_size}\t{shape}\n"
+            error_message += "\n\nPassed shapes:\n"
+            for binding, (element_size, shape) in zip(self.bindings, buf_dims):
+                if shape == [0]:
+                    continue
+                error_message += f"{binding.name}:\t{element_size}\t{shape}\n"
+        return error_message
+
+    def set_persistent_inputs(self, buffers: Dict[str, np.ndarray]) -> None:
+        if self._kv_dma is None:
+            raise RuntimeError("Persistent inputs require `kv_dma_share=True`.")
+        self._kv_dma.set_persistent_inputs(buffers)
+
+    def set_data_for_kv_handoff(self, kv_cache_buffers, slicing_parameters, index=0, buff_map=None):
+        if self._kv_dma is None:
+            raise RuntimeError("KV handoff requires `kv_dma_share=True`.")
+        return self._kv_dma.set_data_for_kv_handoff(kv_cache_buffers, slicing_parameters, index, buff_map)
+
+    def np_run(self, inputs: Dict[str, np.ndarray], slicing_parameters=None, is_prefill: bool = True) -> int:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
+        return self._kv_dma.np_run(inputs, slicing_parameters, is_prefill)
+
+    def np_run_pipeline(
+        self, inputs: Dict[str, np.ndarray], slicing_parameters=None, last_chunk: bool = False, kv_cache_buffers=None
+    ) -> int:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
+        return self._kv_dma.np_run_pipeline(inputs, slicing_parameters, last_chunk, kv_cache_buffers)
+
+    def complete_inf(self, index: int, is_prefill: bool) -> None:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
+        self._kv_dma.complete_inf(index, is_prefill)
+
+    def get_outputs(self, index: int) -> Dict[str, np.ndarray]:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
+        return self._kv_dma.get_outputs(index)

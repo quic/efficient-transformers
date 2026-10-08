@@ -3771,3 +3771,60 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
             num_patches=2508,
             kv_offload=True,
         )
+
+
+def test_diffusion_gemma_split_compile_uses_paired_mxint8_kv_io(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
+
+    captured = []
+
+    class FakeQPC:
+        role = "qpc"
+
+        def __init__(self, model):
+            self.model = self
+
+        def get_specializations(self, **kwargs):
+            return ([{"_graph_name": self.role}], {})
+
+        def get_onnx_path(self, **kwargs):
+            return tmp_path / f"{self.role}.onnx"
+
+        def _compile(self, **kwargs):
+            captured.append((self.role, kwargs))
+            return tmp_path / f"{self.role}_qpc"
+
+    class FakeEncoderQPC(FakeQPC):
+        role = "encoder"
+
+    class FakeDecoderQPC(FakeQPC):
+        role = "decoder"
+
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaEncoderQPC", FakeEncoderQPC)
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaDecoderQPC", FakeDecoderQPC)
+
+    qeff_model = SimpleNamespace(
+        config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=2)),
+        generate_npi_file=lambda path: tmp_path / "decoder_npi.yaml",
+    )
+
+    diffusion_utils.compile_split_qpcs(
+        qeff_model,
+        prefill_seq_len=256,
+        ctx_len=1024,
+        canvas_length=256,
+        num_devices=4,
+        num_cores=16,
+    )
+
+    assert [role for role, _ in captured] == ["encoder", "decoder"]
+    expected_custom_io = {
+        f"past_{kv_name}.{layer_index}{suffix}": "mxint8"
+        for layer_index in range(2)
+        for kv_name in ("key", "value")
+        for suffix in ("", "_RetainedState")
+    }
+    for _, kwargs in captured:
+        assert kwargs["custom_io"] == expected_custom_io

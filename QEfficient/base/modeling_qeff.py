@@ -517,20 +517,20 @@ class QEFFBaseModel(ABC):
                 return tuple(layers)
             return None
 
-        def _resolve_pkv_names(layer_idx, layer_state):
+        def _resolve_pkv_names(layer_idx, layer_state, prefix=""):
             if hasattr(self.model, "get_onnx_past_key_value_names"):
                 names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
                 if names is not None:
-                    return list(names)
+                    return [prefix + name for name in names]
             state_len = len(layer_state)
             if state_len == 2:
-                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+                return [f"{prefix}past_key.{layer_idx}", f"{prefix}past_value.{layer_idx}"]
             if state_len == 4:
                 return [
-                    f"past_key_self.{layer_idx}",
-                    f"past_value_self.{layer_idx}",
-                    f"past_key_cross.{layer_idx}",
-                    f"past_value_cross.{layer_idx}",
+                    f"{prefix}past_key_self.{layer_idx}",
+                    f"{prefix}past_value_self.{layer_idx}",
+                    f"{prefix}past_key_cross.{layer_idx}",
+                    f"{prefix}past_value_cross.{layer_idx}",
                 ]
             raise ValueError(
                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
@@ -540,13 +540,14 @@ class QEFFBaseModel(ABC):
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
-                if param == "past_key_values":
-                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                if param.endswith("past_key_values"):
+                    pkv_layers = _resolve_pkv_layers(example_inputs[param])
                     if pkv_layers is None:
                         input_names.append(param)
                         continue
+                    prefix = param[: -len("past_key_values")]
                     for i in range(len(pkv_layers)):
-                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i]))
+                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i], prefix=prefix))
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
                         input_names.extend(

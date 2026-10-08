@@ -3033,17 +3033,45 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
         qpc_path: Optional[Union[str, Path]] = None,
+        encoder_qpc_path: Optional[Union[str, Path]] = None,
+        decoder_qpc_path: Optional[Union[str, Path]] = None,
+        runtime_mode: str = "unified",
         **kwargs,
     ):
         if not runtime_ai100:
-            raise NotImplementedError("PyTorch execution is not supported for DiffusionGemma single-QPC generation.")
+            raise NotImplementedError("PyTorch execution is not supported for DiffusionGemma QAIC generation.")
 
+        if generation_len is None:
+            raise ValueError("`generation_len` must be provided for DiffusionGemma QAIC generation.")
+        if runtime_mode not in {"unified", "split"}:
+            raise ValueError("`runtime_mode` must be either 'unified' or 'split'.")
+
+        if runtime_mode == "split":
+            if qpc_path is not None:
+                raise ValueError("`qpc_path` is only valid when `runtime_mode='unified'`.")
+            if encoder_qpc_path is None or decoder_qpc_path is None:
+                raise ValueError(
+                    "Both `encoder_qpc_path` and `decoder_qpc_path` are required when `runtime_mode='split'`."
+                )
+            from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
+                diffusion_gemma_generate_split_qpc_chunked,
+            )
+
+            return diffusion_gemma_generate_split_qpc_chunked(
+                qeff_model=self,
+                inputs=inputs,
+                device_ids=device_ids,
+                generation_len=generation_len,
+                encoder_qpc_path=encoder_qpc_path,
+                decoder_qpc_path=decoder_qpc_path,
+                **kwargs,
+            )
+
+        if encoder_qpc_path is not None or decoder_qpc_path is not None:
+            raise ValueError("Split QPC paths require `runtime_mode='split'`.")
         resolved_qpc_path = qpc_path if qpc_path is not None else getattr(self, "qpc_path", None)
         if resolved_qpc_path is None:
-            raise ValueError("A compiled QPC path must be provided for DiffusionGemma single-QPC generation.")
-        if generation_len is None:
-            raise ValueError("`generation_len` must be provided for DiffusionGemma single-QPC generation.")
-
+            raise ValueError("A compiled QPC path must be provided for DiffusionGemma unified generation.")
         from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
             diffusion_gemma_generate_single_qpc_chunked,
         )
