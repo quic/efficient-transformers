@@ -8,6 +8,7 @@
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
+from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -199,12 +200,18 @@ def find_checkpoint_key(
             candidates.append(f"model.{language_model_key}")
         if ".vision_model." in candidate:
             candidates.append(candidate.replace(".vision_model.", ".visual.", 1))
+            candidates.append(candidate.replace(".vision_model.", ".vision_tower.", 1))
         elif candidate.startswith("vision_model."):
             candidates.append(candidate.replace("vision_model.", "visual.", 1))
+            candidates.append(candidate.replace(".vision_model.", ".vision_tower.", 1))
+        # elif candidate.startswith("vision_tower."):
+        #     candidates.append(candidate.replace("vision_tower.", "visual.", 1))
         if ".visual." in candidate:
             candidates.append(candidate.replace(".visual.", ".vision_model.", 1))
+            candidates.append(candidate.replace(".visual.", ".vision_tower.", 1))
         elif candidate.startswith("visual."):
             candidates.append(candidate.replace("visual.", "vision_model.", 1))
+            candidates.append(candidate.replace(".visual.", ".vision_tower.", 1))
         if candidate.startswith("model.visual."):
             candidates.append(candidate.replace("model.visual.", "model.language_model.visual.", 1))
         elif candidate.startswith("visual."):

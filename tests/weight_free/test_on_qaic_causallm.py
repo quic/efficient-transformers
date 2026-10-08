@@ -17,14 +17,14 @@ Covers causal-LM generation, HF/QAIC parity, and embedding parity.
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
 import pytest
+import requests
 import torch
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoTokenizer,
-)
+from PIL import Image
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel, QEFFAutoModelForCausalLM
@@ -41,6 +41,138 @@ from ._helpers import (
     load_tokenizer,
     skip_on_model_fetch_error,
 )
+
+VLM_PREFILL_SEQ_LEN = 64
+VLM_CTX_LEN = 512
+VLM_IMAGE_HEIGHT = 354
+VLM_IMAGE_WIDTH = 536
+VLM_NUM_CORES = 16
+VLM_NUM_DEVICES = 1
+VLM_GENERATION_LEN = 2
+VLM_PROMPT = "Describe the image."
+VLM_IMAGE_URL = "https://wallup.net/wp-content/uploads/2017/03/28/351036-San_Francisco-USA-bridge-sunset-Golden_Gate_Bridge-lights.jpg"
+
+
+def _load_vlm_hf_reference(model_id: str):
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+    try:
+        model = AutoModelForImageTextToText.from_pretrained(
+            model_id,
+            config=config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+    except ValueError:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            config=config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+    return model.eval()
+
+
+def _prepare_vlm_inputs(processor : AutoProcessor,) -> dict:
+    process_vision_info = pytest.importorskip("qwen_vl_utils").process_vision_info
+    response = requests.get(VLM_IMAGE_URL, timeout=30)
+    response.raise_for_status()
+    image = Image.open(io.BytesIO(response.content)).convert("RGB")
+    image = image.resize(
+        (VLM_IMAGE_WIDTH, VLM_IMAGE_HEIGHT),
+        Image.Resampling.BICUBIC,
+    )
+    messages = [
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": VLM_PROMPT},
+                ],
+            }
+        ]
+    ]
+    texts = [processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages]
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
+    return dict(inputs)
+
+
+def _run_vlm_hf_reference(model, inputs: dict) -> np.ndarray:
+    with torch.inference_mode():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=VLM_GENERATION_LEN,
+            min_new_tokens=VLM_GENERATION_LEN,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+        )
+    prompt_len = inputs["input_ids"].shape[-1]
+    return outputs[:, prompt_len:].detach().cpu().numpy()
+
+
+@pytest.mark.weight_free
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_VLM_MODEL_PARAMS)
+def test_weight_free_vlm_combined_compile(model_type, model_id, tmp_export_dir):
+    """Run a weight-free dual-QPC VLM and compare generated tokens with HF."""
+    try:
+        hf_model = _load_vlm_hf_reference(model_id)
+        processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        qeff_model = load_weight_free_vlm_model(model_id)
+    except Exception as exc:
+        skip_on_model_fetch_error(exc, model_id)
+
+    hf_tokens = _run_vlm_hf_reference(hf_model, _prepare_vlm_inputs(processor))
+    qeff_inputs = _prepare_vlm_inputs(processor)
+    model_type = getattr(qeff_model.model.config, "model_type", None)
+    if model_type == "qwen3_vl_moe":
+        qeff_inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=qeff_inputs,
+            prefill_seq_len=VLM_PREFILL_SEQ_LEN,
+            batch_size=1,
+        )
+    common = {
+        "batch_size": 1,
+        "ctx_len": VLM_CTX_LEN,
+        "height": VLM_IMAGE_HEIGHT,
+        "prefill_seq_len": VLM_PREFILL_SEQ_LEN,
+        "width": VLM_IMAGE_WIDTH,
+        "num_cores": VLM_NUM_CORES,
+        "num_devices": VLM_NUM_DEVICES,
+        "mxfp6_matmul": False,
+        "mxint8_kv_cache": False,
+        "aic_enable_depth_first": True,
+        "mos": 1,
+        "split_model_io": True,
+        "use_onnx_subfunctions": True,
+    }
+    config_model_type = getattr(qeff_model.model.config, "model_type", None)
+    if config_model_type == "gemma4":
+        common.pop("height")
+        common.pop("width")
+
+    qpc_paths = qeff_model.compile(
+        compile_dir=str(tmp_export_dir / f"{model_type}_combined"),
+        **common,
+    )
+
+    assert qpc_paths.get("vision_qpc_path")
+    assert qpc_paths.get("lang_qpc_path")
+
+    qaic_output = qeff_model.generate(inputs=qeff_inputs, generation_len=VLM_GENERATION_LEN)
+    assert qaic_output is not None, "Weight-free VLM QAIC generate returned None"
+    assert qaic_output.generated_ids is not None, "Weight-free VLM QAIC generate returned no token IDs"
+
+    qaic_tokens = qaic_output.generated_ids[:, :VLM_GENERATION_LEN]
+    assert qaic_tokens.shape == hf_tokens.shape == (1, VLM_GENERATION_LEN)
+    assert np.array_equal(qaic_tokens, hf_tokens), (
+        f"Weight-free VLM QAIC/HF parity failed for {model_id}: HF={hf_tokens.tolist()}, QAIC={qaic_tokens.tolist()}"
+    )
 
 
 @pytest.mark.weight_free

@@ -102,6 +102,12 @@ WEIGHT_FREE_VLM_MODEL_PARAMS = [
         marks=pytest.mark.xdist_group(name="qaic-runtime-qwen3-vl-moe"),
         id="qwen3-vl-moe",
     ),
+    pytest.param(
+        "gemma4_moe",
+        "tiny-random/gemma-4-moe",
+        marks=pytest.mark.xdist_group(name="qaic-runtime-gemma-4-moe"),
+        id="gemma-4-moe",
+    ),
 ]
 
 # ---------------------------------------------------------------------------

@@ -1098,10 +1098,10 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
                 layer_seq_len = seq_len
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
-                (
+                [
                     torch.zeros(cache_shape, dtype=config.dtype),
                     torch.zeros(cache_shape, dtype=config.dtype),
-                )
+                ]
             )
         return past_key_values
 
@@ -1137,7 +1137,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             else:
                 hidden_states = hidden_states[:, -1:, :]
 
-        logits = self.lm_head(hidden_states)
+        logits = self.model.lm_head(hidden_states)
         if self.config.final_logit_softcapping is not None:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
@@ -1155,7 +1155,6 @@ class QEffGemma4DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model.language_model
         self.config = self.model.config
-        self.lm_head = self.model.lm_head
 
     def get_submodules_for_export(self) -> type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
@@ -1240,7 +1239,7 @@ class QEffGemma4DecoderWrapper(nn.Module):
         else:
             logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states)
+        logits = self.model.lm_head(hidden_states)
         if self.config.text_config.final_logit_softcapping is not None:
             logits = logits / self.config.text_config.final_logit_softcapping
             logits = torch.tanh(logits)
@@ -1501,10 +1500,10 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 layer_seq_len = seq_len
             cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
             past_key_values.append(
-                (
+                [
                     torch.zeros(cache_shape, dtype=config.dtype),
                     torch.zeros(cache_shape, dtype=config.dtype),
-                )
+                ]
             )
         return past_key_values
 
