@@ -75,7 +75,7 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
             ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+        reordered_shapes = {k: dynamic_shapes.get(k, {}) for k in reordered_inputs}
         return reordered_inputs, reordered_shapes
     return reordered_inputs, None
 
@@ -118,8 +118,6 @@ def convert_dynamic_axes_to_dynamic_shapes(
         The HuggingFace model config object (model.config). Used to read:
           - max_position_embeddings  -> upper bound for seq_len / ctx_len dims
           - sliding_window           -> upper bound for sliding_window dim
-          - model_type               -> controls batch_min and whether
-                                       compressed_kvs reconstruction runs
         When None, safe defaults are used for all bounds and model-type-specific
         passes are skipped.
 
@@ -158,11 +156,13 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim.DYNAMIC
         return dim_registry[dim_name]
 
-    dynamic_shapes: Dict[str, Any] = {}
-    past_keys: Dict[int, Any] = {}
-    past_values: Dict[int, Any] = {}
-    compressed_kv_layers: Dict[int, Any] = {}
-    k_pe_layers: Dict[int, Any] = {}
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    conv_states: dict[int, Any] = {}
+    recurrent_states: dict[int, Any] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -170,6 +170,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            conv_states[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("recurrent_state."):
+            recurrent_states[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("compressed_kv."):
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
@@ -177,10 +181,15 @@ def convert_dynamic_axes_to_dynamic_shapes(
         else:
             dynamic_shapes[input_name] = resolved
 
-    if past_keys or past_values:
-        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+    cache_layer_indices = set(past_keys) | set(past_values) | set(conv_states) | set(recurrent_states)
+    if cache_layer_indices:
+        max_layer = max(cache_layer_indices)
         dynamic_shapes["past_key_values"] = [
-            [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+            [
+                past_keys.get(i, conv_states.get(i, {})),
+                past_values.get(i, recurrent_states.get(i, {})),
+            ]
+            for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -425,10 +434,14 @@ def export_wrapper(func):
                 if use_onnx_subfunctions and dynamo
                 else nullcontext()
             )
+            # This is an inference export. Without no_grad, the first layer's
+            # input has requires_grad=False while later layer inputs have
+            # requires_grad=True. PyTorch's region comparison treats their
+            # otherwise identical bodies as different subgraphs.
+            grad_context = torch.no_grad() if use_onnx_subfunctions and dynamo else nullcontext()
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch, grad_context:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 QEFFLogger.log_api_failure("export", self.__class__.__name__, export_exc)
                 if use_onnx_subfunctions and dynamo:
@@ -538,7 +551,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     if getattr(qeff_model, "_weight_free", False):
         copy_of_hash_params["weight_free"] = True
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        copy_of_hash_params["onnx_subfunction_version"] = 3
+        copy_of_hash_params["onnx_subfunction_version"] = 4
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
         model_params=copy_of_hash_params,
@@ -584,7 +597,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     orig_hash_subfunction_version = qeff_model.hash_params.get("onnx_subfunction_version")
     qeff_model._use_onnx_subfunctions = True
     qeff_model.hash_params["use_onnx_subfunctions"] = True
-    qeff_model.hash_params["onnx_subfunction_version"] = 3
+    qeff_model.hash_params["onnx_subfunction_version"] = 4
     # TorchScript patches are irrelevant on the dynamo path.
     if not dynamo:
         apply_torch_patches()
