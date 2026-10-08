@@ -32,6 +32,13 @@ from QEfficient.diffusers.models.modeling_utils import (
     compute_blocked_attention,
     get_attention_blocking_config,
 )
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
+
+
+class QEffWanTransformerBlock(WanTransformerBlock):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
 
 
 class QEffWanAttnProcessor(WanAttnProcessor):
@@ -222,7 +229,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         """
         Return repeated block classes used for ONNX subfunction extraction.
         """
-        return {WanTransformerBlock}
+        return {QEffWanTransformerBlock}
 
     def forward(
         self,
@@ -332,7 +339,7 @@ class QEffWanUnifiedWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {WanTransformerBlock}
+        return {QEffWanTransformerBlock}
 
     def forward(
         self,

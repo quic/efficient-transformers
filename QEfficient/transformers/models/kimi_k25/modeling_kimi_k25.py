@@ -25,6 +25,7 @@ from transformers.cache_utils import Cache
 from transformers.models.llava.modeling_llava import LlavaCausalLMOutputWithPast
 
 from QEfficient.utils import constants
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def eager_attention_forward(q, k, v, **kwargs):
@@ -230,7 +231,7 @@ class MLP2(nn.Module):
         return self.fc1(x)
 
 
-class MoonViTEncoderLayer(nn.Module):
+class QEffMoonViTEncoderLayer(nn.Module):
     def __init__(
         self,
         num_heads: int,
@@ -295,6 +296,7 @@ class MoonViTEncoderLayer(nn.Module):
         attn_out = self.wo(attn_out)
         return attn_out
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -340,7 +342,7 @@ class QEffMoonViT3dEncoder(nn.Module):
 
         new_blocks = []
         for old_block in old_blocks:
-            new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+            new_block = QEffMoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
             new_block.load_state_dict(old_block.state_dict())
             new_blocks.append(new_block.to(device=old_block.wqkv.weight.device, dtype=old_block.wqkv.weight.dtype))
         self.blocks = nn.ModuleList(new_blocks)
@@ -359,7 +361,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.encoder.blocks[0].__class__}
+        return {QEffMoonViTEncoderLayer}
 
     def forward(self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor) -> torch.Tensor:
         """

@@ -29,6 +29,7 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffMptAttention(MptAttention):
@@ -147,6 +148,7 @@ class QEffMptBlock(MptBlock):
     - add new args cache idx for the kv retention
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

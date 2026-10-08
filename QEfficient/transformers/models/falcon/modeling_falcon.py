@@ -33,6 +33,7 @@ from transformers.models.falcon.modeling_falcon import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
@@ -182,6 +183,7 @@ class QEffFalconAttention(FalconAttention):
 
 
 class QEffFalconDecoderLayer(FalconDecoderLayer):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

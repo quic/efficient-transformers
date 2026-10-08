@@ -51,6 +51,7 @@ from QEfficient.transformers.moe import (
     stack_expert_linears,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
@@ -336,6 +337,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     - add new args batch idx for the CB retention
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

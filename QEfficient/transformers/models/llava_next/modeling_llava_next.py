@@ -16,6 +16,7 @@ from transformers.models.llava_next.modeling_llava_next import (
     get_anyres_image_grid_shape,
 )
 
+from QEfficient.transformers.models.llava.modeling_llava import QEffCLIPEncoderLayer
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
@@ -37,7 +38,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {QEffCLIPEncoderLayer}
 
     def forward(self, pixel_values, image_sizes):
         if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:

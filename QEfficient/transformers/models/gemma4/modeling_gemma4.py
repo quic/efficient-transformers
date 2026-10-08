@@ -25,6 +25,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextRotaryEmbedding,
     Gemma4TextRouter,
     Gemma4VisionAttention,
+    Gemma4VisionEncoderLayer,
     apply_rotary_pos_emb,
     eager_attention_forward,
     repeat_kv,
@@ -50,6 +51,7 @@ from QEfficient.transformers.moe import (
 )
 from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils import constants
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
@@ -635,6 +637,7 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         post_norm = self._modules.pop("post_feedforward_layernorm_2")
         self.moe_block = QEffGemma4TextMoeBlock(router, experts, pre_norm, post_norm)
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1240,6 +1243,12 @@ class QEffGemma4DecoderWrapper(nn.Module):
         return logits, vision_embeds, next_image_idx, outputs.past_key_values
 
 
+class QEffGemma4VisionEncoderLayer(Gemma4VisionEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffGemma4EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -1252,7 +1261,7 @@ class QEffGemma4EncoderWrapper(nn.Module):
         )
 
     def get_submodules_for_export(self) -> type[nn.Module]:
-        return {self.model.model.vision_tower.encoder.layers[0].__class__}
+        return {QEffGemma4VisionEncoderLayer}
 
     def forward(self, pixel_values, image_position_ids):
         vision_tower = self.model.model.vision_tower

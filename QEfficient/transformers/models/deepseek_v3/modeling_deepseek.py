@@ -34,6 +34,7 @@ from QEfficient.transformers.moe import (
     stack_expert_linears,
 )
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def rotate_half(x):
@@ -995,6 +996,7 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
 class QEffDeepseekV3DecoderLayer(nn.Module):
     """Adapted DeepseekV3DecoderLayer with batch_index and proper position_ids handling."""
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

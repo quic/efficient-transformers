@@ -37,6 +37,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 # from transformers.utils import is_torchdynamo_compiling
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
@@ -196,6 +197,7 @@ class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
     - add new args batch idx for the CB models
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

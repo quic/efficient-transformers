@@ -27,6 +27,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextModel,
     Qwen3_5TextRotaryEmbedding,
     Qwen3_5VisionAttention,
+    Qwen3_5VisionBlock,
     Qwen3_5VisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
@@ -61,6 +62,7 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 QWEN3_5_ROPE_CACHE_EXPORT_CAP = 76800
 
@@ -1169,6 +1171,7 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
             self.self_attn.__class__ = QEffQwen3_5Attention
             self.self_attn.__qeff_init__()
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1748,6 +1751,12 @@ class QEffQwen3_5VisionAttention(Qwen3_5VisionAttention):
         return attn_output
 
 
+class QEffQwen3_5VisionBlock(Qwen3_5VisionBlock):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffQwen3_5EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -1756,9 +1765,9 @@ class QEffQwen3_5EncoderWrapper(nn.Module):
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
-            return {self.model.model.visual.blocks[0].__class__}
+            return {QEffQwen3_5VisionBlock}
         if hasattr(self.model.model, "vision_model") and hasattr(self.model.model.vision_model, "blocks"):
-            return {self.model.model.vision_model.blocks[0].__class__}
+            return {QEffQwen3_5VisionBlock}
         return set()
 
     def forward(self, pixel_values, image_grid_thw):

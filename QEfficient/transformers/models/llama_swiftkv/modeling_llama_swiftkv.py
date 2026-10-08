@@ -30,6 +30,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     qeff_apply_rotary_pos_emb,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffLlamaSwiftKVConfig(LlamaConfig):
@@ -168,6 +169,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         self.sin_cached = sin_cached
         self.cos_cached = cos_cached
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

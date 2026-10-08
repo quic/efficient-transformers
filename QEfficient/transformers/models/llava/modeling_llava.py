@@ -10,18 +10,26 @@ from typing import List, Optional, Type
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
+from transformers.models.clip.modeling_clip import CLIPEncoderLayer
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
 
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 BS = 1
 FBS = 4
 NUM_CHANNEL = 3
 SEQ_LEN = 592
 CTX_LEN = 1024
+
+
+class QEffCLIPEncoderLayer(CLIPEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
 
 
 class QEFFLlavaEncoderWrapper(nn.Module):
@@ -37,7 +45,7 @@ class QEFFLlavaEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {QEffCLIPEncoderLayer}
 
     def forward(self, pixel_values):
         # Image features

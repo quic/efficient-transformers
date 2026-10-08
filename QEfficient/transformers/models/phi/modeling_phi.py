@@ -25,6 +25,7 @@ from transformers.models.phi.modeling_phi import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def eager_attention_forward(
@@ -142,6 +143,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
     - update the hidden_states, and fix for onnx model
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

@@ -29,6 +29,7 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextModel,
     Llama4TextMoe,
     Llama4VisionAttention,
+    Llama4VisionEncoderLayer,
     Llama4VisionModel,
     logger,
     repeat_kv,
@@ -48,6 +49,7 @@ from QEfficient.transformers.moe import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def eager_attention_forward_vision(
@@ -552,6 +554,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
     - add new args batch idx for the CB models
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -837,6 +840,12 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         return past_key_values
 
 
+class QEffLlama4VisionEncoderLayer(Llama4VisionEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffLlama4EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -849,7 +858,7 @@ class QEffLlama4EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_model.model.layers[0].__class__}
+        return {QEffLlama4VisionEncoderLayer}
 
     def forward(self, pixel_values):
         vision_feature_select_strategy = self.model.config.vision_config.vision_feature_select_strategy

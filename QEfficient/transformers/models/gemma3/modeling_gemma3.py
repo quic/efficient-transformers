@@ -24,6 +24,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     repeat_kv,
     rotate_half,
 )
+from transformers.models.siglip.modeling_siglip import SiglipEncoderLayer
 from transformers.utils import logging
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
@@ -32,6 +33,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 logger = logging.get_logger(__name__)
 
@@ -284,6 +286,7 @@ class QEffGemma3Attention(Gemma3Attention):
 
 
 class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -637,6 +640,12 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         return past_key_values
 
 
+class QEffSiglipEncoderLayer(SiglipEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffGemma3EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -650,7 +659,7 @@ class QEffGemma3EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {QEffSiglipEncoderLayer}
 
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)

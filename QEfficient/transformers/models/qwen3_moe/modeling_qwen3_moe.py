@@ -48,6 +48,7 @@ from QEfficient.transformers.moe import (
     silu_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
@@ -261,6 +262,7 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
 
 
 class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

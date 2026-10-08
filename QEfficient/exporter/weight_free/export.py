@@ -191,8 +191,8 @@ def export_weight_free_onnx(
 
     # export_wrapper (the @export_wrapper decorator on _export) already ran
     # _setup_onnx_subfunctions on this same object before calling into this
-    # function, and already has temporarily_enable_nested_compile_regions active
-    # around the whole call chain — meta_qeff_model is qeff_model is self, mutated
+    # function, and already has the nested compile region export contexts active
+    # around the whole call chain - meta_qeff_model is qeff_model is self, mutated
     # in place, not a clone. Re-running subfunction setup here would only be
     # necessary if _run_quantizer_for_wf's quantizer rewrite (which runs after
     # export_wrapper's setup) changed the repeated decoder-block class itself;

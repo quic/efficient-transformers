@@ -21,6 +21,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
+    WhisperEncoderLayer,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
@@ -31,6 +32,7 @@ from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE, ONNX_EXPORT_EXAMPLE_SEQ_LEN
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
@@ -177,6 +179,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
     - added input_features argument to pass forward to attention
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -271,6 +274,12 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
             outputs += (past_key_value,)
 
         return outputs
+
+
+class QEffWhisperEncoderLayer(WhisperEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
 
 
 class QEffWhisperEncoder(WhisperEncoder):
@@ -721,7 +730,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.encoder.layers[0].__class__, QEffWhisperDecoderLayer}
+        return {QEffWhisperEncoderLayer, QEffWhisperDecoderLayer}
 
     def forward(
         self,

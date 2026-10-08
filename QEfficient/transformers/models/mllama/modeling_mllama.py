@@ -30,6 +30,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextSelfAttention,
+    MllamaVisionEncoderLayer,
     MllamaVisionModel,
     logger,
     repeat_kv,
@@ -45,6 +46,7 @@ from QEfficient.transformers.modeling_utils import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 _MLLAMA_DEPRECATION_MSG = (
     "Support for Mllama (Llama 3.2 Vision) in QEfficient is deprecated and will be removed in a future release. "
@@ -294,6 +296,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         - add new args cache idx for the kv retention
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -744,6 +747,12 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         )
 
 
+class QEffMllamaVisionEncoderLayer(MllamaVisionEncoderLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffMllamaVisionEncoder(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -757,7 +766,7 @@ class QEffMllamaVisionEncoder(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_model.transformer.layers[0].__class__}
+        return {QEffMllamaVisionEncoderLayer}
 
     def forward(
         self,

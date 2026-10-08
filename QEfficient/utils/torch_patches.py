@@ -13,8 +13,10 @@ Patches kept here:
     legacy trace-based exporter (dynamo=False path).
   - Layerwise safe export pass patches: disable expensive ONNX exporter passes
     for layerwise prefill export (TorchScript path).
+  - qeff_nested_compile_region: import-safe nested compile region decorator.
+  - invoke_subgraph_export_patches: scoped PyTorch backports for reusable subgraphs.
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
-    context managers for dynamo export path subgraph boundary management.
+    compatibility context managers for dynamo export subgraph boundary management.
   - preserve_subfunction_source_lines: preserve FX source metadata while Dynamo
     retraces GraphModule subfunctions.
   - invoke_subgraph export reuse_hash_fn patches: backport PyTorch changes that
@@ -30,8 +32,8 @@ Patches removed (upstreamed to PyTorch):
   - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
 """
 
+import functools
 import importlib
-import inspect
 import os
 import threading
 from contextlib import contextmanager
@@ -78,6 +80,29 @@ _SAFE_EXPORT_REQUIRED_PASSES = {
 }
 
 _GRAPH_CALL_COMPATIBLE_TENSOR_METADATA_EXCLUDED_FIELDS = frozenset({"storage_bytes"})
+
+
+def qeff_nested_compile_region(fn=None, *, options=None, max_reuse_entries=8, reuse_hash_fn=None):
+    """Use ``torch.compiler.nested_compile_region`` when the installed Torch provides it."""
+
+    def decorator(func):
+        nested_compile_region = getattr(getattr(torch, "compiler", None), "nested_compile_region", None)
+        if nested_compile_region is None:
+            wrapped = func
+        else:
+            wrapped = nested_compile_region(
+                options=options,
+                max_reuse_entries=max_reuse_entries,
+                reuse_hash_fn=reuse_hash_fn,
+            )(func)
+            functools.update_wrapper(wrapped, func)
+
+        wrapped.__qeff_nested_compile_region__ = True
+        wrapped.__qeff_original_function__ = func
+        wrapped.__qeff_reuse_hash_fn__ = reuse_hash_fn
+        return wrapped
+
+    return decorator if fn is None else decorator(fn)
 
 
 def _noop(*args, **kwargs):
@@ -956,7 +981,6 @@ def apply_torch_patches():
     if _original_track_scope_attrs is not None:
         _C._jit_pass_onnx_track_scope_attributes = _track_scope_attributes_patched
 
-    _enable_invoke_subgraph_export_reuse_hash_patches()
     _PATCHES_ACTIVE = True
 
 
@@ -979,22 +1003,30 @@ def undo_torch_patches():
     if _original_track_scope_attrs is not None:
         _C._jit_pass_onnx_track_scope_attributes = _original_track_scope_attrs
 
-    _disable_invoke_subgraph_export_reuse_hash_patches()
     _PATCHES_ACTIVE = False
+
+
+@contextmanager
+def invoke_subgraph_export_patches():
+    """Apply reusable invoke_subgraph export backports only within Dynamo subfunction export."""
+    _enable_invoke_subgraph_export_reuse_hash_patches()
+    try:
+        yield
+    finally:
+        _disable_invoke_subgraph_export_reuse_hash_patches()
 
 
 @contextmanager
 def temporarily_enable_nested_compile_regions(model, target_classes=None):
     """
-    Wrap selected module ``forward`` methods with ``nested_compile_region``
-    during export so repeated block functions are materialized by dynamo.
+    Add nested compile regions to selected external module ``forward`` methods.
 
-    Used when dynamo=True and use_onnx_subfunctions=True. Requires torch >= 2.13.
+    QEff-owned classes are decorated statically. This is only a compatibility
+    fallback for dynamically loaded classes that QEfficient cannot subclass.
     """
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
-    _enable_invoke_subgraph_export_reuse_hash_patches()
     try:
         for module in model.modules():
             if target_classes and not isinstance(module, target_classes):
@@ -1005,11 +1037,11 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
                 continue
 
             wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
-            if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
+            if getattr(wrapped_forward, "__qeff_nested_compile_region__", False):
                 continue
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
-            nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
+            nested_forward = qeff_nested_compile_region(wrapped_forward)
             setattr(module, "forward", nested_forward.__get__(module, type(module)))
             patched_modules.append((module, previous_forward))
 
@@ -1020,7 +1052,6 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
                 delattr(module, "forward")
             else:
                 setattr(module, "forward", previous_forward)
-        _disable_invoke_subgraph_export_reuse_hash_patches()
 
 
 @contextmanager
@@ -1029,9 +1060,8 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     Replace nested_compile_region-wrapped ``forward`` methods with their original
     underlying functions for the duration of plain dynamo export (flat graph path).
 
-    Used during weight-free export with use_onnx_subfunctions=False so that
-    @nested_compile_region boundaries on decoder layer forward() methods do not
-    create unwanted subgraph splits during tracing.
+    Used when dynamo=True and use_onnx_subfunctions=False so static region
+    boundaries do not create unwanted subgraph splits during flat export.
     """
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
@@ -1046,14 +1076,10 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
-            if getattr(wrapped_forward, "__qualname__", "") != "mark_compile_region.<locals>.wrap.<locals>.inner":
+            if not getattr(wrapped_forward, "__qeff_nested_compile_region__", False):
                 continue
 
-            closure = getattr(wrapped_forward, "__closure__", None) or ()
-            original_forward = next(
-                (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),
-                None,
-            )
+            original_forward = getattr(wrapped_forward, "__qeff_original_function__", None)
             if original_forward is None:
                 continue
 

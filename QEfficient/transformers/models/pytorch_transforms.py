@@ -12,6 +12,7 @@ from types import MethodType
 
 import torch
 from torch import nn
+from transformers.models.clip.modeling_clip import CLIPEncoderLayer
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -59,6 +60,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
     Gemma4TextRouter,
     Gemma4VisionAttention,
+    Gemma4VisionEncoderLayer,
 )
 from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeAttention,
@@ -103,6 +105,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
 )
+from transformers.models.internvl.modeling_internvl import InternVLVisionLayer
 
 try:
     from transformers.models.granitemoe.modeling_granitemoe import (
@@ -135,6 +138,7 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextMoe,
     Llama4TextRMSNorm,
     Llama4VisionAttention,
+    Llama4VisionEncoderLayer,
     Llama4VisionModel,
 )
 from transformers.models.llava.modeling_llava import (
@@ -174,6 +178,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
+    MllamaVisionEncoderLayer,
     MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
@@ -192,7 +197,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Model,
     Phi3RMSNorm,
 )
-from transformers.models.pixtral.modeling_pixtral import PixtralRMSNorm, PixtralVisionModel
+from transformers.models.pixtral.modeling_pixtral import PixtralAttentionLayer, PixtralRMSNorm, PixtralVisionModel
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
     Qwen2DecoderLayer,
@@ -234,6 +239,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5RMSNormGated,
     Qwen3_5TextModel,
     Qwen3_5VisionAttention,
+    Qwen3_5VisionBlock,
     Qwen3_5VisionModel,
 )
 from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
@@ -250,6 +256,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTextModel,
     Qwen3_5MoeTopKRouter,
     Qwen3_5MoeVisionAttention,
+    Qwen3_5MoeVisionBlock,
     Qwen3_5MoeVisionModel,
 )
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
@@ -272,6 +279,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextRMSNorm,
     Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionAttention,
+    Qwen3VLVisionBlock,
     Qwen3VLVisionModel,
 )
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
@@ -286,9 +294,11 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
+    Qwen3VLMoeVisionBlock,
     Qwen3VLMoeVisionModel,
 )
 from transformers.models.roberta.modeling_roberta import RobertaModel
+from transformers.models.siglip.modeling_siglip import SiglipEncoderLayer
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -309,6 +319,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
+    WhisperEncoderLayer,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
@@ -377,6 +388,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
+    QEffSiglipEncoderLayer,
 )
 from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4ClippableLinear,
@@ -388,6 +400,7 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
     QEffGemma4VisionAttention,
+    QEffGemma4VisionEncoderLayer,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeAttention,
@@ -455,6 +468,7 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
+    QEffInternVLVisionLayer,
 )
 from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import (
     QEffKimiK25ForConditionalGeneration,
@@ -479,9 +493,11 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4TextModel,
     QEffLlama4TextMoe,
     QEffLlama4VisionAttention,
+    QEffLlama4VisionEncoderLayer,
     QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
+    QEffCLIPEncoderLayer,
     QEFFLlavaDecoderWrapper,
     QEffLlavaForConditionalGeneration,
 )
@@ -498,6 +514,7 @@ from QEfficient.transformers.models.mistral.modeling_mistral import (
 from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
     QEffMistral3ForConditionalGeneration,
     QEffMistral3Model,
+    QEffPixtralAttentionLayer,
     QEffPixtralVisionModel,
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
@@ -518,6 +535,7 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaTextCrossAttentionTwoQPC,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
+    QEffMllamaVisionEncoderLayer,
     QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.molmo.modeling_molmo import (
@@ -584,6 +602,7 @@ from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Model,
     QEffQwen3_5TextModel,
     QEffQwen3_5VisionAttention,
+    QEffQwen3_5VisionBlock,
     QEffQwen3_5VisionModel,
 )
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
@@ -599,6 +618,7 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeTextModel,
     QEffQwen3_5MoeTopKRouter,
     QEffQwen3_5MoeVisionAttention,
+    QEffQwen3_5MoeVisionBlock,
     QEffQwen3_5MoeVisionModel,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
@@ -619,6 +639,7 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLTextModel,
     QEffQwen3VLTextRotaryEmbedding,
     QEffQwen3VLVisionAttention,
+    QEffQwen3VLVisionBlock,
     QEffQwen3VLVisionModel,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
@@ -632,6 +653,7 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeTextTopKRouter,
     QEffQwen3VLMoeVisionAttention,
+    QEffQwen3VLMoeVisionBlock,
     QEffQwen3VLMoeVisionModel,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
@@ -650,6 +672,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
+    QEffWhisperEncoderLayer,
     QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
@@ -771,9 +794,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4TextModel: QEffLlama4TextModel,
         Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
         Llama4VisionAttention: QEffLlama4VisionAttention,
+        Llama4VisionEncoderLayer: QEffLlama4VisionEncoderLayer,
         Llama4VisionModel: QEffLlama4VisionModel,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
+        CLIPEncoderLayer: QEffCLIPEncoderLayer,
         # Llava Next
         LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
         # Gemma
@@ -793,6 +818,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
         Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
         Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
+        Qwen3VLMoeVisionBlock: QEffQwen3VLMoeVisionBlock,
         Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
@@ -802,6 +828,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLTextAttention: QEffQwen3VLTextAttention,
         Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
         Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
+        Qwen3VLVisionBlock: QEffQwen3VLVisionBlock,
         Qwen3VLVisionModel: QEffQwen3VLVisionModel,
         Qwen3VLTextModel: QEffQwen3VLTextModel,
         Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
@@ -815,6 +842,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma3TextModel: QEffGemma3TextModel,
         Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        SiglipEncoderLayer: QEffSiglipEncoderLayer,
         # Gemma4
         Gemma4TextAttention: QEffGemma4TextAttention,
         Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
@@ -822,6 +850,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4ForCausalLM: QEffGemma4ForCausalLM,
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
         Gemma4VisionAttention: QEffGemma4VisionAttention,
+        Gemma4VisionEncoderLayer: QEffGemma4VisionEncoderLayer,
         Gemma4ClippableLinear: QEffGemma4ClippableLinear,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
@@ -847,6 +876,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
         MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
         MllamaVisionModel: QEffMllamaVisionModel,
+        MllamaVisionEncoderLayer: QEffMllamaVisionEncoderLayer,
         MllamaTextModel: QEffMllamaTextModel,
         MllamaForCausalLM: QEffMllamaForCausalLM,
         MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
@@ -858,6 +888,7 @@ class KVCacheTransform(ModuleMappingTransform):
         # Mistral3
         Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
         Mistral3Model: QEffMistral3Model,
+        PixtralAttentionLayer: QEffPixtralAttentionLayer,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
@@ -899,6 +930,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
         Qwen3_5VisionAttention: QEffQwen3_5VisionAttention,
+        Qwen3_5VisionBlock: QEffQwen3_5VisionBlock,
         Qwen3_5VisionModel: QEffQwen3_5VisionModel,
         # Qwen3_5_Moe
         Qwen3_5MoeGatedDeltaNet: QEffQwen3_5MoeGatedDeltaNet,
@@ -909,6 +941,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeForCausalLM: QEffQwen3_5MoeForCausalLM,
         Qwen3_5MoeAttention: QEffQwen3_5MoeAttention,
         Qwen3_5MoeVisionAttention: QEffQwen3_5MoeVisionAttention,
+        Qwen3_5MoeVisionBlock: QEffQwen3_5MoeVisionBlock,
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
@@ -939,9 +972,11 @@ class KVCacheTransform(ModuleMappingTransform):
         WhisperAttention: QEffWhisperAttention,
         WhisperDecoderLayer: QEffWhisperDecoderLayer,
         WhisperEncoder: QEffWhisperEncoder,
+        WhisperEncoderLayer: QEffWhisperEncoderLayer,
         WhisperDecoder: QEffWhisperDecoder,
         WhisperModel: QEffWhisperModel,
         WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+        InternVLVisionLayer: QEffInternVLVisionLayer,
     }
 
     @classmethod

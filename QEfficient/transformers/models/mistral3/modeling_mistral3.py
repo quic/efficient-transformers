@@ -17,11 +17,16 @@ from transformers.models.mistral3.modeling_mistral3 import (
     Mistral3Model,
     Mistral3ModelOutputWithPast,
 )
-from transformers.models.pixtral.modeling_pixtral import PixtralVisionModel, position_ids_in_meshgrid
+from transformers.models.pixtral.modeling_pixtral import (
+    PixtralAttentionLayer,
+    PixtralVisionModel,
+    position_ids_in_meshgrid,
+)
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def custom_cumsum(tensor):
@@ -179,6 +184,12 @@ class QEffMistral3Model(Mistral3Model):
         )
 
 
+class QEffPixtralAttentionLayer(PixtralAttentionLayer):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEFFMistral3EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -192,7 +203,7 @@ class QEFFMistral3EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.model.vision_tower.transformer.layers[0].__class__}
+        return {QEffPixtralAttentionLayer}
 
     def forward(self, pixel_values):
         image_sizes = torch.tensor([[pixel_values.shape[2], pixel_values.shape[3]]]).repeat(pixel_values.shape[0], 1)

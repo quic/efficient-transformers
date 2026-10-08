@@ -10,7 +10,10 @@ Unit tests for the dynamo-specific transforms and context managers introduced
 in the enable_dynamo_for_causallm branch.
 
 Covered:
+  - qeff_nested_compile_region
+  - invoke_subgraph_export_patches
   - temporarily_enable_nested_compile_regions
+  - temporarily_disable_nested_compile_regions
   - PreserveNestedCacheRetainedStateTransform
   - RenameRepeatedSubgraphTransform
   - PruneFakeInitializersTransform
@@ -35,7 +38,13 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import export_utils
-from QEfficient.utils.torch_patches import preserve_subfunction_source_lines, temporarily_enable_nested_compile_regions
+from QEfficient.utils.torch_patches import (
+    invoke_subgraph_export_patches,
+    preserve_subfunction_source_lines,
+    qeff_nested_compile_region,
+    temporarily_disable_nested_compile_regions,
+    temporarily_enable_nested_compile_regions,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,56 +165,78 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
 
 
 # ---------------------------------------------------------------------------
-# TestTemporarilyEnableNestedCompileRegions
+# TestNestedCompileRegions
 # ---------------------------------------------------------------------------
 
 
-class TestTemporarilyEnableNestedCompileRegions:
-    def test_patches_decoder_layers_and_restores(self):
+class TestNestedCompileRegions:
+    def test_qeff_decoder_layers_are_decorated(self):
         model_hf, _ = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model_hf)
-        inner_model = qeff_model.model
+        decoder_layers = [m for m in qeff_model.model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
 
-        decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
-        assert len(decoder_layers) > 0, "No QEffLlamaDecoderLayer found in wrapped model"
+        assert decoder_layers
+        assert all(getattr(layer.forward, "__qeff_nested_compile_region__", False) for layer in decoder_layers)
 
-        original_qualnames = [getattr(m.forward, "__qualname__", "") for m in decoder_layers]
+    def test_decorator_factory_forwards_reuse_configuration(self, monkeypatch):
+        calls = []
 
-        with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-            for m in decoder_layers:
-                fwd = getattr(m, "forward", None)
-                qualname = getattr(fwd, "__qualname__", "")
-                assert (
-                    "mark_compile_region" in qualname or "nested_compile_region" in qualname or "inner" in qualname
-                ), (
-                    f"Expected nested_compile_region wrapper on {m.__class__.__name__}.forward, "
-                    f"got qualname: {qualname!r}"
-                )
+        def reuse_hash_fn(value):
+            return 0
 
-        # After context: original forward restored
-        for m, orig_qn in zip(decoder_layers, original_qualnames):
-            fwd = getattr(m, "forward", None)
-            qualname = getattr(fwd, "__qualname__", "")
-            assert qualname == orig_qn, f"forward qualname not restored: expected {orig_qn!r}, got {qualname!r}"
+        def fake_nested_compile_region(**kwargs):
+            calls.append(kwargs)
+            return lambda fn: fn
 
-    def test_noop_when_already_wrapped(self):
-        model_hf, _ = make_tiny_llama()
-        qeff_model = QEFFAutoModelForCausalLM(model_hf)
-        inner_model = qeff_model.model
+        monkeypatch.setattr(torch.compiler, "nested_compile_region", fake_nested_compile_region)
 
-        decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
+        @qeff_nested_compile_region(options="options", max_reuse_entries=3, reuse_hash_fn=reuse_hash_fn)
+        def identity(value):
+            return value
 
-        # Enter once
-        with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-            wrapped_forwards_first = [id(m.forward) for m in decoder_layers]
+        assert identity(1) == 1
+        assert calls == [{"options": "options", "max_reuse_entries": 3, "reuse_hash_fn": reuse_hash_fn}]
+        assert identity.__qeff_nested_compile_region__
 
-            # Enter again — already wrapped, should not double-wrap
-            with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-                wrapped_forwards_second = [id(m.forward) for m in decoder_layers]
+    def test_decorator_is_noop_when_torch_feature_is_unavailable(self, monkeypatch):
+        monkeypatch.delattr(torch.compiler, "nested_compile_region")
 
-        # IDs may differ (second context creates a new binding), but both contexts
-        # must restore cleanly — the important invariant is no crash and final state is restored.
-        assert len(wrapped_forwards_first) == len(wrapped_forwards_second)
+        def identity(value):
+            return value
+
+        decorated = qeff_nested_compile_region(identity)
+        assert decorated is identity
+        assert decorated.__qeff_nested_compile_region__
+
+    def test_external_fallback_wraps_without_activating_pytorch_patch(self):
+        class ExternalBlock(torch.nn.Module):
+            def forward(self, value):
+                return value
+
+        invoke_vars = importlib.import_module("torch._dynamo.variables.invoke_subgraph")
+        original_call_function = invoke_vars.InvokeSubgraphHigherOrderVariable._call_function
+        model = ExternalBlock()
+
+        with temporarily_enable_nested_compile_regions(model, target_classes=[ExternalBlock]):
+            assert model.forward.__qeff_nested_compile_region__
+            assert invoke_vars.InvokeSubgraphHigherOrderVariable._call_function is original_call_function
+
+        assert "forward" not in model.__dict__
+
+    def test_temporarily_disables_and_restores_qeff_regions(self):
+        class Model(torch.nn.Module):
+            @qeff_nested_compile_region
+            def forward(self, value):
+                return value + 1
+
+        model = Model()
+        wrapped_forward = model.forward.__func__
+
+        with temporarily_disable_nested_compile_regions(model):
+            assert not getattr(model.forward, "__qeff_nested_compile_region__", False)
+            assert model(torch.tensor(1)).item() == 2
+
+        assert model.forward.__func__ is wrapped_forward
 
     def test_reuse_hash_fn_partitions_export_repeated_subgraphs(self):
         class Dense(torch.nn.Module):
@@ -223,7 +254,7 @@ class TestTemporarilyEnableNestedCompileRegions:
         def reuse_hash_fn(layer, x):
             return layer.reuse_group_key
 
-        @torch.compiler.nested_compile_region(reuse_hash_fn=reuse_hash_fn)
+        @qeff_nested_compile_region(reuse_hash_fn=reuse_hash_fn)
         def layer_fn(layer, x):
             return layer(x)
 
@@ -240,7 +271,7 @@ class TestTemporarilyEnableNestedCompileRegions:
         model = Model()
         inputs = (torch.randn(8),)
 
-        with temporarily_enable_nested_compile_regions(model, target_classes=[torch.nn.Linear]):
+        with invoke_subgraph_export_patches():
             with torch.no_grad(), torch._dynamo.config.patch(inline_single_use_invoke_subgraph=False):
                 exported_program = torch.export.export(model, inputs, strict=False)
 
@@ -249,6 +280,36 @@ class TestTemporarilyEnableNestedCompileRegions:
             name for name, _ in exported_program.graph_module.named_modules() if name.startswith("repeated_subgraph")
         }
         assert repeated_subgraphs == {"repeated_subgraph0", "repeated_subgraph1"}
+
+    def test_glm4_moe_reuse_hash_separates_dense_and_moe_layers(self):
+        from transformers import AutoConfig
+        from transformers.models.glm4_moe.modeling_glm4_moe import Glm4MoeDecoderLayer
+
+        from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeDecoderLayer
+
+        config = AutoConfig.for_model(
+            "glm4_moe",
+            max_position_embeddings=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            vocab_size=127,
+            num_key_value_heads=2,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            first_k_dense_replace=1,
+            n_group=1,
+            topk_group=1,
+            head_dim=16,
+        )
+        dense_layer = Glm4MoeDecoderLayer(config, layer_idx=0)
+        moe_layer = Glm4MoeDecoderLayer(config, layer_idx=1)
+        reuse_hash_fn = QEffGlm4MoeDecoderLayer.forward.__qeff_reuse_hash_fn__
+
+        assert reuse_hash_fn(dense_layer) == 0
+        assert reuse_hash_fn(moe_layer) == 1
 
     def test_graph_module_comparison_ignores_storage_bytes(self):
         from torch._subclasses.fake_tensor import FakeTensorMode
@@ -268,8 +329,7 @@ class TestTemporarilyEnableNestedCompileRegions:
             small_fake = fake_mode.from_tensor(small_storage)
             large_fake = fake_mode.from_tensor(large_storage)
 
-        model = torch.nn.Identity()
-        with temporarily_enable_nested_compile_regions(model, target_classes=[torch.nn.Linear]):
+        with invoke_subgraph_export_patches():
             from torch._dynamo.variables.higher_order_ops import are_same_graph_modules
 
             assert are_same_graph_modules(
@@ -317,6 +377,101 @@ def test_dynamo_subfunction_export_runs_without_grad(monkeypatch, tmp_path):
 
     export(Model(), dynamo=True, use_onnx_subfunctions=True)
     assert invoke_vars.InvokeSubgraphHigherOrderVariable._call_function is original_call_function
+
+
+def test_flat_dynamo_export_temporarily_disables_nested_regions(monkeypatch, tmp_path):
+    class Region(torch.nn.Module):
+        @qeff_nested_compile_region
+        def forward(self, value):
+            return value
+
+    class Model:
+        model = Region()
+        model_architecture = "test"
+        model_name = "test"
+        hash_params = {}
+        _onnx_transforms = []
+
+    monkeypatch.setattr(export_utils, "validate_dynamo_export_requirements", lambda _: None)
+    monkeypatch.setattr(export_utils, "_prepare_export_directory", lambda self, kwargs: tmp_path / "model")
+    monkeypatch.setattr(export_utils, "_generate_export_hash", lambda self, args, kwargs, func: ("hash", {}))
+    monkeypatch.setattr(export_utils, "_save_export_metadata", lambda *args: None)
+
+    @export_utils.export_wrapper
+    def export(model, **kwargs):
+        assert not getattr(model.model.forward, "__qeff_nested_compile_region__", False)
+        return kwargs["export_dir"] / "model.onnx"
+
+    wrapper = Model()
+    export(wrapper, dynamo=True, use_onnx_subfunctions=False)
+    assert wrapper.model.forward.__qeff_nested_compile_region__
+
+
+def test_visual_block_mappings_use_qeff_owned_nested_regions():
+    from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
+    from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
+
+    expected_mappings = {
+        "CLIPEncoderLayer": "QEffCLIPEncoderLayer",
+        "Gemma4VisionEncoderLayer": "QEffGemma4VisionEncoderLayer",
+        "InternVLVisionLayer": "QEffInternVLVisionLayer",
+        "Llama4VisionEncoderLayer": "QEffLlama4VisionEncoderLayer",
+        "MllamaVisionEncoderLayer": "QEffMllamaVisionEncoderLayer",
+        "PixtralAttentionLayer": "QEffPixtralAttentionLayer",
+        "Qwen2_5_VLVisionBlock": "QEffQwen2_5_VLVisionBlock",
+        "Qwen3VLVisionBlock": "QEffQwen3VLVisionBlock",
+        "Qwen3VLMoeVisionBlock": "QEffQwen3VLMoeVisionBlock",
+        "Qwen3_5VisionBlock": "QEffQwen3_5VisionBlock",
+        "Qwen3_5MoeVisionBlock": "QEffQwen3_5MoeVisionBlock",
+        "SiglipEncoderLayer": "QEffSiglipEncoderLayer",
+        "WhisperEncoderLayer": "QEffWhisperEncoderLayer",
+    }
+    mappings = {source.__name__: (source, target) for source, target in KVCacheTransform._module_mapping.items()}
+
+    for source_name, target_name in expected_mappings.items():
+        source, target = mappings[source_name]
+        assert target.__name__ == target_name
+        assert issubclass(target, source)
+        assert target.forward.__qeff_nested_compile_region__
+
+        module = torch.nn.Module()
+        module.__class__ = source
+        module, transformed = KVCacheTransform.apply(module)
+        assert transformed
+        assert type(module) is target
+
+    wan_source, wan_target = next(
+        (source, target)
+        for source, target in AttentionTransform._module_mapping.items()
+        if source.__name__ == "WanTransformerBlock"
+    )
+    assert wan_target.__name__ == "QEffWanTransformerBlock"
+    assert issubclass(wan_target, wan_source)
+    assert wan_target.forward.__qeff_nested_compile_region__
+
+    wan_block = torch.nn.Module()
+    wan_block.__class__ = wan_source
+    wan_block, transformed = AttentionTransform.apply(wan_block)
+    assert transformed
+    assert type(wan_block) is wan_target
+
+
+def test_visual_block_mapping_preserves_forward_behavior():
+    from transformers.models.clip.configuration_clip import CLIPVisionConfig
+    from transformers.models.clip.modeling_clip import CLIPEncoderLayer
+
+    from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
+
+    config = CLIPVisionConfig(hidden_size=16, intermediate_size=32, num_attention_heads=4, num_hidden_layers=1)
+    layer = CLIPEncoderLayer(config).eval()
+    hidden_states = torch.randn(2, 5, config.hidden_size)
+    expected = layer(hidden_states, attention_mask=None)
+
+    layer, transformed = KVCacheTransform.apply(layer)
+    actual = layer(hidden_states, attention_mask=None)
+
+    assert transformed
+    torch.testing.assert_close(actual, expected)
 
 
 # ---------------------------------------------------------------------------

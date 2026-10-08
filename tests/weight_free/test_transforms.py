@@ -620,31 +620,17 @@ class TestRuntimeRequirements:
 
 
 class TestTemporarilyEnableNestedCompileRegions:
-    def test_patches_decoder_layers_and_restores(self):
+    def test_qeff_decoder_layers_are_already_wrapped(self):
         model_hf, _ = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model_hf)
         inner_model = qeff_model.model
 
         decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
-        assert len(decoder_layers) > 0, "No QEffLlamaDecoderLayer found in wrapped model"
-
-        original_qualnames = [getattr(m.forward, "__qualname__", "") for m in decoder_layers]
+        assert decoder_layers
+        assert all(getattr(layer.forward, "__qeff_nested_compile_region__", False) for layer in decoder_layers)
 
         with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-            for m in decoder_layers:
-                fwd = getattr(m, "forward", None)
-                qualname = getattr(fwd, "__qualname__", "")
-                assert (
-                    "mark_compile_region" in qualname or "nested_compile_region" in qualname or "inner" in qualname
-                ), (
-                    f"Expected nested_compile_region wrapper on {m.__class__.__name__}.forward, "
-                    f"got qualname: {qualname!r}"
-                )
-
-        for m, orig_qn in zip(decoder_layers, original_qualnames):
-            fwd = getattr(m, "forward", None)
-            qualname = getattr(fwd, "__qualname__", "")
-            assert qualname == orig_qn, f"forward qualname not restored: expected {orig_qn!r}, got {qualname!r}"
+            assert all("forward" not in layer.__dict__ for layer in decoder_layers)
 
     def test_noop_when_already_wrapped(self):
         model_hf, _ = make_tiny_llama()
@@ -653,13 +639,13 @@ class TestTemporarilyEnableNestedCompileRegions:
 
         decoder_layers = [m for m in inner_model.modules() if isinstance(m, QEffLlamaDecoderLayer)]
 
+        wrapped_forwards = [layer.forward.__func__ for layer in decoder_layers]
+
         with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-            wrapped_forwards_first = [id(m.forward) for m in decoder_layers]
-
             with temporarily_enable_nested_compile_regions(inner_model, target_classes=[QEffLlamaDecoderLayer]):
-                wrapped_forwards_second = [id(m.forward) for m in decoder_layers]
+                assert [layer.forward.__func__ for layer in decoder_layers] == wrapped_forwards
 
-        assert len(wrapped_forwards_first) == len(wrapped_forwards_second)
+        assert [layer.forward.__func__ for layer in decoder_layers] == wrapped_forwards
 
 
 # ---------------------------------------------------------------------------

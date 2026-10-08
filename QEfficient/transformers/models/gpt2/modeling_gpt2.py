@@ -19,6 +19,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def eager_attention_forward(module, query, key, value, attention_mask, head_mask=None, **kwargs):
@@ -149,6 +150,7 @@ class QEffGPT2Block(GPT2Block):
     - add new args cache idx for the kv retention
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],

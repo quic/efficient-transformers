@@ -45,6 +45,11 @@ from QEfficient.transformers.moe import (
     stack_expert_linears,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
+
+
+def _glm4_moe_decoder_layer_reuse_hash(layer, *args, **kwargs):
+    return 1 if isinstance(layer.mlp, Glm4MoeMoE) else 0
 
 
 class QEffGlm4MoeRotaryEmbedding(Glm4MoeRotaryEmbedding):
@@ -374,6 +379,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
 
 class QEffGlm4MoeDecoderLayer(Glm4MoeDecoderLayer):
+    @qeff_nested_compile_region(reuse_hash_fn=_glm4_moe_decoder_layer_reuse_hash)
     def forward(
         self,
         hidden_states: torch.Tensor,

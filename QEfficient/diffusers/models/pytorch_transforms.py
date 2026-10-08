@@ -20,7 +20,12 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
-from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
+from diffusers.models.transformers.transformer_wan import (
+    WanAttention,
+    WanAttnProcessor,
+    WanTransformer3DModel,
+    WanTransformerBlock,
+)
 from torch import nn
 from transformers.models.clip.modeling_clip import CLIPTextTransformer
 
@@ -49,6 +54,7 @@ from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttention,
     QEffWanAttnProcessor,
     QEffWanTransformer3DModel,
+    QEffWanTransformerBlock,
 )
 from QEfficient.transformers.models.clip.modeling_clip import QEffCLIPTextTransformer
 
@@ -76,6 +82,7 @@ class AttentionTransform(ModuleMappingTransform):
         WanAttnProcessor: QEffWanAttnProcessor,
         WanAttention: QEffWanAttention,
         WanTransformer3DModel: QEffWanTransformer3DModel,
+        WanTransformerBlock: QEffWanTransformerBlock,
         AutoencoderKLWan: QEffAutoencoderKLWan,
         WanDecoder3d: QEffWanDecoder3d,
         WanEncoder3d: QEffWanEncoder3d,

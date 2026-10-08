@@ -45,6 +45,7 @@ from QEfficient.transformers.moe import (
     silu_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
@@ -207,6 +208,7 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
     - add new args batch idx for the CB models although its not supported yet.
     """
 
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

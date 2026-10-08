@@ -21,6 +21,7 @@ from diffusers.models.transformers.transformer_flux import (
 
 from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention, get_attention_blocking_config
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 
 def qeff_apply_rotary_emb(
@@ -128,6 +129,7 @@ class QEffFluxAttention(FluxAttention):
 
 
 class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -160,6 +162,7 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
 
 
 class QEffFluxTransformerBlock(FluxTransformerBlock):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

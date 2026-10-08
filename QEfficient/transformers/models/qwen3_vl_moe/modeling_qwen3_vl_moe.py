@@ -29,6 +29,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
+    Qwen3VLMoeVisionBlock,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
@@ -60,6 +61,7 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import qeff_nested_compile_region
 
 QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
 
@@ -488,6 +490,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
 
 
 class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
+    @qeff_nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -772,6 +775,12 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
         return output if return_dict else output.to_tuple()
 
 
+class QEffQwen3VLMoeVisionBlock(Qwen3VLMoeVisionBlock):
+    @qeff_nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
+
 class QEffQwen3VLEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -786,7 +795,7 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.visual.blocks[0].__class__}
+        return {QEffQwen3VLMoeVisionBlock}
 
     def forward(self, pixel_values, image_grid_thw):
         image_embeds, deepstack_feature_lists = self.model.visual(pixel_values, grid_thw=image_grid_thw)
