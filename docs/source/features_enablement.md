@@ -212,13 +212,13 @@ The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `spec
 
 ## Dump executed inference inputs
 
-To replay the exact inputs used by a Cloud AI 100 inference, pass `dump_inputs_path` to `generate()` or set the `QEFFICIENT_DUMP_INPUTS` environment variable before constructing runtime sessions:
+To replay the exact inputs used by a Cloud AI 100 inference, pass a path-valued `artifacts` argument to `generate()` or set the `QEFFICIENT_DUMP_INPUTS` environment variable before constructing runtime sessions. This extends artifacts mode: `artifacts=True` still writes the non-executed runner bundle, while a path dumps every executed runtime invocation:
 
 ```python
 exec_info = model.generate(
     tokenizer=tokenizer,
     prompts=["Hello"],
-    dump_inputs_path="./input-dumps",
+    artifacts="./input-dumps",
 )
 ```
 

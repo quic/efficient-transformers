@@ -5043,6 +5043,72 @@ def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
 
 
 @pytest.mark.cpu_only
+def test_path_valued_artifacts_resolves_runtime_input_dump(tmp_path):
+    from QEfficient.generation.input_dump import resolve_runtime_dump_inputs_path
+
+    dump_dir = tmp_path / "input-dumps"
+    legacy_dir = tmp_path / "legacy-dumps"
+
+    assert resolve_runtime_dump_inputs_path(True) is None
+    assert resolve_runtime_dump_inputs_path(False) is None
+    assert resolve_runtime_dump_inputs_path(dump_dir) == dump_dir
+    assert resolve_runtime_dump_inputs_path(str(dump_dir)) == str(dump_dir)
+    assert resolve_runtime_dump_inputs_path(dump_dir, legacy_dir) == legacy_dir
+
+
+@pytest.mark.cpu_only
+def test_causal_generate_uses_path_valued_artifacts_for_runtime_input_dump(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import modeling_auto
+
+    model = object.__new__(QEFFAutoModelForCausalLM)
+    model.qpc_path = tmp_path / "model.qpc"
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.is_tlm = False
+    dump_dir = tmp_path / "input-dumps"
+    exec_info = object()
+    captured_kwargs = {}
+
+    monkeypatch.setattr(
+        modeling_auto,
+        "write_causal_lm_runner_bundle",
+        MagicMock(side_effect=AssertionError("path-valued artifacts should execute runtime generation")),
+    )
+
+    def fake_cloud_ai_100_exec_kv(**kwargs):
+        captured_kwargs.update(kwargs)
+        return exec_info
+
+    monkeypatch.setattr(modeling_auto.QEfficient, "cloud_ai_100_exec_kv", fake_cloud_ai_100_exec_kv)
+
+    result = model.generate(tokenizer=object(), prompts=["Hello"], artifacts=dump_dir)
+
+    assert result is exec_info
+    assert captured_kwargs["dump_inputs_path"] == dump_dir
+
+
+@pytest.mark.cpu_only
+def test_causal_generate_keeps_bool_artifacts_runner_bundle(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import modeling_auto
+
+    model = object.__new__(QEFFAutoModelForCausalLM)
+    runner_dir = tmp_path / "runner-inputs"
+    runner_bundle = MagicMock(return_value=runner_dir)
+
+    monkeypatch.setattr(modeling_auto, "write_causal_lm_runner_bundle", runner_bundle)
+    monkeypatch.setattr(
+        modeling_auto.QEfficient,
+        "cloud_ai_100_exec_kv",
+        MagicMock(side_effect=AssertionError("bool artifacts should not execute runtime generation")),
+    )
+
+    result = model.generate(tokenizer=object(), prompts=["Hello"], artifacts=True)
+
+    assert result == runner_dir
+    runner_bundle.assert_called_once()
+
+
+@pytest.mark.cpu_only
 def test_qaic_input_dumper_writes_multi_invocation_runner_inputs(tmp_path):
     from QEfficient.generation.input_dump import QAICInputDumper
 
