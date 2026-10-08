@@ -43,6 +43,7 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     MoEFusedExpertSplitCheckpointTransform,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
+from QEfficient.generation.input_dump import resolve_runtime_dump_inputs_path
 from QEfficient.generation.runner_io import (
     write_causal_lm_runner_bundle,
     write_dual_qpc_vlm_runner_bundle,
@@ -2420,8 +2421,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_frames: int | None = None,
         skip_vision: bool = False,
         skip_lang: bool = False,
-        artifacts: bool = False,
-        dump_inputs_path: str | bool | None = None,
+        artifacts: bool | str | Path = False,
         **kwargs,
     ) -> torch.Tensor | np.ndarray | Path:
         """
@@ -2453,8 +2453,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         generation_len : int, optional
             The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
 
-        artifacts : bool, optional
-            Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+        artifacts : bool or path-like, optional
+            ``True`` writes first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+            A string or ``Path`` dumps every executed runtime invocation under that directory.
         Returns
         -------
         CloudAI100ExecInfoNew or np.ndarray
@@ -2465,7 +2466,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        if artifacts:
+        if artifacts is True:
             return write_dual_qpc_vlm_runner_bundle(
                 model=self,
                 processor=processor,
@@ -2474,6 +2475,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 skip_vision=skip_vision,
                 skip_lang=skip_lang,
             )
+        runtime_dump_inputs_path = resolve_runtime_dump_inputs_path(artifacts, kwargs.pop("dump_inputs_path", None))
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
@@ -2495,7 +2497,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
-                dump_inputs_path=dump_inputs_path,
+                dump_inputs_path=runtime_dump_inputs_path,
                 **kwargs,
             )
 
@@ -2516,7 +2518,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             device_ids=device_ids,
             streamer=streamer,
             generation_len=generation_len,
-            dump_inputs_path=dump_inputs_path,
+            dump_inputs_path=runtime_dump_inputs_path,
         )
 
     def kv_offload_generate(
@@ -3277,8 +3279,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generation_len : int, optional
             The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
 
-        artifacts : bool, optional
-            Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+        artifacts : bool or path-like, optional
+            ``True`` writes first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+            A string or ``Path`` dumps every executed runtime invocation under that directory.
         Returns
         -------
         CloudAI100ExecInfoNew or np.ndarray
@@ -3289,8 +3292,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        if artifacts:
+        if artifacts is True:
             return write_single_qpc_vlm_runner_bundle(model=self, processor=processor, images=images, prompts=prompts)
+        runtime_dump_inputs_path = resolve_runtime_dump_inputs_path(artifacts)
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
@@ -3299,7 +3303,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             device_ids=device_ids,
             generation_len=generation_len,
             streamer=streamer,
-            dump_inputs_path=dump_inputs_path,
+            dump_inputs_path=runtime_dump_inputs_path,
         )
 
     def cloud_ai_100_generate(
@@ -5142,8 +5146,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prompts: list[str],
         device_ids: list[int] | None = None,
         runtime_ai100: bool = True,
-        artifacts: bool = False,
-        dump_inputs_path: str | bool | None = None,
+        artifacts: bool | str | Path = False,
         **kwargs,
     ) -> CloudAI100ExecInfoNew | Path:
         """
@@ -5166,8 +5169,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
 
-        artifacts : bool, optional
-            Write first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+        artifacts : bool or path-like, optional
+            ``True`` writes first-prefill ``qaic-runner`` inputs without constructing a runtime session.
+            A string or ``Path`` dumps every executed runtime invocation under that directory.
         Returns
         -------
         CloudAI100ExecInfoNew
@@ -5180,13 +5184,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        if artifacts:
+        if artifacts is True:
             return write_causal_lm_runner_bundle(
                 model=self,
                 tokenizer=tokenizer,
                 prompts=prompts,
                 sampling_params=kwargs.get("sampling_params"),
             )
+        runtime_dump_inputs_path = resolve_runtime_dump_inputs_path(artifacts, kwargs.pop("dump_inputs_path", None))
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
@@ -5202,7 +5207,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
-                dump_inputs_path=dump_inputs_path,
+                dump_inputs_path=runtime_dump_inputs_path,
                 **kwargs,
             )
         else:

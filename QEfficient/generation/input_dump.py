@@ -66,6 +66,24 @@ def _resolve_dump_root(path: Optional[Union[str, Path, bool]]) -> Optional[Path]
     return Path(path).expanduser().resolve()
 
 
+def resolve_runtime_dump_inputs_path(
+    artifacts: Optional[Union[str, Path, bool]],
+    dump_inputs_path: Optional[Union[str, Path, bool]] = None,
+) -> Optional[Union[str, Path, bool]]:
+    """Resolve runtime input dumping from path-valued artifacts mode.
+
+    ``artifacts=True`` keeps the existing dry-run runner-bundle behavior in
+    public ``generate`` APIs. A string or ``Path`` value enables executed runtime
+    input dumps at that location. ``dump_inputs_path`` is retained for internal
+    plumbing and backward compatibility.
+    """
+    if dump_inputs_path is not None:
+        return dump_inputs_path
+    if isinstance(artifacts, (str, Path)):
+        return artifacts
+    return None
+
+
 def _make_unique_dir(root: Path, component_name: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     session_id = next(_SESSION_COUNTER)
