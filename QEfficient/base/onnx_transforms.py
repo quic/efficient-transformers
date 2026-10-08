@@ -378,18 +378,13 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if fn is None:
                 continue
 
-            # Identify the layer index and cache-state inputs on this call node.
-            layer_idx = None
-            state_inputs: dict[str, str] = {}
+            state_inputs_by_layer: dict[str, dict[str, str]] = {}
             for inp_name in node.input:
                 match = cls._STATE_INPUT_RE.match(inp_name)
                 if match is None:
                     continue
-                state_kind, idx = match.groups()
-                layer_idx = idx if layer_idx is None else layer_idx
-                if layer_idx != idx:
-                    state_inputs = {}
-                    break
+                state_kind, layer_idx = match.groups()
+                state_inputs = state_inputs_by_layer.setdefault(layer_idx, {})
                 if state_kind in state_inputs:
                     raise ValueError(
                         f"Function call '{node.name or node.op_type}' has multiple "
@@ -397,58 +392,45 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                     )
                 state_inputs[state_kind] = inp_name
 
-            if layer_idx is None or not state_inputs:
-                continue
+            for layer_idx, state_inputs in state_inputs_by_layer.items():
+                present_states = frozenset(state_inputs)
+                if present_states not in cls._STATE_PAIRS:
+                    continue
 
-            present_states = frozenset(state_inputs)
-            if present_states not in cls._STATE_PAIRS:
-                if present_states & {"past_key", "past_value"}:
+                desired_outputs = {state_kind: f"{state_kind}.{layer_idx}_RetainedState" for state_kind in state_inputs}
+                dangling_outputs = {
+                    state_kind: output_name
+                    for state_kind, output_name in desired_outputs.items()
+                    if output_name in dangling_retained_outputs
+                }
+                if not dangling_outputs:
+                    continue
+
+                if set(dangling_outputs) != set(desired_outputs):
                     raise ValueError(
-                        f"Nested function '{fn.name}' has incomplete KV inputs for layer {layer_idx}: "
-                        f"found {sorted(present_states)}."
+                        f"Nested function '{fn.name}' has partially dangling retained-state outputs for layer "
+                        f"{layer_idx}: dangling={sorted(dangling_outputs.values())}, "
+                        f"expected={sorted(desired_outputs.values())}."
                     )
-                continue
 
-            desired_outputs = {state_kind: f"{state_kind}.{layer_idx}_RetainedState" for state_kind in state_inputs}
-            dangling_outputs = {
-                state_kind: output_name
-                for state_kind, output_name in desired_outputs.items()
-                if output_name in dangling_retained_outputs
-            }
-            # Skip layers whose retained-state outputs are not dangling —
-            # either the graph is already correctly wired or a previous call
-            # to this transform already fixed them.
-            if not dangling_outputs:
-                continue
+                scatter_outputs = cls._resolve_state_scatter_outputs(fn, node, layer_idx, set(state_inputs))
+                if scatter_outputs is None:
+                    continue
 
-            if set(dangling_outputs) != set(desired_outputs):
-                raise ValueError(
-                    f"Nested function '{fn.name}' has partially dangling retained-state outputs for layer "
-                    f"{layer_idx}: dangling={sorted(dangling_outputs.values())}, "
-                    f"expected={sorted(desired_outputs.values())}."
-                )
+                for state_kind, desired_output in desired_outputs.items():
+                    scatter_output = scatter_outputs[state_kind]
+                    if scatter_output not in fn.output:
+                        fn.output.append(scatter_output)
+                        changed = True
 
-            scatter_outputs = cls._resolve_state_scatter_outputs(fn, node, layer_idx, set(state_inputs))
-            if scatter_outputs is None:
-                continue
+                    retained_input = state_inputs[state_kind]
+                    plain_input = f"{state_kind}.{layer_idx}"
+                    if retained_input.endswith("_RetainedState"):
+                        state_rename_map[retained_input] = plain_input
 
-            # Expose scatter outputs in the function's output list, rename cache
-            # inputs and append retained-state output names to the call node.
-            # Both writers are resolved before this block, so graph rewiring is atomic.
-            for state_kind, desired_output in desired_outputs.items():
-                scatter_output = scatter_outputs[state_kind]
-                if scatter_output not in fn.output:
-                    fn.output.append(scatter_output)
-                    changed = True
-
-                retained_input = state_inputs[state_kind]
-                plain_input = f"{state_kind}.{layer_idx}"
-                if retained_input.endswith("_RetainedState"):
-                    state_rename_map[retained_input] = plain_input
-
-                if desired_output not in node.output:
-                    node.output.append(desired_output)
-                    changed = True
+                    if desired_output not in node.output:
+                        node.output.append(desired_output)
+                        changed = True
         if state_rename_map:
             changed |= cls._rename_graph_inputs_bulk(graph, state_rename_map)
         return changed
