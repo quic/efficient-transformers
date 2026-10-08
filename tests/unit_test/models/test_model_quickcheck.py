@@ -2988,6 +2988,48 @@ def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
     ]
 
 
+@pytest.mark.llm_model
+def test_qwen3_5_moe_subfunction_keeps_rope_gather_with_full_attention_layer(tmp_path):
+    """RoPE gathers must be local to full-attention functions for MDP placement."""
+    qeff_model = _tiny_qwen_qeff_model("qwen3_5_moe")
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "qwen3-5-moe-rope-subfunction",
+            skip_vision=True,
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+
+    full_attention_functions = {
+        function.name: function
+        for function in onnx_model.functions
+        if "QEffQwen3_5MoeFullAttentionDecoderLayer" in function.name
+    }
+    assert full_attention_functions
+    full_attention_calls = [node for node in onnx_model.graph.node if node.op_type in full_attention_functions]
+    assert full_attention_calls
+    for call in full_attention_calls:
+        rope_input_indices = [
+            index
+            for index, input_name in enumerate(call.input)
+            if input_name.endswith("cos_cached") or input_name.endswith("sin_cached")
+        ]
+        assert rope_input_indices
+        function = full_attention_functions[call.op_type]
+        rope_inputs = {function.input[index] for index in rope_input_indices}
+        assert any(node.op_type == "Gather" and rope_inputs.intersection(node.input) for node in function.node)
+
+    root_rope_gathers = [
+        node
+        for node in onnx_model.graph.node
+        if node.op_type == "Gather"
+        and any(input_name.endswith("cos_cached") or input_name.endswith("sin_cached") for input_name in node.input)
+    ]
+    assert not root_rope_gathers
+
+
 def test_qwen3_5_moe_decode_export_uses_static_token_axis():
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForCausalLM
 

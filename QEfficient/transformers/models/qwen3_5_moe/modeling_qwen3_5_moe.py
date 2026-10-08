@@ -1375,12 +1375,18 @@ class QEffQwen3_5MoeLinearDecoderLayer(QEffQwen3_5MoeDecoderLayer):
 
 
 class QEffQwen3_5MoeFullAttentionDecoderLayer(QEffQwen3_5MoeDecoderLayer):
-    """Decoder-layer subfunction identity for Qwen3.5 full-attention layers."""
+    """Decoder-layer subfunction identity for Qwen3.5 full-attention layers.
+
+    RoPE tables are function inputs so each full-attention invocation gathers its
+    own position-specific embeddings. Keeping that gather inside the function
+    allows MDP to place it with the decoder layer instead of fanning one root
+    graph result out to every full-attention layer.
+    """
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        rope_tables: Optional[Tuple[torch.Tensor, torch.Tensor]],
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[QEffQwen3_5MoeDynamicCache] = None,
@@ -1393,6 +1399,21 @@ class QEffQwen3_5MoeFullAttentionDecoderLayer(QEffQwen3_5MoeDecoderLayer):
         **kwargs,
     ) -> torch.FloatTensor:
         del batch_fold, gdn_num_head_blocks, use_cache
+        if rope_tables is None:
+            raise ValueError("`rope_tables` must be provided for QEffQwen3_5MoeFullAttentionDecoderLayer.")
+
+        rope_cos, rope_sin = rope_tables
+        rotary_position_ids = (
+            position_ids[1:] if position_ids.ndim == 3 and position_ids.shape[0] == 4 else position_ids
+        )
+        rope_parameters = getattr(self.self_attn.config, "rope_parameters", {}) or {}
+        mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
+        # Keep the position gather in the full-attention subfunction. A root-graph
+        # gather is shared by every attention invocation and forces MDP fan-out.
+        cos, sin = qeff_prepare_mrope_cos_sin(
+            rope_cos, rope_sin, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
+        )
+
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         hidden_states, _ = self.self_attn(
@@ -1403,7 +1424,7 @@ class QEffQwen3_5MoeFullAttentionDecoderLayer(QEffQwen3_5MoeDecoderLayer):
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             cache_position=cache_position,
-            position_embeddings=position_embeddings,
+            position_embeddings=(cos, sin),
             **kwargs,
         )
 
@@ -1494,9 +1515,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 )
         position_ids = _expand_mrope_position_ids(position_ids, cache_position, inputs_embeds.shape[0])
         text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
-        rotary_position_ids = (
-            position_ids[1:] if position_ids.ndim == 3 and position_ids.shape[0] == 4 else position_ids
-        )
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
@@ -1521,12 +1539,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         hidden_states = inputs_embeds
 
-        rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
-        mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
-        cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
-        )
-        position_embeddings = (cos, sin)
+        rope_tables = (self.cos_cached, self.sin_cached)
         all_hidden_states = () if output_hidden_states else None
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
 
@@ -1541,7 +1554,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
             layer_mask = linear_attn_mask if decoder_layer.layer_type == "linear_attention" else causal_mask
             decoder_args = (
                 hidden_states,
-                position_embeddings,
+                rope_tables if decoder_layer.layer_type == "full_attention" else None,
                 layer_mask,
                 position_ids,
                 past_key_values,
