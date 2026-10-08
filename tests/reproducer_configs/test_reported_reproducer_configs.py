@@ -112,6 +112,10 @@ EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
         "node_precision_info",
         "num_frames",
         "parallel",
+        # These QAIC flags are forwarded through the VLM compile API's
+        # ``**compiler_options`` and therefore do not appear in its signature.
+        "split_model_io",
+        "user_tiled",
         "vision_size",
         "width",
     }
@@ -1190,11 +1194,23 @@ def _load_vlm_model(scenario: RegressionScenario):
     The helper exists because VLM reports must exercise the dual-QPC API rather
     than the causal-LM helper used by text-only models.
     """
+    from transformers import AutoConfig
+
     from QEfficient import QEFFAutoModelForImageTextToText
+    from QEfficient.utils.test_utils import set_num_layers_vlm
 
     model_id = _scenario_model_id(scenario)
     load_kwargs = {"trust_remote_code": True, **scenario.load_kwargs}
     load_kwargs.setdefault("cache_dir", os.environ["HF_HUB_CACHE"])
+    # VLM constructors reject ``num_hidden_layers`` as a top-level argument.
+    # Apply the reduced-layer setting to the nested text config instead, then
+    # allow the tiny checkpoint's layer-shaped weights to be loaded partially.
+    num_hidden_layers = load_kwargs.pop("num_hidden_layers", -1)
+    if num_hidden_layers != -1:
+        config = AutoConfig.from_pretrained(model_id, **load_kwargs)
+        set_num_layers_vlm(config, num_hidden_layers)
+        load_kwargs["config"] = config
+        load_kwargs.setdefault("ignore_mismatched_sizes", True)
     return QEFFAutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
 
 
@@ -1394,7 +1410,17 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     export_dir = tmp_path / scenario.name / "export"
     export_kwargs = dict(scenario.export_kwargs)
     export_kwargs.setdefault("offload_pt_weights", False)
-    onnx_paths = qeff_model.export(export_dir=export_dir, **export_kwargs)
+    # Export must use the same component selection as compile.  In particular,
+    # skip_vision prevents the tiny language-only reproducer from tracing the
+    # unsupported vision rotary-input shape.
+    skip_vision = bool(scenario.compile_kwargs.get("skip_vision", False))
+    skip_lang = bool(scenario.compile_kwargs.get("skip_lang", False))
+    onnx_paths = qeff_model.export(
+        export_dir=export_dir,
+        skip_vision=skip_vision,
+        skip_lang=skip_lang,
+        **export_kwargs,
+    )
     vision_onnx_path, lang_onnx_path = onnx_paths
     common_kwargs = dict(scenario.compile_kwargs)
     use_intersection = common_kwargs.pop("_mdp_intersection", False)
@@ -1411,14 +1437,18 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
         "mdp_dump_partition_config",
     ):
         vision_kwargs.pop(language_only_key, None)
-    _assert_compile_kwargs_supported(qeff_model, scenario, {**vision_kwargs, "skip_lang": True})
-    vision_qpcs = qeff_model.compile(
-        compile_dir=compile_dir / "vision",
-        vision_onnx_path=vision_onnx_path,
-        lang_onnx_path=lang_onnx_path,
-        skip_lang=True,
-        **vision_kwargs,
-    )
+    vision_qpcs = {}
+    # Do not call compile() for a component explicitly excluded by the
+    # scenario: omitting its ONNX path would make QEff re-export that component.
+    if not skip_vision:
+        _assert_compile_kwargs_supported(qeff_model, scenario, {**vision_kwargs, "skip_lang": True})
+        vision_qpcs = qeff_model.compile(
+            compile_dir=compile_dir / "vision",
+            vision_onnx_path=vision_onnx_path,
+            lang_onnx_path=lang_onnx_path,
+            skip_lang=True,
+            **vision_kwargs,
+        )
     prefill_kwargs = dict(common_kwargs)
     prefill_kwargs["prefill_only"] = True
     if use_intersection:
