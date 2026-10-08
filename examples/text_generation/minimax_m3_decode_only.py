@@ -11,7 +11,7 @@ import tempfile
 import time
 
 import torch
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 

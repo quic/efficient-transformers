@@ -313,13 +313,9 @@ def main() -> None:
     ):
         parser.error("All GQA and MSA DP/CP factors must be positive")
     shared_page_block_size = 128 if args.page_block_size is None else args.page_block_size
-    gqa_page_block_size = (
-        shared_page_block_size if args.gqa_page_block_size is None else args.gqa_page_block_size
-    )
+    gqa_page_block_size = shared_page_block_size if args.gqa_page_block_size is None else args.gqa_page_block_size
     indexer_page_block_size = (
-        shared_page_block_size
-        if args.msa_indexer_page_block_size is None
-        else args.msa_indexer_page_block_size
+        shared_page_block_size if args.msa_indexer_page_block_size is None else args.msa_indexer_page_block_size
     )
     attn_page_block_size = (
         shared_page_block_size if args.msa_attn_page_block_size is None else args.msa_attn_page_block_size

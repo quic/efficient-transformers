@@ -195,11 +195,9 @@ def convert_dynamic_axes_to_dynamic_shapes(
         dynamic_shapes["compressed_kvs"] = [
             (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
         ]
-        
+
     if index_key_layers:
-        dynamic_shapes["index_keys"] = [
-            index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)
-        ]
+        dynamic_shapes["index_keys"] = [index_key_layers[layer_idx] for layer_idx in sorted(index_key_layers)]
 
     return dynamic_shapes
 

@@ -162,9 +162,7 @@ def main():
     for name in ("msa_indexer_dp", "msa_indexer_cp", "msa_attn_dp", "msa_attn_cp", "attn_dp", "attn_cp"):
         if getattr(args, name) < 1:
             parser.error(f"--{name.replace('_', '-')} must be positive")
-    execution_batch_size = _execution_batch_size(
-        args.batch_size, args.msa_indexer_dp, args.msa_attn_dp, args.attn_dp
-    )
+    execution_batch_size = _execution_batch_size(args.batch_size, args.msa_indexer_dp, args.msa_attn_dp, args.attn_dp)
 
     factory_kwargs = dict(kv_offload=True, dtype=torch.float16)
     config = AutoConfig.from_pretrained(args.model_id)

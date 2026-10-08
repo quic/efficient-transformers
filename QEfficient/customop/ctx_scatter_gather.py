@@ -553,9 +553,7 @@ def _symbolic_sizes(value: "torch.Value"):
     return tuple(sizes) if sizes is not None else None
 
 
-def _set_gather_output_type(
-    output: "torch.Value", data: "torch.Value", indices: "torch.Value"
-) -> "torch.Value":
+def _set_gather_output_type(output: "torch.Value", data: "torch.Value", indices: "torch.Value") -> "torch.Value":
     data_sizes = _symbolic_sizes(data)
     index_sizes = _symbolic_sizes(indices)
     if data_sizes is None or len(data_sizes) != 4:
@@ -594,9 +592,7 @@ def _set_block_gather_output_type(
         return output
     try:
         output.setType(
-            data.type().with_sizes(
-                (data_sizes[0], data_sizes[1], id_sizes[2], data_sizes[3], data_sizes[4])
-            )
+            data.type().with_sizes((data_sizes[0], data_sizes[1], id_sizes[2], data_sizes[3], data_sizes[4]))
         )
     except Exception:
         pass
@@ -637,9 +633,7 @@ class CtxPagedScatterFuncDP(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(
-        data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
         batch, rows, seq_len, _ = updates.shape
         row_idx = torch.arange(rows, device=data.device).view(1, rows, 1).expand(batch, rows, seq_len)
         out = data.clone()
@@ -775,9 +769,7 @@ class CtxGatherFuncPagedKVDP(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
-        block_ids = torch.where(
-            block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids
-        )
+        block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
         num_pages, rows = block_ids.shape
         _, data_rows, page_size, head_dim = data.shape
         if rows != data_rows:
@@ -807,9 +799,7 @@ def CtxGatherPagedKVHeads(data: onnxscript.FLOAT, block_ids: onnxscript.INT32) -
     num_pages = ops.Gather(ids_shape, [0])
     zero = ops.Constant(value_ints=[0])
     one = ops.Constant(value_ints=[1])
-    head_idx = ops.Expand(
-        ops.Unsqueeze(ops.Range(zero, num_heads, one), [0]), ids_shape
-    )
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0]), ids_shape)
     indices = ops.Concat(
         ops.Unsqueeze(ops.Cast(block_ids, to=7), [-1]),
         ops.Unsqueeze(ops.Cast(head_idx, to=7), [-1]),
@@ -825,9 +815,7 @@ class CtxGatherFuncPagedKVHeads(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, block_ids: torch.Tensor) -> torch.Tensor:
-        block_ids = torch.where(
-            block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids
-        )
+        block_ids = torch.where(block_ids == torch.iinfo(torch.int32).max, torch.zeros_like(block_ids), block_ids)
         num_pages, heads = block_ids.shape
         if heads != data.shape[1]:
             raise ValueError("Paged head gather IDs must match the cache head dimension.")

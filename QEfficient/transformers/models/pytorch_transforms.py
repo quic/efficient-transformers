@@ -143,6 +143,19 @@ from transformers.models.llava.modeling_llava import (
 from transformers.models.llava_next.modeling_llava_next import (
     LlavaNextForConditionalGeneration,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLRotaryEmbedding,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -162,19 +175,6 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
-)
-from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
-    MiniMaxM3SparseForConditionalGeneration,
-    MiniMaxM3VLAttention,
-    MiniMaxM3VLDecoderLayer,
-    MiniMaxM3VLDenseMLP,
-    MiniMaxM3VLForCausalLM,
-    MiniMaxM3VLIndexer,
-    MiniMaxM3VLRMSNorm,
-    MiniMaxM3VLRotaryEmbedding,
-    MiniMaxM3VLSparseMoeBlock,
-    MiniMaxM3VLTextModel,
-    MiniMaxM3VLTopKRouter,
 )
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
@@ -502,6 +502,18 @@ from QEfficient.transformers.models.llava_next.modeling_llava_next import (
     QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -519,18 +531,6 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
-)
-from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
-    QEffMiniMaxM3SparseForConditionalGeneration,
-    QEffMiniMaxM3VLAttention,
-    QEffMiniMaxM3VLDecoderLayer,
-    QEffMiniMaxM3VLDenseMLP,
-    QEffMiniMaxM3VLForCausalLM,
-    QEffMiniMaxM3VLIndexer,
-    QEffMiniMaxM3VLRotaryEmbedding,
-    QEffMiniMaxM3VLSparseMoeBlock,
-    QEffMiniMaxM3VLTextModel,
-    QEffMiniMaxM3VLTopKRouter,
 )
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
