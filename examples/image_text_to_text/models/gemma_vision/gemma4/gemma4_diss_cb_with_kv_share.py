@@ -73,7 +73,7 @@ def _build_config(model_id: str):
     config = AutoConfig.from_pretrained(model_id)
 
     # For faster execution user can run with fewer layers. For testing purposes only.
-    # config.text_config.num_hidden_layers = 2
+    # config.text_config.num_hidden_layers = 6
     # if getattr(config.text_config, "layer_types", None):
     #     config.text_config.layer_types = config.text_config.layer_types[: config.text_config.num_hidden_layers]
     # config.vision_config.num_hidden_layers = 2
@@ -137,6 +137,7 @@ def run(
         config=config,
         dtype="float32",
         trust_remote_code=True,
+        # weight_free=True,
     )
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
     processor = AutoProcessor.from_pretrained(model_id)

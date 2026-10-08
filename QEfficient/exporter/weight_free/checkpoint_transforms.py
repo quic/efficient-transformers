@@ -229,6 +229,54 @@ class _LayerStacker:
         }
 
 
+def _is_expert_parallel_prefill_checkpoint(kwargs: dict) -> bool:
+    hash_params = kwargs.get("hash_params") or {}
+    flavour = hash_params.get("moe_prefill_flavour")
+    if hasattr(flavour, "value"):
+        flavour = flavour.value
+    return flavour == "expert_parallel"
+
+
+def _expert_parallel_checkpoint_layout(kwargs: dict) -> Optional[Tuple[int, int]]:
+    if not _is_expert_parallel_prefill_checkpoint(kwargs):
+        return None
+    hash_params = kwargs.get("hash_params") or {}
+    num_pipeline_stages = hash_params.get("moe_prefill_num_pipeline_stages")
+    num_parallelized_experts = hash_params.get("moe_prefill_num_parallelized_experts")
+    if num_pipeline_stages is None or num_parallelized_experts is None:
+        return None
+    return int(num_pipeline_stages), int(num_parallelized_experts)
+
+
+def _pack_expert_parallel_checkpoint_tensor(
+    key: str,
+    tensor: torch.Tensor,
+    *,
+    num_pipeline_stages: int,
+    num_parallelized_experts: int,
+) -> torch.Tensor:
+    if tensor.ndim == 4:
+        return tensor.contiguous()
+    if tensor.shape[0] != num_pipeline_stages * num_parallelized_experts:
+        raise ValueError(
+            f"Cannot pack {key}: first dimension {tensor.shape[0]} does not match "
+            f"num_pipeline_stages * num_parallelized_experts "
+            f"({num_pipeline_stages} * {num_parallelized_experts})."
+        )
+    return tensor.view(num_pipeline_stages, num_parallelized_experts, *tensor.shape[1:]).transpose(0, 1).contiguous()
+
+
+class MoEExpertParallelCheckpointTransform(BaseCheckpointTransform):
+    """Pack canonical MoE checkpoint tensors for expert-parallel prefill export."""
+
+    MOE_WEIGHTS_RE = re.compile(r"^(.+\.moe_weights)\.(gate|up|down|gate_bias|up_bias|down_bias)$")
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        layout = _expert_parallel_checkpoint_layout(kwargs)
+        return layout is not None and any(cls.MOE_WEIGHTS_RE.match(key) for key in weight_map)
+
+
 # ---------------------------------------------------------------------------
 # Transform 2: MoE expert stacking
 # ---------------------------------------------------------------------------
@@ -396,15 +444,25 @@ class FusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         _plan_fused_stages(cls, context)
 
     @classmethod
-    def _resolve_split_dim(cls, prefix: str, canonical_index: Dict[str, str]) -> int:
-        """Return split dimension from canonical_index key presence.
+    def _resolve_split_dim(
+        cls,
+        prefix: str,
+        canonical_index: Dict[str, str],
+        context: Optional[CheckpointPlanningContext] = None,
+        key_translation: Optional[Dict[str, str]] = None,
+    ) -> int:
+        """Return the fused gate/up split dimension for one expert group."""
+        if context is not None:
+            key_translation = key_translation or {}
+            gate_up_key = key_translation.get(f"{prefix}.gate_up_proj", f"{prefix}.gate_up_proj")
+            down_key = key_translation.get(f"{prefix}.down_proj", f"{prefix}.down_proj")
+            if gate_up_key in context.weight_map and down_key in context.weight_map:
+                with safe_open(str(context.source_dir / context.weight_map[gate_up_key]), framework="pt") as handle:
+                    gate_up_shape = tuple(handle.get_slice(gate_up_key).get_shape())
+                with safe_open(str(context.source_dir / context.weight_map[down_key]), framework="pt") as handle:
+                    down_shape = tuple(handle.get_slice(down_key).get_shape())
+                return _infer_fused_gate_up_split_dim(gate_up_shape, down_shape)
 
-        GptOss-MXFP4 has its own transform so FusedExpertSplitCheckpointTransform
-        only sees two cases:
-          bias present → GptOss dense interleaved → dim=2
-          bias absent  → Mixtral or GraniteMoE    → dim=1
-        No shape reads needed — canonical_index (from index.json) is sufficient.
-        """
         return 2 if f"{prefix}.gate_up_proj_bias" in canonical_index else 1
 
 
@@ -974,13 +1032,17 @@ def _plan_fused_stages(cls, context: CheckpointPlanningContext) -> None:
         gate_up_raw_key = key_translation.get(f"{prefix}.gate_up_proj", f"{prefix}.gate_up_proj")
         num_experts = _declared_num_experts(context.config) or _source_num_experts(context, gate_up_raw_key)
 
+        split_dim = cls._resolve_split_dim(prefix, canonical_index, context, key_translation)
+        interleaved = split_dim == 2 and f"{prefix}.gate_up_proj_bias" in canonical_keys
+
         def runner(
             get_tensor,
             target_dtype,
             canonical_keys=canonical_keys,
             key_translation=key_translation,
-            canonical_index=canonical_index,
             output_refs=output_refs,
+            split_dim=split_dim,
+            interleaved=interleaved,
         ):
             out_tensors = {}
             for canonical_key in canonical_keys:
@@ -994,11 +1056,10 @@ def _plan_fused_stages(cls, context: CheckpointPlanningContext) -> None:
                 if gate_up_match:
                     group_prefix = gate_up_match.group(1)
                     group_moe_prefix = _moe_weights_prefix_from_experts_prefix(group_prefix)
-                    split_dim = cls._resolve_split_dim(group_prefix, canonical_index)
                     gate, up = _split_fused_gate_up_to_canonical(
                         tensor,
                         None,
-                        interleaved=split_dim == 2,
+                        interleaved=interleaved,
                         preferred_split_dim=split_dim,
                     )
                     out_tensors[f"{group_moe_prefix}.gate"] = gate
@@ -1009,12 +1070,12 @@ def _plan_fused_stages(cls, context: CheckpointPlanningContext) -> None:
                     out_tensors[f"{group_moe_prefix}.down"] = _down_to_canonical(
                         tensor,
                         None,
-                        preferred_split_dim=cls._resolve_split_dim(group_prefix, canonical_index),
+                        preferred_split_dim=split_dim,
                     )
                 elif gate_bias_match:
                     group_prefix = gate_bias_match.group(1)
                     group_moe_prefix = _moe_weights_prefix_from_experts_prefix(group_prefix)
-                    gate_bias, up_bias = _split_gate_up_bias(tensor, interleaved=True)
+                    gate_bias, up_bias = _split_gate_up_bias(tensor, interleaved=interleaved)
                     out_tensors[f"{group_moe_prefix}.gate_bias"] = gate_bias
                     out_tensors[f"{group_moe_prefix}.up_bias"] = up_bias
                 elif down_bias_match:
@@ -1042,6 +1103,8 @@ def _plan_fused_stages(cls, context: CheckpointPlanningContext) -> None:
                     num_experts=num_experts,
                     output_file=output_file,
                     prefix=prefix,
+                    interleaved=interleaved,
+                    split_dim=split_dim,
                 ),
             ),
         )
@@ -1050,7 +1113,10 @@ def _plan_fused_stages(cls, context: CheckpointPlanningContext) -> None:
                 stage_id="fused_split",
                 input_refs=input_refs,
                 output_refs=output_refs,
-                params=TaskParams(cls.TRANSFORM_ID, _task_values(keys=canonical_keys, prefix=prefix)),
+                params=TaskParams(
+                    cls.TRANSFORM_ID,
+                    _task_values(keys=canonical_keys, prefix=prefix, interleaved=interleaved, split_dim=split_dim),
+                ),
                 runner=runner,
                 labels=("split",),
             )
