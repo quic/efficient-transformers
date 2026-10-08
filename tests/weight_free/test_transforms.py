@@ -302,6 +302,53 @@ class TestWeightFreeCheckpointTransforms:
 
         assert ort_inputs["weight"].tolist() == [1.0, 2.0]
 
+    def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+        prepared_weight_map = json.loads((prepared / "model.safetensors.index.json").read_text())["weight_map"]
+        prepared_shard = next(iter(set(prepared_weight_map.values())))
+        (prepared / prepared_shard).unlink()
+
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
+    def test_ort_weight_injection_resolves_cache_relative_spec_for_absolute_model_id(self, tmp_path):
+        hf_cache = tmp_path / "hf_cache"
+        prepared = hf_cache / "models--org--model" / "snapshots" / "prepared"
+        export_dir = tmp_path / "export"
+        prepared.mkdir(parents=True)
+        export_dir.mkdir()
+        save_file({"weight": torch.tensor([1.0, 2.0])}, str(prepared / "model.safetensors"))
+
+        weight_spec_path = export_dir / "weight_spec.json"
+        weight_spec_path.write_text(
+            json.dumps(
+                {
+                    "files": [
+                        {
+                            "format": "safetensors",
+                            "path": "models--org--model/snapshots/prepared/model.safetensors",
+                        }
+                    ],
+                    "inputs": [{"name": "weight", "location": {"file": 0, "key": "weight"}}],
+                    "model_id": str(prepared),
+                    "model_name": "tiny",
+                    "version": 5,
+                }
+            )
+        )
+
+        ort_inputs = load_weight_free_ort_inputs(weight_spec_path, {})
+
+        assert ort_inputs["weight"].tolist() == [1.0, 2.0]
+
     def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
