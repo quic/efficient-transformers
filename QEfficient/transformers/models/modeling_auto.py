@@ -4187,6 +4187,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ##################################
 
+        is_deepseek_v4 = getattr(self.model.config, "model_type", None) == "deepseek_v4"
+        deepseek_v4_prefill = is_deepseek_v4 and bool(prefill_only)
+        if is_deepseek_v4:
+            self.model.config.qeff_swa_prefill_only = deepseek_v4_prefill
+            self.model.config.qeff_csa_prefill_only = deepseek_v4_prefill
+            self.model.config.qeff_hca_prefill_only = deepseek_v4_prefill
+        query_seq_len = prefill_seq_len if deepseek_v4_prefill else (1 if is_deepseek_v4 else seq_len)
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -4246,6 +4253,75 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
+        if is_deepseek_v4:
+            pkv_cache = self.model.get_dummy_pkv_cache(
+                self.model.config,
+                fbs if self.continuous_batching else bs,
+                cache_ctx_len or seq_len,
+            )
+            for layer_idx, layer_state in enumerate(pkv_cache):
+                state_names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
+                layer_type = self.model.config.layer_types[layer_idx]
+                csa_dp_layout = (
+                    layer_type == "compressed_sparse_attention"
+                    and int(getattr(self.model.config, "qeff_csa_attention_dp", 1)) > 1
+                )
+                csa_prefill_layout = layer_type == "compressed_sparse_attention" and bool(
+                    getattr(self.model.config, "qeff_csa_prefill_only", False)
+                )
+                hca_prefill_layout = layer_type == "heavily_compressed_attention" and bool(
+                    getattr(self.model.config, "qeff_hca_prefill_only", False)
+                )
+                hca_dp_layout = (
+                    layer_type == "heavily_compressed_attention"
+                    and not hca_prefill_layout
+                    and int(getattr(self.model.config, "qeff_hca_attention_dp", 1)) > 1
+                )
+                parallel_layout = csa_dp_layout or hca_dp_layout
+                folded_row_cache = (
+                    bool(getattr(self.model.config, "qeff_sliding_folded_row_cache", True))
+                    if layer_type == "sliding_attention"
+                    else (
+                        bool(getattr(self.model.config, "qeff_csa_folded_row_cache", False))
+                        if layer_type == "compressed_sparse_attention" and not csa_prefill_layout
+                        else bool(getattr(self.model.config, "qeff_hca_folded_row_cache", False))
+                        and not hca_prefill_layout
+                    )
+                )
+                for state_name, state in zip(state_names, layer_state):
+                    example_inputs["past_key_values"][layer_idx].append(state)
+                    state_axes = {}
+                    if folded_row_cache and "sliding_window_kv" in state_name:
+                        state_axes[1] = "full_batch_size" if self.continuous_batching else "batch_size"
+                    elif not parallel_layout:
+                        state_axes[0] = "full_batch_size" if self.continuous_batching else "batch_size"
+                    if state_name.startswith("local_kv_cache"):
+                        if not csa_prefill_layout and not folded_row_cache:
+                            state_axes[2] = "ctx_len"
+                    elif "sliding_window_kv" in state_name:
+                        if not folded_row_cache and not hca_prefill_layout:
+                            state_axes[2] = "ctx_len"
+                    elif state_name.startswith(("compressed_kv_cache", "indexer_kv_cache")):
+                        if csa_prefill_layout:
+                            state_axes[1] = f"compressed_ctx_len_{layer_idx}"
+                        else:
+                            cp_tiled_indexer_cache = (
+                                state_name.startswith("indexer_kv_cache")
+                                and int(getattr(self.model.config, "qeff_csa_indexer_cp", 1)) > 1
+                            )
+                            if not cp_tiled_indexer_cache:
+                                state_axes[2] = f"compressed_ctx_len_{layer_idx}"
+                    elif "actual_" in state_name:
+                        cp_tiled_indexer_cache = (
+                            "actual_indexer_compressed_kv" in state_name
+                            and int(getattr(self.model.config, "qeff_csa_indexer_cp", 1)) > 1
+                        )
+                        if hca_prefill_layout:
+                            state_axes[2] = f"compressed_ctx_len_{layer_idx}"
+                        elif not (cp_tiled_indexer_cache or hca_dp_layout):
+                            state_axes[2] = f"compressed_ctx_len_{layer_idx}"
+                    dynamic_axes[state_name] = state_axes
+                    output_names.append(f"{state_name}_RetainedState")
         if hasattr(self.model, "get_onnx_retained_state_specs"):
             retained_state_specs = self.model.get_onnx_retained_state_specs(
                 batch_size=fbs if self.continuous_batching else bs,
@@ -4259,7 +4335,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes.update(retained_state_specs["dynamic_axes"])
             output_names.extend(retained_state_specs["output_names"])
         elif (
-            hasattr(self.model.config, "model_type")
+            not is_deepseek_v4
+            and hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
             and hasattr(self.model, "get_dummy_pkv_cache")
         ):
@@ -4274,7 +4351,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        else:
+        elif not is_deepseek_v4:
             # HACK: create common function for this including above if condition code
             pkv_dynamic_axes = (
                 self.model.get_pkv_dynamic_axes(
@@ -4795,6 +4872,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
+        if getattr(self.model.config, "model_type", None) == "deepseek_v4":
+            self.model.config.qeff_swa_prefill_only = prefill_only is True
+            self.model.config.qeff_csa_prefill_only = prefill_only is True
+            self.model.config.qeff_hca_prefill_only = prefill_only is True
 
         _decode_ks = (
             sorted(set(num_speculative_tokens))

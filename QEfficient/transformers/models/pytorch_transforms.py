@@ -373,6 +373,12 @@ from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     QEffDeepseekV4TopKRouter,
     QEffDeepseekV4UnweightedRMSNorm,
 )
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffDFlashAttention,
+    QEffDFlashDecoderLayer,
+    QEffDFlashForCausalLM,
+    QEffDFlashModel,
+)
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -1556,6 +1562,42 @@ class FFNBlockingTransform(PytorchTransform):
             if isinstance(module, QEffDeepseekV4Experts):
                 module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
                 transformed = True
+        return model, transformed
+
+
+class GatedDeltaConfigTransform:
+    @classmethod
+    def apply(cls, model: nn.Module, gated_delta_config: dict | None = None) -> tuple[nn.Module, bool]:
+        target_modules = [module for module in model.modules() if hasattr(module, "torch_chunk_gated_delta_rule_qeff")]
+        if not target_modules:
+            return model, False
+
+        if not gated_delta_config:
+            # Avoid compile-to-compile state leakage when the same model object is reused
+            # across prefill/decode compiles and only one of them passes qaic_config.
+            transformed = False
+            for module in target_modules:
+                if getattr(module, "gdn_chunk_size", 64) != 64:
+                    module.gdn_chunk_size = 64
+                    if hasattr(module, "__qeff_init__"):
+                        module.__qeff_init__()
+                    transformed = True
+            return model, transformed
+
+        chunk_size = gated_delta_config.get("chunk_size")
+        chunk_size = int(chunk_size) if chunk_size is not None else None
+
+        if chunk_size is None:
+            return model, False
+
+        transformed = False
+        for module in target_modules:
+            if chunk_size is not None and chunk_size > 0:
+                module.gdn_chunk_size = chunk_size
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
+                transformed = True
+
         return model, transformed
 
 
