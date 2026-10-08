@@ -62,6 +62,9 @@ except ImportError:
 from QEfficient.generation._kv_dma_handoff import KvDmaHandoff, is_retained_state_name  # noqa: E402,F401
 
 
+from QEfficient.generation._kv_dma_handoff import KvDmaHandoff, is_retained_state_name  # noqa: E402,F401
+
+
 class QAICInferenceSession:
     def __init__(
         self,
@@ -74,9 +77,6 @@ class QAICInferenceSession:
         stages: Optional[int] = 1,
         cluster_id: Optional[str] = None,
         full_batch_size: int = 1,
-        profiling_type: str | None = None,
-        profiling_output_dir: Path | str | None = None,
-        profiling_file_prefix: str = "aic-profiling-python",
     ):
         """
         Initialise for QAIC inference Session
@@ -87,22 +87,10 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         :data_path_timeout_ms: int. Host wait timeout (in ms) for a data-path response from the device. Default=60000 (60s).
-        :kv_dma_share: bool. If True, enable the DMA-based prefill->decode KV handoff
-            path (`np_run` / `np_run_pipeline` / `set_data_for_kv_handoff`). When False
-            (default) the session behaves exactly as before: the handoff members are
-            inert and only the numpy-copy `run()` path is available.
-        :stages: Optional[int]. Prefill pipeline depth; sizes the prefill execObj pool
-            (`stages + 1`). Only used when `kv_dma_share=True`. Default=1.
-        :cluster_id: Optional[str]. Must be "prefill" or "decode" when `kv_dma_share=True`;
-            selects which exec-object pool this session allocates. Unused otherwise.
-        :full_batch_size: int. Number of decode slots; `batch_index` offsets wrap
-            modulo this value at prefill handoff. Only used when `kv_dma_share=True`.
-        :profiling_type: Optional[str]. One of "latency", "trace", "raw_device_stats", "stats". Selects the
-            runtime device profiling type (via the `qaicrt.ProfilingHandle` API on this session's `Program`).
-            If None (default), profiling support is disabled.
-        :profiling_output_dir: Optional[Union[Path, str]]. Directory to write the profiling report to. Defaults to
-            a "profiling_output" directory alongside `qpc_path`. Only used when `profiling_type` is set.
-        :profiling_file_prefix: str. Filename prefix for the profiling report. Default="aic-profiling-python".
+        :kv_dma_share: Enable the retained-state DMA handoff API.
+        :stages: Prefill pipeline depth when ``kv_dma_share`` is enabled.
+        :cluster_id: DMA session role: ``"prefill"`` or ``"decode"``.
+        :full_batch_size: Number of KV cache slots available to DMA slicing.
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError(
@@ -123,6 +111,11 @@ class QAICInferenceSession:
             aicapi.INT64_I_TYPE: np.dtype(np.int64),
             aicapi.INT8_TYPE: np.dtype(np.int8),
         }
+        self.kv_dma_share = kv_dma_share
+        self.stages = stages if stages is not None else 1
+        self.cluster_id = cluster_id
+        self.full_batch_size = full_batch_size
+        self._kv_dma: Optional[KvDmaHandoff] = KvDmaHandoff(self) if kv_dma_share else None
 
         # KV-DMA-share configuration. When disabled, `_kv_dma` stays None and the
         # session keeps a single scalar execObj / qbuffers / buf_dims exactly as
@@ -206,23 +199,19 @@ class QAICInferenceSession:
             )
         if activate:
             self.activate()
+            self.is_active = True
         if self._kv_dma is None:
-            # Create input qbuffers and buf_dims (single-execObj `run()` path)
             self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
             self.buf_dims = qaicrt.BufferDimensionsVecRef(
                 [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
             )
         else:
-            # Per-slot qbuffers / buf_dims for the pooled DMA-handoff path.
             self.qbuffers = [
                 [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings] for _ in range(self._queue_len)
             ]
             self.buf_dims = [
                 qaicrt.BufferDimensionsVecRef(
-                    [
-                        (self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims))
-                        for binding in self.bindings
-                    ]
+                    [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
                 )
                 for _ in range(self._queue_len)
             ]
@@ -274,29 +263,12 @@ class QAICInferenceSession:
     def activate(self):
         """Activate qpc"""
         if not self.is_active:
-            try:
-                self.program.activate()
-                self.is_active = True
-                if self._kv_dma is not None:
-                    self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
-                else:
-                    self.execObj = qaicrt.ExecObj(self.context, self.program)
-            except Exception:
-                try:
-                    self._deactivate(force=True)
-                except Exception as cleanup_error:
-                    warn(f"Failed to deactivate QAIC program after activation error: {cleanup_error}", RuntimeWarning)
-                raise
-
-    def _deactivate(self, force: bool = False):
-        """Deactivate qpc"""
-        if force or getattr(self, "is_active", False):
-            if hasattr(self, "execObj"):
-                del self.execObj
-            try:
-                self.program.deactivate()
-            finally:
-                self.is_active = False
+            self.program.activate()
+            if self._kv_dma is None:
+                self.execObj = qaicrt.ExecObj(self.context, self.program)
+            else:
+                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
+            self.is_active = True
 
     def deactivate(self):
         """Deactivate qpc"""
@@ -388,6 +360,9 @@ class QAICInferenceSession:
         Return:
             :Dict[str, np.ndarray]:
         """
+        if self._kv_dma is not None:
+            raise RuntimeError("Use the DMA execution API when `kv_dma_share=True`.")
+
         # Set inputs
         self.set_buffers(inputs)
         if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
@@ -454,27 +429,56 @@ class QAICInferenceSession:
                 outputs.setdefault(public_name.rsplit("/", 1)[-1], output)
         return outputs
 
-    # ------------------------------------------------------------------
-    # DMA-based KV handoff path (enabled only when kv_dma_share=True);
-    # state/logic lives in QEfficient.generation._kv_dma_handoff.KvDmaHandoff.
-    # ------------------------------------------------------------------
+    def _shape_mismatch_message(self, buf_dims) -> str:
+        """Build the existing shape diagnostic for pooled DMA execution."""
+        error_message = "Failed to run"
+        if self.allowed_shapes:
+            error_message += "\n\n"
+            error_message += '(Only if "No matching dimension found" error is present above)'
+            error_message += "\nAllowed shapes:"
+            for index, allowed_shape in enumerate(self.allowed_shapes):
+                error_message += f"\n{index}\n"
+                for binding, (element_size, shape), (_, passed_shape) in zip(self.bindings, allowed_shape, buf_dims):
+                    if passed_shape == [0]:
+                        if not binding.is_partial_buf_allowed:
+                            warn(f"Partial buffer not allowed for: {binding.name}")
+                        continue
+                    error_message += f"{binding.name}:\t{element_size}\t{shape}\n"
+            error_message += "\n\nPassed shapes:\n"
+            for binding, (element_size, shape) in zip(self.bindings, buf_dims):
+                if shape == [0]:
+                    continue
+                error_message += f"{binding.name}:\t{element_size}\t{shape}\n"
+        return error_message
 
     def set_persistent_inputs(self, buffers: Dict[str, np.ndarray]) -> None:
+        if self._kv_dma is None:
+            raise RuntimeError("Persistent inputs require `kv_dma_share=True`.")
         self._kv_dma.set_persistent_inputs(buffers)
 
     def set_data_for_kv_handoff(self, kv_cache_buffers, slicing_parameters, index=0, buff_map=None):
+        if self._kv_dma is None:
+            raise RuntimeError("KV handoff requires `kv_dma_share=True`.")
         return self._kv_dma.set_data_for_kv_handoff(kv_cache_buffers, slicing_parameters, index, buff_map)
 
     def np_run(self, inputs: Dict[str, np.ndarray], slicing_parameters=None, is_prefill: bool = True) -> int:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
         return self._kv_dma.np_run(inputs, slicing_parameters, is_prefill)
 
     def np_run_pipeline(
         self, inputs: Dict[str, np.ndarray], slicing_parameters=None, last_chunk: bool = False, kv_cache_buffers=None
     ) -> int:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
         return self._kv_dma.np_run_pipeline(inputs, slicing_parameters, last_chunk, kv_cache_buffers)
 
     def complete_inf(self, index: int, is_prefill: bool) -> None:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
         self._kv_dma.complete_inf(index, is_prefill)
 
     def get_outputs(self, index: int) -> Dict[str, np.ndarray]:
+        if self._kv_dma is None:
+            raise RuntimeError("DMA execution requires `kv_dma_share=True`.")
         return self._kv_dma.get_outputs(index)

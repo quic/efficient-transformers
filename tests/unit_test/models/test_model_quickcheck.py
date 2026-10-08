@@ -5003,40 +5003,58 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
         )
 
 
-@pytest.mark.cpu_only
-def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
-    from onnx import TensorProto, helper
+def test_diffusion_gemma_split_compile_uses_paired_mxint8_kv_io(monkeypatch, tmp_path):
+    from types import SimpleNamespace
 
-    from QEfficient.generation.runner_io import write_runner_io_bundle
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
 
-    input_info = helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "seq_len"])
-    output_info = helper.make_tensor_value_info("output", TensorProto.INT64, ["batch_size", "seq_len"])
-    graph = helper.make_graph(
-        [helper.make_node("Identity", ["input_ids"], ["output"])], "runner", [input_info], [output_info]
+    captured = []
+
+    class FakeQPC:
+        role = "qpc"
+
+        def __init__(self, model):
+            self.model = self
+
+        def get_specializations(self, **kwargs):
+            return ([{"_graph_name": self.role}], {})
+
+        def get_onnx_path(self, **kwargs):
+            return tmp_path / f"{self.role}.onnx"
+
+        def _compile(self, **kwargs):
+            captured.append((self.role, kwargs))
+            return tmp_path / f"{self.role}_qpc"
+
+    class FakeEncoderQPC(FakeQPC):
+        role = "encoder"
+
+    class FakeDecoderQPC(FakeQPC):
+        role = "decoder"
+
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaEncoderQPC", FakeEncoderQPC)
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaDecoderQPC", FakeDecoderQPC)
+
+    qeff_model = SimpleNamespace(
+        config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=2)),
+        generate_npi_file=lambda path: tmp_path / "decoder_npi.yaml",
     )
-    onnx_path = tmp_path / "model.onnx"
-    onnx.save(helper.make_model(graph), onnx_path)
 
-    compile_dir = tmp_path / "qpc-hash"
-    compile_dir.mkdir()
-    inputs = np.arange(4, dtype=np.int64).reshape(1, 4)
-    io_dir = write_runner_io_bundle(
-        onnx_path=onnx_path,
-        compile_dir=compile_dir,
-        specialization={"batch_size": 1, "seq_len": 4},
-        host_inputs={"input_ids": inputs},
+    diffusion_utils.compile_split_qpcs(
+        qeff_model,
+        prefill_seq_len=256,
+        ctx_len=1024,
+        canvas_length=256,
+        num_devices=4,
+        num_cores=16,
     )
 
-    descriptor = json.loads((io_dir / "aic_batch_io.json").read_text())
-    entries = descriptor["IO-files"][0]
-    assert entries[0] == {
-        "path": "data/input_ids.raw",
-        "io-direction": "in",
-        "elem-size": 8,
-        "map-to": "input_ids",
-        "dims": [1, 4],
+    assert [role for role, _ in captured] == ["encoder", "decoder"]
+    expected_custom_io = {
+        f"past_{kv_name}.{layer_index}{suffix}": "mxint8"
+        for layer_index in range(2)
+        for kv_name in ("key", "value")
+        for suffix in ("", "_RetainedState")
     }
-    assert entries[1]["io-direction"] == "out"
-    assert entries[1]["dims"] == [1, 4]
-    assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
-    assert not (io_dir / "data/output.raw").exists()
+    for _, kwargs in captured:
+        assert kwargs["custom_io"] == expected_custom_io

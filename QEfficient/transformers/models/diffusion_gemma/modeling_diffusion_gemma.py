@@ -74,6 +74,7 @@ _NPI_DISCRETE_SAMPLER_OPS = {
 _NPI_EXCLUDED_OUTPUTS = {
     "/Cast_9_output_0",
     "/Div_1_output_0",
+    "/Reshape_2_output_0",
     "/Reshape_6_output_0",
 }
 _NPI_FLOATING_POINT_TENSOR_TYPES = {
@@ -81,7 +82,7 @@ _NPI_FLOATING_POINT_TENSOR_TYPES = {
     onnx.TensorProto.DOUBLE,
     onnx.TensorProto.FLOAT,
     onnx.TensorProto.FLOAT16,
-}
+    }
 
 
 def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
@@ -97,15 +98,22 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
     }
     keep_nodes = []
 
+    def normalized_name(name):
+        return name.removeprefix("/unified")
+
+    def normalized_output_name(name):
+        return name.removeprefix("/unified")
+
     def is_moe_node(node):
-        node_name = node.name.lower()
+        node_name = normalized_name(node.name).lower()
         return any(part in node_name for part in _NPI_MOE_NODE_NAME_PARTS)
 
     def is_excluded_npi_node(node):
-        return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
+        node_name = normalized_name(node.name)
+        return "/self_attn/Softmax" in node_name or "/lm_head/MatMul" in node_name
 
     def is_model_body_node(node):
-        return node.name.startswith(("/layers.", "/norm/", "/self_conditioning/", "/decoder/"))
+        return normalized_name(node.name).startswith(("/layers.", "/norm/", "/self_conditioning/", "/decoder/"))
 
     sampler_outputs = [
         output.name for output in graph.output if output.name.rsplit("/", maxsplit=1)[-1] in _NPI_SAMPLER_OUTPUTS
@@ -116,12 +124,13 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
         if is_moe_node(node) or is_excluded_npi_node(node):
             continue
         if is_sampler_graph:
-            if node.name.startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
+            if normalized_name(node.name).startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
                 keep_nodes.append(node)
             continue
         if node.op_type in _NPI_FP32_ACCUM_OPS:
             keep_nodes.append(node)
-        if "/decoder/self_conditioning/" in node.name or node.name.endswith("/decoder/norm/CustomRMSNorm"):
+        node_name = normalized_name(node.name)
+        if "/decoder/self_conditioning/" in node_name or node_name.endswith("/decoder/norm/CustomRMSNorm"):
             keep_nodes.append(node)
 
     seen_names = set()
@@ -179,11 +188,12 @@ def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
         if is_moe_node(node) or is_excluded_npi_node(node) or node.op_type in {"ReduceSum"}:
             continue
         for output_index, output_name in enumerate(node.output):
+            normalized_output_name_value = normalized_output_name(output_name)
             if (
                 not output_name
                 or output_name in seen_tensors
                 or output_name in excluded_outputs
-                or output_name in _NPI_EXCLUDED_OUTPUTS
+                or normalized_output_name_value in _NPI_EXCLUDED_OUTPUTS
             ):
                 continue
             output_basename = output_name.rsplit("/", maxsplit=1)[-1]
@@ -438,11 +448,6 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
         value_states = value_states.transpose(1, 2)
 
         if past_key_values is not None:
-            # Keep the QEff cache update so prefill/commit scatters the current
-            # block into retained state. Decode supplies all -1 cache positions,
-            # which leaves retained state untouched. Attention deliberately reads
-            # the physical buffers rather than the update return value: that return
-            # contains a gather/reordered view unsuitable for the unified QPC.
             if use_physical_kv:
                 write_positions = cache_position_ids if cache_position_ids is not None else position_ids
                 past_key_values.update(
@@ -830,6 +835,193 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         return names
 
 
+class QEffDiffusionGemmaEncoderWrapper(nn.Module):
+    """Prefill-only QPC wrapper that exposes retained KV for DMA split handoff."""
+
+    supports_autoregressive_generate = False
+
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+        super().__init__()
+        self.model = model
+        self.unified = model.get_qeff_unified_wrapper()
+        self.config = model.config
+        self.text_config = model.config.text_config
+
+    def get_submodules_for_export(self):
+        return self.unified.get_submodules_for_export()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        vision_embeds: Optional[torch.Tensor] = None,
+        image_idx: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Cache] = None,
+    ):
+        outputs = self.unified(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            cache_position_ids=cache_position_ids,
+            full_attention_mask=full_attention_mask,
+            sliding_attention_mask=sliding_attention_mask,
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            mm_token_type_ids=mm_token_type_ids,
+            past_key_values=past_key_values,
+        )
+        next_image_idx = outputs[6]
+        pkv = outputs[7]
+        return next_image_idx, pkv
+
+    def get_dummy_inputs(self, **kwargs):
+        inputs = self.unified.get_dummy_inputs(**kwargs)
+        return {
+            name: value
+            for name, value in inputs.items()
+            if name
+            not in {
+                "self_conditioning_topk_probabilities",
+                "self_conditioning_topk_indices",
+                "sampling_uniforms",
+                "temperature",
+                "is_encode",
+                "use_self_conditioning",
+            }
+        }
+
+    def get_onnx_dynamic_axes(self, **kwargs):
+        axes = self.unified.get_onnx_dynamic_axes(**kwargs)
+        for name in (
+            "self_conditioning_topk_probabilities",
+            "self_conditioning_topk_indices",
+            "sampling_uniforms",
+            "temperature",
+        ):
+            axes.pop(name, None)
+        return axes
+
+    def get_specializations(self, batch_size: int, prefill_seq_len: int, ctx_len: int, **compiler_options):
+        return [
+            {
+                "_graph_name": "Encoder",
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": self.text_config.sliding_window,
+                "full_kv_plus_seq_len": ctx_len + prefill_seq_len,
+                "sliding_kv_plus_seq_len": self.text_config.sliding_window + prefill_seq_len,
+                "vision_batch_size": batch_size,
+                "vision_tokens": self.model._get_mm_tokens_per_image(),
+            }
+        ], compiler_options
+
+    def get_output_names(self, **kwargs):
+        names = ["image_idx_output"]
+        for layer_index in range(self.text_config.num_hidden_layers):
+            for kv_name in ("key", "value"):
+                names.append(f"past_{kv_name}.{layer_index}_RetainedState")
+        return names
+
+
+class QEffDiffusionGemmaDecoderWrapper(nn.Module):
+    """Decoder QPC wrapper with retained KV supplied by the split DMA handoff."""
+
+    supports_autoregressive_generate = False
+
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+        super().__init__()
+        self.model = model
+        self.unified = model.get_qeff_unified_wrapper()
+        self.config = model.config
+        self.text_config = model.config.text_config
+
+    def get_submodules_for_export(self):
+        return self.unified.get_submodules_for_export()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        self_conditioning_topk_probabilities: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_indices: Optional[torch.LongTensor] = None,
+        sampling_uniforms: Optional[torch.FloatTensor] = None,
+        temperature: Optional[torch.FloatTensor] = None,
+        is_encode: Optional[torch.LongTensor] = None,
+        use_self_conditioning: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+    ):
+        if past_key_values is None:
+            past_key_values = self.model.get_dummy_pkv_cache(
+                self.text_config,
+                batch_size=input_ids.shape[0],
+                seq_len=input_ids.shape[1],
+            )
+        retained_cache = QEffGemma4DynamicCache.from_legacy_cache(self.text_config, past_key_values)
+
+        outputs = self.unified(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            cache_position_ids=cache_position_ids,
+            full_attention_mask=full_attention_mask,
+            sliding_attention_mask=sliding_attention_mask,
+            mm_token_type_ids=mm_token_type_ids,
+            self_conditioning_topk_probabilities=self_conditioning_topk_probabilities,
+            self_conditioning_topk_indices=self_conditioning_topk_indices,
+            sampling_uniforms=sampling_uniforms,
+            temperature=temperature,
+            is_encode=is_encode,
+            use_self_conditioning=use_self_conditioning,
+            past_key_values=retained_cache,
+        )
+        return (*outputs[:6], outputs[7])
+
+    def get_dummy_inputs(self, **kwargs):
+        inputs = self.unified.get_dummy_inputs(**kwargs)
+        inputs.pop("vision_embeds")
+        inputs.pop("image_idx")
+        return inputs
+
+    def get_onnx_dynamic_axes(self, **kwargs):
+        axes = self.unified.get_onnx_dynamic_axes(**kwargs)
+        axes.pop("vision_embeds")
+        return axes
+
+    def get_specializations(self, batch_size: int, canvas_length: int, ctx_len: int, **compiler_options):
+        return [
+            {
+                "_graph_name": "Decoder",
+                "batch_size": batch_size,
+                "seq_len": canvas_length,
+                "ctx_len": ctx_len,
+                "sliding_window": self.text_config.sliding_window,
+                "full_kv_plus_seq_len": ctx_len + canvas_length,
+                "sliding_kv_plus_seq_len": self.text_config.sliding_window + canvas_length,
+            }
+        ], compiler_options
+
+    def get_output_names(self, **kwargs):
+        names = [
+            "self_conditioning_topk_probabilities_RetainedState",
+            "self_conditioning_topk_indices_RetainedState",
+            "newly_accepted_mask",
+            "mean_entropy",
+            "denoiser_canvas",
+            "top1_indices",
+        ]
+        for layer_index in range(self.text_config.num_hidden_layers):
+            for kv_name in ("key", "value"):
+                names.append(f"past_{kv_name}.{layer_index}_RetainedState")
+        return names
+
+
 # ---------------------------------------------------------------------------
 # Top-level model class — registered to AutoModelForImageTextToText
 # ---------------------------------------------------------------------------
@@ -847,6 +1039,12 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
     def get_qeff_unified_wrapper(self) -> QEffDiffusionGemmaUnifiedWrapper:
         """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
         return QEffDiffusionGemmaUnifiedWrapper(self)
+
+    def get_qeff_diffusion_encoder(self) -> QEffDiffusionGemmaEncoderWrapper:
+        return QEffDiffusionGemmaEncoderWrapper(self)
+
+    def get_qeff_diffusion_decoder(self) -> QEffDiffusionGemmaDecoderWrapper:
+        return QEffDiffusionGemmaDecoderWrapper(self)
 
     def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
         del model_name
