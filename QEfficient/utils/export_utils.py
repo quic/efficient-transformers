@@ -13,11 +13,11 @@ from collections import Counter
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import onnx
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
@@ -33,8 +33,6 @@ from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
     _KNOWN_DECODER_LAYER_ATTR_PATHS,
     _KNOWN_DECODER_LAYER_SUFFIXES,
-    DYNAMO_DIM_MAX_BATCH_SIZE,
-    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import QEFFLogger, log_api_arguments
@@ -102,9 +100,9 @@ def build_dynamo_export_kwargs(export_kwargs):
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
-    dynamic_axes: Dict[str, Dict[int, str]],
+    dynamic_axes: dict[str, dict[int, str]],
     model_config=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
 
@@ -127,33 +125,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
-    model_type = getattr(model_config, "model_type", None)
-    batch_min = 1 if model_type == "gpt_oss" else 2
-
-    dim_registry: Dict[str, Any] = {}
+    dim_registry: dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
-            if dim_name == "batch_size":
-                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif dim_name == "full_batch_size":
-                # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
-                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif "seq_len" in dim_name:
-                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
-            elif "comp_ctx_lengths" in dim_name:
-                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
-            elif "ctx_len" in dim_name:
-                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
-            elif "sliding_window" in dim_name:
-                dim_registry[dim_name] = Dim(
-                    "sliding_window",
-                    min=2,
-                    max=getattr(model_config, "sliding_window", max_seq_len),
-                )
-            else:
-                dim_registry[dim_name] = Dim.DYNAMIC
+            dim_registry[dim_name] = Dim(dim_name)
         return dim_registry[dim_name]
 
     dynamic_shapes: dict[str, Any] = {}
@@ -659,6 +635,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
+            onnx_transform_kwargs["target_class_modules"] = {
+                cls.__name__: cls.__module__ for cls in decoder_layer_classes
+            }
             kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
         else:
             # TorchScript path: pass class objects for export_modules_as_functions
@@ -710,7 +689,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
             qeff_model.hash_params["onnx_subfunction_version"] = state["hash_subfunction_version"]
 
 
-def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
+def _save_export_metadata(export_dir: Path, filtered_hash_params: dict):
     """
     Save export metadata to JSON file for reproducibility.
 

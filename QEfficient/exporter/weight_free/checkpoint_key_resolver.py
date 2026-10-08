@@ -8,7 +8,6 @@
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
-from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -37,9 +36,14 @@ _COMPUTED_INITIALIZER_NAMES = {
     "cos_cached",
     "sin_cached",
     "inv_freq",
+    "full_attention_sin_cached",
+    "full_attention_cos_cached",
+    "sliding_attention_sin_cached",
+    "sliding_attention_cos_cached",
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "_qeff_unit_weight",
 }
 
 
@@ -71,6 +75,17 @@ def _moe_weight_aliases(name: str) -> List[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
+    for onnx_suffix, checkpoint_suffix in (
+        (".moe_block.router.", ".router."),
+        (".moe_block.pre_feedforward_layernorm.", ".pre_feedforward_layernorm_2."),
+        (".moe_block.post_feedforward_layernorm.", ".post_feedforward_layernorm_2."),
+    ):
+        if onnx_suffix in name:
+            aliases.append(name.replace(onnx_suffix, checkpoint_suffix, 1))
+    if ".moe_block.moe_weights." in canonical:
+        canonical = canonical.replace(".moe_block.moe_weights.", ".moe_weights.", 1)
+        aliases.append(canonical)
+
     if ".experts.moe_weights." in name:
         canonical = name.replace(".experts.moe_weights.", ".moe_weights.", 1)
         aliases.append(canonical)
