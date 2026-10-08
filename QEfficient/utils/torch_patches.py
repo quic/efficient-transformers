@@ -34,8 +34,8 @@ import importlib
 import inspect
 import os
 import threading
-from collections import defaultdict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import torch
@@ -65,6 +65,8 @@ _safe_export_original_passes = {}
 _INVOKE_SUBGRAPH_EXPORT_PATCH_LOCK = threading.RLock()
 _invoke_subgraph_export_patch_depth = 0
 _invoke_subgraph_export_patch_state = {}
+_invoke_subgraph_autograd_cache_key = ContextVar("invoke_subgraph_autograd_cache_key", default=None)
+_invoke_subgraph_proxy_reuse_group_key = ContextVar("invoke_subgraph_proxy_reuse_group_key", default=None)
 _SAFE_EXPORT_REQUIRED_PASSES = {
     "_jit_pass_dce",
     "_jit_pass_dce_allow_deleting_nodes_with_side_effects",
@@ -324,14 +326,16 @@ def _normalize_symbolic_graph_metadata_value(value: Any, symbol_map: dict[str, s
 
     expr_str = re.sub(r"\bs\d+\b", replace_symbol, expr_str)
     pytype = getattr(value, "ty", getattr(node, "pytype", type(value)))
-    return (type(value), pytype, getattr(node, "constant", None), expr_str)
+    return (
+        type(value),
+        pytype,
+        getattr(node, "constant", None),
+        str(sympy.simplify(expr_str)),
+    )
 
 
 def _normalize_graph_metadata_value(value: Any, symbol_map: dict[str, str]) -> Any:
-    try:
-        from torch._subclasses._fake_tensor_utils import _PySymInputStub
-    except Exception:
-        _PySymInputStub = ()
+    from torch._subclasses._fake_tensor_utils import _PySymInputStub
 
     if isinstance(value, _PySymInputStub):
         return (_PySymInputStub, _normalize_symbolic_graph_metadata_value(value.value, symbol_map))
@@ -343,12 +347,11 @@ def _flatten_graph_metadata_value_for_call_compatibility(value: Any, fake_mode) 
 
     result: list[Any] = []
     state = _CacheKeyState(fake_mode.shape_env)
-    sym_int_cls = getattr(torch, "SymInt", None)
     if isinstance(value, (tuple, list, torch.Size)):
         id_hashed_objects: list[Any] = []
         fake_mode._prep_args_for_hash(result, value, state, id_hashed_objects)
         id_hashed_objects.clear()
-    elif sym_int_cls is not None and isinstance(value, sym_int_cls):
+    elif isinstance(value, torch.SymInt):
         state.convert_sym_int(result, value)
     else:
         result.append(value)
@@ -387,6 +390,7 @@ def _qeff_are_same_graph_modules(
     fn_name: str, a_mod: torch.fx.GraphModule, b_mod: torch.fx.GraphModule, fake_mode
 ) -> bool:
     import torch.utils._pytree as pytree
+    from torch._subclasses._fake_tensor_utils import _CacheKeyState
     from torch._subclasses.fake_tensor import extract_tensor_metadata
 
     hop_vars = importlib.import_module("torch._dynamo.variables.higher_order_ops")
@@ -424,7 +428,6 @@ def _qeff_are_same_graph_modules(
         log_mismatch(f"node count mismatch: {len(a_graph_nodes)} != {len(b_graph_nodes)}")
         return False
 
-    sym_int_cls = getattr(torch, "SymInt", None)
     for a_node, b_node in zip(a_graph_nodes, b_graph_nodes):
         if a_node.op != b_node.op:
             log_mismatch(f"op mismatch: {a_node.op} != {b_node.op}", a_node, b_node)
@@ -439,13 +442,23 @@ def _qeff_are_same_graph_modules(
                     log_mismatch(f"placeholder type mismatch: tensor != {type(b_value).__name__}", a_node, b_node)
                     return False
                 a_metadata = extract_tensor_metadata(a_value)
+                a_result = []
+                a_state = _CacheKeyState(fake_mode.shape_env)
+                a_metadata._flatten_into(a_result, fake_mode, a_state)
                 b_metadata = extract_tensor_metadata(b_value)
+                b_result = []
+                b_state = _CacheKeyState(fake_mode.shape_env)
+                b_metadata._flatten_into(b_result, fake_mode, b_state)
                 mismatch_detail = _tensor_metadata_graph_call_mismatch(a_metadata, b_metadata, fake_mode)
                 if mismatch_detail is not None:
-                    log_mismatch(f"placeholder tensor metadata mismatch: {mismatch_detail}", a_node, b_node)
+                    log_mismatch(
+                        f"placeholder tensor metadata mismatch: {mismatch_detail}; {a_result} != {b_result}",
+                        a_node,
+                        b_node,
+                    )
                     return False
-            elif sym_int_cls is not None and isinstance(a_value, sym_int_cls):
-                if not isinstance(b_value, sym_int_cls):
+            elif isinstance(a_value, torch.SymInt):
+                if not isinstance(b_value, torch.SymInt):
                     log_mismatch(f"placeholder type mismatch: SymInt != {type(b_value).__name__}", a_node, b_node)
                     return False
                 if _normalize_symbolic_graph_metadata_value(a_value, {}) != _normalize_symbolic_graph_metadata_value(
@@ -497,66 +510,46 @@ def _qeff_are_same_graph_modules(
     return True
 
 
-def _qeff_cache_table(cache, attr_name):
-    table = getattr(cache, attr_name, None)
-    if table is None:
-        table = defaultdict(list)
-        setattr(cache, attr_name, table)
-    return table
-
-
-def _qeff_proxy_cache_table(cache):
-    table = getattr(cache, "_qeff_proxy_dispatch_cache_by_reuse_group", None)
-    if table is None:
-        table = {}
-        setattr(cache, "_qeff_proxy_dispatch_cache_by_reuse_group", table)
-    return table
-
-
 def _qeff_add_dynamo_installed_submodule(self, fn_code, identifier, reuse_group_key=None):
-    original = _invoke_subgraph_export_patch_state["cache_add_dynamo_installed_submodule"]
-    if reuse_group_key is None:
-        return original(self, fn_code, identifier)
-    cache_key = (fn_code, reuse_group_key)
-    _qeff_cache_table(self, "_qeff_dynamo_installed_submodules_by_reuse_group")[cache_key].append(identifier)
-    return None
+    self.dynamo_installed_submodules[(fn_code, reuse_group_key)].append(identifier)
 
 
 def _qeff_get_dynamo_installed_submodules(self, fn_code, reuse_group_key=None):
-    original = _invoke_subgraph_export_patch_state["cache_get_dynamo_installed_submodules"]
-    if reuse_group_key is None:
-        return original(self, fn_code)
-    cache_key = (fn_code, reuse_group_key)
-    return _qeff_cache_table(self, "_qeff_dynamo_installed_submodules_by_reuse_group").get(cache_key, [])
+    return self.dynamo_installed_submodules.get((fn_code, reuse_group_key), [])
+
+
+def _qeff_add_autograd_key_entry(self, identifier, key):
+    cache_key = _invoke_subgraph_autograd_cache_key.get() or identifier
+    self.autograd_cache[cache_key] = key
+
+
+def _qeff_get_autograd_key_entry(self, identifier):
+    cache_key = _invoke_subgraph_autograd_cache_key.get() or identifier
+    return self.autograd_cache.get(cache_key, None)
 
 
 def _qeff_add_proxy_dispatch_entry(self, identifier, key, reuse_group_key=None):
-    original = _invoke_subgraph_export_patch_state["cache_add_proxy_dispatch_entry"]
     if reuse_group_key is None:
-        return original(self, identifier, key)
-    cache_key = (identifier, reuse_group_key)
-    _qeff_proxy_cache_table(self)[cache_key] = key
-    return None
+        reuse_group_key = _invoke_subgraph_proxy_reuse_group_key.get()
+    self.proxy_dispatch_cache[(identifier, reuse_group_key)] = key
 
 
 def _qeff_get_proxy_dispatch_entry(self, identifier, reuse_group_key=None):
-    original = _invoke_subgraph_export_patch_state["cache_get_proxy_dispatch_entry"]
     if reuse_group_key is None:
-        return original(self, identifier)
-    cache_key = (identifier, reuse_group_key)
-    return _qeff_proxy_cache_table(self).get(cache_key, None)
+        reuse_group_key = _invoke_subgraph_proxy_reuse_group_key.get()
+    return self.proxy_dispatch_cache.get((identifier, reuse_group_key), None)
 
 
-def _qeff_create_wrapped_node(self, *args, reuse_group_key=None, **kwargs):
+def _qeff_create_wrapped_node(self, *args, install_subgraph_kwargs=None, **kwargs):
     original_create = _invoke_subgraph_export_patch_state["wrap_create_wrapped_node"]
-    if reuse_group_key is None:
+    if not install_subgraph_kwargs:
         return original_create(self, *args, **kwargs)
 
     instance_previous_install = self.__dict__.get("install_subgraph_in_output_graph", _MISSING_INSTANCE_ATTR)
     previous_install = getattr(self, "install_subgraph_in_output_graph")
 
     def install_with_extra_kwargs(*install_args, **install_kwargs):
-        install_kwargs["reuse_group_key"] = reuse_group_key
+        install_kwargs.update(install_subgraph_kwargs)
         return previous_install(*install_args, **install_kwargs)
 
     setattr(self, "install_subgraph_in_output_graph", install_with_extra_kwargs)
@@ -567,6 +560,33 @@ def _qeff_create_wrapped_node(self, *args, reuse_group_key=None, **kwargs):
             delattr(self, "install_subgraph_in_output_graph")
         else:
             setattr(self, "install_subgraph_in_output_graph", instance_previous_install)
+
+
+def _qeff_invoke_subgraph_autograd_impl(subgraph, identifier, *operands):
+    cache_key = (identifier, id(subgraph), len(operands))
+    token = _invoke_subgraph_autograd_cache_key.set(cache_key)
+    try:
+        return _invoke_subgraph_export_patch_state["invoke_autograd_impl"](subgraph, identifier, *operands)
+    finally:
+        _invoke_subgraph_autograd_cache_key.reset(token)
+
+
+def _qeff_invoke_subgraph_proxy_impl(proxy_mode, subgraph, identifier, *operands):
+    invoke_runtime = importlib.import_module("torch._higher_order_ops.invoke_subgraph")
+    orig_subgraph = subgraph.subgraph if isinstance(subgraph, invoke_runtime.FunctionalizeCtxWrapper) else subgraph
+    reuse_group_key = None
+    if (
+        isinstance(orig_subgraph, torch.fx.GraphModule)
+        and hasattr(orig_subgraph, "meta")
+        and "invoke_subgraph_reuse_group_key" in orig_subgraph.meta
+    ):
+        reuse_group_key = orig_subgraph.meta["invoke_subgraph_reuse_group_key"]
+
+    token = _invoke_subgraph_proxy_reuse_group_key.set(reuse_group_key)
+    try:
+        return _invoke_subgraph_export_patch_state["invoke_proxy_impl"](proxy_mode, subgraph, identifier, *operands)
+    finally:
+        _invoke_subgraph_proxy_reuse_group_key.reset(token)
 
 
 def _qeff_install_subgraph_in_output_graph(
@@ -735,7 +755,7 @@ def _qeff_invoke_subgraph_call_function(self, tx, args, kwargs):
             kwargs,
             self._HOP_NAME,
             subgraph_name=subgraph_name,
-            reuse_group_key=export_reuse_group_key,
+            install_subgraph_kwargs={"reuse_group_key": export_reuse_group_key},
         )
 
     if len(p_kwargs) > 0:
@@ -819,6 +839,9 @@ def _enable_invoke_subgraph_export_reuse_hash_patches():
             hop_vars = importlib.import_module("torch._dynamo.variables.higher_order_ops")
             invoke_vars = importlib.import_module("torch._dynamo.variables.invoke_subgraph")
             guards = importlib.import_module("torch._guards")
+            invoke_runtime = importlib.import_module("torch._higher_order_ops.invoke_subgraph")
+            invoke_op = invoke_runtime.invoke_subgraph
+            proxy_mode_type = invoke_runtime.ProxyTorchDispatchMode
 
             _invoke_subgraph_export_patch_state.clear()
             _invoke_subgraph_export_patch_state.update(
@@ -831,8 +854,13 @@ def _enable_invoke_subgraph_export_reuse_hash_patches():
                     "invoke_call_function": invoke_vars.InvokeSubgraphHigherOrderVariable._call_function,
                     "cache_add_dynamo_installed_submodule": guards.InvokeSubgraphCache.add_dynamo_installed_submodule,
                     "cache_get_dynamo_installed_submodules": guards.InvokeSubgraphCache.get_dynamo_installed_submodules,
+                    "cache_add_autograd_key_entry": guards.InvokeSubgraphCache.add_autograd_key_entry,
+                    "cache_get_autograd_key_entry": guards.InvokeSubgraphCache.get_autograd_key_entry,
                     "cache_add_proxy_dispatch_entry": guards.InvokeSubgraphCache.add_proxy_dispatch_entry,
                     "cache_get_proxy_dispatch_entry": guards.InvokeSubgraphCache.get_proxy_dispatch_entry,
+                    "invoke_autograd_impl": invoke_op.py_kernels[torch._C.DispatchKey.Autograd],
+                    "invoke_proxy_impl": invoke_op.python_key_table[proxy_mode_type],
+                    "invoke_proxy_mode_type": proxy_mode_type,
                 }
             )
 
@@ -844,8 +872,13 @@ def _enable_invoke_subgraph_export_reuse_hash_patches():
             invoke_vars.InvokeSubgraphHigherOrderVariable._call_function = _qeff_invoke_subgraph_call_function
             guards.InvokeSubgraphCache.add_dynamo_installed_submodule = _qeff_add_dynamo_installed_submodule
             guards.InvokeSubgraphCache.get_dynamo_installed_submodules = _qeff_get_dynamo_installed_submodules
+            guards.InvokeSubgraphCache.add_autograd_key_entry = _qeff_add_autograd_key_entry
+            guards.InvokeSubgraphCache.get_autograd_key_entry = _qeff_get_autograd_key_entry
             guards.InvokeSubgraphCache.add_proxy_dispatch_entry = _qeff_add_proxy_dispatch_entry
             guards.InvokeSubgraphCache.get_proxy_dispatch_entry = _qeff_get_proxy_dispatch_entry
+            invoke_op.py_kernels[torch._C.DispatchKey.Autograd] = _qeff_invoke_subgraph_autograd_impl
+            invoke_op.python_key_table[proxy_mode_type] = _qeff_invoke_subgraph_proxy_impl
+            invoke_op._dispatch_cache.clear()
         _invoke_subgraph_export_patch_depth += 1
 
 
@@ -861,6 +894,8 @@ def _disable_invoke_subgraph_export_reuse_hash_patches():
             hop_vars = importlib.import_module("torch._dynamo.variables.higher_order_ops")
             invoke_vars = importlib.import_module("torch._dynamo.variables.invoke_subgraph")
             guards = importlib.import_module("torch._guards")
+            invoke_runtime = importlib.import_module("torch._higher_order_ops.invoke_subgraph")
+            invoke_op = invoke_runtime.invoke_subgraph
 
             hop_vars.are_same_graph_modules = _invoke_subgraph_export_patch_state["are_same_graph_modules"]
             hop_vars.WrapHigherOrderVariable.create_wrapped_node = _invoke_subgraph_export_patch_state[
@@ -877,12 +912,25 @@ def _disable_invoke_subgraph_export_reuse_hash_patches():
             guards.InvokeSubgraphCache.get_dynamo_installed_submodules = _invoke_subgraph_export_patch_state[
                 "cache_get_dynamo_installed_submodules"
             ]
+            guards.InvokeSubgraphCache.add_autograd_key_entry = _invoke_subgraph_export_patch_state[
+                "cache_add_autograd_key_entry"
+            ]
+            guards.InvokeSubgraphCache.get_autograd_key_entry = _invoke_subgraph_export_patch_state[
+                "cache_get_autograd_key_entry"
+            ]
             guards.InvokeSubgraphCache.add_proxy_dispatch_entry = _invoke_subgraph_export_patch_state[
                 "cache_add_proxy_dispatch_entry"
             ]
             guards.InvokeSubgraphCache.get_proxy_dispatch_entry = _invoke_subgraph_export_patch_state[
                 "cache_get_proxy_dispatch_entry"
             ]
+            invoke_op.py_kernels[torch._C.DispatchKey.Autograd] = _invoke_subgraph_export_patch_state[
+                "invoke_autograd_impl"
+            ]
+            invoke_op.python_key_table[_invoke_subgraph_export_patch_state["invoke_proxy_mode_type"]] = (
+                _invoke_subgraph_export_patch_state["invoke_proxy_impl"]
+            )
+            invoke_op._dispatch_cache.clear()
             _invoke_subgraph_export_patch_state.clear()
 
 

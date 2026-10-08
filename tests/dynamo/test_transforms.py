@@ -34,6 +34,7 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils import export_utils
 from QEfficient.utils.torch_patches import preserve_subfunction_source_lines, temporarily_enable_nested_compile_regions
 
 # ---------------------------------------------------------------------------
@@ -205,6 +206,117 @@ class TestTemporarilyEnableNestedCompileRegions:
         # IDs may differ (second context creates a new binding), but both contexts
         # must restore cleanly — the important invariant is no crash and final state is restored.
         assert len(wrapped_forwards_first) == len(wrapped_forwards_second)
+
+    def test_reuse_hash_fn_partitions_export_repeated_subgraphs(self):
+        class Dense(torch.nn.Module):
+            reuse_group_key = 0
+
+            def forward(self, x):
+                return x.sin() + 1
+
+        class Moe(torch.nn.Module):
+            reuse_group_key = 1
+
+            def forward(self, x):
+                return x.cos() + 2
+
+        def reuse_hash_fn(layer, x):
+            return layer.reuse_group_key
+
+        @torch.compiler.nested_compile_region(reuse_hash_fn=reuse_hash_fn)
+        def layer_fn(layer, x):
+            return layer(x)
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList([Dense(), Dense(), Moe(), Dense(), Moe()])
+
+            def forward(self, x):
+                for layer in self.layers:
+                    x = layer_fn(layer, x)
+                return x
+
+        model = Model()
+        inputs = (torch.randn(8),)
+
+        with temporarily_enable_nested_compile_regions(model, target_classes=[torch.nn.Linear]):
+            with torch.no_grad(), torch._dynamo.config.patch(inline_single_use_invoke_subgraph=False):
+                exported_program = torch.export.export(model, inputs, strict=False)
+
+        assert torch.equal(exported_program.module()(*inputs), model(*inputs))
+        repeated_subgraphs = {
+            name for name, _ in exported_program.graph_module.named_modules() if name.startswith("repeated_subgraph")
+        }
+        assert repeated_subgraphs == {"repeated_subgraph0", "repeated_subgraph1"}
+
+    def test_graph_module_comparison_ignores_storage_bytes(self):
+        from torch._subclasses.fake_tensor import FakeTensorMode
+
+        def make_graph(example_value):
+            graph = torch.fx.Graph()
+            x = graph.placeholder("x")
+            x.meta["example_value"] = example_value
+            sin = graph.call_function(torch.ops.aten.sin.default, (x,))
+            graph.output((sin,))
+            return torch.fx.GraphModule({}, graph)
+
+        small_storage = torch.empty(2)
+        large_storage = torch.as_strided(torch.empty(100), (2,), (1,), 0)
+
+        with FakeTensorMode() as fake_mode:
+            small_fake = fake_mode.from_tensor(small_storage)
+            large_fake = fake_mode.from_tensor(large_storage)
+
+        model = torch.nn.Identity()
+        with temporarily_enable_nested_compile_regions(model, target_classes=[torch.nn.Linear]):
+            from torch._dynamo.variables.higher_order_ops import are_same_graph_modules
+
+            assert are_same_graph_modules(
+                "storage_bytes",
+                make_graph(small_fake),
+                make_graph(large_fake),
+                fake_mode,
+            )
+
+
+def test_dynamo_subfunction_export_runs_without_grad(monkeypatch, tmp_path):
+    class Model:
+        model = torch.nn.Identity()
+        model_architecture = "test"
+        model_name = "test"
+        hash_params = {}
+        _onnx_transforms = []
+
+    state = {
+        "decoder_layer_classes": [],
+        "dynamo": True,
+        "onnx_transforms": [],
+        "use_onnx_subfunctions": False,
+        "hash_use_subfunctions": False,
+        "hash_subfunction_version": None,
+    }
+    invoke_vars = importlib.import_module("torch._dynamo.variables.invoke_subgraph")
+    original_call_function = invoke_vars.InvokeSubgraphHigherOrderVariable._call_function
+    monkeypatch.setattr(export_utils, "validate_dynamo_export_requirements", lambda _: None)
+    monkeypatch.setattr(
+        export_utils,
+        "_setup_onnx_subfunctions",
+        lambda self, args, kwargs, dynamo: (args, kwargs, state),
+    )
+    monkeypatch.setattr(export_utils, "_prepare_export_directory", lambda self, kwargs: tmp_path / "model")
+    monkeypatch.setattr(export_utils, "_generate_export_hash", lambda self, args, kwargs, func: ("hash", {}))
+    monkeypatch.setattr(export_utils, "_save_export_metadata", lambda *args: None)
+    monkeypatch.setattr(export_utils, "_cleanup_onnx_subfunctions", lambda *args: None)
+
+    @export_utils.export_wrapper
+    def export(model, **kwargs):
+        assert not torch.is_grad_enabled()
+        assert invoke_vars.InvokeSubgraphHigherOrderVariable._call_function is not original_call_function
+        return kwargs["export_dir"] / "model.onnx"
+
+    export(Model(), dynamo=True, use_onnx_subfunctions=True)
+    assert invoke_vars.InvokeSubgraphHigherOrderVariable._call_function is original_call_function
 
 
 # ---------------------------------------------------------------------------
