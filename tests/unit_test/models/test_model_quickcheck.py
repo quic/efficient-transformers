@@ -2860,6 +2860,60 @@ def test_qwen3_5_moe_gated_norm_preserves_float16():
     assert out.dtype == torch.float16
 
 
+def test_qwen3_5_moe_gdn_initializes_eager_prefill_cache():
+    """First eager prefill must materialize GDN state before retained-state export takes over."""
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeGatedDeltaNet
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeDynamicCache,
+        QEffQwen3_5MoeGatedDeltaNet,
+    )
+
+    config = Qwen3_5MoeTextConfig(
+        vocab_size=32,
+        hidden_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        layer_types=["linear_attention"],
+        linear_conv_kernel_dim=4,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        moe_intermediate_size=16,
+        shared_expert_intermediate_size=16,
+        num_experts=2,
+        num_experts_per_tok=1,
+        dtype=torch.float32,
+    )
+    torch.manual_seed(0)
+    hf_gdn = Qwen3_5MoeGatedDeltaNet(config, layer_idx=0).eval()
+    qeff_gdn = QEffQwen3_5MoeGatedDeltaNet(config, layer_idx=0).eval()
+    qeff_gdn.load_state_dict(hf_gdn.state_dict())
+    qeff_gdn.__qeff_init__()
+    hidden_states = torch.randn(1, 64, config.hidden_size)
+    cache = QEffQwen3_5MoeDynamicCache(config)
+
+    with torch.no_grad():
+        expected = hf_gdn(hidden_states)
+        actual = qeff_gdn(
+            hidden_states,
+            cache_params=cache,
+            position_ids=torch.arange(64, dtype=torch.int64).view(1, 1, 64),
+        )
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    assert cache.conv_states[0].shape == (1, qeff_gdn.conv_dim, qeff_gdn.conv_kernel_size)
+    assert cache.recurrent_states[0].shape == (
+        1,
+        qeff_gdn.num_v_heads,
+        qeff_gdn.head_k_dim,
+        qeff_gdn.head_v_dim,
+    )
+
+
 def test_qwen3_5_moe_get_submodules_for_export_handles_fallback_and_headpar():
     """Mixed full/linear attention configs must still expose usable subfunction targets."""
     from types import SimpleNamespace
@@ -2947,6 +3001,7 @@ def test_qwen3_5_moe_decode_export_uses_static_token_axis():
     }
 
     assert QEffQwen3_5MoeForCausalLM.get_onnx_export_seq_len(32, prefill_seq_len=1) == 1
+    assert QEffQwen3_5MoeForCausalLM.get_onnx_export_seq_len(32, prefill_seq_len=64) == 64
 
     example_inputs, dynamic_axes = QEffQwen3_5MoeForCausalLM.prepare_onnx_export_inputs(
         example_inputs,

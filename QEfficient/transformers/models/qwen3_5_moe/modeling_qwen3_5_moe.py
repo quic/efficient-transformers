@@ -1028,6 +1028,22 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             conv_state_all = cache_params.conv_states[self.layer_idx]
             recurrent_state_all = cache_params.recurrent_states[self.layer_idx]
 
+            if conv_state_all is None or recurrent_state_all is None:
+                # Eager prefill creates the hybrid cache without materialized GDN state.
+                # Export/runtime always supplies retained-state tensors, so keep this
+                # initialization local to the first PyTorch cache update.
+                conv_state_all = mixed_qkv.new_zeros(batch_size, self.conv_dim, self.conv_kernel_size)
+                recurrent_state_all = torch.zeros(
+                    batch_size,
+                    self.num_v_heads,
+                    self.head_k_dim,
+                    self.head_v_dim,
+                    dtype=self.A_log.dtype,
+                    device=hidden_states.device,
+                )
+                cache_params.conv_states[self.layer_idx] = conv_state_all
+                cache_params.recurrent_states[self.layer_idx] = recurrent_state_all
+
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
                 conv_state_grouped = conv_state_all.ndim == 4
@@ -1595,7 +1611,9 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
         **kwargs,
     ) -> int:
         del prefill_only, kwargs
-        return 1 if prefill_seq_len == 1 else default_seq_len
+        # GDN unrolls its chunk loop during Dynamo export, so prefill must trace
+        # the exact fixed specialization length requested for runtime dispatch.
+        return prefill_seq_len if prefill_seq_len is not None else default_seq_len
 
     @staticmethod
     def prepare_onnx_export_inputs(
