@@ -307,6 +307,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     # Match past_key.N / past_value.N regardless of any suffix that follows
     # (plain, _RetainedState, or _<prefix>_RetainedState for kv_cache_prefix).
     _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)")
+    _RETAINED_STATE_INPUT_RE = re.compile(r"^past_.+_(?:Internal)?RetainedState$")
 
     # All scatter op_type names that write back a KV cache tensor.
     # Keep in sync with CustomOpTransform._custom_ops and the dynamo
@@ -321,6 +322,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             "CtxScatterDP",
             "CtxScatterFoldedRows",
             "CtxScatterDPCP",
+            "V4CtxScatter1D",
         }
     )
 
@@ -378,7 +380,9 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         graph = model.graph
         produced_names = {name for node in graph.node for name in node.output}
         dangling_retained_outputs = {
-            out.name for out in graph.output if out.name.endswith("_RetainedState") and out.name not in produced_names
+            out.name
+            for out in graph.output
+            if out.name.endswith(("_RetainedState", "_InternalRetainedState")) and out.name not in produced_names
         }
         if not dangling_retained_outputs:
             return False
@@ -407,6 +411,47 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 kv_inputs[kind] = inp_name
 
             if layer_idx is None or set(kv_inputs) != {"key", "value"}:
+                for input_index, retained_output in enumerate(node.input):
+                    if retained_output not in dangling_retained_outputs:
+                        continue
+                    if cls._RETAINED_STATE_INPUT_RE.match(retained_output) is None:
+                        continue
+                    if input_index >= len(fn.input):
+                        raise ValueError(
+                            f"Nested function '{fn.name}' has no input at position {input_index} for "
+                            f"retained-state input '{retained_output}'."
+                        )
+
+                    function_input = fn.input[input_index]
+                    writers = [
+                        fn_node
+                        for fn_node in fn.node
+                        if fn_node.op_type in cls._SCATTER_OP_TYPES
+                        and fn_node.input
+                        and fn_node.input[0] == function_input
+                        and fn_node.output
+                    ]
+                    if len(writers) != 1:
+                        writer_names = [
+                            f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})"
+                            for writer in writers
+                        ]
+                        raise ValueError(
+                            f"Could not uniquely resolve retained-state writer for '{retained_output}' in nested "
+                            f"function '{fn.name}': expected one CtxScatter* with data input '{function_input}', "
+                            f"found {len(writers)} ({writer_names})."
+                        )
+
+                    scatter_output = writers[0].output[0]
+                    if scatter_output not in fn.output:
+                        fn.output.append(scatter_output)
+                        changed = True
+
+                    plain_input = re.sub(r"_(?:Internal)?RetainedState$", "", retained_output)
+                    kv_rename_map[retained_output] = plain_input
+                    if retained_output not in node.output:
+                        node.output.append(retained_output)
+                        changed = True
                 continue
 
             desired_outputs = [
