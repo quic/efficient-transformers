@@ -143,6 +143,9 @@ class QEffSlidingCacheLayer(CacheLayerMixin):
     def get_max_cache_shape(self) -> int:
         return self.max_cache_len
 
+    def get_max_length(self) -> int:
+        return self.max_cache_len
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -423,6 +426,9 @@ class QEffHCACacheLayer(CacheLayerMixin):
         return self.cumulative_length + query_length, kv_offset
 
     def get_max_cache_shape(self) -> int:
+        return self.max_cache_len
+
+    def get_max_length(self) -> int:
         return self.max_cache_len
 
     def update(
@@ -914,6 +920,9 @@ class QEffCSACacheLayer(CacheLayerMixin):
         return self.cumulative_length + query_length, kv_offset
 
     def get_max_cache_shape(self) -> int:
+        return self.max_cache_len
+
+    def get_max_length(self) -> int:
         return self.max_cache_len
 
     def update(
@@ -2890,6 +2899,21 @@ class QEffDeepseekV4ForCausalLM(DeepseekV4ForCausalLM):
         if len(layer_state) != len(state_names):
             raise ValueError(f"Layer {layer_idx} cache has {len(layer_state)} tensors; expected {len(state_names)}.")
         return [f"past_{name}.{layer_idx}" for name in state_names]
+
+    def get_retained_state_names(self) -> list[str]:
+        """Return the cache inputs in the same order and names used by export."""
+        names = []
+        for layer_idx, layer_type in enumerate(self.config.layer_types):
+            if layer_type == "sliding_attention":
+                state_names = ("sliding_window_kv",)
+            elif layer_type == "heavily_compressed_attention":
+                state_names = QEffDeepseekV4Cache._HCA_STATE_NAMES
+            elif layer_type == "compressed_sparse_attention":
+                state_names = QEffDeepseekV4Cache._CSA_STATE_NAMES
+            else:
+                raise ValueError(f"Unsupported DeepSeek V4 attention layer type: {layer_type}")
+            names.extend(f"past_{name}.{layer_idx}" for name in state_names)
+        return names
 
     def forward(
         self,

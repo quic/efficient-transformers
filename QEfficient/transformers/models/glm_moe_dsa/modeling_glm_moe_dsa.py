@@ -1029,5 +1029,5 @@ class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
                     indexer_types[: config.num_hidden_layers],
                 )
             )
-            if layer_type == "deepseek_sparse_attention" and indexer_type != "shared"
+            if layer_type in {"deepseek_sparse_attention", "indexed_attention"} and indexer_type != "shared"
         )

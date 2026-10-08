@@ -1166,14 +1166,17 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else:
                 # General graphs serve both prefill and decode; select the
                 # matching branch at runtime after export.
-                recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
-                    query,
-                    key,
-                    value,
-                    g,
-                    beta,
-                    recurrent_state,
-                )
+                if seq_len == 1:
+                    recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
+                        query,
+                        key,
+                        value,
+                        g,
+                        beta,
+                        recurrent_state,
+                    )
+                else:
+                    recurrent_out, recurrent_state_new = None, None
                 chunk_out, chunk_state = self.chunk_gated_delta_rule(
                     query,
                     key,
@@ -1193,9 +1196,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 text_position_ids = (
                     position_ids[0] if position_ids is not None and position_ids.ndim == 3 else position_ids
                 )
-                is_decode = (text_position_ids[:, :1] == text_position_ids[:, -1:]).view(batch_size, 1, 1, 1)
-                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-                last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
+                if recurrent_out is None:
+                    core_attn_out, last_recurrent_state = chunk_out, chunk_state
+                else:
+                    is_decode = (text_position_ids[:, :1] == text_position_ids[:, -1:]).view(batch_size, 1, 1, 1)
+                    core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                    last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)

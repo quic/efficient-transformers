@@ -133,12 +133,117 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    gdn_num_head_blocks: Optional[int] = None
     headpar_split: Optional[int] = None
     batch_fold: Optional[bool] = False
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
     par_num_split: Optional[int] = None
+
+
+def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
+    """Resolve the GDN head-block count for folded decode."""
+    if not batch_fold or blocking_config is None:
+        return 1
+    return max(1, int(getattr(blocking_config, "gdn_num_head_blocks", 1) or 1))
+
+
+def blocked_gdn_decode_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_state: torch.Tensor,
+    gdn_num_head_blocks: int = 1,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the one-token GDN update with optional head blocking."""
+    dtype = query.dtype
+    batch_size, sequence_length, num_heads, key_head_dim = query.shape
+    value_head_dim = value.shape[-1]
+
+    if sequence_length != 1:
+        raise ValueError("blocked_gdn_decode_forward requires sequence_length == 1")
+
+    q = query.float()
+    k = key.float()
+    q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+    k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+    v = value.float()
+    b = beta.float()
+    decay = g.float().exp()
+    state = recurrent_state.float()
+
+    q = q * (1.0 / (key_head_dim**0.5))
+    num_blocks = max(1, min(num_heads, int(gdn_num_head_blocks)))
+    heads_per_block = -(-num_heads // num_blocks)
+
+    output_blocks = []
+    state_blocks = []
+    for block_idx in range(num_blocks):
+        head_start = block_idx * heads_per_block
+        if head_start >= num_heads:
+            break
+        head_end = min(head_start + heads_per_block, num_heads)
+        block_heads = head_end - head_start
+        folded_batch_heads = batch_size * block_heads
+
+        q_block = q[:, :, head_start:head_end].reshape(folded_batch_heads, sequence_length, key_head_dim)
+        k_block = k[:, :, head_start:head_end].reshape(folded_batch_heads, sequence_length, key_head_dim)
+        v_block = v[:, :, head_start:head_end].reshape(folded_batch_heads, sequence_length, value_head_dim)
+        b_block = b[:, :, head_start:head_end].reshape(folded_batch_heads, sequence_length, 1)
+        decay_block = decay[:, :, head_start:head_end].reshape(folded_batch_heads, sequence_length, 1)
+        state_block = state[:, head_start:head_end].reshape(folded_batch_heads, key_head_dim, value_head_dim)
+
+        decayed_state = state_block * decay_block[:, 0].unsqueeze(-1)
+        kv_memory = torch.matmul(k_block[:, 0].unsqueeze(-2), decayed_state).squeeze(-2)
+        delta = (v_block - kv_memory.unsqueeze(1)) * b_block
+        updated_state = decayed_state + k_block[:, 0].unsqueeze(-1) * delta[:, 0].unsqueeze(-2)
+        block_output = torch.matmul(q_block, updated_state)
+
+        output_blocks.append(block_output.reshape(batch_size, block_heads, sequence_length, value_head_dim))
+        state_blocks.append(updated_state.reshape(batch_size, block_heads, key_head_dim, value_head_dim))
+
+    output = torch.cat(output_blocks, dim=1).reshape(batch_size, sequence_length, num_heads, value_head_dim)
+    updated_state = torch.cat(state_blocks, dim=1)
+    return output.to(dtype), updated_state.to(recurrent_state.dtype)
+
+
+def recurrent_gdn_decode_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the original unblocked GDN decode update."""
+    dtype = query.dtype
+    _, _, _, key_head_dim = query.shape
+
+    query = query.float()
+    key = key.float()
+    query = query * torch.rsqrt((query * query).sum(dim=-1, keepdim=True) + 1e-6)
+    key = key * torch.rsqrt((key * key).sum(dim=-1, keepdim=True) + 1e-6)
+    value = value.float()
+    state = recurrent_state.float()
+
+    query = (query * (1.0 / (key_head_dim**0.5))).transpose(1, 2)
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    beta = beta.float().transpose(1, 2)
+    g = g.float().exp().transpose(1, 2)
+
+    if query.shape[2] != 1:
+        raise ValueError("recurrent_gdn_decode_forward requires sequence_length == 1")
+    state_decayed = state * g[:, :, 0].unsqueeze(-1)
+    kv_memory = torch.matmul(key[:, :, 0].unsqueeze(-2), state_decayed).squeeze(-2)
+    delta = (value[:, :, 0] - kv_memory) * beta[:, :, 0]
+    state_new = state_decayed + key[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)
+    output = (state_new * query[:, :, 0].unsqueeze(-1)).sum(dim=-2)
+    output = output.unsqueeze(2).transpose(1, 2).to(dtype)
+    return output, state_new.to(recurrent_state.dtype)
 
 
 # Required AttentionBlockingConfig fields per blocking mode.

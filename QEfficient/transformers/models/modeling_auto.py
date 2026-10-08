@@ -4056,6 +4056,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        export_batch_size = kwargs.pop("export_batch_size", None)
+        cache_ctx_len = kwargs.pop("cache_ctx_len", None)
         enable_chunking = override_gptoss_prefill_chunking(
             self.model.config, prefill_only, kwargs.get("enable_chunking", False)
         )
@@ -4121,6 +4123,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if hasattr(self.model, "get_export_seq_len")
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
+        is_deepseek_v4 = getattr(self.model.config, "model_type", None) == "deepseek_v4"
+        if is_deepseek_v4:
+            seq_len = 1
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         if hasattr(self.model, "get_onnx_export_seq_len"):
             seq_len = self.model.get_onnx_export_seq_len(
@@ -4205,7 +4210,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ##################################
 
-        is_deepseek_v4 = getattr(self.model.config, "model_type", None) == "deepseek_v4"
         deepseek_v4_prefill = is_deepseek_v4 and bool(prefill_only)
         if is_deepseek_v4:
             self.model.config.qeff_swa_prefill_only = deepseek_v4_prefill
@@ -4324,7 +4328,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     example_inputs["past_key_values"][layer_idx].append(state)
                     state_axes = {}
                     if folded_row_cache and "sliding_window_kv" in state_name:
-                        state_axes[1] = "full_batch_size" if self.continuous_batching else "batch_size"
+                        if self.continuous_batching:
+                            state_axes[1] = "full_batch_size"
                     elif not parallel_layout:
                         state_axes[0] = "full_batch_size" if self.continuous_batching else "batch_size"
                     if state_name.startswith("local_kv_cache"):

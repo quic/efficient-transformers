@@ -721,6 +721,7 @@ from QEfficient.transformers.moe import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.checkpoint_utils import load_checkpoint_weights
 from QEfficient.utils.config_utils import (
     resolve_attention_heads,
     resolve_hidden_size,
@@ -728,6 +729,7 @@ from QEfficient.utils.config_utils import (
     set_kv_head_aliases,
 )
 from QEfficient.utils.constants import (
+    _DFLASH_TARGET_ABSMAX,
     ATTENTION_HEAD_CONFIG_KEYS,
     DEFAULT_AIC_NUM_CORES,
     HIDDEN_SIZE_CONFIG_KEYS,
@@ -1310,6 +1312,116 @@ class SamplerTransform:
         else:
             raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
         return model, transformed
+
+
+class DFlashTransform(ModuleMappingTransform):
+    """Replace QEff Qwen3 modules with DFlash variants when dflash_dlm is set."""
+
+    _module_mapping = {
+        QEffQwen3Attention: QEffDFlashAttention,
+        QEffQwen3DecoderLayer: QEffDFlashDecoderLayer,
+        QEffQwen3Model: QEffDFlashModel,
+        QEffQwen3ForCausalLM: QEffDFlashForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+        if type(model) is not QEffQwen3ForCausalLM:
+            raise NotImplementedError(
+                f"DFlash DLM does not support model class {type(model).__name__}. "
+                "Supported model class: QEffQwen3ForCausalLM."
+            )
+        return super().apply(model)
+
+
+class DFlashDLMTransform:
+    """Inject target embeddings into the draft model and remove target-only modules."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+
+        inner = model.model
+        for attr in ("fc", "hidden_norm"):
+            if hasattr(inner, attr):
+                delattr(inner, attr)
+
+        tlm_repo = qaic_config.get("dflash_tlm_repo")
+        if not tlm_repo:
+            return model, True
+
+        weights = load_checkpoint_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
+        embed_weight = weights.get("model.embed_tokens.weight")
+        lm_head_weight = weights.get("lm_head.weight", embed_weight)
+        if lm_head_weight is None or embed_weight is None:
+            return model, True
+
+        with torch.no_grad():
+            model.lm_head.weight.data.copy_(lm_head_weight.float())
+            inner.embed_tokens.weight.data.copy_(embed_weight.float())
+            if weights.get("lm_head.bias") is not None:
+                model.lm_head.bias = nn.Parameter(weights["lm_head.bias"].float())
+        return model, True
+
+
+class DFlashTLMTransform:
+    """Attach target-layer projection modules and configure collected hidden-state layers."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+        target_layer_ids = qaic_config.get("target_layer_ids") if qaic_config else None
+        if not target_layer_ids:
+            return model, False
+
+        config = model.config
+        text_config = getattr(config, "text_config", config)
+        hidden_size = text_config.hidden_size
+        inner = model.model
+        if hasattr(inner, "language_model"):
+            inner = inner.language_model
+        num_target_layers = len(target_layer_ids)
+        reference_weight = inner.embed_tokens.weight
+        module_device = reference_weight.device
+        module_dtype = reference_weight.dtype
+
+        if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
+            model_type = getattr(config, "model_type", "")
+            eps = getattr(text_config, "rms_norm_eps", getattr(config, "rms_norm_eps", 1e-6))
+            if "gemma" in model_type:
+                rms_norm = Gemma4RMSNorm
+            elif "qwen3_vl" in model_type:
+                rms_norm = Qwen3VLTextRMSNorm
+            elif "qwen3" in model_type:
+                rms_norm = Qwen3RMSNorm
+            elif "llama" in model_type:
+                rms_norm = LlamaRMSNorm
+            else:
+                rms_norm = nn.RMSNorm
+            inner.fc = nn.Linear(num_target_layers * hidden_size, hidden_size, bias=False).to(
+                device=module_device, dtype=module_dtype
+            )
+            inner.hidden_norm = rms_norm(hidden_size, eps=eps).to(device=module_device, dtype=module_dtype)
+
+            dlm_repo = qaic_config.get("dflash_dlm_repo")
+            weights = load_checkpoint_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
+            if "fc.weight" in weights and "hidden_norm.weight" in weights:
+                inner.fc.weight.data.copy_(weights["fc.weight"].to(device=module_device, dtype=module_dtype))
+                inner.hidden_norm.weight.data.copy_(
+                    weights["hidden_norm.weight"].to(device=module_device, dtype=module_dtype)
+                )
+                with torch.no_grad():
+                    bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.float().norm(dim=1).max().item()
+                    inner.fc.weight.data.div_(max(bound / _DFLASH_TARGET_ABSMAX, 1.0))
+            else:
+                warnings.warn(f"DFlashTLMTransform: fc/hidden_norm not found in {dlm_repo!r}; left random.")
+
+        inner.fc.to(device=module_device, dtype=module_dtype)
+        inner.hidden_norm.to(device=module_device, dtype=module_dtype)
+        inner.target_layer_ids = target_layer_ids
+        return model, True
 
 
 class VlmKVOffloadTransform(ModuleMappingTransform):
@@ -1981,13 +2093,14 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
 class FFNBlockingTransform(PytorchTransform):
     """Configure optional token tiling for optimized routed MoE FFNs."""
 
-    _VALID_MODES = {"default", "token"}
+    _VALID_MODES = {"default", "token", "weight", "token_weight"}
 
     @classmethod
     def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
         config = qaic_config or {}
         mode = config.get("ffn_blocking_mode", "default")
         token_block_size = config.get("ffn_token_block_size")
+        weight_block_size = config.get("ffn_weight_block_size")
         if mode not in cls._VALID_MODES:
             raise ValueError(
                 f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
@@ -1996,10 +2109,17 @@ class FFNBlockingTransform(PytorchTransform):
             not isinstance(token_block_size, int) or isinstance(token_block_size, bool) or token_block_size < 1
         ):
             raise ValueError("qaic_config['ffn_token_block_size'] must be a positive integer when provided.")
+        if weight_block_size is not None and (
+            not isinstance(weight_block_size, int) or isinstance(weight_block_size, bool) or weight_block_size < 1
+        ):
+            raise ValueError("qaic_config['ffn_weight_block_size'] must be a positive integer when provided.")
 
         transformed = False
         for module in model.modules():
-            if isinstance(module, QEffMoEBlockMixin):
+            if isinstance(module, QEffDeepseekV4Experts):
+                module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
+                transformed = True
+            elif isinstance(module, QEffMoEBlockMixin):
                 module.configure_ffn_blocking(mode, token_block_size)
                 transformed = True
         return model, transformed
@@ -2023,7 +2143,8 @@ class OptimizedMoETransform(PytorchTransform):
         model, mapped = OptimizedMoEMapperTransform.apply(model)
         model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
         if not (mapped or external_mapped):
-            return model, False
+            model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
+            return model, ffn_blocking_configured
 
         model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
 

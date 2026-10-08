@@ -1249,7 +1249,6 @@ class QEFFBaseModel(ABC):
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
-            batch_size=moe_batch_size,
             num_devices=moe_num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
