@@ -386,7 +386,8 @@ class QAICInferenceSession:
                 buffer.itemsize,
                 buffer.shape if len(buffer.shape) > 0 else (1,),
             )
-            if self.input_dumper is not None and self.bindings[buffer_index].dir == aicapi.BUFFER_IO_TYPE_INPUT:
+            input_dumper = getattr(self, "input_dumper", None)
+            if input_dumper is not None and self.bindings[buffer_index].dir == aicapi.BUFFER_IO_TYPE_INPUT:
                 if buffer.size == 0:
                     self._dump_bound_inputs.pop(buffer_name, None)
                 else:
@@ -428,10 +429,11 @@ class QAICInferenceSession:
         """
         # Set inputs
         self.set_buffers(inputs)
-        if self.input_dumper is not None:
+        input_dumper = getattr(self, "input_dumper", None)
+        if input_dumper is not None:
             output_names = self._dumpable_output_names()
             dumped_inputs = {**self._dump_bound_inputs, **inputs}
-            self.input_dumper.record_invocation(
+            input_dumper.record_invocation(
                 kind="run",
                 inputs=dumped_inputs,
                 output_names=output_names,
