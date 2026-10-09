@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Dict, Tuple
 
 import numpy as np
 import onnx
 import onnxruntime
 import pytest
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForCTC, AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer
 
 from QEfficient.exporter.weight_free import load_weight_free_ort_inputs
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -31,7 +30,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 # ---------------------------------------------------------------------------
 # Worker-level model cache
 # ---------------------------------------------------------------------------
-_HF_MODEL_CACHE: Dict[str, Tuple[AutoModelForCausalLM, AutoTokenizer]] = {}
+_HF_MODEL_CACHE: dict[tuple[str, str], tuple] = {}
 
 # ---------------------------------------------------------------------------
 # Model registry — same tiny-random models as tests/dynamo/
@@ -59,6 +58,17 @@ WEIGHT_FREE_CAUSAL_LM_MODEL_IDS = {
     "qwen3": "tiny-random/qwen3",
     "qwen3_moe": "tiny-random/qwen3-moe",
     "starcoder2": "hf-tiny-v2/tiny-random-Starcoder2ForCausalLM",
+}
+
+WEIGHT_FREE_ASR_MODEL_IDS = {
+    "wav2vec2": "facebook/wav2vec2-base-960h",
+    "whisper": "openai/whisper-tiny",
+}
+
+HF_MODEL_CLASSES = {
+    "causal_lm": AutoModelForCausalLM,
+    "wav2vec2": AutoModelForCTC,
+    "whisper": AutoModelForSpeechSeq2Seq,
 }
 
 WEIGHT_FREE_QAIC_MODEL_PARAMS = [
@@ -91,26 +101,33 @@ def skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
     )
 
 
-def load_hf_model(model_id: str) -> AutoModelForCausalLM:
-    if model_id not in _HF_MODEL_CACHE:
-        model = AutoModelForCausalLM.from_pretrained(
+def load_hf_model(model_id: str, model_type: str = "causal_lm"):
+    """Load and cache a reference HF model for a causal-LM or ASR test."""
+    if model_type not in HF_MODEL_CLASSES:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+    cache_key = (model_type, model_id)
+    if cache_key not in _HF_MODEL_CACHE:
+        model = HF_MODEL_CLASSES[model_type].from_pretrained(
             model_id,
             trust_remote_code=True,
             **MODEL_KWARGS,
         )
         model.eval()
-        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        if not hasattr(tokenizer, "pad_token") or tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        _HF_MODEL_CACHE[model_id] = (model, tokenizer)
-    model, _ = _HF_MODEL_CACHE[model_id]
-    return copy.deepcopy(model)
+        processor_cls = AutoTokenizer if model_type == "causal_lm" else AutoProcessor
+        processor = processor_cls.from_pretrained(model_id, trust_remote_code=True)
+        if model_type == "causal_lm" and (not hasattr(processor, "pad_token") or processor.pad_token is None):
+            processor.pad_token = processor.eos_token
+        _HF_MODEL_CACHE[cache_key] = (model, processor)
+    model, processor = _HF_MODEL_CACHE[cache_key]
+    if model_type == "causal_lm":
+        return copy.deepcopy(model)
+    return copy.deepcopy(model), processor
 
 
 def load_tokenizer(model_id: str) -> AutoTokenizer:
-    if model_id not in _HF_MODEL_CACHE:
-        load_hf_model(model_id)
-    _, tokenizer = _HF_MODEL_CACHE[model_id]
+    if ("causal_lm", model_id) not in _HF_MODEL_CACHE:
+        load_hf_model(model_id, model_type="causal_lm")
+    _, tokenizer = _HF_MODEL_CACHE[("causal_lm", model_id)]
     return tokenizer
 
 
