@@ -173,7 +173,7 @@ def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) ->
         return
 
     logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM and VLM wrappers; disabling it for %s.",
         qeff_auto_class_name,
     )
 
@@ -554,6 +554,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
@@ -946,6 +947,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1679,6 +1681,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: bool | None = False,
         skip_lang: bool | None = False,
         prefill_seq_len: int | None = None,
+        ctx_len: int | None = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
@@ -1724,7 +1727,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **kwargs,
             )
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         gdn_export_kwargs = _get_gdn_full_state_update_kwargs(
             self.model,
@@ -1737,7 +1740,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs, "ctx_len": ctx_len}
         dynamic_axes_kwargs = {
             "kv_offload": True,
             "continuous_batching": self.continuous_batching,
@@ -1821,6 +1824,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 num_cores=num_cores,
                 prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
                 qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -2251,6 +2255,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     prefill_only=prefill_only,
                     enable_chunking=enable_chunking,
                     prefill_seq_len=prefill_seq_len,
+                    ctx_len=ctx_len,
                     num_cores=num_cores,
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
@@ -5241,6 +5246,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         TypeError
             If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         model_class_name = model.__class__.__name__
 
         if not (model_class_name.endswith("ForConditionalGeneration")):
@@ -5250,6 +5256,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
+        return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
     @property
     def get_model_config(self) -> dict:
@@ -5576,6 +5587,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model.base_model.config.use_cache = True
 
