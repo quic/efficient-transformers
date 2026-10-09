@@ -979,8 +979,6 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
 @pytest.mark.parametrize("flavour", ("simple_loop", "decode_bmm", "expert_parallel"))
 def test_gptoss_moe_block_all_flavours_forward_parity(flavour):
     """SIMPLE_LOOP, DECODE_BMM, EXPERT_PARALLEL should all match HF output."""
-    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssMLP
-
     torch.manual_seed(37)
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -1003,7 +1001,6 @@ def test_gptoss_moe_block_all_flavours_forward_parity(flavour):
 @pytest.mark.parametrize("flavour", ("simple_loop", "expert_parallel"))
 def test_gptoss_expert_intermediate_block_size_parity(flavour):
     """expert_intermediate_block_size tiling must produce the same result as no tiling for GPT-OSS."""
-    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssMLP
     from QEfficient.transformers.moe import MoEFlavour
 
     torch.manual_seed(41)
