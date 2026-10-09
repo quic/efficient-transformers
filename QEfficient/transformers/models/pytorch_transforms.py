@@ -1540,13 +1540,18 @@ class BlockingAttentionTransform:
 class GatedDeltaConfigTransform:
     @classmethod
     def apply(cls, model: nn.Module, gated_delta_config: dict | None = None) -> tuple[nn.Module, bool]:
+        gated_delta_config = gated_delta_config or {}
+        full_state_update = bool(gated_delta_config.get("full_state_update", False))
         target_modules = [module for module in model.modules() if hasattr(module, "torch_chunk_gated_delta_rule_qeff")]
+        full_state_targets = [module for module in target_modules if hasattr(module, "gdn_full_state_update")]
+        if full_state_update and not full_state_targets:
+            raise ValueError("qaic_config['gdn_full_state_update'] is not supported for this model")
         if not target_modules:
             return model, False
 
         if not gated_delta_config:
-            # Avoid compile-to-compile state leakage when the same model object is reused
-            # across prefill/decode compiles and only one of them passes qaic_config.
+            # Preserve the legacy chunk-size reset and independently clear the
+            # model-specific full-state mode between prefill/decode compiles.
             transformed = False
             for module in target_modules:
                 if getattr(module, "gdn_chunk_size", 64) != 64:
@@ -1554,13 +1559,14 @@ class GatedDeltaConfigTransform:
                     if hasattr(module, "__qeff_init__"):
                         module.__qeff_init__()
                     transformed = True
+            for module in full_state_targets:
+                if bool(module.gdn_full_state_update):
+                    module.gdn_full_state_update = False
+                    transformed = True
             return model, transformed
 
         chunk_size = gated_delta_config.get("chunk_size")
         chunk_size = int(chunk_size) if chunk_size is not None else None
-
-        if chunk_size is None:
-            return model, False
 
         transformed = False
         for module in target_modules:
@@ -1569,6 +1575,10 @@ class GatedDeltaConfigTransform:
                 if hasattr(module, "__qeff_init__"):
                     module.__qeff_init__()
                 transformed = True
+        for module in full_state_targets:
+            if full_state_update or bool(module.gdn_full_state_update) != full_state_update:
+                transformed = True
+            module.gdn_full_state_update = full_state_update
 
         return model, transformed
 

@@ -643,6 +643,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
         self.chunk_gated_delta_solver = "tree"
+        self.torch_dtype = self.out_proj.weight.dtype
+        self.gdn_full_state_update = bool(getattr(self, "gdn_full_state_update", False))
         chunk_size = int(getattr(self, "gdn_chunk_size", 64) or 64)
         if chunk_size <= 0:
             chunk_size = 64
@@ -976,9 +978,11 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         if cache_params is not None:
             conv_state_all = cache_params.conv_states[self.layer_idx]
             recurrent_state_all = cache_params.recurrent_states[self.layer_idx]
+            # Singleton disaggregated prefill replaces these states in full; decode still routes partial updates.
+            state_batch_index = None if self.gdn_full_state_update else batch_index
 
             # Continuous batching path: gather only active rows, then scatter updates back.
-            if batch_index is not None:
+            if state_batch_index is not None:
                 conv_state_grouped = conv_state_all.ndim == 4
                 if conv_state_grouped:
                     conv_state_all_flat = conv_state_all.reshape(
@@ -988,7 +992,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     )
                 else:
                     conv_state_all_flat = conv_state_all
-                conv_batch_index = batch_index.to(conv_state_all_flat.device)
+                conv_batch_index = state_batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
@@ -998,7 +1002,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                         conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
                     )
 
-                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
+                recurrent_batch_index = state_batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -1009,7 +1013,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
-            if batch_fold and position_ids is not None:
+            if position_ids is not None:
                 text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
                 conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
@@ -1031,7 +1035,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 position_ids,
                 self.conv1d.bias,
             )
-            if batch_index is not None:
+            if state_batch_index is not None:
                 if conv_state_all.ndim == 4:
                     conv_state_all_flat = conv_state_all.reshape(
                         conv_state_all.shape[0],
@@ -1046,7 +1050,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 else:
                     conv_state_all_flat = conv_state_all
                     new_conv_state_flat = new_conv_state
-                conv_batch_index = batch_index.to(conv_state_all_flat.device)
+                conv_batch_index = state_batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
@@ -1125,8 +1129,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
                 last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
-            if batch_index is not None:
-                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
+            if state_batch_index is not None:
+                recurrent_batch_index = state_batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
@@ -1715,7 +1719,7 @@ class QEffQwen3_5MoeVisionAttention(Qwen3_5MoeVisionAttention):
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         if position_embeddings is None:
-            logger.warning_once(
+            logger.warning(
                 "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
                 "through `rotary_pos_emb` (2D tensor of RoPE theta values), to using externally computed "
                 "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.54 `rotary_pos_emb` will be "
@@ -2049,6 +2053,23 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         return logits, outputs.past_key_values[: len(past_key_values)]
 
+    def get_gdn_full_state_update_kwargs(
+        self,
+        qaic_config: dict | None = None,
+        *,
+        prefill_only: bool,
+        batch_size: int = 1,
+        full_batch_size: int = 1,
+    ) -> dict:
+        if not (qaic_config and qaic_config.get("gdn_full_state_update") is True):
+            return {}
+        if prefill_only is not True or batch_size != 1 or full_batch_size != 1:
+            raise ValueError(
+                "qaic_config['gdn_full_state_update'] requires qwen3_5_moe prefill with "
+                "prefill_only=True, batch_size=1, and full_batch_size=1"
+            )
+        return {"gdn_full_state_update": True}
+
     def get_specializations(
         self,
         batch_size: int,
@@ -2142,7 +2163,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 )
             else:
                 if vision_size * f > user_vision_size:
-                    logger.warning_once(
+                    logger.warning(
                         f"Computed vision_size of {vision_size * f} tokens "
                         f"(vision_size={vision_size}, num_frames={f}) for image resolution "
                         f"(width={w}, height={h}) exceeds the provided "
@@ -2207,10 +2228,12 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         kv_offload: bool = False,
         continuous_batching: bool = False,
         batch_fold: bool = False,
+        gdn_full_state_update: bool = False,
     ):
         num_layers = self.config.text_config.num_hidden_layers
         batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
         input_batch_axis = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
+        linear_state_batch_axis = "batch_size" if gdn_full_state_update else batch_axis_name
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -2228,8 +2251,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
             else:
-                lang_dynamic_axes[f"conv_state.{i}"] = {0: batch_axis_name}
-                lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"conv_state.{i}"] = {0: linear_state_batch_axis}
+                lang_dynamic_axes[f"recurrent_state.{i}"] = {0: linear_state_batch_axis}
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: input_batch_axis}
@@ -2263,6 +2286,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             bs = 2
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         batch_fold = kwargs.pop("batch_fold", False)
+        gdn_full_state_update = kwargs.pop("gdn_full_state_update", False)
         if continuous_batching and batch_fold:
             bs = fbs
         inputs_shapes["input_ids"] = (bs, dummy_seq_len)
@@ -2307,7 +2331,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             seq_len=dummy_seq_len,
         )
 
-        linear_batch_size = fbs if continuous_batching else bs
+        linear_batch_size = bs if gdn_full_state_update else (fbs if continuous_batching else bs)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # Default path exports all layers; layerwise exports only the active window's layer.
