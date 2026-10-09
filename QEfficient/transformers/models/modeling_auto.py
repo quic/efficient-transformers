@@ -173,7 +173,7 @@ def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) ->
         return
 
     logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM and VLM wrappers; disabling it for %s.",
         qeff_auto_class_name,
     )
 
@@ -554,6 +554,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
@@ -946,6 +947,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -5244,6 +5246,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         TypeError
             If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
         """
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         model_class_name = model.__class__.__name__
 
         if not (model_class_name.endswith("ForConditionalGeneration")):
@@ -5253,6 +5256,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+        _disable_unsupported_weight_free(kwargs, cls.__name__)
+        return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
     @property
     def get_model_config(self) -> dict:
@@ -5579,6 +5587,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
+        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model.base_model.config.use_cache = True
 

@@ -45,7 +45,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
     )
 
     messages = [
@@ -91,7 +90,6 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
     )
 
     ### IMAGE + TEXT ###
