@@ -55,6 +55,19 @@ def test_structured_api_and_generation_logging(tmp_path):
     assert any(record["message"] == "Generation completed." for record in records)
 
 
+def test_warning_once_logs_a_message_once(tmp_path):
+    logger = QEFFLogger.get_logger("MODEL", "INFO", str(tmp_path))
+    logger.warning_once("cache is disabled for %s", "training")
+    logger.warning_once("cache is disabled for %s", "training")
+    log_path = QEFFLogger.get_logfile_path()
+    assert log_path is not None
+    QEFFLogger.close_logger()
+
+    records = [json.loads(line) for line in Path(log_path).read_text().splitlines() if line.startswith("{")]
+    warnings = [record for record in records if record["message"] == "cache is disabled for training"]
+    assert len(warnings) == 1
+
+
 def test_complete_timing_table(tmp_path, capsys):
     QEFFLogger.get_logger("infra", "INFO", str(tmp_path))
     QEFFLogger.start_run("test-model")
