@@ -39,6 +39,8 @@ _COMPUTED_INITIALIZER_NAMES = {
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "position_ids",
+    "token_type_ids",
 }
 
 

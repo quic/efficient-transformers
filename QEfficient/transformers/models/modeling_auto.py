@@ -173,7 +173,7 @@ def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) ->
         return
 
     logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM, QEffAutoModel; disabling it for %s.",
         qeff_auto_class_name,
     )
 
@@ -394,7 +394,8 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
+        if self.__class__ is not QEFFAutoModel:
+            _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -538,6 +539,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _checkpoint_transforms = [DtypeConversionCheckpointTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -570,7 +572,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, weight_free=False, *args, **kwargs):
         """
         Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
 
@@ -589,6 +591,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             - "avg": Average pooling
             - Callable: A custom pooling function
             - None: No pooling applied. Default is None.
+        weight_free : bool, optional
+            If True, the model will be loaded in weight-free mode, which avoids materializing checkpoint weights. Default is False.
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
@@ -602,8 +606,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
+
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -614,7 +620,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if weight_free:
+            # Weight-free mode: build the model on the meta device so no
+            # checkpoint weights are ever materialized here. The real weights
+            # are supplied later at export time via pretrained_model_name_or_path.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -626,7 +638,13 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload, **kwargs
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            pooling=pooling,
+            weight_free=weight_free,
+            **kwargs,
+        )
 
     @property
     def get_model_config(self) -> dict:
@@ -640,7 +658,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: str | None = None, dynamo: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -663,6 +681,11 @@ class QEFFAutoModel(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
+        dynamo = kwargs.get("dynamo", False) or self._weight_free
+        if dynamo:
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
@@ -677,6 +700,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
+            dynamo=dynamo,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
