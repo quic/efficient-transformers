@@ -976,6 +976,64 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
+@pytest.mark.parametrize("flavour", ("simple_loop", "decode_bmm", "expert_parallel"))
+def test_gptoss_moe_block_all_flavours_forward_parity(flavour):
+    """SIMPLE_LOOP, DECODE_BMM, EXPERT_PARALLEL should all match HF output."""
+    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssMLP
+
+    torch.manual_seed(37)
+    config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+
+    seq_len = 1 if flavour == "decode_bmm" else MOE_BLOCK_SEQ_LEN
+    x = torch.randn(1, seq_len, config.hidden_size)
+
+    hf_block = next(m for m in model.modules() if m.__class__.__name__ == "GptOssMLP")
+    with torch.no_grad():
+        expected, _ = hf_block(x)
+
+    qeff_block = _make_qeff_moe_block(hf_block, flavour, {"gpt_oss_prefill": True})
+    with torch.no_grad():
+        actual, _ = qeff_block(x)
+    actual = _match_expected_shape(actual, expected)
+
+    torch.testing.assert_close(actual, expected, atol=1e-3, rtol=1e-3, msg=f"gpt_oss {flavour} parity failed")
+
+
+@pytest.mark.parametrize("flavour", ("simple_loop", "expert_parallel"))
+def test_gptoss_expert_intermediate_block_size_parity(flavour):
+    """expert_intermediate_block_size tiling must produce the same result as no tiling for GPT-OSS."""
+    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssMLP
+    from QEfficient.transformers.moe import MoEFlavour
+
+    torch.manual_seed(41)
+    config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+
+    hf_block = next(m for m in model.modules() if m.__class__.__name__ == "GptOssMLP")
+    x = torch.randn(1, MOE_BLOCK_SEQ_LEN, config.hidden_size)
+
+    # reference: standard path with no blocking
+    qeff_ref = _make_qeff_moe_block(hf_block, flavour, {"gpt_oss_prefill": True})
+    with torch.no_grad():
+        expected, _ = qeff_ref(x)
+
+    # blocked path: set expert_intermediate_block_size after weights transform
+    qeff_blocked = _make_qeff_moe_block(hf_block, flavour, {"gpt_oss_prefill": True})
+    qeff_blocked.expert_intermediate_block_size = 4
+    if flavour == "expert_parallel":
+        # expert_intermediate_block_size propagates through moe_expert_parallel →
+        # cumsum_scatter_gather_update_expert_blocked; verify b_d=None path doesn't crash
+        assert qeff_blocked._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    with torch.no_grad():
+        actual, _ = qeff_blocked(x)
+    actual = _match_expected_shape(actual, expected)
+
+    torch.testing.assert_close(
+        actual, expected, atol=1e-3, rtol=1e-3, msg=f"gpt_oss {flavour} expert_intermediate_block_size parity failed"
+    )
+
+
 def test_gptoss_decode_export(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
