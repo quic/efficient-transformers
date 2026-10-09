@@ -137,6 +137,29 @@ def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict)
     return False
 
 
+def _get_gdn_full_state_update_kwargs(
+    model,
+    qaic_config: dict | None,
+    *,
+    prefill_only: bool,
+    batch_size: int = 1,
+    full_batch_size: int = 1,
+) -> dict:
+    if not (qaic_config and qaic_config.get("gdn_full_state_update") is True):
+        return {}
+
+    get_kwargs = getattr(model, "get_gdn_full_state_update_kwargs", None)
+    if get_kwargs is None:
+        raise ValueError("qaic_config['gdn_full_state_update'] is not supported for this model")
+
+    return get_kwargs(
+        qaic_config=qaic_config,
+        prefill_only=prefill_only,
+        batch_size=batch_size,
+        full_batch_size=full_batch_size,
+    )
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
@@ -1708,6 +1731,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
+        gdn_export_kwargs = _get_gdn_full_state_update_kwargs(
+            self.model,
+            qaic_config,
+            prefill_only=prefill_only,
+        )
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -1731,6 +1759,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 onnx_kwargs["prefill_seq_len"] = 1
                 onnx_kwargs["batch_fold"] = batch_fold
                 dynamic_axes_kwargs["batch_fold"] = batch_fold
+        onnx_kwargs.update(gdn_export_kwargs)
+        dynamic_axes_kwargs.update(gdn_export_kwargs)
         inputs = self.model.get_dummy_inputs(
             kv_offload=True,
             continuous_batching=self.continuous_batching,
@@ -2048,6 +2078,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        if qaic_config and qaic_config.get("gdn_full_state_update") is True:
+            _get_gdn_full_state_update_kwargs(
+                self.model,
+                qaic_config,
+                prefill_only=prefill_only,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+            )
 
         if layerwise:
             if skip_lang and not skip_vision:
