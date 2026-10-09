@@ -1414,13 +1414,14 @@ class QEFFBaseModel(ABC):
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
 
-        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
-        io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_", "compressed_kv")
-        pkv_in_bfloat16 = (custom_io is not None) and any(
-            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
-            for key, value in custom_io.items()
-        )
-        custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
+        # Custom_io with bf16 dtype is now enabled in SDK > 1.24.0.5
+        # model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        # io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_", "compressed_kv")
+        # pkv_in_bfloat16 = (custom_io is not None) and any(
+        #     any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
+        #     for key, value in custom_io.items()
+        # )
+        # custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
 
         # MDP partition config selection (highest priority first):
         #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
@@ -1453,7 +1454,7 @@ class QEFFBaseModel(ABC):
                     compile_command=command,
                     specializations=specializations,
                     specialization_module_name=specialization_module_name,
-                    custom_io=custom_io_for_compiler,
+                    custom_io=custom_io,
                     compiler_env=compiler_env,
                 )
             mdp_config_dir = (
@@ -1554,12 +1555,7 @@ class QEFFBaseModel(ABC):
             with open(custom_io_yaml, "w") as fp:
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            if model_in_bfloat16 and pkv_in_bfloat16:
-                logger.warning(
-                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
-                )
-            else:
-                command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         if artifacts:
