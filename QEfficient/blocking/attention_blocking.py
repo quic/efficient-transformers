@@ -139,6 +139,8 @@ class AttentionBlockingConfig:
     n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
+    num_cores_per_device: Optional[int] = None
+    paged_attention: Optional[bool] = False
     par_num_split: Optional[int] = None
 
 
@@ -274,6 +276,10 @@ def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
     return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
 
 
+def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool:
+    return past_key_value is not None and hasattr(past_key_value, "read_only_paged_attention")
+
+
 _STRATEGIES: Dict[BlockingMode, Callable] = {
     # decode
     BlockingMode.KV: blocked_kv_attention_forward,
@@ -356,6 +362,8 @@ def generic_blocked_attention_interface(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    block_table: Optional[torch.LongTensor] = None,
+    slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Optional[Callable] = None,
     score_mod: Optional[Callable] = None,
@@ -403,11 +411,50 @@ def generic_blocked_attention_interface(
     mode = BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
     strategy = _STRATEGIES[mode]
 
+    # Keep a zero-valued, layer-local dependency in the traced graph for
+    # batch-folded decode. The folded-cache index/mask expressions are built
+    # by the layer-specific attention forward below. Without this dependency,
+    # ONNX export can treat those expressions as identical across decoder
+    # layers, lift them out of the subfunction body, and expose them as extra
+    # subfunction inputs/outputs. Besides producing unnecessary subfunction
+    # variants, that prevents the AIC compiler from applying its range
+    # optimizations. The dependency is intentionally numerical no-op: it
+    # preserves position_ids while anchoring the graph to this layer's cache.
+    if blocking_mode == BlockingMode.KV_BATCH_FOLD and past_key_value is not None and position_ids is not None:
+        layers = getattr(past_key_value, "layers", None)
+        # Dynamic caches can start with no layer entries during initial tracing.
+        # In that case, there is no cache tensor to use as a graph dependency;
+        # leave position_ids unchanged until the requested layer is available.
+        layer = layers[layer_idx] if layers is not None and layer_idx is not None and layer_idx < len(layers) else None
+        layer_keys = getattr(layer, "keys", None)
+        if layer_keys is not None:
+            cache_shape = torch._shape_as_tensor(layer_keys)
+            layer_local_zero = (cache_shape[0] - cache_shape[0]).to(dtype=position_ids.dtype)
+            position_ids = position_ids + layer_local_zero
+
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+
+    use_paged_kv_blocked = (
+        blocking_config is not None
+        and blocking_config.paged_attention
+        and supports_paged_attention_blocked_kv(past_key_value)
+    )
 
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
-        if prefill_only:
+        if use_paged_kv_blocked and sliding_window is None:
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "block_table": block_table,
+                "slot_id": slot_id,
+            }
+            past_key_value.write_only_paged_attention(key, value, module.layer_idx, cache_kwargs)
+        elif use_paged_kv_blocked and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
+        elif prefill_only:
             if sliding_window is not None:
                 cache_kwargs.update(
                     {
@@ -460,6 +507,7 @@ def generic_blocked_attention_interface(
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
+        paged_attention=blocking_config.paged_attention,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
         # MLA-specific

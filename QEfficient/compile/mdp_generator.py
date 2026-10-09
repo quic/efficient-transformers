@@ -297,6 +297,19 @@ def _get_layer_num_from_inputs(node_inputs: List[str]) -> Optional[int]:
     return None
 
 
+def _get_layer_num_from_inputs(node_inputs: List[str]) -> Optional[int]:
+    """Return a layer index from model parameter inputs on generic callsites.
+
+    Dynamo names repeated decoder-layer callsites generically, but their
+    weight inputs retain paths such as ``model.layers.3.self_attn.q_proj``.
+    """
+    for input_name in node_inputs:
+        match = re.search(r"(?:^|\.)layers\.(\d+)(?:\.|$)", input_name)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
     """Compute exclusive-upper-bound layer bounds for balanced pipeline partitioning.
 

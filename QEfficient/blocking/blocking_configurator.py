@@ -286,6 +286,11 @@ def build_transformer_blocking_config(
             attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, blocking_mode or "hqkv")
+    paged_attention = "paged" in str(blocking_mode or "").lower()
+
+    # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+    if paged_attention and "kv" not in effective_mode:
+        raise ValueError(f"Paged attention is only valid alongside KV blocking, got mode {effective_mode}")
 
     requested = blocking_mode or "hqkv"
     if effective_mode != requested:
@@ -298,6 +303,7 @@ def build_transformer_blocking_config(
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],
+        paged_attention=paged_attention,
     )
 
 
@@ -332,7 +338,9 @@ def build_transformer_blocking_config_for_transform(
         # implementation consumes num_kv_blocks/par_num_split directly.
         return None
 
-    blocking_mode = BlockingMode.resolve(requested_blocking_mode)
+    blocking_mode = BlockingMode.resolve(
+        str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
+    )
 
     required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])
     provided_keys = [key for key in required_keys if qaic_config.get(key)]
@@ -346,9 +354,11 @@ def build_transformer_blocking_config_for_transform(
 
     # if we haven't been passed manual number of blocks, do automatic calculation
     if missing_keys:
+        # Pass the raw requested mode (not the paged-stripped enum) through so the "paged"
+        # substring is still visible to build_transformer_blocking_config's own paged detection.
         blocking_config = build_transformer_blocking_config(
             model_config,
-            blocking_mode=blocking_mode,
+            blocking_mode=str(requested_blocking_mode),
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
@@ -360,6 +370,10 @@ def build_transformer_blocking_config_for_transform(
         for key in required_keys:
             setattr(blocking_config, key, _get_valid_num_blocks(qaic_config, key))
         blocking_config.mode = BlockingMode(blocking_mode)
+        # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+        blocking_config.paged_attention = (
+            "paged" in str(requested_blocking_mode or "").lower() and "num_kv_blocks" in required_keys
+        )
 
     # For headpar modes: set headpar_split, defaulting to aic_num_cores when omitted
     _HEADPAR_MODES = {BlockingMode.KV_HEADPAR, BlockingMode.PREFILL_KV, BlockingMode.PREFILL_QKV}
@@ -373,34 +387,41 @@ def build_transformer_blocking_config_for_transform(
         blocking_config.batch_fold = True
 
     # optional blocking parameters to set if given in qaic_config
-    for param in (
-        "skip_kv",
-        "n_rep_chunk",
-        "ctx_len",
-        "kv_block_unroll",
-    ):
+    for param in ("skip_kv", "n_rep_chunk", "ctx_len", "kv_block_unroll", "num_cores_per_device"):
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))
 
+    # KV_BATCH_FOLD also uses this value to block Qwen3.5 linear-attention
+    # recurrence across the head dimension. It is a required field for BHQKV,
+    # but an optional tuning knob for the folded decode path.
+    if qaic_config.get("gdn_num_head_blocks") is not None:
+        blocking_config.gdn_num_head_blocks = _get_valid_num_blocks(qaic_config, "gdn_num_head_blocks")
+
     if qaic_config.get("ctx_len") is None:
         blocking_config.ctx_len = ctx_len
+
+    if qaic_config.get("num_cores_per_device") is None:
+        blocking_config.num_cores_per_device = compile_options.get("aic_num_cores")
 
     return blocking_config
 
 
 def build_gated_delta_config_for_transform(
     seq_len: Optional[int] = None, qaic_config: Optional[dict] = None
-) -> Optional[Dict[str, int]]:
+) -> Optional[Dict[str, Any]]:
     del seq_len
     if not qaic_config:
         return None
 
+    gated_delta_config = {}
     chunk_size = qaic_config.get("gdn_chunk_size")
-    if chunk_size is None:
-        return None
 
-    chunk_size = int(chunk_size)
-    if chunk_size <= 0:
-        return None
+    if chunk_size is not None:
+        chunk_size = int(chunk_size)
+        if chunk_size > 0:
+            gated_delta_config["chunk_size"] = chunk_size
 
-    return {"chunk_size": chunk_size}
+    if qaic_config.get("gdn_full_state_update") is True:
+        gated_delta_config["full_state_update"] = True
+
+    return gated_delta_config or None

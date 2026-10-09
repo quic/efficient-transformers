@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import inspect
 import json
 import time
 from pathlib import Path
@@ -26,6 +25,8 @@ from QEfficient.utils.torch_patches import (
     isolate_invoke_subgraph_cache,
     preserve_subfunction_source_lines,
 )
+
+logger = QEFFLogger.get_logger("INFRA")
 
 logger = QEFFLogger.get_logger("INFRA")
 

@@ -373,6 +373,8 @@ def _make_minimal_glm_onnx_with_repeated_subgraph():
     outputs = [helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in retained_names]
     model = helper.make_model(helper.make_graph([call], "glm_test_graph", inputs, outputs))
     model.functions.append(fn)
+
+
 def _make_function_model(functions):
     call_nodes = [
         helper.make_node(fn.name, inputs=[f"x{i}", f"w{i}"], outputs=[f"y{i}"]) for i, fn in enumerate(functions)
@@ -547,6 +549,7 @@ class TestPreserveNestedCacheRetainedStateTransform:
         model = _make_minimal_glm_onnx_with_repeated_subgraph()
         assert PreserveNestedCacheRetainedStateTransform.apply(model)
         assert not PreserveNestedCacheRetainedStateTransform.apply(model)
+
     def test_preserves_v4_retained_state_with_nested_subfunction(self):
         retained_state = "past_local_kv_cache.0_InternalRetainedState"
         state_input = "past_local_kv_cache.0"
