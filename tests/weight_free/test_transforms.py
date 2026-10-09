@@ -66,7 +66,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
 from QEfficient.utils import runtime_requirements
 from QEfficient.utils.checkpoint_utils import checkpoint_root
-from QEfficient.utils.export_utils import _generate_export_hash
+from QEfficient.utils.export_utils import _generate_export_hash, convert_dynamic_axes_to_dynamic_shapes
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
@@ -87,6 +87,19 @@ def make_tiny_llama():
     )
     model = LlamaForCausalLM(cfg).eval()
     return model, cfg
+
+
+def test_dynamic_shapes_accept_qwen_decode_sequence_length():
+    class Decode(torch.nn.Module):
+        def forward(self, input_ids):
+            return input_ids.float()
+
+    inputs = (torch.zeros((2, 1), dtype=torch.long),)
+    dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
+        {"input_ids": {0: "batch_size", 1: "seq_len"}}, example_inputs={"input_ids": inputs[0]}
+    )
+
+    torch.export.export(Decode(), inputs, dynamic_shapes=dynamic_shapes, strict=True)
 
 
 def _make_minimal_onnx_with_repeated_subgraphs(

@@ -107,6 +107,7 @@ def build_dynamo_export_kwargs(export_kwargs):
 def convert_dynamic_axes_to_dynamic_shapes(
     dynamic_axes: Dict[str, Dict[int, str]],
     model_config=None,
+    example_inputs=None,
 ) -> Dict[str, Any]:
     """
     Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
@@ -123,6 +124,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
           - sliding_window           -> upper bound for sliding_window dim
         When None, safe defaults are used for all bounds and model-type-specific
         passes are skipped.
+    example_inputs : optional
+        Concrete export inputs used to identify dimensions that are statically
+        specialized by the traced graph, such as singleton vision axes and
+        one-token decode sequence length.
 
     Returns
     -------
@@ -139,38 +144,28 @@ def convert_dynamic_axes_to_dynamic_shapes(
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
+    observed_dim_values: Dict[str, set[int]] = {}
+    if example_inputs is not None:
+        for input_name, axes_map in dynamic_axes.items():
+            sample = example_inputs.get(input_name)
+            if not isinstance(sample, torch.Tensor):
+                continue
+            for axis_idx, dim_name in axes_map.items():
+                if axis_idx < sample.ndim:
+                    observed_dim_values.setdefault(dim_name, set()).add(int(sample.shape[axis_idx]))
+
     dim_registry: Dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
-            if dim_name == "batch_size":
-                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif dim_name == "full_batch_size":
-                # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
-                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
-            elif "seq_len" in dim_name:
-                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
-            elif "comp_ctx_lengths" in dim_name:
-                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
-            elif "ctx_len" in dim_name:
-                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
-            elif "sliding_window" in dim_name:
-                dim_registry[dim_name] = Dim(
-                    "sliding_window",
-                    min=2,
-                    max=getattr(model_config, "sliding_window", max_seq_len),
-                )
-            else:
-                # Preserve specialization symbol names for model-specific axes
-                # such as grid_height, grid_h, grid_w, and vision_batch_size.
-                # Anonymous Dim.DYNAMIC values are exported as s0/s1/... and
-                # cannot be resolved from the compiler specialization file.
                 dim_registry[dim_name] = Dim(dim_name)
         return dim_registry[dim_name]
 
     dynamic_shapes: Dict[str, Any] = {}
     past_keys: Dict[int, Any] = {}
     past_values: Dict[int, Any] = {}
+    conv_states: Dict[int, Any] = {}
+    recurrent_states: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
 
@@ -180,6 +175,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            conv_states[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("recurrent_state."):
+            recurrent_states[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("compressed_kv."):
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
@@ -187,10 +186,15 @@ def convert_dynamic_axes_to_dynamic_shapes(
         else:
             dynamic_shapes[input_name] = resolved
 
-    if past_keys or past_values:
-        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+    cache_layer_indices = set(past_keys) | set(past_values) | set(conv_states) | set(recurrent_states)
+    if cache_layer_indices:
+        max_layer = max(cache_layer_indices)
         dynamic_shapes["past_key_values"] = [
-            [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+            [
+                past_keys.get(i, conv_states.get(i, {})),
+                past_values.get(i, recurrent_states.get(i, {})),
+            ]
+            for i in range(max_layer + 1)
         ]
 
     if compressed_kv_layers or k_pe_layers:
@@ -393,7 +397,10 @@ def export_wrapper(func):
             dynamic_axes = bound_export_args.arguments.get("dynamic_axes")
             if dynamic_axes is not None:
                 model_config = getattr(self.model, "config", None)
-                kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
+                example_inputs = bound_export_args.arguments.get("example_inputs")
+                kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(
+                    dynamic_axes, model_config, example_inputs
+                )
 
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
