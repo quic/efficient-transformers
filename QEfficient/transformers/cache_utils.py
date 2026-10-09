@@ -1557,6 +1557,8 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                         f"({batch_local}, {rows}, local_ctx_len, {head_dim})."
                     )
                 local_ctx_len = layer.keys.shape[2]
+                cache_keys = layer.keys.reshape(batch_local, rows, local_ctx_len, head_dim)
+                cache_values = layer.values.reshape(batch_local, rows, local_ctx_len, head_dim)
                 key_dp = key_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
                 value_dp = value_states.view(dp, batch_local, query_len, hkv, head_dim).permute(1, 0, 3, 2, 4)
                 key_updates = (
@@ -1573,7 +1575,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                 owner_cp = position_ids_dp // local_ctx_len
                 owner_valid = (owner_cp >= 0) & (owner_cp < cp)
                 local_pos = position_ids_dp - owner_cp * local_ctx_len
-                row_cp = torch.arange(rows, device=layer.keys.device).remainder(cp * hkv) // hkv
+                row_cp = torch.arange(rows, device=layer.keys.device).remainder(hkv * cp).remainder(cp)
                 row_live = row_cp.view(1, dp, cp, hkv, 1) == owner_cp.view(batch_local, dp, 1, 1, query_len)
                 row_live = row_live & owner_valid.view(batch_local, dp, 1, 1, query_len)
                 row_live = row_live.expand(batch_local, dp, cp, hkv, query_len).reshape(batch_local, rows, query_len)
@@ -1589,6 +1591,23 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                     batch_idx.expand(batch_local, rows, query_len),
                     torch.iinfo(torch.int32).max,
                 ).to(torch.int32)
+
+                flat_keys = cache_keys.reshape(batch_local * rows, local_ctx_len, head_dim)
+                flat_values = cache_values.reshape(batch_local * rows, local_ctx_len, head_dim)
+                flat_addr = torch.where(row_live, addr, torch.zeros_like(addr)).reshape(batch_local * rows, query_len)
+                previous_keys = ctx_gather_3d(flat_keys, torch.zeros_like(flat_addr)).reshape(
+                    batch_local, rows, query_len, head_dim
+                )
+                previous_values = ctx_gather_3d(flat_values, torch.zeros_like(flat_addr)).reshape(
+                    batch_local, rows, query_len, head_dim
+                )
+                flat_key_updates = torch.where(row_live.unsqueeze(-1), key_updates, previous_keys).reshape(
+                    batch_local * rows, query_len, head_dim
+                )
+                flat_value_updates = torch.where(row_live.unsqueeze(-1), value_updates, previous_values).reshape(
+                    batch_local * rows, query_len, head_dim
+                )
+                
                 layer.keys = self.paged_scatter(layer.keys, block_id, addr, key_updates)
                 layer.values = self.paged_scatter(layer.values, block_id, addr, value_updates)
                 layer._mark_initialized(layer.keys)

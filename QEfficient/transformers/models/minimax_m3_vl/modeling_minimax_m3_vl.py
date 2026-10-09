@@ -2373,7 +2373,9 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         )
         position_dp = position_ids.view(dp, batch_local, 1).permute(1, 0, 2)
         live_way = (
-            (position_dp % cp)[:, :, None, None, :].expand(batch_local, dp, cp, hkv, 1).reshape(batch_local, rows, 1)
+            (position_dp % cp)[:, :, None, None, :]
+            .expand(batch_local, dp, cp, hkv, 1)
+            .reshape(batch_local, rows, 1)
         )
         row_way = torch.arange(rows, device=query_states.device).remainder(cp * hkv) // hkv
         row_live = row_way.view(1, rows, 1) == live_way
@@ -2388,8 +2390,6 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         block_id = torch.where(row_live, block_id, torch.full_like(block_id, torch.iinfo(torch.int32).max))
         layer.keys = past_key_values.paged_scatter(key_cache, block_id.to(torch.int32), addr, key_updates)
         layer.values = past_key_values.paged_scatter(value_cache, block_id.to(torch.int32), addr, value_updates)
-        # layer.keys = layer.keys.reshape(batch_local, rows, -1, self.head_dim)
-        # layer.values = layer.values.reshape(batch_local, rows, -1, self.head_dim)
         return self._gqa_dedicated_decode(query_states, layer.keys, layer.values, position_ids, blocking_config)
 
     def _msa_attention_prefill(
