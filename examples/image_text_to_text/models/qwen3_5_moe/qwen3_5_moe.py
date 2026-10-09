@@ -57,6 +57,12 @@ def _initialize_decode_states(session):
     return state_inputs
 
 
+def _next_token_from_logits(logits):
+    if logits.ndim == 2:
+        logits = logits[:, None, :]
+    return np.argmax(logits[:, -1:, :], axis=-1).reshape(BS, 1)
+
+
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
     attn_implementation="eager",
@@ -184,7 +190,26 @@ else:
         skip_lang=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
+    )
+
+    prefill_qpc_path = qeff_model.compile(
+        batch_size=BS,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
+        num_cores=16,
+        num_devices=4,
+        height=354,
+        width=536,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        retain_full_kv=True,
+        split_model_io=True,
+        aic_enable_depth_first=False,
+        prefill_only=True,
+        enable_chunking=True,
+        skip_vision=True,
+        mos=1,
+        use_onnx_subfunctions=True,
     )
 
     decode_qpc_path = qeff_model.compile(
@@ -192,7 +217,7 @@ else:
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
         num_cores=16,
-        num_devices=DECODE_NUM_DEVICES,
+        num_devices=4,
         height=354,
         width=536,
         mxfp6_matmul=True,
@@ -204,8 +229,6 @@ else:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
-        qaic_config=qaic_config if enable_blocking else None,
     )
 
     if enable_blocking:
@@ -262,8 +285,11 @@ else:
         padding=True,
         return_tensors="pt",
     )
-    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=1, batch_size=BS)
+    inputs = qeff_model.model.prepare_inputs_for_generation(
+        inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS
+    )
 
+    prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
     lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
     vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
@@ -284,42 +310,52 @@ else:
     lang_inputs = {key: value for key, value in inputs.items() if key not in vision_inputs}
     lang_inputs.pop("attention_mask", None)
     lang_inputs["image_idx"] = np.array([[0]])
+
+    pad_token_id = tokenizer.pad_token_id or 1
+    prompt_length = lang_inputs["input_ids"].shape[1]
+    num_chunks = -(prompt_length // -PREFILL_SEQ_LEN)
+    padded_length = num_chunks * PREFILL_SEQ_LEN
+    lang_inputs["input_ids"] = np.pad(
+        lang_inputs["input_ids"], ((0, 0), (0, padded_length - prompt_length)), constant_values=pad_token_id
+    )
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
 
+    prefill_session.set_buffers(vision_outputs)
+    chunk_inputs = dict(lang_inputs)
+    prefill_out = None
+    for chunk_idx in range(num_chunks):
+        chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+            :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+        ]
+        chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+            :, :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+        ]
+        prefill_out = prefill_session.run(chunk_inputs)
+        _update_retained_states(chunk_inputs, prefill_out)
+        chunk_inputs["image_idx"] = prefill_out["image_idx_output"]
+
+    if prefill_out is None:
+        raise RuntimeError("Prefill produced no output chunks")
+
     decode_inputs = _initialize_decode_states(lang_decode_session)
-    prompt_length = lang_inputs["input_ids"].shape[1]
-    generated_ids = []
-    decode_out = None
-    for token_idx in range(prompt_length):
-        decode_inputs.update(
-            {
-                "input_ids": lang_inputs["input_ids"][:, token_idx : token_idx + 1],
-                "position_ids": lang_inputs["position_ids"][..., token_idx : token_idx + 1],
-                "image_idx": decode_inputs.get("image_idx", lang_inputs["image_idx"]),
-                "vision_embeds": decode_inputs.get("vision_embeds", lang_inputs["vision_embeds"]),
-            }
-        )
-        decode_out = lang_decode_session.run(decode_inputs)
-        _update_retained_states(decode_inputs, decode_out)
-        decode_inputs["image_idx"] = decode_out["image_idx_output"]
-        decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
+    _update_retained_states(decode_inputs, prefill_out)
+    decode_inputs["image_idx"] = prefill_out["image_idx_output"]
+    decode_inputs["vision_embeds"] = prefill_out["vision_embeds_RetainedState"]
+    decode_inputs["input_ids"] = _next_token_from_logits(prefill_out["logits"])
+    decode_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
 
-    next_token = np.argmax(decode_out["logits"], axis=-1).reshape(BS, 1)
-    generated_ids.append(next_token)
-    decode_inputs["input_ids"] = next_token
-    decode_inputs["position_ids"] = lang_inputs["position_ids"][..., -1:] + 1
-
+    generated_ids = [decode_inputs["input_ids"].copy()]
     for _ in range(99):
         decode_out = lang_decode_session.run(decode_inputs)
         _update_retained_states(decode_inputs, decode_out)
         decode_inputs.update(
             {
-                "input_ids": np.argmax(decode_out["logits"], axis=-1).reshape(BS, 1),
+                "input_ids": _next_token_from_logits(decode_out["logits"]),
                 "position_ids": decode_inputs["position_ids"] + 1,
                 "image_idx": decode_out["image_idx_output"],
                 "vision_embeds": decode_out["vision_embeds_RetainedState"],
             }
         )
-        generated_ids.append(decode_inputs["input_ids"])
+        generated_ids.append(decode_inputs["input_ids"].copy())
 
     print(tokenizer.decode(np.asarray(generated_ids).reshape(-1).tolist()))

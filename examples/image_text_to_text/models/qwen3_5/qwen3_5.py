@@ -98,7 +98,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
@@ -119,7 +118,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
@@ -164,7 +162,6 @@ else:
         skip_vision=False,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        dynamo=True,
     )
 
     prefill_qpc_path = qeff_model.compile(
@@ -185,7 +182,6 @@ else:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
@@ -206,7 +202,6 @@ else:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
-        dynamo=True,
         # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable

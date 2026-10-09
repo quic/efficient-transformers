@@ -1516,11 +1516,13 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_classes = {
-            "linear_attention": QEffQwen3_5MoeLinearAttentionDecoderLayer,
-            "full_attention": QEffQwen3_5MoeFullAttentionDecoderLayer,
+        specialized_classes = {
+            QEffQwen3_5MoeLinearAttentionDecoderLayer,
+            QEffQwen3_5MoeFullAttentionDecoderLayer,
         }
-        return {layer_classes[layer_type] for layer_type in self.config.layer_types}
+        layer_classes = {layer.__class__ for layer in getattr(self, "layers", ())}
+        specialized_layers = layer_classes & specialized_classes
+        return specialized_layers or {QEffQwen3_5MoeDecoderLayer}
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
@@ -1945,11 +1947,14 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_classes = {
-            "linear_attention": QEffQwen3_5MoeLinearAttentionDecoderLayer,
-            "full_attention": QEffQwen3_5MoeFullAttentionDecoderLayer,
+        specialized_classes = {
+            QEffQwen3_5MoeLinearAttentionDecoderLayer,
+            QEffQwen3_5MoeFullAttentionDecoderLayer,
         }
-        return {layer_classes[layer_type] for layer_type in self.config.text_config.layer_types}
+        language_model = getattr(self, "language_model", None)
+        layer_classes = {layer.__class__ for layer in getattr(language_model, "layers", ())}
+        specialized_layers = layer_classes & specialized_classes
+        return specialized_layers or {QEffQwen3_5MoeDecoderLayer}
 
     def _get_attention_blocking_config(self) -> Optional[AttentionBlockingConfig]:
         for layer in getattr(self.language_model, "layers", ()):
