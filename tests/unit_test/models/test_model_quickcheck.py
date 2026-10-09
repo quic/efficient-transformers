@@ -5331,3 +5331,165 @@ def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
     assert entries[1]["dims"] == [1, 4]
     assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
     assert not (io_dir / "data/output.raw").exists()
+
+
+@pytest.mark.cpu_only
+def test_path_valued_artifacts_resolves_runtime_input_dump(tmp_path):
+    from QEfficient.generation.input_dump import resolve_runtime_dump_inputs_path
+
+    dump_dir = tmp_path / "input-dumps"
+    legacy_dir = tmp_path / "legacy-dumps"
+
+    assert resolve_runtime_dump_inputs_path(True) is None
+    assert resolve_runtime_dump_inputs_path(False) is None
+    assert resolve_runtime_dump_inputs_path(dump_dir) == dump_dir
+    assert resolve_runtime_dump_inputs_path(str(dump_dir)) == str(dump_dir)
+    assert resolve_runtime_dump_inputs_path(dump_dir, legacy_dir) == legacy_dir
+
+
+@pytest.mark.cpu_only
+def test_causal_generate_uses_path_valued_artifacts_for_runtime_input_dump(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import modeling_auto
+
+    model = object.__new__(QEFFAutoModelForCausalLM)
+    model.qpc_path = tmp_path / "model.qpc"
+    model.comp_ctx_lengths_prefill = None
+    model.comp_ctx_lengths_decode = None
+    model.is_tlm = False
+    dump_dir = tmp_path / "input-dumps"
+    exec_info = object()
+    captured_kwargs = {}
+
+    monkeypatch.setattr(
+        modeling_auto,
+        "write_causal_lm_runner_bundle",
+        MagicMock(side_effect=AssertionError("path-valued artifacts should execute runtime generation")),
+    )
+
+    def fake_cloud_ai_100_exec_kv(**kwargs):
+        captured_kwargs.update(kwargs)
+        return exec_info
+
+    monkeypatch.setattr(modeling_auto.QEfficient, "cloud_ai_100_exec_kv", fake_cloud_ai_100_exec_kv)
+
+    result = model.generate(tokenizer=object(), prompts=["Hello"], artifacts=dump_dir)
+
+    assert result is exec_info
+    assert captured_kwargs["dump_inputs_path"] == dump_dir
+
+
+@pytest.mark.cpu_only
+def test_causal_generate_keeps_bool_artifacts_runner_bundle(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import modeling_auto
+
+    model = object.__new__(QEFFAutoModelForCausalLM)
+    runner_dir = tmp_path / "runner-inputs"
+    runner_bundle = MagicMock(return_value=runner_dir)
+
+    monkeypatch.setattr(modeling_auto, "write_causal_lm_runner_bundle", runner_bundle)
+    monkeypatch.setattr(
+        modeling_auto.QEfficient,
+        "cloud_ai_100_exec_kv",
+        MagicMock(side_effect=AssertionError("bool artifacts should not execute runtime generation")),
+    )
+
+    result = model.generate(tokenizer=object(), prompts=["Hello"], artifacts=True)
+
+    assert result == runner_dir
+    runner_bundle.assert_called_once()
+
+
+@pytest.mark.cpu_only
+def test_qaic_input_dumper_writes_multi_invocation_runner_inputs(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper
+
+    bindings = [
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, 4]),
+        SimpleNamespace(name="position_ids", type="int64", dims=[1, 4]),
+        SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
+    ]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={binding.name: index for index, binding in enumerate(bindings)},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64), "float32": np.dtype(np.float32)},
+    )
+    dumper = QAICInputDumper(
+        session=session,
+        qpc_path=tmp_path / "qpc",
+        root=tmp_path / "dumps",
+        component_name="text",
+    )
+
+    prefill_inputs = {
+        "input_ids": np.arange(4, dtype=np.int64).reshape(1, 4),
+        "position_ids": np.arange(4, dtype=np.int64).reshape(1, 4),
+    }
+    decode_inputs = {
+        "input_ids": np.array([[4]], dtype=np.int64),
+        "position_ids": np.array([[4]], dtype=np.int64),
+    }
+    dumper.record_invocation(
+        kind="prefill",
+        inputs=prefill_inputs,
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+    dumper.record_invocation(
+        kind="decode",
+        inputs=decode_inputs,
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+
+    descriptor = json.loads((dumper.session_dir / "aic_batch_io.json").read_text())
+    assert len(descriptor["IO-files"]) == 2
+    assert descriptor["IO-files"][0][0]["path"] == "data/00000/input_ids.raw"
+    assert descriptor["IO-files"][1][0]["dims"] == [1, 1]
+    assert (dumper.session_dir / "data/00000/input_ids.raw").stat().st_size == prefill_inputs["input_ids"].nbytes
+    assert (dumper.session_dir / "data/00001/input_ids.raw").stat().st_size == decode_inputs["input_ids"].nbytes
+    manifest = json.loads((dumper.session_dir / "manifest.json").read_text())
+    assert [invocation["kind"] for invocation in manifest["invocations"]] == ["prefill", "decode"]
+
+
+@pytest.mark.cpu_only
+def test_qaic_input_dumper_records_kv_slice_handoff_inputs(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper
+
+    bindings = [
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, 1]),
+        SimpleNamespace(name="past_key.0", type="float32", dims=[1, 2, 4, 8]),
+        SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
+    ]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={binding.name: index for index, binding in enumerate(bindings)},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64), "float32": np.dtype(np.float32)},
+    )
+    dumper = QAICInputDumper(
+        session=session,
+        qpc_path=tmp_path / "decode_qpc",
+        root=tmp_path / "dumps",
+        component_name="decode",
+    )
+
+    kv_cache = np.ones((1, 2, 4, 8), dtype=np.float32)
+    dumper.record_slice_config(
+        index=0,
+        kv_cache_buffers=[kv_cache],
+        slicing_parameters=[("batch_index", 0), ("ctx_start", 0)],
+        buff_map=[("past_key.0", 1)],
+    )
+    dumper.record_invocation(
+        kind="np_run_decode",
+        inputs={"input_ids": np.array([[7]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+        exec_obj_index=0,
+    )
+
+    manifest = json.loads((dumper.session_dir / "manifest.json").read_text())
+    slice_configs = manifest["invocations"][0]["slice_configs"]
+    assert slice_configs[0]["slicing_parameters"] == [["batch_index", 0], ["ctx_start", 0]]
+    assert slice_configs[0]["buffers"][0]["name"] == "past_key.0"
+    kv_path = dumper.session_dir / slice_configs[0]["buffers"][0]["path"]
+    assert kv_path.stat().st_size == kv_cache.nbytes

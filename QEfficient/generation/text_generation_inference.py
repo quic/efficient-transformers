@@ -298,6 +298,7 @@ def cloud_ai_100_exec_kv(
     sampling_params: Optional[Dict[str, Any]] = None,
     profiling_type: str | None = None,
     profiling_output_dir: Path | str | None = None,
+    dump_inputs_path: Path | str | bool | None = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -332,6 +333,8 @@ def cloud_ai_100_exec_kv(
         :profiling_type (str, default=None): One of "latency", "trace", "raw_device_stats", "stats". Enables
         runtime device profiling capture (via `QAICInferenceSession`'s profiling API) for this call.
         :profiling_output_dir (Union[Path, str], default=None): Directory to write the profiling report to.
+        :dump_inputs_path (Union[Path, str, bool], default=None): Dump every qaic-runner invocation under this
+        directory. If omitted, the QEFFICIENT_DUMP_INPUTS environment variable can be used instead.
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
@@ -370,6 +373,7 @@ def cloud_ai_100_exec_kv(
         sampling_params=sampling_params,
         profiling_type=profiling_type,
         profiling_output_dir=profiling_output_dir,
+        dump_inputs_path=dump_inputs_path,
     )
 
     for _ in range(0, int(iteration)):
@@ -422,6 +426,8 @@ class QEffTextGenerationBase:
         activate: bool = True,
         profiling_type: str | None = None,
         profiling_output_dir: Path | str | None = None,
+        dump_inputs_path: Path | str | bool | None = None,
+        dump_component_name: str | None = None,
     ) -> None:
         self._ctx_len = ctx_len
         self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
@@ -440,6 +446,8 @@ class QEffTextGenerationBase:
             enable_debug_logs=enable_debug_logs,
             profiling_type=profiling_type,
             profiling_output_dir=profiling_output_dir,
+            dump_inputs_path=dump_inputs_path,
+            dump_component_name=dump_component_name or "text",
         )
 
         # Validate sampler inputs for On-Device Sampling
@@ -1066,6 +1074,7 @@ class TextGeneration:
         sampling_params: Optional[Dict[str, Any]] = None,
         profiling_type: str | None = None,
         profiling_output_dir: Path | str | None = None,
+        dump_inputs_path: Path | str | bool | None = None,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
             tokenizer=tokenizer,
@@ -1084,6 +1093,8 @@ class TextGeneration:
             sampling_params=sampling_params,
             profiling_type=profiling_type,
             profiling_output_dir=profiling_output_dir,
+            dump_inputs_path=dump_inputs_path,
+            dump_component_name="text",
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._num_kv_blocks = self._qaic_model.num_kv_blocks
