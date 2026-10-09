@@ -23,6 +23,12 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGather3D,
     CtxGatherBlockedKV,
     CtxGatherBlockedKVBatch,
+    CtxGatherDP,
+    CtxGatherDPCP,
+    CtxGatherDPCPFunc,
+    CtxGatherDPFunc,
+    CtxGatherFoldedRows,
+    CtxGatherFoldedRowsFunc,
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFunc3DGeneralized,
@@ -31,6 +37,12 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
+    CtxScatterDP,
+    CtxScatterDPCP,
+    CtxScatterDPCPFunc,
+    CtxScatterDPFunc,
+    CtxScatterFoldedRows,
+    CtxScatterFoldedRowsFunc,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
@@ -106,9 +118,15 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxScatterFunc3DInt": (CtxScatterFunc3DInt, CtxScatter3DInt),
         "CtxScatterFunc3DGeneralized": (CtxScatterFunc3DGeneralized, CtxScatter3D),
+        "CtxScatterDPFunc": (CtxScatterDPFunc, CtxScatterDP),
+        "CtxScatterFoldedRowsFunc": (CtxScatterFoldedRowsFunc, CtxScatterFoldedRows),
+        "CtxScatterDPCPFunc": (CtxScatterDPCPFunc, CtxScatterDPCP),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
         "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
         "CtxGatherFunc3DGeneralized": (CtxGatherFunc3DGeneralized, CtxGather3D),
+        "CtxGatherDPFunc": (CtxGatherDPFunc, CtxGatherDP),
+        "CtxGatherFoldedRowsFunc": (CtxGatherFoldedRowsFunc, CtxGatherFoldedRows),
+        "CtxGatherDPCPFunc": (CtxGatherDPCPFunc, CtxGatherDPCP),
         "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
         "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
         "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
@@ -263,6 +281,18 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                                 "k_pe.",
                                 "recurrent_state.",
                                 "conv_state.",
+                                "past_sliding_window_kv.",
+                                "past_local_kv_cache.",
+                                "past_compressor_kv_buffer.",
+                                "past_compressor_gate_buffer.",
+                                "past_compressor_kv_state.",
+                                "past_compressor_score_state.",
+                                "past_actual_compressed_kv.",
+                                "past_indexer_kv_buffer.",
+                                "past_indexer_gate_buffer.",
+                                "past_indexer_kv_cache.",
+                                "past_indexer_kv_state.",
+                                "past_indexer_score_state.",
                             ):
                                 if not base.startswith(token):
                                     continue
@@ -289,6 +319,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     # Match past_key.N / past_value.N regardless of any suffix that follows
     # (plain, _RetainedState, or _<prefix>_RetainedState for kv_cache_prefix).
     _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)")
+    _RETAINED_STATE_INPUT_RE = re.compile(r"^past_.+_(?:Internal)?RetainedState$")
 
     # All scatter op_type names that write back a KV cache tensor.
     # Keep in sync with CustomOpTransform._custom_ops and the dynamo
@@ -300,8 +331,85 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             "CtxScatter3D",
             "CtxScatter3DInt",
             "CtxScatterCB3D",
+            "CtxScatterDP",
+            "CtxScatterFoldedRows",
+            "CtxScatterDPCP",
+            "V4CtxScatter1D",
+            "ScatterND",
         }
     )
+
+    @classmethod
+    def _resolve_retained_state_output(cls, fn, function_input: str, *, allow_unchanged: bool = False) -> str:
+        """Return the final cache value derived from a nested-function input.
+
+        Decode cache updates normally have one scatter that directly consumes the
+        function input. Prefill may update the same cache repeatedly, with each
+        scatter consuming a view of the prior scatter result. In that case the
+        retained state must be the final scatter in the update chain. Cache
+        states that are unused by a prefill layer are returned unchanged.
+        """
+        producer_by_output = {output: fn_node for fn_node in fn.node for output in fn_node.output if output}
+        dependency_cache: dict[tuple[str, str], bool] = {}
+
+        def depends_on(value_name: str, ancestor_name: str, visiting: set[str] | None = None) -> bool:
+            cache_key = (value_name, ancestor_name)
+            if cache_key in dependency_cache:
+                return dependency_cache[cache_key]
+            if value_name == ancestor_name:
+                dependency_cache[cache_key] = True
+                return True
+
+            if visiting is None:
+                visiting = set()
+            if value_name in visiting:
+                dependency_cache[cache_key] = False
+                return False
+
+            producer = producer_by_output.get(value_name)
+            if producer is None:
+                dependency_cache[cache_key] = False
+                return False
+
+            visiting.add(value_name)
+            result = any(
+                input_name and depends_on(input_name, ancestor_name, visiting) for input_name in producer.input
+            )
+            visiting.remove(value_name)
+            dependency_cache[cache_key] = result
+            return result
+
+        writers = [
+            fn_node
+            for fn_node in fn.node
+            if fn_node.op_type in cls._SCATTER_OP_TYPES
+            and fn_node.input
+            and fn_node.output
+            and depends_on(fn_node.input[0], function_input)
+        ]
+        if not writers:
+            if allow_unchanged:
+                return function_input
+            raise ValueError(
+                f"Could not uniquely resolve a retained-state writer in nested function '{fn.name}': "
+                f"no cache scatter depends on '{function_input}'."
+            )
+
+        final_writers = [
+            writer
+            for writer in writers
+            if not any(other is not writer and depends_on(other.input[0], writer.output[0]) for other in writers)
+        ]
+        if len(final_writers) != 1:
+            writer_names = [
+                f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})" for writer in final_writers
+            ]
+            raise ValueError(
+                f"Could not uniquely resolve the final retained-state writer in nested function '{fn.name}' "
+                f"for input '{function_input}': found {len(final_writers)} ({writer_names})."
+            )
+
+        return final_writers[0].output[0]
 
     @classmethod
     def _resolve_kv_scatter_outputs(cls, fn, node, layer_idx: str) -> dict[str, str] | None:
@@ -331,24 +439,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         scatter_outputs = {}
         for kind, function_input in function_cache_inputs.items():
-            writers = [
-                fn_node
-                for fn_node in fn.node
-                if fn_node.op_type in cls._SCATTER_OP_TYPES
-                and fn_node.input
-                and fn_node.input[0] == function_input
-                and fn_node.output
-            ]
-            if len(writers) != 1:
-                writer_names = [
-                    f"{writer.op_type}({writer.output[0] if writer.output else '<no-output>'})" for writer in writers
-                ]
-                raise ValueError(
-                    f"Could not uniquely resolve the nested past_{kind}.{layer_idx} cache writer in function "
-                    f"'{fn.name}': expected one CtxScatter* with data input '{function_input}', "
-                    f"found {len(writers)} ({writer_names})."
-                )
-            scatter_outputs[kind] = writers[0].output[0]
+            scatter_outputs[kind] = cls._resolve_retained_state_output(fn, function_input)
 
         return scatter_outputs
 
@@ -357,7 +448,9 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         graph = model.graph
         produced_names = {name for node in graph.node for name in node.output}
         dangling_retained_outputs = {
-            out.name for out in graph.output if out.name.endswith("_RetainedState") and out.name not in produced_names
+            out.name
+            for out in graph.output
+            if out.name.endswith(("_RetainedState", "_InternalRetainedState")) and out.name not in produced_names
         }
         if not dangling_retained_outputs:
             return False
@@ -386,6 +479,28 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 kv_inputs[kind] = inp_name
 
             if layer_idx is None or set(kv_inputs) != {"key", "value"}:
+                for input_index, retained_output in enumerate(node.input):
+                    if retained_output not in dangling_retained_outputs:
+                        continue
+                    if cls._RETAINED_STATE_INPUT_RE.match(retained_output) is None:
+                        continue
+                    if input_index >= len(fn.input):
+                        raise ValueError(
+                            f"Nested function '{fn.name}' has no input at position {input_index} for "
+                            f"retained-state input '{retained_output}'."
+                        )
+
+                    function_input = fn.input[input_index]
+                    scatter_output = cls._resolve_retained_state_output(fn, function_input, allow_unchanged=True)
+                    if scatter_output not in fn.output:
+                        fn.output.append(scatter_output)
+                        changed = True
+
+                    plain_input = re.sub(r"_(?:Internal)?RetainedState$", "", retained_output)
+                    kv_rename_map[retained_output] = plain_input
+                    if retained_output not in node.output:
+                        node.output.append(retained_output)
+                        changed = True
                 continue
 
             desired_outputs = [
@@ -477,6 +592,8 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
             for attr in node.attribute:
                 if attr.HasField("g"):
                     yield from cls._iter_all_nodes(attr.g.node)
+                for graph in attr.graphs:
+                    yield from cls._iter_all_nodes(graph.node)
 
     @staticmethod
     def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:

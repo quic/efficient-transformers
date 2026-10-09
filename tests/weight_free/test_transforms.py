@@ -50,6 +50,7 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.exporter.weight_free import checkpoint_key_resolver
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import find_checkpoint_key
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
+    DeepseekV4CheckpointTransform,
     DtypeConversionCheckpointTransform,
     ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
@@ -232,6 +233,63 @@ def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_prepares_native_deepseek_v4_checkpoint(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "embed.weight": torch.ones(2, 4),
+                "head.weight": torch.full((2, 4), 2.0),
+                "norm.weight": torch.ones(4),
+                "layers.0.attn.wkv.weight": torch.ones(2, 4),
+                "layers.0.attn.wkv.scale": torch.full((1, 1), 0.5),
+                "layers.0.hc_attn_scale": torch.ones(1),
+                "layers.0.ffn.experts.0.w1.weight": torch.tensor([[0x21], [0x43]], dtype=torch.int8),
+                "layers.0.ffn.experts.0.w1.scale": torch.full((2, 1), 127, dtype=torch.uint8),
+                "layers.0.ffn.experts.0.w2.weight": torch.tensor([[0x21], [0x43]], dtype=torch.int8),
+                "layers.0.ffn.experts.0.w2.scale": torch.full((2, 1), 127, dtype=torch.uint8),
+                "layers.0.ffn.experts.0.w3.weight": torch.tensor([[0x21], [0x43]], dtype=torch.int8),
+                "layers.0.ffn.experts.0.w3.scale": torch.full((2, 1), 127, dtype=torch.uint8),
+            },
+        )
+
+        changed = DeepseekV4CheckpointTransform.apply(src, out, target_dtype=torch.float32, num_hidden_layers=1)
+
+        assert changed
+        tensors = _load_prepared_tensors(out)
+        assert "model.embed_tokens.weight" in tensors
+        assert "lm_head.weight" in tensors
+        assert "model.layers.0.self_attn.kv_proj.weight" in tensors
+        assert "model.layers.0.self_attn.kv_proj.weight_scale_inv" not in tensors
+        assert "model.layers.0.attn_hc.scale" in tensors
+        torch.testing.assert_close(tensors["model.layers.0.self_attn.kv_proj.weight"], torch.full((2, 4), 0.5))
+        from transformers.integrations.finegrained_fp8 import Fp8Dequantize
+
+        expected = (
+            Fp8Dequantize(None)
+            ._dequantize_one(
+                torch.tensor([[0x21], [0x43]], dtype=torch.int8),
+                torch.full((2, 1), 127, dtype=torch.uint8),
+                output_dtype=torch.float32,
+            )
+            .transpose(0, 1)
+            .unsqueeze(0)
+        )
+        torch.testing.assert_close(tensors["model.layers.0.mlp.experts.gate_proj"], expected)
+        torch.testing.assert_close(tensors["model.layers.0.mlp.experts.up_proj"], expected)
+        torch.testing.assert_close(tensors["model.layers.0.mlp.experts.down_proj"], expected)
+
+    @pytest.mark.skipif(not hasattr(torch, "float8_e8m0fnu"), reason="PyTorch does not provide UE8M0 tensors")
+    def test_deepseek_v4_transform_decodes_ue8m0_scales(self):
+        scale = torch.tensor([0.5, 1.0], dtype=torch.float8_e8m0fnu)
+
+        decoded = DeepseekV4CheckpointTransform._decode_ue8m0_scale(scale)
+
+        assert decoded.dtype == torch.float32
+        torch.testing.assert_close(decoded, scale.to(torch.float32))
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
@@ -254,6 +312,53 @@ class TestWeightFreeCheckpointTransforms:
 
         assert prepared == out
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(3, dtype=torch.float32))
+
+    def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+        prepared_weight_map = json.loads((prepared / "model.safetensors.index.json").read_text())["weight_map"]
+        prepared_shard = next(iter(set(prepared_weight_map.values())))
+        (prepared / prepared_shard).unlink()
+
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
+    def test_ort_weight_injection_resolves_cache_relative_spec_for_absolute_model_id(self, tmp_path):
+        hf_cache = tmp_path / "hf_cache"
+        prepared = hf_cache / "models--org--model" / "snapshots" / "prepared"
+        export_dir = tmp_path / "export"
+        prepared.mkdir(parents=True)
+        export_dir.mkdir()
+        save_file({"weight": torch.tensor([1.0, 2.0])}, str(prepared / "model.safetensors"))
+
+        weight_spec_path = export_dir / "weight_spec.json"
+        weight_spec_path.write_text(
+            json.dumps(
+                {
+                    "files": [
+                        {
+                            "format": "safetensors",
+                            "path": "models--org--model/snapshots/prepared/model.safetensors",
+                        }
+                    ],
+                    "inputs": [{"name": "weight", "location": {"file": 0, "key": "weight"}}],
+                    "model_id": str(prepared),
+                    "model_name": "tiny",
+                    "version": 5,
+                }
+            )
+        )
+
+        ort_inputs = load_weight_free_ort_inputs(weight_spec_path, {})
+
+        assert ort_inputs["weight"].tolist() == [1.0, 2.0]
 
     def test_checkpoint_pipeline_rebuilds_incomplete_prepared_dir(self, tmp_path):
         src = tmp_path / "src"
@@ -1009,8 +1114,13 @@ class TestWeightFreeCheckpointTransforms:
         "state_kind,state_name",
         [
             ("buffer", "rotary_emb.inv_freq"),
+            ("buffer", "model.rotary_emb.main_inv_freq"),
+            ("buffer", "model.rotary_emb.main_original_inv_freq"),
+            ("buffer", "model.rotary_emb.compress_inv_freq"),
+            ("buffer", "model.rotary_emb.compress_original_inv_freq"),
             ("buffer", "transformer.h.0.attn.embed_positions"),
             ("buffer", "model.embed_tokens.embed_scale"),
+            ("parameter", "model.layers.4.self_attn.sinks"),
             ("parameter", "model.sin_cached"),
             ("parameter", "model.cos_cached"),
         ],

@@ -46,6 +46,7 @@ from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolv
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    FFNBlockingTransform,
     GatedDeltaConfigTransform,
     OptimizedMoETransform,
     ReplicateKVHeadTransform,
@@ -1192,6 +1193,7 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        self.model, _ = FFNBlockingTransform.apply(self.model, qaic_config=qaic_config)
         gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
         self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
             self.model, gated_delta_config=gated_delta_config

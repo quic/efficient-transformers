@@ -9,6 +9,7 @@ import gc
 import warnings
 from collections.abc import Callable
 from types import MethodType
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -20,6 +21,21 @@ from transformers.models.codegen.modeling_codegen import (
 )
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
+)
+from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+    DeepseekV4Attention,
+    DeepseekV4DecoderLayer,
+    DeepseekV4Experts,
+    DeepseekV4ForCausalLM,
+    DeepseekV4HashRouter,
+    DeepseekV4HyperConnection,
+    DeepseekV4HyperHead,
+    DeepseekV4MLP,
+    DeepseekV4Model,
+    DeepseekV4RMSNorm,
+    DeepseekV4SparseMoeBlock,
+    DeepseekV4TopKRouter,
+    DeepseekV4UnweightedRMSNorm,
 )
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
@@ -344,6 +360,21 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3ForCausalLM,
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
+)
+from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+    QEffDeepseekV4Attention,
+    QEffDeepseekV4DecoderLayer,
+    QEffDeepseekV4Experts,
+    QEffDeepseekV4ForCausalLM,
+    QEffDeepseekV4HashRouter,
+    QEffDeepseekV4HyperConnection,
+    QEffDeepseekV4HyperHead,
+    QEffDeepseekV4MLP,
+    QEffDeepseekV4Model,
+    QEffDeepseekV4RMSNorm,
+    QEffDeepseekV4SparseMoeBlock,
+    QEffDeepseekV4TopKRouter,
+    QEffDeepseekV4UnweightedRMSNorm,
 )
 from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
     QEffDFlashAttention,
@@ -717,6 +748,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        DeepseekV4RMSNorm: QEffDeepseekV4RMSNorm,
+        DeepseekV4UnweightedRMSNorm: QEffDeepseekV4UnweightedRMSNorm,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -733,6 +766,18 @@ class CustomOpsTransform(ModuleMappingTransform):
 
 class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
+        # DeepSeek V4
+        DeepseekV4ForCausalLM: QEffDeepseekV4ForCausalLM,
+        DeepseekV4Model: QEffDeepseekV4Model,
+        DeepseekV4DecoderLayer: QEffDeepseekV4DecoderLayer,
+        DeepseekV4Attention: QEffDeepseekV4Attention,
+        DeepseekV4SparseMoeBlock: QEffDeepseekV4SparseMoeBlock,
+        DeepseekV4Experts: QEffDeepseekV4Experts,
+        DeepseekV4TopKRouter: QEffDeepseekV4TopKRouter,
+        DeepseekV4HashRouter: QEffDeepseekV4HashRouter,
+        DeepseekV4HyperConnection: QEffDeepseekV4HyperConnection,
+        DeepseekV4HyperHead: QEffDeepseekV4HyperHead,
+        DeepseekV4MLP: QEffDeepseekV4MLP,
         # GLMMoe
         Glm4MoeModel: QEffGlm4MoeModel,
         Glm4MoeForCausalLM: QEffGlm4MoeForCausalLM,
@@ -1546,6 +1591,38 @@ class BlockingAttentionTransform:
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+
+class FFNBlockingTransform(PytorchTransform):
+    """Configure DeepSeek V4 routed-expert FFN tiling from ``qaic_config``."""
+
+    _VALID_MODES = {"default", "token", "weight", "token_weight"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        weight_block_size = config.get("ffn_weight_block_size")
+
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        for key, value in (
+            ("ffn_token_block_size", token_block_size),
+            ("ffn_weight_block_size", weight_block_size),
+        ):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+                raise ValueError(f"qaic_config['{key}'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffDeepseekV4Experts):
+                module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
+                transformed = True
+
         return model, transformed
 
 

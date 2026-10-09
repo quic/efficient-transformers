@@ -82,6 +82,12 @@ class TestONNXTransformsModuleStructure:
         assert callable(CustomOpTransform.apply)
 
     def test_custom_op_variants_use_legacy_and_dynamo_opsets(self):
+        from QEfficient.customop.ctx_scatter_gather import (
+            CtxGatherDPCP,
+            CtxGatherFoldedRows,
+            CtxScatterDPCP,
+            CtxScatterFoldedRows,
+        )
         from QEfficient.customop.onnxscript_utils import get_onnxscript_func
         from QEfficient.customop.rms_norm import CustomRMSNorm
         from QEfficient.utils import constants
@@ -98,6 +104,91 @@ class TestONNXTransformsModuleStructure:
 
         assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
         assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
+
+        for custom_op in (CtxScatterDPCP, CtxGatherDPCP):
+            legacy_proto = get_onnxscript_func(
+                custom_op, constants.get_onnx_export_opset(dynamo=False)
+            ).to_function_proto()
+            dynamo_proto = get_onnxscript_func(
+                custom_op, constants.get_onnx_export_opset(dynamo=True)
+            ).to_function_proto()
+
+            assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
+            assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
+
+            for function_proto in (legacy_proto, dynamo_proto):
+                producers = {output: node for node in function_proto.node for output in node.output}
+                context_parallel_cast = next(
+                    node
+                    for node in function_proto.node
+                    if node.op_type == "Cast" and node.input == ["context_parallel"]
+                )
+                slots_per_cp_divide = next(
+                    node
+                    for node in function_proto.node
+                    if node.op_type == "Div" and context_parallel_cast.output[0] in node.input
+                )
+                context_slots = producers[slots_per_cp_divide.input[0]]
+
+                assert context_slots.op_type == "Gather"
+
+        for custom_op in (CtxScatterFoldedRows, CtxGatherFoldedRows):
+            legacy_proto = get_onnxscript_func(
+                custom_op, constants.get_onnx_export_opset(dynamo=False)
+            ).to_function_proto()
+            dynamo_proto = get_onnxscript_func(
+                custom_op, constants.get_onnx_export_opset(dynamo=True)
+            ).to_function_proto()
+
+            assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
+            assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
+
+        for function_proto in (
+            get_onnxscript_func(
+                CtxScatterFoldedRows, constants.get_onnx_export_opset(dynamo=False)
+            ).to_function_proto(),
+            get_onnxscript_func(CtxScatterFoldedRows, constants.get_onnx_export_opset(dynamo=True)).to_function_proto(),
+        ):
+            scatter = next(node for node in function_proto.node if node.op_type == "ScatterND")
+            producers = {output: node for node in function_proto.node for output in node.output}
+            updates_transpose = producers[scatter.input[2]]
+
+            assert updates_transpose.op_type == "Transpose"
+            assert next(attribute.ints for attribute in updates_transpose.attribute if attribute.name == "perm") == [
+                1,
+                0,
+                2,
+                3,
+            ]
+
+    def test_dp_cp_gather_uses_batch_dims_without_expanded_indices(self):
+        from QEfficient.customop.ctx_scatter_gather import CtxGatherDPCP
+        from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
+
+        function = get_dynamo_onnxscript_func(CtxGatherDPCP).to_function_proto()
+        gather_node = next(node for node in function.node if node.op_type == "GatherND")
+
+        assert next(attr for attr in gather_node.attribute if attr.name == "batch_dims").i == 2
+        assert any(
+            node.op_type == "Cast" and next(attribute.i for attribute in node.attribute if attribute.name == "to") == 7
+            for node in function.node
+        )
+        assert not any(node.op_type in {"Expand", "Range"} for node in function.node)
+
+    def test_dp_context_ops_are_registered_for_onnx_transforms(self):
+        from QEfficient.base.onnx_transforms import CustomOpTransform, PreserveNestedCacheRetainedStateTransform
+
+        assert {
+            "CtxScatterDPFunc",
+            "CtxScatterDPCPFunc",
+            "CtxScatterFoldedRowsFunc",
+            "CtxGatherDPFunc",
+            "CtxGatherDPCPFunc",
+            "CtxGatherFoldedRowsFunc",
+        } <= {*CustomOpTransform._custom_ops}
+        assert {"CtxScatterDP", "CtxScatterDPCP", "CtxScatterFoldedRows"} <= (
+            PreserveNestedCacheRetainedStateTransform._SCATTER_OP_TYPES
+        )
 
     def test_base_onnx_transform_importable(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform
@@ -412,8 +503,15 @@ class TestRenameFunctionOutputsTransform:
             f"Output count changed: {output_count_before} → {output_count_after}"
         )
 
-    def test_rename_transform_preserves_kv_prefix_infix(self):
-        """Subfunction rename keeps optional KV prefix infix on retained-state outputs."""
+    @pytest.mark.parametrize(
+        ("fn_out", "expected_output"),
+        [
+            ("past_key.0_vllmKvCache_InternalRetainedState", "past_key.1_vllmKvCache_RetainedState"),
+            ("past_local_kv_cache.0_InternalRetainedState", "past_local_kv_cache.1_RetainedState"),
+        ],
+    )
+    def test_rename_transform_preserves_retained_state_prefixes(self, fn_out, expected_output):
+        """Subfunction rename preserves KV infixes and DeepSeek cache-state prefixes."""
         import onnx
         from onnx import helper
 
@@ -421,7 +519,6 @@ class TestRenameFunctionOutputsTransform:
 
         fn_name = "DecoderLayerFn"
         fn_domain = "qeff.test"
-        fn_out = "past_key.0_vllmKvCache_InternalRetainedState"
         function = helper.make_function(
             fn_domain,
             fn_name,
@@ -445,7 +542,7 @@ class TestRenameFunctionOutputsTransform:
 
         RenameFunctionOutputsTransform.apply(model, layer_idx=1)
 
-        assert model.graph.output[0].name == "past_key.1_vllmKvCache_RetainedState"
+        assert model.graph.output[0].name == expected_output
         assert "_InternalRetainedState" not in model.graph.output[0].name
 
 

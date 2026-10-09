@@ -21,6 +21,8 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import importlib
+import operator
+from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,7 +37,13 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.torch_patches import preserve_subfunction_source_lines, temporarily_enable_nested_compile_regions
+from QEfficient.utils import export_subfunctions
+from QEfficient.utils.torch_patches import (
+    _same_export_region,
+    preserve_mixed_export_subfunctions,
+    preserve_subfunction_source_lines,
+    temporarily_enable_nested_compile_regions,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,6 +80,36 @@ def test_preserve_subfunction_source_lines_interprets_graph_modules(monkeypatch)
     assert original_reenter_make_fx is not invoke_subgraph.reenter_make_fx
 
 
+def test_preserve_mixed_export_subfunctions_is_scoped_to_supported_pytorch_hook():
+    utils = importlib.import_module("torch._higher_order_ops.utils")
+    onnx_core = importlib.import_module("torch.onnx._internal.exporter._core")
+    original_hop_compile_and_call = getattr(utils, "_hop_compile_and_call", None)
+    original_prepare = getattr(onnx_core, "_prepare_exported_program_for_export", None)
+
+    with preserve_mixed_export_subfunctions():
+        if original_hop_compile_and_call is not None:
+            assert utils._hop_compile_and_call is not original_hop_compile_and_call
+        if original_prepare is not None:
+            assert onnx_core._prepare_exported_program_for_export is not original_prepare
+
+    if original_hop_compile_and_call is not None:
+        assert utils._hop_compile_and_call is original_hop_compile_and_call
+    assert getattr(onnx_core, "_prepare_exported_program_for_export", None) is original_prepare
+
+
+def test_preserve_mixed_export_subfunctions_tolerates_missing_onnx_hook(monkeypatch):
+    """A missing private ONNX hook disables reuse without breaking export setup."""
+    utils = importlib.import_module("torch._higher_order_ops.utils")
+    if getattr(utils, "_hop_compile_and_call", None) is None:
+        pytest.skip("PyTorch build has no _hop_compile_and_call hook")
+    onnx_core = importlib.import_module("torch.onnx._internal.exporter._core")
+    monkeypatch.delattr(onnx_core, "_prepare_exported_program_for_export", raising=False)
+
+    with preserve_mixed_export_subfunctions():
+        assert not hasattr(onnx_core, "_prepare_exported_program_for_export")
+    assert not hasattr(onnx_core, "_prepare_exported_program_for_export")
+
+
 def make_tiny_llama():
     cfg = LlamaConfig(
         num_hidden_layers=2,
@@ -84,6 +122,139 @@ def make_tiny_llama():
     )
     model = LlamaForCausalLM(cfg).eval()
     return model, cfg
+
+
+def _make_graph_module_with_attribute(attribute):
+    root = torch.nn.Module()
+    root.captured = attribute
+    graph = torch.fx.Graph()
+    captured = graph.get_attr("captured")
+    graph.output(captured)
+    return torch.fx.GraphModule(root, graph)
+
+
+def test_same_export_region_accepts_nested_graphmodule_attributes(monkeypatch):
+    """Nested GraphModules compare recursively, while tensor captures stay unsupported."""
+    comparator = importlib.import_module("torch._dynamo.variables.higher_order_ops")
+    monkeypatch.setattr(comparator, "are_same_graph_modules", lambda *args: True)
+
+    nested_left = _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity()))
+    nested_right = _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity()))
+    assert _same_export_region(nested_left, nested_right, fake_mode=None)
+
+    tensor_left = _make_graph_module_with_attribute(torch.ones(2))
+    tensor_right = _make_graph_module_with_attribute(torch.ones(2))
+    assert not _same_export_region(tensor_left, tensor_right, fake_mode=None)
+
+
+def _make_identity_region(example_value):
+    graph = torch.fx.Graph()
+    x = graph.placeholder("x")
+    x.meta["example_value"] = example_value
+    graph.output(x)
+    return torch.fx.GraphModule(torch.nn.Module(), graph)
+
+
+def test_same_export_region_compares_call_operands_and_restores_metadata(monkeypatch):
+    comparator = importlib.import_module("torch._dynamo.variables.higher_order_ops")
+    seen = []
+
+    def fake_are_same(_name, left, right, _fake_mode):
+        seen.extend(next(iter(gm.graph.nodes)).meta["example_value"] for gm in (left, right))
+        return True
+
+    monkeypatch.setattr(comparator, "are_same_graph_modules", fake_are_same)
+    original_left, original_right = torch.zeros(1), torch.zeros(1)
+    left, right = _make_identity_region(original_left), _make_identity_region(original_right)
+    operand_left, operand_right = torch.ones(2), torch.ones(2)
+
+    assert _same_export_region(left, right, None, (operand_left,), (operand_right,))
+    assert seen == [operand_left, operand_right]
+    assert next(iter(left.graph.nodes)).meta["example_value"] is original_left
+    assert next(iter(right.graph.nodes)).meta["example_value"] is original_right
+
+
+def _make_sized_region(size_input_index):
+    graph = torch.fx.Graph()
+    a, b = graph.placeholder("a"), graph.placeholder("b")
+    size = graph.call_function(torch.ops.aten.sym_size.int, ((a, b)[size_input_index], 0))
+    graph.call_function(operator.eq, (size, 2))
+    graph.output(graph.call_function(torch.ops.aten.add.Tensor, (a, b)))
+    return torch.fx.GraphModule(torch.nn.Module(), graph)
+
+
+def test_canonical_region_normalizes_dead_size_reads():
+    operands = (torch.zeros(2, 3), torch.zeros(2, 3))
+    left = export_subfunctions._canonical_region(_make_sized_region(0), operands)
+    right = export_subfunctions._canonical_region(_make_sized_region(1), operands)
+
+    targets = lambda gm: [node.target for node in gm.graph.nodes if node.op == "call_function"]  # noqa: E731
+    assert targets(left) == targets(right) == [torch.ops.aten.add.Tensor]
+
+
+def test_apply_region_merges_prunes_orphaned_root_region():
+    root_module = torch.nn.Module()
+    for index in range(2):
+        setattr(
+            root_module,
+            f"region_{index}",
+            _make_graph_module_with_attribute(torch.fx.symbolic_trace(torch.nn.Identity())),
+        )
+    graph = torch.fx.Graph()
+    x = graph.placeholder("x")
+    calls = [
+        graph.call_function(
+            torch.ops.higher_order.invoke_subgraph,
+            (graph.get_attr(f"region_{index}"), f"subgraph_{index}", x),
+        )
+        for index in range(2)
+    ]
+    graph.output(tuple(calls))
+    root = torch.fx.GraphModule(root_module, graph)
+    representative = export_subfunctions._RegionCall(None, calls[0].args[0], "subgraph_0", ())
+
+    export_subfunctions._apply_region_merges(root, [(calls[1], representative)])
+
+    assert calls[1].args[:2] == (calls[0].args[0], "subgraph_0")
+    assert "region_1" not in dict(root.named_modules())
+    assert "region_0" in dict(root.named_modules())
+
+
+def test_reuse_exported_subfunctions_leaves_program_untouched_when_planning_fails(monkeypatch):
+    monkeypatch.setattr(export_subfunctions, "_plan_region_merges", lambda _root: (_ for _ in ()).throw(RuntimeError()))
+    program = MagicMock()
+    assert export_subfunctions.reuse_exported_subfunctions(program) is program
+    program.validate.assert_not_called()
+
+
+def test_export_wrapper_disables_grad_for_dynamo_subfunction_exports(monkeypatch, tmp_path):
+    """Repeated subfunction bodies see the same inference grad state at every layer."""
+    from QEfficient.utils import export_utils
+
+    grad_states = []
+
+    class DummyQEff:
+        model = torch.nn.Identity()
+
+        @export_utils.export_wrapper
+        def export(self, **kwargs):
+            grad_states.append(torch.is_grad_enabled())
+            return kwargs["export_dir"] / "dummy.onnx"
+
+    monkeypatch.setattr(export_utils, "validate_dynamo_export_requirements", lambda *args: None)
+    monkeypatch.setattr(export_utils, "_setup_onnx_subfunctions", lambda *args, **kwargs: (args[1], args[2], {}))
+    monkeypatch.setattr(
+        export_utils, "temporarily_enable_nested_compile_regions", lambda *args, **kwargs: nullcontext()
+    )
+    monkeypatch.setattr(export_utils, "_prepare_export_directory", lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(export_utils, "_generate_export_hash", lambda *args: ("test-hash", {}))
+    monkeypatch.setattr(export_utils, "_save_export_metadata", lambda *args: None)
+    monkeypatch.setattr(export_utils, "_cleanup_onnx_subfunctions", lambda *args, **kwargs: None)
+
+    with pytest.warns(DeprecationWarning):
+        DummyQEff().export(export_dir=tmp_path, dynamo=True, use_onnx_subfunctions=True)
+
+    assert grad_states == [False]
 
 
 def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_count_per_fn: int = 2):
@@ -247,6 +418,133 @@ class TestPreserveNestedCacheRetainedStateTransform:
         fn = model.functions[0]
         assert len(fn.output) == 1, f"Function with 1 scatter should not have outputs added, got {list(fn.output)}"
         assert not model.graph.node[0].output
+
+    def test_preserves_v4_retained_state_with_nested_subfunction(self):
+        retained_state = "past_local_kv_cache.0_InternalRetainedState"
+        state_input = "past_local_kv_cache.0"
+        function = helper.make_function(
+            domain="",
+            fname="repeated_subgraph0",
+            inputs=[retained_state, "position_ids", "updates"],
+            outputs=[],
+            nodes=[
+                helper.make_node(
+                    "V4CtxScatter1D",
+                    inputs=[retained_state, "position_ids", "updates"],
+                    outputs=["updated_local_kv_cache"],
+                    domain="com.qualcomm.cloud",
+                )
+            ],
+            opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid("com.qualcomm.cloud", 1)],
+        )
+        call_node = helper.make_node(
+            "repeated_subgraph0",
+            inputs=[retained_state, "position_ids", "updates"],
+            outputs=[],
+        )
+        graph = helper.make_graph(
+            [call_node],
+            "test_graph",
+            [
+                helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None),
+                helper.make_tensor_value_info("position_ids", TensorProto.INT32, None),
+                helper.make_tensor_value_info("updates", TensorProto.FLOAT, None),
+            ],
+            [helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None)],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        model.functions.append(function)
+
+        changed = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert changed
+        assert list(model.functions[0].output) == ["updated_local_kv_cache"]
+        assert list(model.graph.node[0].input) == [state_input, "position_ids", "updates"]
+        assert list(model.graph.node[0].output) == [retained_state]
+        assert model.graph.input[0].name == state_input
+
+    def test_preserves_final_scatternd_cache_state_from_prefill_update_chain(self):
+        retained_state = "past_local_kv_cache.0_RetainedState"
+        state_input = "past_local_kv_cache.0"
+        function = helper.make_function(
+            domain="",
+            fname="repeated_subgraph0",
+            inputs=[retained_state, "indices", "updates"],
+            outputs=[],
+            nodes=[
+                helper.make_node("Identity", inputs=[retained_state], outputs=["cache_view"]),
+                helper.make_node("ScatterND", inputs=["cache_view", "indices", "updates"], outputs=["cache_step_0"]),
+                helper.make_node("Identity", inputs=["cache_step_0"], outputs=["next_cache_view"]),
+                helper.make_node(
+                    "ScatterND", inputs=["next_cache_view", "indices", "updates"], outputs=["cache_step_1"]
+                ),
+            ],
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        call_node = helper.make_node(
+            "repeated_subgraph0",
+            inputs=[retained_state, "indices", "updates"],
+            outputs=[],
+        )
+        graph = helper.make_graph(
+            [call_node],
+            "test_graph",
+            [
+                helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None),
+                helper.make_tensor_value_info("indices", TensorProto.INT64, None),
+                helper.make_tensor_value_info("updates", TensorProto.FLOAT, None),
+            ],
+            [helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None)],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        model.functions.append(function)
+
+        changed = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert changed
+        assert list(model.functions[0].output) == ["cache_step_1"]
+        assert list(model.graph.node[0].input) == [state_input, "indices", "updates"]
+        assert list(model.graph.node[0].output) == [retained_state]
+
+    def test_preserves_unchanged_prefill_retained_state(self):
+        retained_state = "past_compressor_kv_state.0_RetainedState"
+        state_input = "past_compressor_kv_state.0"
+        function = helper.make_function(
+            domain="",
+            fname="repeated_subgraph0",
+            inputs=[retained_state, "hidden_states"],
+            outputs=[],
+            nodes=[
+                helper.make_node("Add", inputs=[retained_state, "hidden_states"], outputs=["output"]),
+            ],
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        call_node = helper.make_node(
+            "repeated_subgraph0",
+            inputs=[retained_state, "hidden_states"],
+            outputs=["output"],
+        )
+        graph = helper.make_graph(
+            [call_node],
+            "test_graph",
+            [
+                helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None),
+                helper.make_tensor_value_info("hidden_states", TensorProto.FLOAT, None),
+            ],
+            [
+                helper.make_tensor_value_info("output", TensorProto.FLOAT, None),
+                helper.make_tensor_value_info(retained_state, TensorProto.FLOAT, None),
+            ],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        model.functions.append(function)
+
+        changed = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert changed
+        assert list(model.functions[0].output) == ["past_compressor_kv_state.0_RetainedState"]
+        assert list(model.graph.node[0].input) == [state_input, "hidden_states"]
+        assert list(model.graph.node[0].output) == ["output", retained_state]
 
 
 # ---------------------------------------------------------------------------
