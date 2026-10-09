@@ -35,6 +35,7 @@ from transformers import LlamaConfig, LlamaForCausalLM
 
 from QEfficient.base.checkpoint_transforms import (
     CHECKPOINT_PREPARED_MANIFEST,
+    CHECKPOINT_PREPARED_SENTINEL,
     CheckpointPlan,
     CheckpointTask,
     CheckpointTransformPipeline,
@@ -263,9 +264,13 @@ class TestWeightFreeCheckpointTransforms:
 
         pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
         prepared = pipeline.apply(src, out, target_dtype=torch.float32)
-        prepared_weight_map = json.loads((prepared / "model.safetensors.index.json").read_text())["weight_map"]
-        prepared_shard = next(iter(set(prepared_weight_map.values())))
-        (prepared / prepared_shard).unlink()
+
+        assert prepared == out
+        prepared_index = json.loads((out / "model.safetensors.index.json").read_text())
+        first_shard = next(iter(prepared_index["weight_map"].values()))
+        (out / first_shard).unlink()
+        assert (out / CHECKPOINT_PREPARED_MANIFEST).is_file()
+        assert (out / CHECKPOINT_PREPARED_SENTINEL).is_file()
 
         prepared = pipeline.apply(src, out, target_dtype=torch.float32)
 
@@ -942,6 +947,21 @@ class TestWeightFreeCheckpointTransforms:
                 {checkpoint_name: "model.safetensors"},
                 backbone,
                 MoEExpertStackingCheckpointTransform,
+            )
+            == checkpoint_name
+        )
+
+    def test_resolver_accepts_granitemoe_router_layer_alias(self):
+        checkpoint_name = "model.layers.0.block_sparse_moe.router.layer.weight"
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key(
+                "model.layers.0.block_sparse_moe.router.weight",
+                {checkpoint_name: "model.safetensors"},
+                backbone,
+                GraniteMoeFusedExpertSplitCheckpointTransform,
             )
             == checkpoint_name
         )
