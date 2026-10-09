@@ -274,8 +274,12 @@ def _ort_session(onnx_path: Path) -> ort.InferenceSession:
     for name, value in added_initializers.items():
         options.add_initializer(name, value)
     if graph_was_patched:
-        return ort.InferenceSession(onnx_model.SerializeToString(), sess_options=options)
-    return ort.InferenceSession(str(onnx_path), sess_options=options)
+        session = ort.InferenceSession(onnx_model.SerializeToString(), sess_options=options)
+    else:
+        session = ort.InferenceSession(str(onnx_path), sess_options=options)
+    # SessionOptions does not own the OrtValue buffers registered above.
+    session._qeff_added_initializers = added_initializers
+    return session
 
 
 def _ort_session_zeroing_int32_max_constants(onnx_path: Path):
@@ -2643,6 +2647,75 @@ class _BlockedPrefillCache:
         return self.value[:, :, start_index:end_index, :]
 
 
+@pytest.mark.parametrize("n_rep_chunk", [None, 1, 2])
+def test_blocked_prefill_qkv_accepts_n_rep_chunk(n_rep_chunk):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_headpar_offline
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 2, 4, 4
+    num_query_heads, num_kv_groups = 4, 2
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_query_heads // num_kv_groups, ctx_len, head_dim)
+
+    output, attention_weights = blocked_qkv_attention_forward_prefill_headpar_offline(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=1,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        configured_split=1,
+        n_rep_chunk=n_rep_chunk,
+    )
+
+    assert output.shape == (batch_size, sequence_length, num_query_heads, head_dim)
+    assert attention_weights is None
+
+
+def test_blocked_prefill_qkv_chunks_queries_by_seq_len(monkeypatch):
+    from QEfficient.blocking import blocked_attention_forwards as blocked
+
+    chunk_lengths = []
+    original_create_causal_mask = blocked._create_causal_mask
+
+    def tracked_create_causal_mask(*args, **kwargs):
+        chunk_lengths.append(kwargs["position_ids"].shape[-1])
+        return original_create_causal_mask(*args, **kwargs)
+
+    monkeypatch.setattr(blocked, "_create_causal_mask", tracked_create_causal_mask)
+
+    batch_size, sequence_length, head_dim, ctx_len = 1, 2, 4, 8
+    num_query_heads, num_kv_groups = 4, 2
+    module = SimpleNamespace(num_key_value_groups=num_kv_groups)
+    query = torch.ones(batch_size, num_query_heads, sequence_length, head_dim)
+    cache = _BlockedPrefillCache(batch_size, num_query_heads // num_kv_groups, ctx_len, head_dim)
+
+    blocked.blocked_qkv_attention_forward_prefill_headpar_offline(
+        module=module,
+        query=query,
+        key=None,
+        value=None,
+        attention_mask=None,
+        scaling=1.0,
+        num_q_blocks=2,
+        num_kv_blocks=1,
+        cache_kwargs={"position_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        configured_split=1,
+        n_rep_chunk=None,
+    )
+
+    assert chunk_lengths == [1, 1]
+
+
 @pytest.mark.parametrize(
     "num_query_heads, num_kv_groups, num_cores",
     [
@@ -2884,6 +2957,193 @@ def test_qwen3_5_moe_get_specializations_decouples_vision_batch_size():
     assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
 
 
+@pytest.mark.llm_model
+def test_qwen3_5_moe_full_state_update_matches_singleton_routed_state():
+    config = _tiny_qwen3_5_moe_config()
+    config.text_config.layer_types = ["linear_attention"] * config.text_config.num_hidden_layers
+    torch.manual_seed(0)
+    hf_model = AutoModelForImageTextToText.from_config(config).eval()
+    routed_model = QEFFAutoModelForImageTextToText(
+        deepcopy(hf_model),
+        kv_offload=True,
+        continuous_batching=True,
+    )
+    full_state_model = QEFFAutoModelForImageTextToText(
+        deepcopy(hf_model),
+        kv_offload=True,
+        continuous_batching=True,
+    )
+    inputs = full_state_model.model.get_dummy_inputs(
+        kv_offload=True,
+        continuous_batching=True,
+        gdn_full_state_update=True,
+        batch_size=1,
+        prefill_seq_len=4,
+    )["lang"]
+    inputs["input_ids"].fill_(1)
+    assert inputs["batch_index"].tolist() == [[0]]
+
+    routed_model.transform(ctx_len=8, seq_len=4, bs=1, prefill_only=True, prefill_seq_len=4)
+    full_state_model.transform(
+        ctx_len=8,
+        seq_len=4,
+        bs=1,
+        prefill_only=True,
+        prefill_seq_len=4,
+        qaic_config={"gdn_full_state_update": True},
+    )
+    assert full_state_model.lang_model.hash_params["gated_delta_kwargs"] == {"full_state_update": True}
+
+    routed_gdn_modules = [
+        module for module in routed_model.lang_model.model.modules() if hasattr(module, "gdn_full_state_update")
+    ]
+    full_state_gdn_modules = [
+        module for module in full_state_model.lang_model.model.modules() if hasattr(module, "gdn_full_state_update")
+    ]
+    assert routed_gdn_modules and all(module.gdn_full_state_update is False for module in routed_gdn_modules)
+    assert full_state_gdn_modules and all(module.gdn_full_state_update is True for module in full_state_gdn_modules)
+
+    with torch.no_grad():
+        routed_outputs = routed_model.lang_model.model(**deepcopy(inputs))
+        full_state_outputs = full_state_model.lang_model.model(**deepcopy(inputs))
+
+    torch.testing.assert_close(full_state_outputs[0], routed_outputs[0])
+    routed_states = routed_outputs[3]
+    full_states = full_state_outputs[3]
+    assert len(routed_states) == len(full_states) == config.text_config.num_hidden_layers
+    for layer_idx, ((routed_conv, routed_recurrent), (full_conv, full_recurrent)) in enumerate(
+        zip(routed_states, full_states)
+    ):
+        torch.testing.assert_close(
+            full_conv,
+            routed_conv,
+            msg=lambda msg, layer_idx=layer_idx: f"conv_state.{layer_idx}: {msg}",
+        )
+        torch.testing.assert_close(
+            full_recurrent,
+            routed_recurrent,
+            msg=lambda msg, layer_idx=layer_idx: f"recurrent_state.{layer_idx}: {msg}",
+        )
+
+    full_state_model.transform(ctx_len=8, seq_len=1, bs=1, prefill_only=False, prefill_seq_len=1)
+    assert all(module.gdn_full_state_update is False for module in full_state_gdn_modules)
+    assert "gated_delta_kwargs" not in full_state_model.lang_model.hash_params
+
+
+@pytest.mark.llm_model
+def test_qwen3_5_moe_singleton_prefill_export_has_no_state_scatter(tmp_path):
+    config = _tiny_qwen3_5_moe_config()
+    config.text_config.layer_types = ["linear_attention"] * config.text_config.num_hidden_layers
+    hf_model = AutoModelForImageTextToText.from_config(config).eval()
+    qeff_model = QEFFAutoModelForImageTextToText(
+        hf_model,
+        kv_offload=True,
+        continuous_batching=True,
+    )
+    qeff_model.transform(
+        ctx_len=8,
+        seq_len=4,
+        bs=1,
+        qaic_config={"gdn_full_state_update": True},
+        prefill_only=True,
+        prefill_seq_len=4,
+    )
+
+    inputs = qeff_model.model.get_dummy_inputs(
+        kv_offload=True,
+        continuous_batching=True,
+        gdn_full_state_update=True,
+        batch_size=1,
+        prefill_seq_len=4,
+    )["lang"]
+    inputs["input_ids"].fill_(1)
+    assert all(state.shape[0] == 1 for layer_state in inputs["past_key_values"] for state in layer_state)
+
+    export_result = qeff_model.export(
+        export_dir=tmp_path / "qwen3-5-moe-prefill-no-state-scatter",
+        skip_vision=True,
+        prefill_only=True,
+        prefill_seq_len=4,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+        qaic_config={"gdn_full_state_update": True},
+    )
+    onnx_model = onnx.load(_exported_onnx_path(export_result), load_external_data=False)
+    nodes = list(onnx_model.graph.node)
+    nodes.extend(node for function_proto in onnx_model.functions for node in function_proto.node)
+    state_indexing_ops = {"CtxGatherCB", "CtxGatherCB3D", "CtxScatterCB", "CtxScatterCB3D"}
+
+    assert not ({node.op_type for node in nodes} & state_indexing_ops)
+    for function_proto in onnx_model.functions:
+        retained_outputs = [name for name in function_proto.output if "state." in name]
+        if not retained_outputs:
+            continue
+        producer_by_output = {output: node for node in function_proto.node for output in node.output}
+        for retained_output in retained_outputs:
+            pending = [retained_output]
+            visited = set()
+            while pending:
+                value = pending.pop()
+                producer = producer_by_output.get(value)
+                if producer is None or id(producer) in visited:
+                    continue
+                visited.add(id(producer))
+                assert "Scatter" not in producer.op_type
+                pending.extend(producer.input)
+
+    with torch.no_grad():
+        pytorch_outputs = qeff_model.lang_model.model(**deepcopy(inputs))
+    session = _ort_session(_exported_onnx_path(export_result))
+    session_input_names = [item.name for item in session.get_inputs()]
+    session_output_names = [item.name for item in session.get_outputs()]
+    ort_inputs = _flatten_qwen_ort_inputs(inputs, session_input_names, qeff_model.lang_model.model)
+    ort_outputs = dict(zip(session_output_names, session.run(session_output_names, ort_inputs)))
+
+    assert np.allclose(pytorch_outputs[0].detach().numpy(), ort_outputs["logits"], atol=2e-3, rtol=1e-4)
+    for layer_idx, (conv_state, recurrent_state) in enumerate(pytorch_outputs[3]):
+        assert np.allclose(
+            conv_state.detach().numpy(),
+            ort_outputs[f"conv_state.{layer_idx}_RetainedState"],
+            atol=2e-3,
+            rtol=1e-4,
+        )
+        assert np.allclose(
+            recurrent_state.detach().numpy(),
+            ort_outputs[f"recurrent_state.{layer_idx}_RetainedState"],
+            atol=2e-3,
+            rtol=1e-4,
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_type", "prefill_only", "batch_size", "full_batch_size"),
+    [
+        ("qwen3_5", True, 1, 1),
+        ("qwen3_5_moe", False, 1, 1),
+        ("qwen3_5_moe", True, 2, 1),
+        ("qwen3_5_moe", True, 1, 4),
+    ],
+)
+def test_gdn_full_state_update_rejects_unsafe_compile_modes(
+    model_type,
+    prefill_only,
+    batch_size,
+    full_batch_size,
+):
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    model = _QEffAutoModelForImageTextToTextDualQPC.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model.model = _tiny_qwen_qeff_model(model_type).model
+
+    with pytest.raises(ValueError, match="gdn_full_state_update"):
+        model.compile(
+            prefill_only=prefill_only,
+            batch_size=batch_size,
+            full_batch_size=full_batch_size,
+            qaic_config={"gdn_full_state_update": True},
+        )
+
+
 def test_vlm_compile_forwards_gdn_chunk_size_in_qaic_config_to_export_path():
     """GDN chunk size is configured only through qaic_config."""
     from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
@@ -2942,6 +3202,41 @@ def test_qwen3_vl_moe_get_specializations_decouples_vision_batch_size():
     axes = model.get_onnx_dynamic_axes(kv_offload=True)
     assert axes["vision"]["image_grid_thw"][0] == "vision_batch_size"
     assert axes["lang"]["vision_embeds"][0] == "vision_batch_size"
+
+
+@pytest.mark.parametrize(("weight_free", "expected_batch_size"), [(False, 1), (True, 2)])
+def test_qwen3_vl_moe_dummy_inputs_use_weight_free_batch_size(weight_free, expected_batch_size):
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffQwen3VLMoeForConditionalGeneration,
+    )
+
+    text_config = SimpleNamespace(
+        hidden_size=16,
+        num_attention_heads=4,
+        num_hidden_layers=1,
+        num_key_value_heads=2,
+    )
+    config = SimpleNamespace(
+        dtype=torch.float32,
+        text_config=text_config,
+        vision_config=SimpleNamespace(deepstack_visual_indexes=[0, 1, 2], out_hidden_size=8),
+    )
+    model = QEffQwen3VLMoeForConditionalGeneration.__new__(QEffQwen3VLMoeForConditionalGeneration)
+    model.config = config
+    model.model = SimpleNamespace(config=config, qaic_config=None)
+
+    inputs = model.get_dummy_inputs(
+        kv_offload=True,
+        batch_size=1,
+        prefill_seq_len=8,
+        weight_free=weight_free,
+    )
+
+    assert inputs["lang"]["input_ids"].shape[0] == expected_batch_size
+    assert inputs["lang"]["vision_embeds"].shape[0] == expected_batch_size
+    assert inputs["lang"]["deepstack_features"].shape[1] == expected_batch_size
 
 
 def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
