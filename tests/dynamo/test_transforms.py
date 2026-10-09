@@ -21,6 +21,7 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import importlib
+import logging
 import operator
 from contextlib import nullcontext
 from unittest.mock import MagicMock
@@ -398,6 +399,37 @@ class TestPreserveNestedCacheRetainedStateTransform:
                 f"Function '{fn.name}' should have at least 2 outputs after transform, got {list(fn.output)}"
             )
 
+    def test_handles_call_with_read_and_updated_cache_layers(self):
+        model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2, scatter_count_per_fn=2)
+        fn = model.functions[1]
+        fn.input[:] = ["past_key.0", "past_key.1", "past_value.1", "hidden_1", "position_ids"]
+        fn.output[:] = []
+        fn.node[0].input[0] = "past_key.1"
+        fn.node[1].input[0] = "past_value.1"
+
+        call_node = model.graph.node[1]
+        call_node.input[:] = [
+            "past_key.0",
+            "past_key.1_RetainedState",
+            "past_value.1_RetainedState",
+            "hidden_1",
+            "position_ids",
+        ]
+        for value in model.graph.input:
+            if value.name == "past_key.1":
+                value.name = "past_key.1_RetainedState"
+            elif value.name == "past_value.1":
+                value.name = "past_value.1_RetainedState"
+
+        changed = PreserveNestedCacheRetainedStateTransform.apply(model)
+
+        assert changed
+        assert "past_key.1" in {value.name for value in model.graph.input}
+        assert "past_value.1" in {value.name for value in model.graph.input}
+        assert "past_key.1_RetainedState" in call_node.output
+        assert "past_value.1_RetainedState" in call_node.output
+        assert len(fn.output) == 2
+
     def test_noop_when_no_dangling_retained_states(self):
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2, scatter_count_per_fn=2)
 
@@ -426,10 +458,12 @@ class TestPreserveNestedCacheRetainedStateTransform:
 
 
 class TestRenameRepeatedSubgraphTransform:
-    def test_renames_repeated_subgraph_functions(self):
+    def test_renames_repeated_subgraph_functions(self, caplog):
         model = _make_minimal_onnx_with_repeated_subgraphs(num_layers=2)
-        changed = RenameRepeatedSubgraphTransform.apply(model, target_classnames=["QEffLlamaDecoderLayer"])
+        with caplog.at_level(logging.WARNING, logger="QEfficient.base.onnx_transforms"):
+            changed = RenameRepeatedSubgraphTransform.apply(model, target_classnames=["QEffLlamaDecoderLayer"])
         assert changed
+        assert "more repeated subgraph functions" not in caplog.text
 
         fn_names = [fn.name for fn in model.functions]
         assert "QEffLlamaDecoderLayer" in fn_names, f"Expected 'QEffLlamaDecoderLayer' in {fn_names}"
