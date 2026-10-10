@@ -561,6 +561,49 @@ def generate_disagg_mdp_partition_config(
     }
 
 
+def _repair_scoped_alias_partitioning(onnx_path: str, mdp_json: Dict[str, Any], compiler_dump: Dict[str, Any]) -> int:
+    """Align scoped aliases with the compiler dump partition."""
+    model = onnx.load(onnx_path, load_external_data=False)
+    names = {n.name for n in model.graph.node if n.name}
+    compiler_partition, compiler_position, compiler_nodes = {}, {}, set()
+    for partition_idx, partition in enumerate(compiler_dump.get("partitions", [])):
+        for node_pos, node_name in enumerate(partition.get("nodeList", [])):
+            if node_name:
+                compiler_nodes.add(node_name)
+                compiler_partition.setdefault(node_name, partition_idx)
+                compiler_position.setdefault(node_name, (partition_idx, node_pos))
+    current_partition = {}
+    for partition_idx, partition in enumerate(mdp_json.get("partitions", [])):
+        for node_name in partition.get("nodeList", []):
+            if node_name:
+                current_partition[node_name] = partition_idx
+    repairs = []
+    for node_name, source_idx in current_partition.items():
+        if not node_name.startswith("/") or node_name.startswith("/language_model/"):
+            continue
+        peer_name = "/language_model" + node_name
+        target_idx = compiler_partition.get(node_name)
+        if peer_name not in names or peer_name in compiler_nodes or target_idx is None or target_idx == source_idx:
+            continue
+        repairs.append((node_name, source_idx, target_idx, compiler_position[node_name]))
+    for node_name, source_idx, target_idx, dump_pos in sorted(repairs, key=lambda item: item[3]):
+        mdp_json["partitions"][source_idx]["nodeList"].remove(node_name)
+        target_nodes = mdp_json["partitions"][target_idx]["nodeList"]
+        insert_at = len(target_nodes)
+        for idx, existing_name in enumerate(target_nodes):
+            if compiler_position.get(existing_name, (10**9, 10**9)) > dump_pos:
+                insert_at = idx
+                break
+        target_nodes.insert(insert_at, node_name)
+        logger.warning(
+            "MDP repaired compiler-scoped alias %r: moved from Partition%d to Partition%d",
+            node_name,
+            source_idx,
+            target_idx,
+        )
+    return len(repairs)
+
+
 def generate_disagg_mdp_intersection_config(
     onnx_path: str,
     compiler_dump_path: str,
@@ -664,6 +707,17 @@ def generate_disagg_mdp_intersection_config(
             }
         )
 
+    mdp_json = {
+        "connections": qeff_mdp["connections"],
+        "partitions": partition_objs,
+    }
+
+    _repair_scoped_alias_partitioning(
+        onnx_path=onnx_path,
+        mdp_json=mdp_json,
+        compiler_dump=dump,
+    )
+
     logger.info(
         f"Intersection: {total_kept} nodes kept, {total_dropped} dropped "
         f"({total_dropped * 100 // max(qeff_total, 1)}% pruned by compiler)"
@@ -676,10 +730,7 @@ def generate_disagg_mdp_intersection_config(
             f"(compiler may have renamed them). Examples: {list(in_dump_not_qeff)[:5]}"
         )
 
-    return {
-        "connections": qeff_mdp["connections"],
-        "partitions": partition_objs,
-    }
+    return mdp_json
 
 
 def generate_disagg_mdp_config(
