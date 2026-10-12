@@ -249,7 +249,7 @@ def main():
         raise ValueError(f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path.")
 
     tlm_config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=args.hf_token)
-    is_qwen3vl = tlm_config.model_type in {"qwen3_vl", "qwen3_5"}
+    is_qwen3vl = tlm_config.model_type in {"qwen3_vl", "qwen3_5", "qwen3_5_moe"}
 
     if args.tlm_qpc and args.vision_qpc:
         tlm_qpc, vision_qpc = args.tlm_qpc, args.vision_qpc
@@ -338,7 +338,7 @@ def main():
     print("=" * width)
     print(f"  {'Acceptance Rate (tok/iter)':<30} {metrics.acceptance_rate():>6.2f}")
     print(f"  {'DLM Throughput  (tok/s)':<30} {metrics.dlm_tok_rate():>6.1f}")
-    if tlm_config.model_type == "qwen3_5":
+    if tlm_config.model_type in {"qwen3_5", "qwen3_5_moe"}:
         round_rate = metrics.num_total_iters / metrics.tlm_decode_time if metrics.tlm_decode_time > 0 else 0.0
         print(f"  {'TLM Rounds (round/s)':<30} {round_rate:>6.1f}")
     else:

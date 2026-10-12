@@ -584,6 +584,11 @@ def _get_rope_model_qwen3_vl(config):
                 if config.model_type == "qwen3_5"
                 else QEffQwen3VLForConditionalGeneration
             )
+            if config.model_type == "qwen3_5_moe":
+                # Native HF construction initializes the MoE expert backend on meta.
+                from transformers import Qwen3_5MoeForConditionalGeneration
+
+                model_cls = Qwen3_5MoeForConditionalGeneration
             _rope_model_cache_qwen3_vl[key] = model_cls._from_config(config)
     return _rope_model_cache_qwen3_vl[key]
 
@@ -596,7 +601,7 @@ def compute_position_ids_qwen3_vl(input_ids, attention_mask, image_grid_thw, con
     """
     rope_model = _get_rope_model_qwen3_vl(config)
     batch_size, seq_len = input_ids.shape
-    if config.model_type == "qwen3_5":
+    if config.model_type in {"qwen3_5", "qwen3_5_moe"}:
         if mm_token_type_ids is None:
             mm_token_type_ids = (input_ids == config.image_token_id).to(torch.int64)
         mrope, deltas = rope_model.model.get_rope_index(
@@ -662,6 +667,20 @@ def run_vision_encoder_qwen3_vl(vision_session, pixel_values, image_grid_thw):
     return vision_outputs["vision_embeds"], vision_outputs["deepstack_features"]
 
 
+def get_qwen35_target_seq_len(tlm_session: QAICInferenceSession, block_size: int) -> int:
+    """Require block-sized verification, independently of prompt prefill."""
+    index = tlm_session.binding_index_map["input_ids"]
+    lengths = {shape[index][1][1] for shape in tlm_session.allowed_shapes}
+    if not lengths:
+        lengths = {tlm_session.bindings[index].dims[1]}
+    if block_size in lengths:
+        return block_size
+    raise ValueError(
+        f"Qwen3.5-MoE DFlash requires a {block_size}-token verification specialization "
+        f"(found {sorted(lengths)}). Recompile the TLM with dflash_block_size={block_size}."
+    )
+
+
 def run_spd_inference_qwen3_vl(
     prompt_text: str,
     tokenizer,
@@ -683,17 +702,22 @@ def run_spd_inference_qwen3_vl(
     compiled_width: int = 536,
     batch_size: int = 1,
 ) -> SpecDecodingMetrics:
-    """Run Qwen3-VL or Qwen3.5 DFlash for a text-only or single-image prompt."""
-    is_qwen35 = tlm_config.model_type == "qwen3_5"
+    """Run Qwen3-VL, Qwen3.5 or Qwen3.5-MoE DFlash for a text or image prompt."""
+    is_qwen35 = tlm_config.model_type in {"qwen3_5", "qwen3_5_moe"}
     if is_qwen35 and (batch_size != 1 or "cache_commit" not in tlm_session.input_names):
         raise ValueError("Qwen3.5 DFlash requires batch size 1 and a TLM QPC with cache_commit input.")
-    if is_qwen35 and (
+    if tlm_config.model_type == "qwen3_5" and (
         prompt_chunk_size not in (QWEN3_5_DFLASH_CHUNK_SIZE, 64) or not 1 < block_size <= prompt_chunk_size
     ):
         raise ValueError(
             "Qwen3.5 DFlash requires 16-token target calls (or a legacy 64-token QPC) and a block that fits; "
             "rebuild with --prefill_seq_len 16."
         )
+    target_seq_len = prompt_chunk_size if is_qwen35 else block_size
+    if tlm_config.model_type == "qwen3_5_moe":
+        if block_size < 2 or prompt_chunk_size < block_size or prompt_chunk_size % block_size:
+            raise ValueError("Qwen3.5-MoE DFlash requires prefill length to be a positive multiple of block_size >= 2.")
+        target_seq_len = get_qwen35_target_seq_len(tlm_session, block_size)
     metrics = SpecDecodingMetrics(block_size=block_size)
     image_processing_start = time.time()
 
@@ -777,7 +801,6 @@ def run_spd_inference_qwen3_vl(
         return outputs["logits"], outputs["hidden_states"]
 
     def prepare_decode():
-        target_seq_len = prompt_chunk_size if is_qwen35 else block_size
         tlm_session.set_buffers({"logits": np.zeros((batch_size, target_seq_len), dtype=np.int32)})
         tlm_session.set_buffers(
             {"hidden_states": np.zeros((batch_size, target_seq_len, hidden_size), dtype=np.float32)}
@@ -789,7 +812,7 @@ def run_spd_inference_qwen3_vl(
     def decode_inputs(draft_ids, decode_position_ids, valid_tokens):
         positions = build_decode_position_ids_qwen3_vl(decode_position_ids, rope_delta)
         if is_qwen35:
-            padding = prompt_chunk_size - block_size
+            padding = target_seq_len - block_size
             draft_ids = np.pad(draft_ids, ((0, 0), (0, padding)), constant_values=tokenizer.pad_token_id)
             positions = np.pad(positions, ((0, 0), (0, 0), (0, padding)), constant_values=-1)
             positions[:, :, valid_tokens:] = -1

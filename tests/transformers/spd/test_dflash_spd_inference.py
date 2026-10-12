@@ -97,7 +97,14 @@ def test_qwen35_compile_accepts_context_larger_than_draft_window(monkeypatch, ct
 
 
 @pytest.mark.parametrize("ctx_len", [4096, 8192])
-def test_qwen35_vision_cli_accepts_long_context(monkeypatch, ctx_len):
+@pytest.mark.parametrize(
+    "model_type,model_name",
+    [
+        ("qwen3_5", "Qwen/Qwen3.6-27B"),
+        ("qwen3_5_moe", "Qwen/Qwen3.6-35B-A3B"),
+    ],
+)
+def test_qwen35_vision_cli_accepts_long_context(monkeypatch, ctx_len, model_type, model_name):
     from examples.performance.dflash import utils
 
     class ReachedCompilation(Exception):
@@ -108,10 +115,10 @@ def test_qwen35_vision_cli_accepts_long_context(monkeypatch, ctx_len):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["basic_inference_vision.py", "--model_name", "Qwen/Qwen3.6-27B", "--image", "--ctx_len", str(ctx_len)],
+        ["basic_inference_vision.py", "--model_name", model_name, "--image", "--ctx_len", str(ctx_len)],
     )
     monkeypatch.setattr(
-        utils.AutoConfig, "from_pretrained", lambda *args, **kwargs: SimpleNamespace(model_type="qwen3_5")
+        utils.AutoConfig, "from_pretrained", lambda *args, **kwargs: SimpleNamespace(model_type=model_type)
     )
 
     def stop_compile(*args, **kwargs):
@@ -153,8 +160,16 @@ def test_qwen3_5_runtime_rejects_unsupported_prefill_qpc(prompt_chunk_size):
         )
 
 
-@pytest.mark.parametrize("target_seq_len", [16, 64])
-def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, target_seq_len):
+@pytest.mark.parametrize(
+    "model_type,prompt_chunk_size,target_seq_len",
+    [
+        ("qwen3_5", 16, 16),
+        ("qwen3_5", 64, 64),
+        ("qwen3_5_moe", 16, 16),
+        ("qwen3_5_moe", 128, 16),
+    ],
+)
+def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, model_type, prompt_chunk_size, target_seq_len):
     import torch
 
     from QEfficient.generation import dflash_generation as generation
@@ -172,8 +187,9 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, target_seq_le
 
     session = SimpleNamespace(
         input_names=["cache_commit", "vision_embeds"],
-        binding_index_map={"vision_embeds": 0},
-        bindings=[SimpleNamespace(type=0, dims=(1, 1, 32))],
+        binding_index_map={"vision_embeds": 0, "input_ids": 1},
+        bindings=[SimpleNamespace(type=0, dims=(1, 1, 32)), SimpleNamespace(dims=(1, prompt_chunk_size))],
+        allowed_shapes=[[(0, [1, 1, 32]), (8, [1, length])] for length in {prompt_chunk_size, target_seq_len}],
         aic_to_np_dtype_mapping={0: np.dtype(np.float32)},
         run=run,
         set_buffers=buffers.append,
@@ -191,7 +207,9 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, target_seq_le
     )
 
     def core(**kwargs):
-        kwargs["tlm_prefill"](0, target_seq_len)
+        kwargs["tlm_prefill"](0, prompt_chunk_size)
+        assert calls[-1]["input_ids"].shape[1] == prompt_chunk_size
+        assert calls[-1]["cache_commit"].item() == 1
         kwargs["prepare_decode"]()
         ids = np.arange(16, dtype=np.int64).reshape(1, 16)
         positions = np.arange(5, 21, dtype=np.int64).reshape(1, 16)
@@ -215,17 +233,73 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, target_seq_le
         prompt_text="test",
         tokenizer=SimpleNamespace(pad_token_id=0, eos_token_id=None),
         processor=None,
-        tlm_config=SimpleNamespace(model_type="qwen3_5"),
+        tlm_config=SimpleNamespace(model_type=model_type),
         dlm_session=None,
         tlm_session=session,
         mask_token_id=2,
         vocab_size=64,
-        prompt_chunk_size=target_seq_len,
+        prompt_chunk_size=prompt_chunk_size,
         ctx_len=256,
         block_size=16,
         hidden_size=32,
     )
-    assert all(value.shape[1] == target_seq_len for item in buffers for key, value in item.items() if key == "logits")
+    assert [item["logits"].shape[1] for item in buffers if "logits" in item] == [prompt_chunk_size, target_seq_len]
+
+
+@pytest.mark.parametrize("with_image", [False, True])
+def test_qwen35_moe_runtime_mrope_matches_hf(with_image):
+    import torch
+
+    from QEfficient.generation.dflash_generation import compute_position_ids_qwen3_vl
+    from tests.unit_test.transforms.test_dflash_transform import make_tiny_qwen3_5_vlm
+
+    model = make_tiny_qwen3_5_vlm(moe=True)
+    ids = torch.tensor([[10, 5, 3, 3, 3, 3, 6, 11]] if with_image else [[10, 11, 12]])
+    mask = torch.ones_like(ids)
+    types = (ids == model.config.image_token_id).long()
+    grid = torch.tensor([[1, 4, 4]]) if with_image else None
+    expected, expected_delta = model.model.get_rope_index(ids, types, image_grid_thw=grid, attention_mask=mask)
+    actual, delta = compute_position_ids_qwen3_vl(ids, mask, grid, model.config, types)
+    torch.testing.assert_close(actual[0], torch.arange(ids.shape[1]).view(1, -1))
+    torch.testing.assert_close(actual[1:], expected)
+    torch.testing.assert_close(delta, expected_delta)
+
+
+@pytest.mark.parametrize("block_size", [8, 16])
+def test_qwen35_moe_compile_preserves_dflash_metadata(monkeypatch, block_size):
+    import torch
+
+    from examples.performance.dflash import utils
+
+    calls = []
+    text_model = SimpleNamespace(fc=torch.nn.Linear(8, 4, bias=False), hidden_norm=torch.nn.LayerNorm(4))
+    qaic_config = {"target_layer_ids": [2, 4]}
+
+    def compile_model(**kwargs):
+        calls.append(kwargs)
+        return {"lang_prefill_qpc_path": "target.qpc", "vision_qpc_path": "vision.qpc"}
+
+    def load_model(*args, **kwargs):
+        assert kwargs["qaic_config"] == qaic_config
+        assert kwargs["dtype"] == "float32"
+        return SimpleNamespace(
+            lang_model=SimpleNamespace(model=SimpleNamespace(language_model=text_model)), compile=compile_model
+        )
+
+    monkeypatch.setattr(utils.AutoConfig, "from_pretrained", lambda *a, **k: SimpleNamespace(model_type="qwen3_5_moe"))
+    monkeypatch.setattr(
+        utils,
+        "read_dlm_meta",
+        lambda *a: ({"fc.weight": torch.ones(4, 8), "hidden_norm.weight": torch.ones(4)}, [1, 3], block_size),
+    )
+    monkeypatch.setattr(utils.QEFFAutoModelForImageTextToText, "from_pretrained", load_model)
+    assert utils.compile_qwen3vl_vlm_qpcs(
+        "target", "draft", ctx_len=8192, prefill_seq_len=128, num_cores=8, num_devices=4
+    ) == ("target.qpc", "vision.qpc")
+    assert calls[0]["qaic_config"] == qaic_config
+    assert calls[0]["prefill_only"] and calls[0]["enable_chunking"]
+    assert calls[0]["prefill_seq_len"] == 128 and calls[0]["dflash_block_size"] == block_size
+    assert calls[0]["mxint8_kv_cache"]
 
 
 class _FakeTokenizer:

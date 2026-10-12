@@ -861,8 +861,51 @@ def _ort_qwen_logits(onnx_path: Path, qeff_model, inputs):
     return outputs["logits"].astype(np.float32)
 
 
-def test_qwen3_5_without_dflash_hf_qeff_ort_parity(tmp_path):
-    _assert_qwen_hf_qeff_ort_parity("qwen3_5", tmp_path)
+@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_moe"])
+def test_qwen3_5_without_dflash_hf_qeff_ort_parity(tmp_path, model_type):
+    _assert_qwen_hf_qeff_ort_parity(model_type, tmp_path)
+
+
+@pytest.mark.parametrize("output_hidden_states", [False, True])
+@pytest.mark.parametrize("explicit_cache_position", [False, True])
+def test_qwen3_5_moe_without_dflash_preserves_forward_path(monkeypatch, output_hidden_states, explicit_cache_position):
+    from QEfficient.transformers.models.qwen3_5_moe import modeling_qwen3_5_moe as modeling
+    from tests.unit_test.transforms.test_dflash_transform import make_tiny_qwen3_5_vlm
+
+    qeff = QEFFAutoModelForImageTextToText(make_tiny_qwen3_5_vlm(moe=True), kv_offload=True)
+    model = qeff.lang_model.model.language_model
+    inputs = qeff.model.get_dummy_inputs(kv_offload=True)["lang"]
+    conv_update = modeling.qeff_torch_causal_conv1d_update
+    conv_calls = []
+
+    def baseline_conv_update(*args, **kwargs):
+        assert kwargs.get("dflash", False) is False
+        conv_calls.append(True)
+        return conv_update(*args, **kwargs)
+
+    def unexpected_dflash(*args, **kwargs):
+        raise AssertionError("Non-DFlash forward must not use DFlash operations")
+
+    monkeypatch.setattr(modeling, "qeff_torch_causal_conv1d_update", baseline_conv_update)
+    monkeypatch.setattr(modeling, "compute_dflash_target_hidden_states", unexpected_dflash)
+    monkeypatch.setattr(modeling, "dflash_chunk_gated_delta_scan", unexpected_dflash)
+    monkeypatch.setattr(modeling.QEffQwen3_5MoeGatedDeltaNet, "_dflash_triangular_inverse", unexpected_dflash)
+    with torch.no_grad():
+        output = model(
+            input_ids=inputs["input_ids"],
+            position_ids=inputs["position_ids"],
+            past_key_values=inputs["past_key_values"],
+            attention_mask=torch.ones_like(inputs["input_ids"]),
+            cache_position=torch.arange(inputs["input_ids"].shape[1]) if explicit_cache_position else None,
+            output_hidden_states=output_hidden_states,
+            use_cache=True,
+        )
+
+    assert len(conv_calls) == model.config.layer_types.count("linear_attention")
+    assert output.hidden_states is None
+    assert "cache_commit" not in inputs
+    assert "hidden_states" not in qeff.model.get_output_names(kv_offload=True)["lang"]
+    assert "hidden_states" not in qeff.model.get_onnx_dynamic_axes(kv_offload=True)["lang"]
 
 
 def test_dflash_mixed_window_ort_parity(tmp_path):
@@ -918,17 +961,27 @@ def test_dflash_mixed_window_ort_parity(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "prefill_length,verification_length,dflash_chunk_size",
-    [(8, 16, 64), (64, 16, 64), (8, 64, 64), (64, 64, 64), (8, 16, 16), (16, 16, 16)],
+    "moe,prefill_length,verification_length,dflash_chunk_size",
+    [
+        (False, 8, 16, 64),
+        (False, 64, 16, 64),
+        (False, 8, 64, 64),
+        (False, 64, 64, 64),
+        (False, 8, 16, 16),
+        (False, 16, 16, 16),
+        (True, 16, 16, 16),
+        (True, 128, 16, 16),
+        (True, 128, 8, 8),
+    ],
 )
 @pytest.mark.parametrize("matrix_solve", [False, True])
 def test_qwen3_5_dflash_ort_recurrent_commit(
-    tmp_path, prefill_length, verification_length, dflash_chunk_size, matrix_solve
+    tmp_path, prefill_length, verification_length, dflash_chunk_size, matrix_solve, moe
 ):
     from tests.unit_test.transforms.test_dflash_transform import make_tiny_qwen3_5_vlm
 
     torch.manual_seed(11)
-    model = make_tiny_qwen3_5_vlm()
+    model = make_tiny_qwen3_5_vlm(moe=moe)
     model.config.text_config.max_position_embeddings = 256
     qeff = QEFFAutoModelForImageTextToText(model, kv_offload=True, qaic_config={"target_layer_ids": [1, 3]})
     qeff.lang_model.model.language_model.dflash_chunk_size = dflash_chunk_size
@@ -957,14 +1010,15 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
     batch_size = inputs["input_ids"].shape[0]
     actual = {}
     prompt_length = prefill_length - 3
+    verified_tokens = min(verification_length, 16)
     # Keep one exported graph across different sequence lengths and acceptance lengths.
     for start, length, valid, commit in [
         (0, prefill_length, prompt_length, 1),
-        (prompt_length, verification_length, 16, 0),
+        (prompt_length, verification_length, verified_tokens, 0),
         (prompt_length, verification_length, 2, 1),
-        (prompt_length + 2, verification_length, 16, 0),
+        (prompt_length + 2, verification_length, verified_tokens, 0),
         (prompt_length + 2, verification_length, 1, 1),
-        (prompt_length + 3, verification_length, 16, 0),
+        (prompt_length + 3, verification_length, verified_tokens, 0),
     ]:
         inputs["input_ids"] = torch.full((batch_size, length), 10 + start, dtype=torch.int64)
         positions = torch.arange(start, start + length).view(1, 1, -1).repeat(4, batch_size, 1)
@@ -3476,6 +3530,32 @@ def test_qwen3_5_moe_conv_decode_slice_keeps_prefill_gather_path():
 
     torch.testing.assert_close(output, expected_output.to(hidden_states.dtype))
     torch.testing.assert_close(state, expected_state)
+
+
+@pytest.mark.parametrize("dflash", [None, False, True])
+@pytest.mark.parametrize("grouped_state", [False, True])
+@pytest.mark.parametrize("valid_tokens", [0, 1, 2, 3, 4])
+def test_qwen3_5_moe_conv_history_dflash_guard(dflash, grouped_state, valid_tokens):
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        qeff_torch_causal_conv1d_update,
+    )
+
+    flat_state = torch.arange(24, dtype=torch.float32).reshape(1, 6, 4)
+    state = flat_state.reshape(1, 2, 3, 4) if grouped_state else flat_state
+    hidden = 100 + torch.arange(6 * 16, dtype=torch.float32).reshape(1, 6, 16)
+    positions = torch.full((4, 1, 16), -1, dtype=torch.int64)
+    positions[..., :valid_tokens] = torch.arange(40, 40 + valid_tokens)
+    kwargs = {} if dflash is None else {"dflash": dflash}
+    _, actual = qeff_torch_causal_conv1d_update(hidden, state, torch.ones(6, 4), positions, **kwargs)
+
+    if dflash:
+        expected = torch.cat([flat_state, hidden[..., :valid_tokens]], dim=-1)[..., -4:]
+    else:
+        # Preserve the original baseline ordering, including its tied cached keys.
+        zeros = flat_state[:, 0, :].to(positions.dtype) * 0
+        order = torch.argsort(torch.cat([zeros, positions[0]], dim=1), dim=1)
+        expected = torch.gather(torch.cat([flat_state, hidden], dim=-1), 2, order[:, None, -4:].expand(-1, 6, -1))
+    torch.testing.assert_close(actual, expected.reshape_as(state), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("valid_tokens", [0, 1, 2, 3, 4])

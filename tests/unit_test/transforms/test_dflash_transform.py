@@ -34,14 +34,31 @@ CTX_LEN = 32
 HIDDEN_SIZE = 64
 
 
-def make_tiny_qwen3_5_vlm():
-    from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
+def make_tiny_qwen3_5_vlm(moe=False):
+    from transformers import (
+        Qwen3_5Config,
+        Qwen3_5ForConditionalGeneration,
+        Qwen3_5MoeConfig,
+        Qwen3_5MoeForConditionalGeneration,
+    )
 
-    config = Qwen3_5Config(
+    config_cls = Qwen3_5MoeConfig if moe else Qwen3_5Config
+    model_cls = Qwen3_5MoeForConditionalGeneration if moe else Qwen3_5ForConditionalGeneration
+    config = config_cls(
         text_config={
             "vocab_size": VOCAB_SIZE,
             "hidden_size": 32,
             "intermediate_size": 64,
+            **(
+                {
+                    "num_experts": 4,
+                    "num_experts_per_tok": 2,
+                    "moe_intermediate_size": 32,
+                    "shared_expert_intermediate_size": 32,
+                }
+                if moe
+                else {}
+            ),
             "num_hidden_layers": 4,
             "num_attention_heads": 2,
             "num_key_value_heads": 1,
@@ -75,21 +92,39 @@ def make_tiny_qwen3_5_vlm():
         vision_end_token_id=6,
     )
     config._attn_implementation = "eager"
-    return Qwen3_5ForConditionalGeneration(config).eval()
+    return model_cls(config).eval()
 
 
 @pytest.mark.parametrize("accepted", [0, 1, 3])
 @pytest.mark.parametrize("prompt_len", [1, 5])
 @pytest.mark.parametrize("chunk_size", [16, 64])
 @pytest.mark.parametrize("matrix_solve", [False, True])
-def test_qwen3_5_dflash_replay_matches_autoregressive(accepted, prompt_len, chunk_size, matrix_solve, monkeypatch):
+@pytest.mark.parametrize("moe_flavour", [None, "decode_bmm", "expert_parallel"])
+def test_qwen3_5_dflash_replay_matches_autoregressive(
+    accepted, prompt_len, chunk_size, matrix_solve, moe_flavour, monkeypatch
+):
     """Verify then replay a prefix; next-round results must exclude rejected tokens."""
     from QEfficient import QEFFAutoModelForImageTextToText
 
     torch.manual_seed(7)
-    hf_model = make_tiny_qwen3_5_vlm()
+    moe = moe_flavour is not None
+    hf_model = make_tiny_qwen3_5_vlm(moe=moe)
     reference = copy.deepcopy(hf_model)
-    qeff = QEFFAutoModelForImageTextToText(hf_model, kv_offload=True, qaic_config={"target_layer_ids": [1, 3]})
+    qaic_config = {"target_layer_ids": [1, 3]}
+    if moe:
+        qaic_config["moe_config"] = {"flavour": moe_flavour}
+    qeff = QEFFAutoModelForImageTextToText(hf_model, kv_offload=True, qaic_config=qaic_config)
+    if moe:
+        qeff.transform(
+            ctx_len=CTX_LEN,
+            seq_len=16,
+            bs=1,
+            num_devices=1,
+            aic_num_cores=4,
+            qaic_config=qaic_config,
+            prefill_only=True,
+            prefill_seq_len=16,
+        )
     model = qeff.lang_model.model.language_model
     model.dflash_chunk_size = chunk_size
     for layer in model.layers:
@@ -99,8 +134,10 @@ def test_qwen3_5_dflash_replay_matches_autoregressive(accepted, prompt_len, chun
     def unexpected_decode(*args, **kwargs):
         raise AssertionError("DFlash must not compute the one-token recurrent branch")
 
+    model_type = "qwen3_5_moe" if moe else "qwen3_5"
     monkeypatch.setattr(
-        "QEfficient.transformers.models.qwen3_5.modeling_qwen3_5.recurrent_gdn_decode_forward", unexpected_decode
+        f"QEfficient.transformers.models.{model_type}.modeling_{model_type}.recurrent_gdn_decode_forward",
+        unexpected_decode,
     )
     initial = qeff.model.get_dummy_inputs(kv_offload=True)["lang"]["past_key_values"]
     tokens = torch.randint(10, VOCAB_SIZE, (1, 16))
@@ -144,6 +181,61 @@ def test_qwen3_5_dflash_replay_matches_autoregressive(accepted, prompt_len, chun
     for i in (0, 2):
         for actual, expected in zip(restarted.past_key_values[i], prefill.past_key_values[i]):
             torch.testing.assert_close(actual, expected, rtol=2e-4, atol=2e-4)
+
+
+@pytest.mark.parametrize(
+    "moe_config", [None, {"cores_per_expert": 2, "tree_reduce": True, "expert_parallel_chunk_size": 16}]
+)
+def test_qwen3_5_moe_dflash_preserves_upstream_expert_parallel(moe_config):
+    from transformers import Qwen3_5MoeForConditionalGeneration
+
+    from QEfficient import QEFFAutoModelForImageTextToText
+    from QEfficient.transformers.moe import MoEFlavour
+    from QEfficient.transformers.moe.block import QEffMoEBlockMixin
+
+    torch.manual_seed(19)
+    config = make_tiny_qwen3_5_vlm(moe=True).config
+    config.text_config.num_experts = 256
+    config.text_config.num_experts_per_tok = 8
+    reference = Qwen3_5MoeForConditionalGeneration(config).eval()
+    qaic_config = {"target_layer_ids": [1, 3]}
+    if moe_config is not None:
+        qaic_config["moe_config"] = moe_config
+    qeff = QEFFAutoModelForImageTextToText(copy.deepcopy(reference), kv_offload=True, qaic_config=qaic_config)
+    qeff.transform(
+        ctx_len=256,
+        seq_len=128,
+        bs=1,
+        num_devices=4,
+        aic_num_cores=8,
+        qaic_config=qaic_config,
+        prefill_only=True,
+        prefill_seq_len=128,
+    )
+    options = moe_config or {}
+    cores_per_expert = options.get("cores_per_expert", 1)
+    packed_chunks = 8 if moe_config is not None else 1
+    language_model = qeff.lang_model.model.language_model
+    assert language_model.target_layer_ids == [1, 3]
+    for layer in language_model.layers:
+        block = layer.mlp
+        assert block.forward.__func__ is QEffMoEBlockMixin.forward
+        assert block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+        assert block.num_devices == 4 and block.total_avl_cores == 32
+        assert block.num_parallelized_experts == 32 // cores_per_expert
+        assert block.num_pipeline_stages == 8 * cores_per_expert
+        assert block.tree_reduce is options.get("tree_reduce", False)
+        assert block.expert_parallel_num_packed_chunks == packed_chunks
+    assert qeff.lang_model.hash_params["moe_prefill_flavour"] == "expert_parallel"
+    assert qeff.lang_model.hash_params["moe_prefill_num_packed_chunks"] == packed_chunks
+
+    # Check routed and shared experts at both verification and prompt-prefill lengths.
+    with torch.no_grad():
+        for seq_len in (16, 128):
+            hidden = torch.randn(1, seq_len, config.text_config.hidden_size)
+            actual = language_model.layers[0].mlp(hidden)
+            expected = reference.model.language_model.layers[0].mlp(hidden)
+            torch.testing.assert_close(actual, expected, atol=2e-4, rtol=2e-4)
 
 
 def test_qwen3_5_dflash_requires_explicit_commit():

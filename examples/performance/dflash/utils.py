@@ -35,6 +35,7 @@ MODEL_MAP = {
     "Qwen3-4B": ("Qwen/Qwen3-4B", "z-lab/Qwen3-4B-DFlash-b16"),
     "Qwen3.5-4B": ("Qwen/Qwen3.5-4B", "z-lab/Qwen3.5-4B-DFlash"),
     "Qwen3.6-27B": ("Qwen/Qwen3.6-27B", "z-lab/Qwen3.6-27B-DFlash"),
+    "Qwen3.6-35B-A3B": ("Qwen/Qwen3.6-35B-A3B", "z-lab/Qwen3.6-35B-A3B-DFlash"),
     "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
     "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
     "Qwen3-VL-32B-Instruct": (
@@ -373,6 +374,13 @@ def compile_qwen3vl_vlm_qpcs(
     logger.info(f"[compile_qwen3vl_tlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
     config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=hf_token)
     is_qwen35 = config.model_type == "qwen3_5"
+    is_qwen35_moe = config.model_type == "qwen3_5_moe"
+    qaic_config = {"target_layer_ids": tlm_target_ids}
+    if is_qwen35_moe:
+        if block_size < 2 or block_size & (block_size - 1):
+            raise ValueError("Qwen3.5-MoE DFlash requires a power-of-two draft block_size >= 2.")
+        if prefill_seq_len < block_size or prefill_seq_len % block_size:
+            raise ValueError(f"Qwen3.5-MoE DFlash requires prefill_seq_len to be a positive multiple of {block_size}.")
     if is_qwen35:
         if prefill_seq_len != QWEN3_5_DFLASH_CHUNK_SIZE:
             logger.warning(
@@ -390,7 +398,7 @@ def compile_qwen3vl_vlm_qpcs(
         kv_offload=True,
         ignore_mismatched_sizes=True,
         token=hf_token,
-        qaic_config={"target_layer_ids": tlm_target_ids},
+        qaic_config=qaic_config,
     )
 
     # DFlashTLMTransform attached fc/hidden_norm but left them random; copy in the real
@@ -421,16 +429,19 @@ def compile_qwen3vl_vlm_qpcs(
         "split_model_io": True,
         "dflash_block_size": block_size,
     }
-    if is_qwen35:
-        # Verification and replay use the same 16-token shape as prefill.
+    if is_qwen35 or is_qwen35_moe:
+        # Hybrid verification and accepted-prefix replay use chunk attention.
         compile_kwargs["prefill_only"] = True
+    if is_qwen35_moe:
+        compile_kwargs["qaic_config"] = qaic_config
+        compile_kwargs["enable_chunking"] = True
     if height is not None:
         compile_kwargs["height"] = height
     if width is not None:
         compile_kwargs["width"] = width
 
     qpc = tlm_qeff.compile(**compile_kwargs)
-    lang_qpc = str(qpc["lang_prefill_qpc_path"] if is_qwen35 else qpc["lang_qpc_path"])
+    lang_qpc = str(qpc["lang_prefill_qpc_path"] if is_qwen35 or is_qwen35_moe else qpc["lang_qpc_path"])
     vision_qpc = str(qpc["vision_qpc_path"])
     logger.info(f"[compile_qwen3vl_tlm] lang_qpc={lang_qpc}  vision_qpc={vision_qpc}")
     return lang_qpc, vision_qpc
