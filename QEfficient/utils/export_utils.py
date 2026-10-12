@@ -13,11 +13,11 @@ from collections import Counter
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import onnx
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
@@ -105,10 +105,10 @@ def build_dynamo_export_kwargs(export_kwargs):
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
-    dynamic_axes: Dict[str, Dict[int, str]],
+    dynamic_axes: dict[str, dict[int, str]],
     model_config=None,
     example_inputs=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
 
@@ -144,7 +144,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
-    observed_dim_values: Dict[str, set[int]] = {}
+    observed_dim_values: dict[str, set[int]] = {}
     if example_inputs is not None:
         for input_name, axes_map in dynamic_axes.items():
             sample = example_inputs.get(input_name)
@@ -154,20 +154,47 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 if axis_idx < sample.ndim:
                     observed_dim_values.setdefault(dim_name, set()).add(int(sample.shape[axis_idx]))
 
-    dim_registry: Dict[str, Any] = {}
+    dim_registry: dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
+            if observed_dim_values.get(dim_name) == {1}:
+                dim_registry[dim_name] = Dim.AUTO
+            elif dim_name == "batch_size":
+                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
+            elif dim_name == "full_batch_size":
+                dim_registry[dim_name] = Dim(
+                    "full_batch_size",
+                    min=batch_min + 1,
+                    max=DYNAMO_DIM_MAX_BATCH_SIZE,
+                )
+            elif "seq_len" in dim_name:
+                dim_registry[dim_name] = Dim("seq_len", min=1, max=max_seq_len)
+            elif "comp_ctx_lengths" in dim_name:
+                dim_registry[dim_name] = Dim(
+                    "comp_ctx_lengths",
+                    min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
+                    max=max_seq_len,
+                )
+            elif "ctx_len" in dim_name:
+                dim_registry[dim_name] = Dim("ctx_len", min=1, max=max_seq_len)
+            elif "sliding_window" in dim_name:
+                dim_registry[dim_name] = Dim(
+                    "sliding_window",
+                    min=1,
+                    max=getattr(model_config, "sliding_window", max_seq_len),
+                )
+            else:
                 dim_registry[dim_name] = Dim(dim_name)
         return dim_registry[dim_name]
 
-    dynamic_shapes: Dict[str, Any] = {}
-    past_keys: Dict[int, Any] = {}
-    past_values: Dict[int, Any] = {}
-    conv_states: Dict[int, Any] = {}
-    recurrent_states: Dict[int, Any] = {}
-    compressed_kv_layers: Dict[int, Any] = {}
-    k_pe_layers: Dict[int, Any] = {}
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    conv_states: dict[int, Any] = {}
+    recurrent_states: dict[int, Any] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -722,7 +749,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
             qeff_model.hash_params["onnx_subfunction_version"] = state["hash_subfunction_version"]
 
 
-def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
+def _save_export_metadata(export_dir: Path, filtered_hash_params: dict):
     """
     Save export metadata to JSON file for reproducibility.
 

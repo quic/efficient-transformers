@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import onnx
@@ -87,7 +87,7 @@ class SplitTensorsTransform(BaseOnnxTransform):
 
     @classmethod
     def apply(
-        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
+        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: dict[str, tuple[TensorProto, str]]
     ) -> None:
         file_name = f"{model_name}_{file_num}.onnx.data"
         mapping[tensor.name] = (tensor, file_name)
@@ -142,7 +142,7 @@ class CustomOpTransform(BaseOnnxTransform):
         return op_applied
 
     @staticmethod
-    def _ensure_opset_imports(container: Union[ModelProto, onnx.FunctionProto], domain: str, version: int) -> None:
+    def _ensure_opset_imports(container: ModelProto | onnx.FunctionProto, domain: str, version: int) -> None:
         if any(opset.domain == domain for opset in container.opset_import):
             return
         container.opset_import.append(onnx.helper.make_opsetid(domain, version))
@@ -365,90 +365,95 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
-        state_rename_map: Dict[str, str] = {}
+        state_rename_map: dict[str, str] = {}
+        remaining_dangling_outputs = set(dangling_retained_outputs)
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
             if fn is None:
                 continue
 
-            # Identify the layer index and cache-state inputs on this call node.
-            layer_idx = None
-            state_inputs: dict[str, str] = {}
+            # Identify cache-state inputs grouped by layer. Dynamo can carry a
+            # prior layer's cache tensor through a later repeated subgraph, so
+            # collecting one layer at a time avoids discarding valid state pairs.
+            state_inputs_by_layer: dict[str, dict[str, str]] = {}
             for inp_name in node.input:
                 match = cls._STATE_INPUT_RE.match(inp_name)
                 if match is None:
                     continue
-                state_kind, idx = match.groups()
-                layer_idx = idx if layer_idx is None else layer_idx
-                if layer_idx != idx:
-                    state_inputs = {}
-                    break
-                if state_kind in state_inputs:
+                state_kind, layer_idx = match.groups()
+                layer_state_inputs = state_inputs_by_layer.setdefault(layer_idx, {})
+                if state_kind in layer_state_inputs:
                     raise ValueError(
                         f"Function call '{node.name or node.op_type}' has multiple "
                         f"inputs for '{state_kind}.{layer_idx}'."
                     )
-                state_inputs[state_kind] = inp_name
+                layer_state_inputs[state_kind] = inp_name
 
-            if layer_idx is None or not state_inputs:
-                continue
+            for layer_idx, state_inputs in state_inputs_by_layer.items():
+                present_states = frozenset(state_inputs)
+                desired_outputs = {state_kind: f"{state_kind}.{layer_idx}_RetainedState" for state_kind in state_inputs}
+                dangling_outputs = {
+                    state_kind: output_name
+                    for state_kind, output_name in desired_outputs.items()
+                    if output_name in remaining_dangling_outputs
+                }
 
-            present_states = frozenset(state_inputs)
-            if present_states not in cls._STATE_PAIRS:
-                if present_states & {"past_key", "past_value"}:
+                # Skip unrelated state-like inputs and layers whose retained
+                # outputs are already produced by the graph.
+                if not dangling_outputs:
+                    continue
+                if present_states not in cls._STATE_PAIRS:
                     raise ValueError(
-                        f"Nested function '{fn.name}' has incomplete KV inputs for layer {layer_idx}: "
+                        f"Nested function '{fn.name}' has incomplete cache inputs for layer {layer_idx}: "
                         f"found {sorted(present_states)}."
                     )
+
+                if set(dangling_outputs) != set(desired_outputs):
+                    raise ValueError(
+                        f"Nested function '{fn.name}' has partially dangling retained-state outputs for layer "
+                        f"{layer_idx}: dangling={sorted(dangling_outputs.values())}, "
+                        f"expected={sorted(desired_outputs.values())}."
+                    )
+
+                scatter_outputs = cls._resolve_state_scatter_outputs(fn, node, layer_idx, set(state_inputs))
+                if scatter_outputs is None:
+                    continue
+
+                # Expose scatter outputs in the function's output list, rename
+                # cache inputs and append retained-state output names to the
+                # call node. Both writers are resolved before this block, so
+                # graph rewiring is atomic.
+                for state_kind, desired_output in desired_outputs.items():
+                    scatter_output = scatter_outputs[state_kind]
+                    if scatter_output not in fn.output:
+                        fn.output.append(scatter_output)
+                        changed = True
+
+                    retained_input = state_inputs[state_kind]
+                    plain_input = f"{state_kind}.{layer_idx}"
+                    if retained_input.endswith("_RetainedState"):
+                        state_rename_map[retained_input] = plain_input
+
+                    if desired_output not in node.output:
+                        node.output.append(desired_output)
+                        changed = True
+                    remaining_dangling_outputs.discard(desired_output)
+        retained_output_names = {output.name for output in graph.output if output.name.endswith("_RetainedState")}
+        for graph_input in graph.input:
+            match = cls._STATE_INPUT_RE.match(graph_input.name)
+            if match is None or not graph_input.name.endswith("_RetainedState"):
                 continue
+            if graph_input.name in retained_output_names:
+                state_kind, layer_idx = match.groups()
+                state_rename_map[graph_input.name] = f"{state_kind}.{layer_idx}"
 
-            desired_outputs = {state_kind: f"{state_kind}.{layer_idx}_RetainedState" for state_kind in state_inputs}
-            dangling_outputs = {
-                state_kind: output_name
-                for state_kind, output_name in desired_outputs.items()
-                if output_name in dangling_retained_outputs
-            }
-            # Skip layers whose retained-state outputs are not dangling —
-            # either the graph is already correctly wired or a previous call
-            # to this transform already fixed them.
-            if not dangling_outputs:
-                continue
-
-            if set(dangling_outputs) != set(desired_outputs):
-                raise ValueError(
-                    f"Nested function '{fn.name}' has partially dangling retained-state outputs for layer "
-                    f"{layer_idx}: dangling={sorted(dangling_outputs.values())}, "
-                    f"expected={sorted(desired_outputs.values())}."
-                )
-
-            scatter_outputs = cls._resolve_state_scatter_outputs(fn, node, layer_idx, set(state_inputs))
-            if scatter_outputs is None:
-                continue
-
-            # Expose scatter outputs in the function's output list, rename cache
-            # inputs and append retained-state output names to the call node.
-            # Both writers are resolved before this block, so graph rewiring is atomic.
-            for state_kind, desired_output in desired_outputs.items():
-                scatter_output = scatter_outputs[state_kind]
-                if scatter_output not in fn.output:
-                    fn.output.append(scatter_output)
-                    changed = True
-
-                retained_input = state_inputs[state_kind]
-                plain_input = f"{state_kind}.{layer_idx}"
-                if retained_input.endswith("_RetainedState"):
-                    state_rename_map[retained_input] = plain_input
-
-                if desired_output not in node.output:
-                    node.output.append(desired_output)
-                    changed = True
         if state_rename_map:
             changed |= cls._rename_graph_inputs_bulk(graph, state_rename_map)
         return changed
 
     @staticmethod
-    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: Dict[str, str]) -> bool:
+    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: dict[str, str]) -> bool:
         if not rename_map:
             return False
         changed = False
@@ -496,13 +501,13 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
                     yield from cls._iter_all_nodes(attr.g.node)
 
     @staticmethod
-    def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:
+    def _rename_op_types(nodes, old_to_new: dict[str, str]) -> None:
         for node in RenameRepeatedSubgraphTransform._iter_all_nodes(nodes):
             if node.op_type in old_to_new:
                 node.op_type = old_to_new[node.op_type]
 
     @classmethod
-    def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
+    def apply(cls, model: ModelProto, target_classnames: list[str] | None = None, **kwargs) -> bool:
         target_classnames = [name for name in (target_classnames or []) if name]
         if not target_classnames:
             logger.warning(
@@ -566,7 +571,7 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
 
 class AdapterWeightsToInputsTransform(BaseOnnxTransform):
     @classmethod
-    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
+    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> tuple[onnx.ModelProto, bool]:
         transformed = False
         removed_initializers = []
 
@@ -726,8 +731,8 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
 
     @classmethod
     def _find_reduce_sum_axes_inputs(
-        cls, function: onnx.FunctionProto, function_inputs: List[str]
-    ) -> Dict[str, List[onnx.NodeProto]]:
+        cls, function: onnx.FunctionProto, function_inputs: list[str]
+    ) -> dict[str, list[onnx.NodeProto]]:
         """Return formal inputs used only as ReduceSum axes inside ``function``.
 
         If a formal input is consumed by any other node or by any ReduceSum input
@@ -735,7 +740,7 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
         graph semantics. Such inputs are excluded.
         """
         formal_inputs = set(function_inputs)
-        axes_inputs: Dict[str, List[onnx.NodeProto]] = {}
+        axes_inputs: dict[str, list[onnx.NodeProto]] = {}
         unsafe_inputs = set()
 
         for node in function.node:
@@ -752,7 +757,7 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
         return axes_inputs
 
     @staticmethod
-    def _find_graph_call_sites(model: ModelProto, function: onnx.FunctionProto) -> List[onnx.NodeProto]:
+    def _find_graph_call_sites(model: ModelProto, function: onnx.FunctionProto) -> list[onnx.NodeProto]:
         """Find top-level graph nodes that call ``function``."""
         return [node for node in model.graph.node if node.op_type == function.name and node.domain == function.domain]
 
@@ -771,7 +776,7 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
         return False
 
     @classmethod
-    def _collect_graph_constants(cls, graph: onnx.GraphProto) -> Dict[str, TensorProto]:
+    def _collect_graph_constants(cls, graph: onnx.GraphProto) -> dict[str, TensorProto]:
         """Collect graph-scope constants addressable by value name.
 
         This supports the common exported ``Constant -> FunctionCall`` form and
@@ -790,8 +795,8 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
 
     @classmethod
     def _resolve_shared_axes_tensor(
-        cls, call_sites: List[onnx.NodeProto], constants_by_name: Dict[str, TensorProto], formal_index: int
-    ) -> Optional[TensorProto]:
+        cls, call_sites: list[onnx.NodeProto], constants_by_name: dict[str, TensorProto], formal_index: int
+    ) -> TensorProto | None:
         """Return the shared integer axes tensor passed by every call site.
 
         ``None`` means at least one call site is dynamic, missing the argument,
@@ -818,7 +823,7 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
         return shared_tensor
 
     @classmethod
-    def _to_integer_axes_value(cls, tensor: TensorProto) -> Optional[np.ndarray]:
+    def _to_integer_axes_value(cls, tensor: TensorProto) -> np.ndarray | None:
         """Convert a TensorProto to a valid ReduceSum axes value, or ``None``.
 
         Valid axes are scalar or 1-D integer tensors. Empty tensors and non-integer
@@ -885,7 +890,7 @@ class LocalizeFunctionReduceSumAxesTransform(BaseOnnxTransform):
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
-    def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
+    def __init__(self, transforms: list[type[BaseOnnxTransform]]):
         self.transforms = transforms
 
     def apply(
@@ -893,16 +898,16 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         model: ModelProto,
         *,
         model_name: str = "",
-        onnx_base_dir: Optional[str] = None,
+        onnx_base_dir: str | None = None,
         file_chunk_size: int = FILE_CHUNK_SIZE_DEFAULT,
         size_threshold: int = SIZE_THRESHOLD_DEFAULT,
         **kwargs,
-    ) -> Tuple[ModelProto, bool]:
+    ) -> tuple[ModelProto, bool]:
         if not self.transforms:
             return model, False
 
         # Same logic as before, but replace `transforms` with `self.transforms`
-        mapping: Dict[str, Tuple[TensorProto, str]] = {}
+        mapping: dict[str, tuple[TensorProto, str]] = {}
         requested = set(self.transforms)
         applied = {t: False for t in requested}
         f16_applied = False
