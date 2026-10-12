@@ -23,8 +23,6 @@ import numpy as np
 import pytest
 import requests
 import torch
-import io
-import requests
 from PIL import Image
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 

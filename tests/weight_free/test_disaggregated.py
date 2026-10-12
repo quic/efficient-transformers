@@ -10,13 +10,13 @@
 from __future__ import annotations
 
 import copy
+import io
 from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
-import io
 import requests
+import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
