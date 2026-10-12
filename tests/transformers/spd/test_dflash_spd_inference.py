@@ -47,6 +47,26 @@ EOS_TOKEN_ID = 1
 MASK_TOKEN_ID = 2
 
 
+@pytest.mark.parametrize("config", [{}, {"dflash_config": {}}], ids=["missing-block-size", "empty-dflash-config"])
+def test_get_dflash_block_size_rejects_missing_value(config):
+    from examples.performance.dflash import utils
+
+    with pytest.raises(ValueError, match="block_size >= 2"):
+        utils.get_dflash_block_size(config)
+
+
+@pytest.mark.parametrize("block_size", [None, "16", 16.0, -1, 0, 1])
+@pytest.mark.parametrize("nested", [False, True], ids=["top-level", "nested"])
+def test_get_dflash_block_size_rejects_invalid_value(block_size, nested):
+    from examples.performance.dflash import utils
+
+    config = {"block_size": block_size}
+    if nested:
+        config = {"dflash_config": config}
+    with pytest.raises(ValueError, match="block_size >= 2"):
+        utils.get_dflash_block_size(config)
+
+
 @pytest.mark.parametrize("ctx_len", [4096, 8192])
 def test_qwen35_compile_accepts_context_larger_than_draft_window(monkeypatch, ctx_len):
     from examples.performance.dflash import utils
