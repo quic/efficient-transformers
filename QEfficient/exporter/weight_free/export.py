@@ -107,6 +107,19 @@ def _prune_unused_fake_initializers(onnx_program) -> None:
             del initializers[name]
 
 
+def _materialize_computed_initializers(onnx_program, qeff_model) -> None:
+    """Materialize model-generated constants before serializing a meta graph."""
+    from torch.onnx._internal.exporter._core import TorchTensor
+
+    get_initializers = getattr(qeff_model.model, "get_weightfree_computed_initializers", None)
+    if not callable(get_initializers):
+        return
+    for name, value in get_initializers().items():
+        initializer = onnx_program.model.graph.initializers.get(name)
+        if initializer is not None:
+            initializer.const_value = TorchTensor(value.detach().cpu().contiguous(), name=name)
+
+
 def _prepare_checkpoint_for_weight_free_export(
     qeff_model,
     model_ref: str,
@@ -235,6 +248,7 @@ def export_weight_free_onnx(
         qeff_model=meta_qeff_model,
     )
     _prune_unused_fake_initializers(onnx_program)
+    _materialize_computed_initializers(onnx_program, meta_qeff_model)
     onnx_program.save(str(onnx_path))
     save_weight_spec(resolve_weight_spec_path(onnx_path), spec)
 

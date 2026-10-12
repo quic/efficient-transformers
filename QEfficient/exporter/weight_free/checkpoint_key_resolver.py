@@ -38,6 +38,7 @@ _COMPUTED_INITIALIZER_NAMES = {
     "original_inv_freq",
     "embed_positions",
     "embed_scale",
+    "_qeff_conv_positions",
 }
 
 
@@ -185,12 +186,11 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     promoted_inputs: List[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
-        if name not in model_names:
-            continue
-
         onnx_name = tied_weight_map.get(name, name)
         checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
         if checkpoint_key is None:
+            if name not in model_names:
+                continue
             if _is_computed_initializer(onnx_name):
                 continue
             raise ValueError(

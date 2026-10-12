@@ -142,9 +142,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
                 dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
             elif "seq_len" in dim_name:
-                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                seq_min = 1 if model_type in {"qwen4_exp", "qwen4_exp_text"} else 2
+                dim_registry[dim_name] = Dim("seq_len", min=seq_min, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif "pooled_ctx_len" in dim_name:
+                dim_registry[dim_name] = Dim("pooled_ctx_len", min=2, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
             elif "sliding_window" in dim_name:
@@ -175,6 +178,28 @@ def convert_dynamic_axes_to_dynamic_shapes(
             k_pe_layers[int(input_name.split(".")[1])] = resolved
         else:
             dynamic_shapes[input_name] = resolved
+
+    # Qwen4-Exp exposes a heterogeneous retained-state ABI.  ONNX input names
+    # are flattened (for example ``gdn_conv_state.0`` and
+    # ``qsa_key_state.3``), while the model.forward signature still receives a
+    # nested ``past_key_values`` list.  Reconstruct the nested shape structure
+    # required by torch.export from the layer suffixes, preserving the order in
+    # which get_onnx_retained_state_specs emitted each layer's states.
+    if model_type in {"qwen4_exp", "qwen4_exp_text"}:
+        retained_by_layer: Dict[int, list] = {}
+        retained_names = []
+        for input_name in dynamic_axes:
+            match = re.search(r"\.(\d+)$", input_name)
+            if match and input_name not in {"input_ids", "position_ids", "ngram_embeddings"}:
+                retained_names.append(input_name)
+        for input_name in retained_names:
+            layer_idx = int(input_name.rsplit(".", 1)[1])
+            retained_by_layer.setdefault(layer_idx, []).append(dynamic_shapes.pop(input_name))
+        if retained_by_layer:
+            max_layer = max(retained_by_layer)
+            dynamic_shapes["past_key_values"] = [
+                retained_by_layer.get(layer_idx, []) for layer_idx in range(max_layer + 1)
+            ]
 
     if past_keys or past_values:
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
