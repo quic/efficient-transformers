@@ -17,9 +17,9 @@ import os
 import re
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from xml.parsers import expat
 
 try:
     from .model_age_utils import MODEL_AGE_UNKNOWN
@@ -117,10 +117,43 @@ def extract_qaic_sdk_version(xml_path: str) -> str:
     if not os.path.exists(xml_path):
         return "N/A"
     try:
-        root = ET.parse(xml_path).getroot()
-        base_version = root.find(".//base_version")
-        if base_version is not None and base_version.text:
-            return base_version.text.strip()
+        parser = expat.ParserCreate()
+        parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+
+        def reject_doctype(*_args):
+            raise ValueError("DTD declarations are forbidden in SDK XML")
+
+        def reject_external_entity(*_args):
+            raise ValueError("External entities are forbidden in SDK XML")
+
+        parser.StartDoctypeDeclHandler = reject_doctype
+        parser.ExternalEntityRefHandler = reject_external_entity
+        element_text = []
+        capture_depth = 0
+
+        def start_element(name, _attrs):
+            nonlocal capture_depth
+            if capture_depth or name == "base_version":
+                capture_depth += 1
+
+        def character_data(data):
+            if capture_depth:
+                element_text.append(data)
+
+        def end_element(_name):
+            nonlocal capture_depth
+            if capture_depth:
+                capture_depth -= 1
+
+        parser.StartElementHandler = start_element
+        parser.CharacterDataHandler = character_data
+        parser.EndElementHandler = end_element
+        with open(xml_path, "rb") as xml_file:
+            parser.ParseFile(xml_file)
+        if element_text:
+            return "".join(element_text).strip()
+    except expat.ExpatError:
+        return "N/A"
     except Exception:
         return "N/A"
     return "N/A"

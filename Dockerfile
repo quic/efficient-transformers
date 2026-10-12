@@ -36,6 +36,11 @@ RUN pip install datasets==2.17.0 fsspec==2023.10.0 multidict==6.0.5 sentencepiec
 RUN python3.12 -m pip install .
 WORKDIR /app/qefficient-library
 
+# Run the image as an unprivileged user after installation is complete.
+RUN useradd --create-home --shell /bin/bash qefficient && \
+    chown -R qefficient:qefficient /app
+USER qefficient
+
 # Set the environment variable for the model card name and token ID
 ENV HF_HOME = "/app/qefficient-library/docs"
 ENV MODEL_NAME = ""
