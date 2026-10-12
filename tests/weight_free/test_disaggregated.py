@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+import io
+import requests
 from PIL import Image
 from transformers import (
     AutoConfig,
@@ -255,12 +257,19 @@ def _load_vlm_hf_reference(model_id: str):
 
 def _prepare_vlm_inputs(processor) -> dict:
     process_vision_info = pytest.importorskip("qwen_vl_utils").process_vision_info
+    response = requests.get(VLM_IMAGE_URL, timeout=30)
+    response.raise_for_status()
+    image = Image.open(io.BytesIO(response.content)).convert("RGB")
+    image = image.resize(
+        (VLM_IMAGE_WIDTH, VLM_IMAGE_HEIGHT),
+        Image.Resampling.BICUBIC,
+    )
     messages = [
         [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": VLM_IMAGE_URL},
+                    {"type": "image", "image": image},
                     {"type": "text", "text": VLM_PROMPT},
                 ],
             }
@@ -312,7 +321,13 @@ def _run_vlm_disaggregated_generation(
         name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
         for name, value in processor_inputs.items()
     }
-
+    model_type = getattr(qeff_model.model.config, "model_type", None)
+    if model_type == "qwen3_vl_moe":
+        inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=inputs,
+            prefill_seq_len=VLM_PREFILL_SEQ_LEN,
+            batch_size=1,
+        )
     pad_token_id = processor.tokenizer.pad_token_id or 1
     input_ids_length = inputs["input_ids"].shape[1]
     num_chunks = -(input_ids_length // -VLM_PREFILL_SEQ_LEN)
@@ -486,7 +501,8 @@ def test_weight_free_vlm_disaggregated_prefill_and_decode(
         "split_model_io": True,
         "use_onnx_subfunctions": True,
     }
-    if model_type == "gemma4_moe":
+    config_model_type = getattr(qeff_model.model.config, "model_type", None)
+    if config_model_type == "gemma4":
         common.pop("height")
         common.pop("width")
     sessions = []

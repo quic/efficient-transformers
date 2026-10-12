@@ -33,6 +33,8 @@ from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import (
     _KNOWN_DECODER_LAYER_ATTR_PATHS,
     _KNOWN_DECODER_LAYER_SUFFIXES,
+    DYNAMO_DIM_MAX_BATCH_SIZE,
+    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import QEFFLogger, log_api_arguments

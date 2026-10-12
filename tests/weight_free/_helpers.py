@@ -26,7 +26,6 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokeni
 
 from QEfficient.exporter.weight_free import load_weight_free_ort_inputs
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 
 # ---------------------------------------------------------------------------
 # Worker-level model cache
@@ -103,15 +102,6 @@ WEIGHT_FREE_VLM_MODEL_PARAMS = [
         marks=pytest.mark.xdist_group(name="qaic-runtime-qwen3-vl-moe"),
         id="qwen3-vl-moe",
     ),
-    pytest.param(
-        "gemma4_moe",
-        "tiny-random/gemma-4-moe",
-        marks=pytest.mark.xdist_group(name="qaic-runtime-gemma-4-moe"),
-        id="gemma-4-moe",
-    ),
-]
-
-WEIGHT_FREE_VLM_MODEL_PARAMS = [
     pytest.param(
         "gemma4_moe",
         "tiny-random/gemma-4-moe",

@@ -23,6 +23,8 @@ import numpy as np
 import pytest
 import requests
 import torch
+import io
+import requests
 from PIL import Image
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 
@@ -88,7 +90,7 @@ def _prepare_vlm_inputs(processor : AutoProcessor,) -> dict:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": VLM_IMAGE_URL},
+                    {"type": "image", "image": image},
                     {"type": "text", "text": VLM_PROMPT},
                 ],
             }
