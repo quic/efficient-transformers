@@ -1420,7 +1420,9 @@ class QEFFBaseModel(ABC):
             any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
             for key, value in custom_io.items()
         )
-        custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
+        custom_io_for_compiler = custom_io
+        if model_in_bfloat16 and pkv_in_bfloat16:
+            custom_io_for_compiler = {key: value for key, value in custom_io.items() if "bfloat16" not in value} or None
 
         # MDP partition config selection (highest priority first):
         #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
@@ -1480,7 +1482,7 @@ class QEFFBaseModel(ABC):
         compile_hash_params = {
             "command": command,
             "specializations": specializations,
-            "custom_io": custom_io,
+            "custom_io": custom_io_for_compiler,
             "mdp_ts_num_devices": mdp_ts_num_devices,
             "mdp_num_partitions": mdp_num_partitions,
             "mdp_strategy": mdp_strategy.value,
@@ -1549,17 +1551,12 @@ class QEFFBaseModel(ABC):
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
-        if custom_io is not None:
+        if custom_io_for_compiler is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
-                for io_name, dtype in custom_io.items():
+                for io_name, dtype in custom_io_for_compiler.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            if model_in_bfloat16 and pkv_in_bfloat16:
-                logger.warning(
-                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
-                )
-            else:
-                command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         if artifacts:
