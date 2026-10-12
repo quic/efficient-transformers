@@ -322,7 +322,7 @@ class QEffQwen3VLMoeVisionAttention(Qwen3VLMoeVisionAttention):
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         if position_embeddings is None:
-            logger.warning_once(
+            logger.warning(
                 "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
                 "through `rotary_pos_emb` (2D tensor of RoPE theta values), to using externally computed "
                 "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.54 `rotary_pos_emb` will be "
@@ -1223,7 +1223,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 )
             else:
                 if vision_size * f > user_vision_size:
-                    logger.warning_once(
+                    logger.warning(
                         f"Computed vision_size of {vision_size * f} tokens "
                         f"(vision_size={vision_size}, num_frames={f}) for image resolution "
                         f"(width={w}, height={h}) exceeds the provided "

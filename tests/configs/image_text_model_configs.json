@@ -106,6 +106,7 @@
     },
     {
       "model_name": "tiny-random/gemma-3",
+      "known_dummy_runtime_parity_issue": "The QAIC backend returns all-zero token IDs for the dummy Gemma3 VLM QPC, while HF PyTorch, QEff PyTorch, and ONNXRuntime agree.",
       "model_type": "gemma3",
       "supports_blocking": false,
       "batch_size": 1,
