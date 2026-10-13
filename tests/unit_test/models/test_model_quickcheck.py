@@ -989,6 +989,9 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
         if layer.layer_type == "linear_attention":
             layer.linear_attn.dflash_matrix_solve = matrix_solve
     inputs, output_names, dynamic_axes = _qwen_export_io(qeff, prefill_seq_len=8)
+    inputs["num_logits_to_keep"] = torch.zeros(1, 1, dtype=torch.int64)
+    dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
+    dynamic_axes["logits"] = {0: "batch_size", 1: "num_logits_to_keep"}
     for i, kind in enumerate(qeff.model.config.text_config.layer_types):
         if kind == "full_attention":
             inputs["past_key_values"][i] = [
@@ -1025,6 +1028,8 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
         positions[:, :, valid:] = -1
         inputs["position_ids"] = positions
         inputs["cache_commit"] = torch.tensor([commit])
+        num_logits = 1 if start == 0 else length
+        inputs["num_logits_to_keep"] = torch.zeros(num_logits, 1, dtype=torch.int64)
         inputs["past_key_values"] = cache
         feed = {name: value.copy() for name, value in _flatten_qwen_ort_inputs(inputs, session_inputs, decoder).items()}
         if start:

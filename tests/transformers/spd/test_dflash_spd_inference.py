@@ -34,12 +34,7 @@ from QEfficient.generation.dflash_generation import (
 VOCAB_SIZE = 64
 HIDDEN_SIZE = 64
 BLOCK_SIZE = 4  # DFlash decode block size; also the DLM's prefill_seq_len
-# TLM prompt-chunk size for prefill. Must differ from BLOCK_SIZE: the TLM's decode
-# specialization seq_len is always overridden to BLOCK_SIZE (see
-# build_decode_specialization's dflash_tlm branch), so a prefill spec with the same
-# seq_len would be indistinguishable from it and the AIC compiler would reject the
-# network ("No input that uniquely identifies specialization"). A multiple of
-# BLOCK_SIZE keeps the prefill loop's sub-block splitting exact (no remainder).
+# Different prefill and verification lengths exercise buffer resizing.
 PROMPT_CHUNK_SIZE = 2 * BLOCK_SIZE
 CTX_LEN = 32
 PAD_TOKEN_ID = 0

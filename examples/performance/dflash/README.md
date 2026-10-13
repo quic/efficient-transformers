@@ -121,6 +121,13 @@ python basic_inference_vision.py --model_name gemma-4-31B-it \
 
 ## Common flags
 
+DFlash targets use the existing SpD `num_logits_to_keep` input to project only
+the last valid position during prompt prefill. Verification still predicts every
+block position, and all hidden states needed by the DLM are preserved. This
+applies automatically to Qwen3, Llama, Gemma4, Qwen3-VL, Qwen3.5, and Qwen3.5-MoE.
+Existing TLM QPCs remain usable but need re-export/compilation for this change;
+DLM and vision QPCs are unchanged.
+
 | Flag | Default | Notes |
 |---|---|---|
 | `--tlm_devices` | `0,1,2,3` | TLM device IDs |

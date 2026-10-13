@@ -76,6 +76,7 @@ from QEfficient.transformers.moe import (
     silu_glu_mlp,
 )
 from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states, dflash_chunk_gated_delta_scan
+from QEfficient.transformers.spd.spd_transform_forward import filter_hidden_states
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -1597,6 +1598,7 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: torch.LongTensor | None = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
@@ -1617,6 +1619,9 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
         if getattr(self.model, "target_layer_ids", None):
             hidden_states = outputs.last_hidden_state
+            if num_logits_to_keep is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                hidden_states = filter_hidden_states(hidden_states, text_position_ids, num_logits_to_keep)
         elif position_ids is None:
             hidden_states = outputs.last_hidden_state[:, -1:, :]
         else:
@@ -1961,6 +1966,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
         cache_commit: torch.Tensor | None = None,
+        num_logits_to_keep: torch.LongTensor | None = None,
     ):
         if getattr(self.language_model, "target_layer_ids", None) and is_layerwise_active():
             raise ValueError("Qwen3.5-MoE DFlash requires the full target model; layerwise execution is unsupported.")
@@ -2018,7 +2024,10 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 cache_commit=cache_commit,
             )
             if getattr(self.language_model, "target_layer_ids", None):
-                logits = self.model.lm_head(outputs.last_hidden_state).float()
+                hidden_states = outputs.last_hidden_state
+                if num_logits_to_keep is not None:
+                    hidden_states = filter_hidden_states(hidden_states, position_ids[0], num_logits_to_keep)
+                logits = self.model.lm_head(hidden_states).float()
                 image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
                 return (
                     logits.argmax(dim=-1).to(torch.int32),
@@ -2243,6 +2252,9 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         language_model = getattr(getattr(self, "model", None), "language_model", None)
         layers = getattr(language_model, "layers", ())
+        if getattr(language_model, "target_layer_ids", None):
+            # Hybrid verification and replay retain the language model's chunk width.
+            compiler_options.pop("dflash_block_size", None)
         blocking_config = None
         for layer in layers:
             attention = getattr(layer, "self_attn", None)
@@ -2363,12 +2375,22 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         lang = []
         if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
             for comp_ctx in comp_ctx_lengths_prefill or []:
-                lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
+                prefill_spec = _build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx)
+                if getattr(language_model, "target_layer_ids", None):
+                    prefill_spec["num_logits_to_keep"] = 1
+                lang.append(prefill_spec)
             for comp_ctx in comp_ctx_lengths_decode or []:
-                lang.append(_build_lang_spec(decode_seq_len, comp_ctx_len=comp_ctx))
+                decode_spec = _build_lang_spec(decode_seq_len, comp_ctx_len=comp_ctx)
+                if getattr(language_model, "target_layer_ids", None):
+                    decode_spec["num_logits_to_keep"] = decode_seq_len
+                lang.append(decode_spec)
         else:
-            lang.append(_build_lang_spec(prefill_seq_len))
-            lang.append(_build_lang_spec(decode_seq_len))
+            prefill_spec = _build_lang_spec(prefill_seq_len)
+            decode_spec = _build_lang_spec(decode_seq_len)
+            if getattr(language_model, "target_layer_ids", None):
+                prefill_spec["num_logits_to_keep"] = 1
+                decode_spec["num_logits_to_keep"] = decode_seq_len
+            lang = [prefill_spec, decode_spec]
 
         if kv_offload:
             return {"vision": vision, "lang": lang}, compiler_options

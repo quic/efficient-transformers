@@ -49,6 +49,7 @@ from QEfficient.transformers.moe import (
     silu_glu_mlp,
 )
 from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
+from QEfficient.transformers.spd.spd_transform_forward import filter_hidden_states
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -1114,6 +1115,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
+        num_logits_to_keep: torch.LongTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
@@ -1129,8 +1131,11 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
-        if not getattr(self.model, "target_layer_ids", None):
+        # DFlash selects one prefill position or the full verification block.
+        if getattr(self.model, "target_layer_ids", None):
+            if num_logits_to_keep is not None:
+                hidden_states = filter_hidden_states(hidden_states, position_ids, num_logits_to_keep)
+        else:
             if position_ids is not None:
                 logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
                 hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
@@ -1170,6 +1175,7 @@ class QEffGemma4DecoderWrapper(nn.Module):
         mm_token_type_ids=None,
         batch_index: torch.LongTensor | None = None,
         comp_ctx_lengths: list[int] | None = None,
+        num_logits_to_keep: torch.LongTensor | None = None,
         **kwargs,
     ):
         del kwargs
@@ -1234,9 +1240,11 @@ class QEffGemma4DecoderWrapper(nn.Module):
             )
         finally:
             _DISABLE_EXPORT_FP16_CLAMP = restore_disable_clamp
-        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
+        # DFlash selects one prefill position or the full verification block.
         if getattr(self.language_model, "target_layer_ids", None):
             hidden_states = outputs[0]
+            if num_logits_to_keep is not None:
+                hidden_states = filter_hidden_states(hidden_states, position_ids, num_logits_to_keep)
         else:
             logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
@@ -1384,6 +1392,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
+        dflash_block_size = None
+        if getattr(self.model.language_model, "target_layer_ids", None):
+            dflash_block_size = compiler_options.pop("dflash_block_size", None)
         user_vision_size = compiler_options.pop("vision_size", None)
         if user_vision_size:
             if user_vision_size >= ctx_len:
@@ -1403,6 +1414,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
+            if dflash_block_size is not None:
+                spec["num_logits_to_keep"] = 1
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
             if continuous_batching:
@@ -1416,12 +1429,14 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         def build_lang_decode_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "seq_len": compiler_options.pop("dflash_block_size", None) or "1",
+                "seq_len": dflash_block_size or "1",
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
+            if dflash_block_size is not None:
+                spec["num_logits_to_keep"] = dflash_block_size
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
             if continuous_batching:

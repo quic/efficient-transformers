@@ -106,6 +106,12 @@ def _prepare_text_inputs(tokenizer, prompt_text: str, prompt_chunk_size: int) ->
     return inputs["input_ids"], position_ids
 
 
+def _dflash_logit_selection_inputs(tlm_session, num_logits: int) -> dict[str, np.ndarray]:
+    if "num_logits_to_keep" not in getattr(tlm_session, "input_names", ()):
+        return {}
+    return {"num_logits_to_keep": np.zeros((num_logits, 1), dtype=np.int64)}
+
+
 def _run_spd_core(
     *,
     input_ids: np.ndarray,
@@ -179,7 +185,8 @@ def _run_spd_core(
             continue
 
         last_prefill_pos_in_chunk = int(flat_pos_chunk.argmax())
-        new_tlm_token = tlm_logits[:, last_prefill_pos_in_chunk]
+        logit_index = 0 if tlm_logits.shape[1] == 1 else last_prefill_pos_in_chunk
+        new_tlm_token = tlm_logits[:, logit_index]
         last_sub_start = (last_prefill_pos_in_chunk // block_size) * block_size
 
         for sub_start in range(0, last_sub_start, block_size):
@@ -311,7 +318,10 @@ def run_spd_inference_single(
     generated_ids = _initialize_generated_ids(batch_size, ctx_len, input_ids.shape[1], tokenizer.pad_token_id)
     metrics = SpecDecodingMetrics(block_size=block_size)
 
-    tlm_session.set_buffers({"logits": np.zeros((batch_size, prompt_chunk_size), dtype=np.int32)})
+    prefill_selection = _dflash_logit_selection_inputs(tlm_session, 1)
+    decode_selection = _dflash_logit_selection_inputs(tlm_session, block_size)
+    prefill_logits = 1 if prefill_selection else prompt_chunk_size
+    tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
     tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
 
     def tlm_prefill(chunk_start, chunk_end):
@@ -319,6 +329,7 @@ def run_spd_inference_single(
             {
                 "input_ids": input_ids[:, chunk_start:chunk_end],
                 "position_ids": position_ids[:, chunk_start:chunk_end],
+                **prefill_selection,
             }
         )
         return outputs["logits"], outputs["hidden_states"]
@@ -328,7 +339,7 @@ def run_spd_inference_single(
         tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, block_size, hidden_size), dtype=np.float32)})
 
     def tlm_decode(draft_ids, decode_position_ids):
-        outputs = tlm_session.run({"input_ids": draft_ids, "position_ids": decode_position_ids})
+        outputs = tlm_session.run({"input_ids": draft_ids, "position_ids": decode_position_ids, **decode_selection})
         return outputs["logits"], outputs["hidden_states"]
 
     eos_token_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
@@ -394,6 +405,9 @@ def run_spd_inference_gemma4(
     generated_ids = _initialize_generated_ids(batch_size, ctx_len, padded_ids.shape[1], tokenizer.pad_token_id)
     metrics = SpecDecodingMetrics(block_size=block_size)
     tlm_hidden_name = "target_hidden_states" if "target_hidden_states" in tlm_session.output_names else "hidden_states"
+    prefill_selection = _dflash_logit_selection_inputs(tlm_session, 1)
+    decode_selection = _dflash_logit_selection_inputs(tlm_session, block_size)
+    prefill_logits = 1 if prefill_selection else prompt_chunk_size
 
     tlm_inputs = set(tlm_session.input_names)
     tlm_needs_vision = "vision_embeds" in tlm_inputs
@@ -420,9 +434,9 @@ def run_spd_inference_gemma4(
 
     tlm_image_idx = np.array([[0]], dtype=np.int64)
 
-    def tlm_run(ids, model_position_ids, mm=None):
+    def tlm_run(ids, model_position_ids, selection, mm=None):
         nonlocal tlm_image_idx
-        feeds = {"input_ids": ids, "position_ids": model_position_ids}
+        feeds = {"input_ids": ids, "position_ids": model_position_ids, **selection}
         if tlm_needs_image_idx:
             feeds["image_idx"] = tlm_image_idx
         if tlm_needs_mm_ids:
@@ -441,9 +455,9 @@ def run_spd_inference_gemma4(
         return token_ids, outputs[tlm_hidden_name]
 
     if tlm_logits_is_full:
-        tlm_session.set_buffers({"logits": np.zeros((batch_size, prompt_chunk_size, vocab_size), dtype=np.float32)})
+        tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits, vocab_size), dtype=np.float32)})
     else:
-        tlm_session.set_buffers({"logits": np.zeros((batch_size, prompt_chunk_size), dtype=np.int32)})
+        tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
     tlm_session.set_buffers({tlm_hidden_name: np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
 
     def tlm_prefill(chunk_start, chunk_end):
@@ -451,6 +465,7 @@ def run_spd_inference_gemma4(
         return tlm_run(
             padded_ids[:, chunk_start:chunk_end],
             position_ids[:, chunk_start:chunk_end],
+            prefill_selection,
             mm=mm_chunk,
         )
 
@@ -464,7 +479,7 @@ def run_spd_inference_gemma4(
             tlm_session.skip_buffers(["vision_embeds"])
 
     def tlm_decode(draft_ids, decode_position_ids):
-        return tlm_run(draft_ids, decode_position_ids)
+        return tlm_run(draft_ids, decode_position_ids, decode_selection)
 
     eos_token_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
     return _run_spd_core(
@@ -786,7 +801,10 @@ def run_spd_inference_qwen3_vl(
     lang_extra = {"image_idx": np.array([[0]], dtype=np.int64)}
     if is_qwen35:
         lang_extra["cache_commit"] = np.ones(1, dtype=np.int64)
-    tlm_session.set_buffers({"logits": np.zeros((batch_size, prompt_chunk_size), dtype=np.int32)})
+    prefill_selection = _dflash_logit_selection_inputs(tlm_session, 1)
+    decode_selection = _dflash_logit_selection_inputs(tlm_session, target_seq_len)
+    prefill_logits = 1 if prefill_selection else prompt_chunk_size
+    tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
     tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
 
     def tlm_prefill(chunk_start, chunk_end):
@@ -794,6 +812,7 @@ def run_spd_inference_qwen3_vl(
             {
                 "input_ids": input_ids_np[:, chunk_start:chunk_end],
                 "position_ids": position_ids_np[:, :, chunk_start:chunk_end],
+                **prefill_selection,
                 **lang_extra,
             }
         )
@@ -816,7 +835,7 @@ def run_spd_inference_qwen3_vl(
             draft_ids = np.pad(draft_ids, ((0, 0), (0, padding)), constant_values=tokenizer.pad_token_id)
             positions = np.pad(positions, ((0, 0), (0, 0), (0, padding)), constant_values=-1)
             positions[:, :, valid_tokens:] = -1
-        return {"input_ids": draft_ids, "position_ids": positions, **lang_extra}
+        return {"input_ids": draft_ids, "position_ids": positions, **decode_selection, **lang_extra}
 
     def tlm_decode(draft_ids, decode_position_ids):
         outputs = tlm_session.run(decode_inputs(draft_ids, decode_position_ids, block_size))
