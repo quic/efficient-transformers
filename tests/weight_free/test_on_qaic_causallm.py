@@ -24,7 +24,14 @@ import pytest
 import requests
 import torch
 from PIL import Image
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoTokenizer,
+    AutoProcessor,
+)
 
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel, QEFFAutoModelForCausalLM
@@ -74,7 +81,9 @@ def _load_vlm_hf_reference(model_id: str):
     return model.eval()
 
 
-def _prepare_vlm_inputs(processor : AutoProcessor,) -> dict:
+def _prepare_vlm_inputs(
+    processor: AutoProcessor,
+) -> dict:
     process_vision_info = pytest.importorskip("qwen_vl_utils").process_vision_info
     response = requests.get(VLM_IMAGE_URL, timeout=30)
     response.raise_for_status()
