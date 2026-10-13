@@ -136,6 +136,29 @@ def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict)
     return False
 
 
+def _get_gdn_full_state_update_kwargs(
+    model,
+    qaic_config: dict | None,
+    *,
+    prefill_only: bool,
+    batch_size: int = 1,
+    full_batch_size: int = 1,
+) -> dict:
+    if not (qaic_config and qaic_config.get("gdn_full_state_update") is True):
+        return {}
+
+    get_kwargs = getattr(model, "get_gdn_full_state_update_kwargs", None)
+    if get_kwargs is None:
+        raise ValueError("qaic_config['gdn_full_state_update'] is not supported for this model")
+
+    return get_kwargs(
+        qaic_config=qaic_config,
+        prefill_only=prefill_only,
+        batch_size=batch_size,
+        full_batch_size=full_batch_size,
+    )
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
@@ -150,7 +173,7 @@ def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) ->
         return
 
     logger.warning(
-        "weight_free=True is only supported for QEFFAutoModelForCausalLM; disabling it for %s.",
+        "weight_free=True is only supported for QEFFAutoModelForCausalLM, QEffAutoModel; disabling it for %s.",
         qeff_auto_class_name,
     )
 
@@ -371,7 +394,8 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
+        if self.__class__ is not QEFFAutoModel:
+            _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
 
         if (
             hasattr(model, "config")
@@ -515,6 +539,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _checkpoint_transforms = [DtypeConversionCheckpointTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -547,7 +572,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, weight_free=False, *args, **kwargs):
         """
         Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
 
@@ -566,6 +591,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             - "avg": Average pooling
             - Callable: A custom pooling function
             - None: No pooling applied. Default is None.
+        weight_free : bool, optional
+            If True, the model will be loaded in weight-free mode, which avoids materializing checkpoint weights. Default is False.
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
@@ -579,8 +606,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
-        _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
+
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -591,7 +620,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if weight_free:
+            # Weight-free mode: build the model on the meta device so no
+            # checkpoint weights are ever materialized here. The real weights
+            # are supplied later at export time via pretrained_model_name_or_path.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -603,7 +638,13 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload, **kwargs
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            pooling=pooling,
+            weight_free=weight_free,
+            **kwargs,
+        )
 
     @property
     def get_model_config(self) -> dict:
@@ -617,7 +658,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: str | None = None, dynamo: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -640,6 +681,11 @@ class QEFFAutoModel(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
+        dynamo = kwargs.get("dynamo", False) or self._weight_free
+        if dynamo:
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
@@ -654,6 +700,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
+            dynamo=dynamo,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
@@ -1690,6 +1737,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
+        gdn_export_kwargs = _get_gdn_full_state_update_kwargs(
+            self.model,
+            qaic_config,
+            prefill_only=prefill_only,
+        )
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -1713,6 +1765,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 onnx_kwargs["prefill_seq_len"] = 1
                 onnx_kwargs["batch_fold"] = batch_fold
                 dynamic_axes_kwargs["batch_fold"] = batch_fold
+        onnx_kwargs.update(gdn_export_kwargs)
+        dynamic_axes_kwargs.update(gdn_export_kwargs)
         inputs = self.model.get_dummy_inputs(
             kv_offload=True,
             continuous_batching=self.continuous_batching,
@@ -2030,6 +2084,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
+        if qaic_config and qaic_config.get("gdn_full_state_update") is True:
+            _get_gdn_full_state_update_kwargs(
+                self.model,
+                qaic_config,
+                prefill_only=prefill_only,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+            )
 
         if layerwise:
             if skip_lang and not skip_vision:

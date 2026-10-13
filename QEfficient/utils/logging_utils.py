@@ -73,6 +73,26 @@ class JSONNamespaceFormatter(logging.Formatter):
         return json.dumps(log_record, default=str)
 
 
+class QEFFLoggerAdapter(logging.LoggerAdapter):
+    """Logger adapter with a Transformers-compatible one-time warning helper."""
+
+    _warning_once_lock = threading.Lock()
+    _warning_once_keys = set()
+
+    def warning_once(self, msg, *args, **kwargs) -> None:
+        """Log a warning once per namespace and rendered message per process."""
+        try:
+            rendered_message = msg % args if args else str(msg)
+        except Exception:
+            rendered_message = str(msg)
+        key = (self.logger.name, self.extra.get("namespace"), rendered_message)
+        with self._warning_once_lock:
+            if key in self._warning_once_keys:
+                return
+            self._warning_once_keys.add(key)
+        self.warning(msg, *args, **kwargs)
+
+
 _SENSITIVE_ARGUMENT_NAMES = {
     "api_key",
     "authorization",
@@ -433,7 +453,7 @@ class QEFFLogger:
         """
         if cls._instance is None:
             cls(loglevel, log_path)
-        return logging.LoggerAdapter(cls._instance, {"namespace": namespace})
+        return QEFFLoggerAdapter(cls._instance, {"namespace": namespace})
 
     @classmethod
     def log_event(cls, event: str, namespace: str, message: str, **fields: Any) -> None:
