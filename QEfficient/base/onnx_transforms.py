@@ -33,9 +33,13 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFuncBlockedKVDP,
     CtxGatherFuncBlockRangeKVDP,
     CtxGatherFuncPagedKVDP,
+    CtxGatherFuncPagedKVHeads,
     CtxGatherPagedKVDP,
+    CtxGatherPagedKVHeads,
     CtxPagedScatterDP,
     CtxPagedScatterFuncDP,
+    CtxPagedScatterFuncPage,
+    CtxPagedScatterPage,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
@@ -128,6 +132,8 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncBlockRangeKVDP": (CtxGatherFuncBlockRangeKVDP, CtxGatherBlockRangeKVDP),
         "CtxGatherFuncPagedKVDP": (CtxGatherFuncPagedKVDP, CtxGatherPagedKVDP),
         "CtxPagedScatterFuncDP": (CtxPagedScatterFuncDP, CtxPagedScatterDP),
+        "CtxGatherFuncPagedKVHeads": (CtxGatherFuncPagedKVHeads, CtxGatherPagedKVHeads),
+        "CtxPagedScatterFuncPage": (CtxPagedScatterFuncPage, CtxPagedScatterPage),
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
@@ -319,6 +325,8 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             "CtxScatter3D",
             "CtxScatter3DInt",
             "CtxScatterCB3D",
+            "CtxPagedScatterDP",
+            "CtxPagedScatterPage",
         }
     )
 
@@ -357,13 +365,32 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             return None
 
         scatter_outputs = {}
+        producers = {output: fn_node for fn_node in fn.node for output in fn_node.output}
+        consumers: dict[str, list] = {}
+        for fn_node in fn.node:
+            for fn_input in fn_node.input:
+                consumers.setdefault(fn_input, []).append(fn_node)
+
+        def reshape_source(name: str) -> str:
+            """Follow Reshape producers back to the tensor whose layout the cache buffer has."""
+            while (producer := producers.get(name)) is not None and producer.op_type == "Reshape":
+                name = producer.input[0]
+            return name
+
+        def restore_cache_layout(name: str) -> str:
+            """Return the Reshape output that folds the scatter result back to the cache layout."""
+            next_nodes = consumers.get(name, [])
+            if len(next_nodes) != 1 or next_nodes[0].op_type != "Reshape":
+                raise ValueError(f"Could not restore the cache layout after nested scatter output '{name}'.")
+            return next_nodes[0].output[0]
+
         for kind, function_input in function_cache_inputs.items():
             writers = [
                 fn_node
                 for fn_node in fn.node
                 if fn_node.op_type in cls._SCATTER_OP_TYPES
                 and fn_node.input
-                and fn_node.input[0] == function_input
+                and reshape_source(fn_node.input[0]) == function_input
                 and fn_node.output
             ]
             if len(writers) != 1:
@@ -375,7 +402,10 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                     f"'{fn.name}': expected one CtxScatter* with data input '{function_input}', "
                     f"found {len(writers)} ({writer_names})."
                 )
-            scatter_outputs[kind] = writers[0].output[0]
+            writer_output = writers[0].output[0]
+            scatter_outputs[kind] = (
+                writer_output if writers[0].input[0] == function_input else restore_cache_layout(writer_output)
+            )
 
         return scatter_outputs
 
