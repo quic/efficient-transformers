@@ -352,7 +352,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         producer_by_output = {output: fn_node for fn_node in fn.node for output in fn_node.output if output}
         dependency_cache: dict[tuple[str, str], bool] = {}
 
-        def depends_on(value_name: str, ancestor_name: str, visiting: set[str] | None = None) -> bool:
+        def depends_on_data(value_name: str, ancestor_name: str, visiting: set[str] | None = None) -> bool:
             cache_key = (value_name, ancestor_name)
             if cache_key in dependency_cache:
                 return dependency_cache[cache_key]
@@ -372,9 +372,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 return False
 
             visiting.add(value_name)
-            result = any(
-                input_name and depends_on(input_name, ancestor_name, visiting) for input_name in producer.input
-            )
+            result = bool(producer.input) and depends_on_data(producer.input[0], ancestor_name, visiting)
             visiting.remove(value_name)
             dependency_cache[cache_key] = result
             return result
@@ -385,7 +383,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if fn_node.op_type in cls._SCATTER_OP_TYPES
             and fn_node.input
             and fn_node.output
-            and depends_on(fn_node.input[0], function_input)
+            and depends_on_data(fn_node.input[0], function_input)
         ]
         if not writers:
             if allow_unchanged:
@@ -398,7 +396,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         final_writers = [
             writer
             for writer in writers
-            if not any(other is not writer and depends_on(other.input[0], writer.output[0]) for other in writers)
+            if not any(other is not writer and depends_on_data(other.input[0], writer.output[0]) for other in writers)
         ]
         if len(final_writers) != 1:
             writer_names = [
@@ -479,6 +477,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 kv_inputs[kind] = inp_name
 
             if layer_idx is None or set(kv_inputs) != {"key", "value"}:
+                retained_state_values: Dict[str, str] = {}
                 for input_index, retained_output in enumerate(node.input):
                     if retained_output not in dangling_retained_outputs:
                         continue
@@ -492,14 +491,31 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
                     function_input = fn.input[input_index]
                     scatter_output = cls._resolve_retained_state_output(fn, function_input, allow_unchanged=True)
-                    if scatter_output not in fn.output:
-                        fn.output.append(scatter_output)
-                        changed = True
+                    retained_state_values[retained_output] = scatter_output
 
                     plain_input = re.sub(r"_(?:Internal)?RetainedState$", "", retained_output)
                     kv_rename_map[retained_output] = plain_input
                     if retained_output not in node.output:
                         node.output.append(retained_output)
+                        changed = True
+
+                if retained_state_values:
+                    original_outputs = list(fn.output)
+                    aligned_outputs = []
+                    for output_index, call_output in enumerate(node.output):
+                        retained_state_value = retained_state_values.get(call_output)
+                        if retained_state_value is not None:
+                            aligned_outputs.append(retained_state_value)
+                        elif output_index < len(original_outputs):
+                            aligned_outputs.append(original_outputs[output_index])
+                        else:
+                            raise ValueError(
+                                f"Nested function '{fn.name}' has no result for call output "
+                                f"'{call_output}' at position {output_index}."
+                            )
+                    if list(fn.output) != aligned_outputs:
+                        del fn.output[:]
+                        fn.output.extend(aligned_outputs)
                         changed = True
                 continue
 
