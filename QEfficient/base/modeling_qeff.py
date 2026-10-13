@@ -1213,11 +1213,32 @@ class QEFFBaseModel(ABC):
             # without a model config, this is not a model that is possible to block
             blocking_config = None
 
+        num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
+        if num_cores is None:
+            num_cores = constants.DEFAULT_AIC_NUM_CORES
+        is_glm_moe_dsa = getattr(model_config, "model_type", None) == "glm_moe_dsa"
+        if blocking_config is not None or is_glm_moe_dsa:
+            self.model, _ = BlockingAttentionTransform.apply(
+                self.model,
+                attn_blocking_config=blocking_config,
+                qaic_config=qaic_config,
+                batch_size=bs,
+                seq_len=seq_len or 1,
+                context_length=ctx_len or seq_len,
+                num_devices=num_devices,
+                num_cores=num_cores,
+                prefill_only=bool(compiler_options.get("prefill_only", False)),
+            )
         if blocking_config is not None:
-            self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
+        if is_glm_moe_dsa:
+            self.hash_params["glm_attention_layers"] = [
+                module.glm_attention_config.to_hash_dict()
+                for module in self.model.modules()
+                if hasattr(module, "glm_attention_config")
+            ]
         gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
         self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
             self.model, gated_delta_config=gated_delta_config
@@ -1232,9 +1253,6 @@ class QEFFBaseModel(ABC):
             self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
-        num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
-        if num_cores is None:
-            num_cores = constants.DEFAULT_AIC_NUM_CORES
         prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
         mdp_num_partitions = compiler_options.get("mdp_num_partitions", 1)
         if mdp_num_partitions is None:

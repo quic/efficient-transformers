@@ -86,6 +86,10 @@ class GlmAttentionLayerConfig:
         return asdict(self)
 
 
+def _is_glm_dsa_layer_type(layer_type: str) -> bool:
+    return layer_type in {"deepseek_sparse_attention", "indexed_attention"}
+
+
 def resolve_glm_attention_layer_configs(
     config: GlmMoeDsaConfig,
     qaic_config: dict[str, Any] | None,
@@ -219,7 +223,7 @@ def resolve_glm_attention_layer_configs(
     indexer_tokens_per_core = indexer_block_width // num_cores_per_device
     indexer_block_topk = min(dsa_topk, indexer_block_width)
     attention_tokens_per_core = dsa_topk // num_cores_per_device
-    has_dsa = any(layer_type == "deepseek_sparse_attention" for layer_type in layer_types[: config.num_hidden_layers])
+    has_dsa = any(_is_glm_dsa_layer_type(layer_type) for layer_type in layer_types[: config.num_hidden_layers])
     if has_dsa and seq_len > 1:
         if not prefill_only:
             raise ValueError("GLM DSA multi-token execution requires prefill_only=True.")
@@ -240,7 +244,7 @@ def resolve_glm_attention_layer_configs(
     resolved = []
     for layer_idx in range(config.num_hidden_layers):
         layer_type = layer_types[layer_idx]
-        is_dsa = layer_type == "deepseek_sparse_attention"
+        is_dsa = _is_glm_dsa_layer_type(layer_type)
         if not is_dsa and layer_type not in {"full_attention", "dense_attention"}:
             raise ValueError(f"Unsupported GLM layer_types[{layer_idx}]={layer_type!r}.")
         indexer_type = indexer_types[layer_idx]
@@ -559,13 +563,14 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
             setattr(self, name, nn.Parameter(tensor.detach().clone()))
         layer_types = list(getattr(self.config, "layer_types", []) or [])
         layer_type = layer_types[self.layer_idx] if self.layer_idx < len(layer_types) else "deepseek_sparse_attention"
+        is_dsa = _is_glm_dsa_layer_type(layer_type)
         indexer_types = list(getattr(self.config, "indexer_types", []) or [])
         indexer_type = indexer_types[self.layer_idx] if self.layer_idx < len(indexer_types) else "full"
         self.glm_attention_config = GlmAttentionLayerConfig(
-            attention_type="dsa" if layer_type == "deepseek_sparse_attention" else "dense_mla",
+            attention_type="dsa" if is_dsa else "dense_mla",
             indexer_type=indexer_type,
-            blocking_mode="dsa" if layer_type == "deepseek_sparse_attention" else "none",
-            absorption=layer_type == "deepseek_sparse_attention",
+            blocking_mode="dsa" if is_dsa else "none",
+            absorption=is_dsa,
             online=False,
             cache_compressed=True,
             num_kv_blocks=1,

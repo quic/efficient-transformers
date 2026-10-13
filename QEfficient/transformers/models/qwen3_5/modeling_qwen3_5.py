@@ -33,6 +33,11 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     rotate_half,
 )
 
+try:
+    from transformers.models.qwen3_5.modeling_qwen3_5 import create_recurrent_attention_mask
+except ImportError:
+    create_recurrent_attention_mask = None
+
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
@@ -1096,14 +1101,17 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else:
                 # General graphs serve both prefill and decode; select the
                 # matching branch at runtime after export.
-                recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
-                    query,
-                    key,
-                    value,
-                    g,
-                    beta,
-                    recurrent_state,
-                )
+                if seq_len == 1:
+                    recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
+                        query,
+                        key,
+                        value,
+                        g,
+                        beta,
+                        recurrent_state,
+                    )
+                else:
+                    recurrent_out, recurrent_state_new = None, None
                 chunk_out, chunk_state = self.chunk_gated_delta_rule(
                     query,
                     key,
@@ -1120,9 +1128,17 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     ones_lower=self._ones_lower,
                     eye=self._eye,
                 )
-                is_decode = hidden_states.shape[1] == torch.tensor(1)
-                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-                last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
+                text_position_ids = (
+                    position_ids[0] if position_ids is not None and position_ids.ndim == 3 else position_ids
+                )
+                if recurrent_out is None:
+                    core_attn_out, last_recurrent_state = chunk_out, chunk_state
+                else:
+                    is_decode = (text_position_ids[:, :1] == text_position_ids[:, -1:]).view(
+                        batch_size, 1, 1, 1
+                    )
+                    core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                    last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
@@ -1171,6 +1187,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
 class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
     def __qeff_init__(self):
+        if not hasattr(self, "layer_type") and hasattr(self, "block_type"):
+            self.layer_type = self.block_type
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5GatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -1307,7 +1325,17 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         causal_mask = _create_causal_mask(
             position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
-        linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        if hasattr(self, "_update_linear_attn_mask"):
+            linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        elif create_recurrent_attention_mask is not None:
+            linear_attn_mask = create_recurrent_attention_mask(
+                config=self.config,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+            )
+        else:
+            linear_attn_mask = attention_mask
 
         hidden_states = inputs_embeds
 

@@ -239,9 +239,9 @@ def recurrent_gdn_decode_forward(
 
     if query.shape[2] != 1:
         raise ValueError("recurrent_gdn_decode_forward requires sequence_length == 1")
-    state_decayed = state * g[:, :, 0].unsqueeze(-1)
+    state_decayed = state * g[:, :, 0].unsqueeze(-1).unsqueeze(-1)
     kv_memory = torch.matmul(key[:, :, 0].unsqueeze(-2), state_decayed).squeeze(-2)
-    delta = (value[:, :, 0] - kv_memory) * beta[:, :, 0]
+    delta = (value[:, :, 0] - kv_memory) * beta[:, :, 0].unsqueeze(-1)
     state_new = state_decayed + key[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)
     output = (state_new * query[:, :, 0].unsqueeze(-1)).sum(dim=-2)
     output = output.unsqueeze(2).transpose(1, 2).to(dtype)

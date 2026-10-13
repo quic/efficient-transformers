@@ -23,12 +23,12 @@ DECODE_MICROBENCH_DEFAULTS = {
     "device_group": list(range(16)),
     "attn_dp": 16,
     "indexer_cp": 16,
-    "num_kv_blocks": 1,
+    "num_kv_blocks": 16,
     "hca_compressed_kv_cp": 2,
     "hca_attn_blocks": 8,
     "hw_version": "ai100",
     "ffn_blocking_mode": "token",
-    "ffn_token_block_size": 4,
+    "ffn_token_block_size": 1,
 }
 
 PREFILL_MICROBENCH_DEFAULTS = {
