@@ -29,8 +29,8 @@ from transformers import (
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
-    AutoTokenizer,
     AutoProcessor,
+    AutoTokenizer,
 )
 
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
