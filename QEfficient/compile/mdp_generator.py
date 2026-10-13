@@ -565,6 +565,9 @@ def _repair_scoped_alias_partitioning(onnx_path: str, mdp_json: Dict[str, Any], 
     """Align scoped aliases with the compiler dump partition."""
     model = onnx.load(onnx_path, load_external_data=False)
     names = {n.name for n in model.graph.node if n.name}
+    inlined_node_map, _ = _get_inlined_node_map(model)
+    for expanded_names in inlined_node_map.values():
+        names.update(expanded_names)
     compiler_partition, compiler_position, compiler_nodes = {}, {}, set()
     for partition_idx, partition in enumerate(compiler_dump.get("partitions", [])):
         for node_pos, node_name in enumerate(partition.get("nodeList", [])):
@@ -619,7 +622,9 @@ def generate_disagg_mdp_intersection_config(
     QEff MDP, but the QEff MDP also contains nodes the compiler optimises away
     (constant-folded, etc.).  The intersection keeps only nodes that survive
     into the compiler IR, while preserving the **QEff MDP node order and
-    partition assignment** as the authoritative source of truth.
+    partition assignment** as the authoritative source of truth, except for
+    scoped aliases whose partition is aligned with the compiler dump when the
+    compiler materializes only the unscoped alias.
 
     Algorithm
     ---------
@@ -630,12 +635,16 @@ def generate_disagg_mdp_intersection_config(
        names the compiler will actually process.
     3. For each partition in the QEff MDP, retain only nodes whose names appear
        in the compiler dump set, in the original QEff order.
+    4. For scoped aliases with a compiler-only unscoped name, move the alias to
+       the compiler dump partition while preserving the compiler-relative order
+       needed by the compiler's partition validator.
 
     Why this is better than re-assigning compiler-dump nodes by heuristic:
     - Node order follows the ONNX topsort (compiler's SplitPlanMerge requires
       this); the compiler dump order is the compiler's internal IR order which
       may differ after constant-folding and other transforms.
-    - Partition boundaries are the same as the onnx strategy — no divergence.
+    - Partition boundaries are the same as the onnx strategy, except for the
+      narrow scoped-alias repair described above.
     - Every retained node is an exact-match hit in ``doManualPartitioning()``.
     - Output JSON is compact (~1-2 MB) because constant-folded nodes are pruned.
 
