@@ -36,6 +36,7 @@ from QEfficient.blocking.blocking_configurator import (
     build_gated_delta_config_for_transform,
     build_transformer_blocking_config_for_transform,
 )
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_config,
@@ -1032,7 +1033,44 @@ class QEFFBaseModel(ABC):
             # without a model config, this is not a model that is possible to block
             blocking_config = None
 
+        qsa_config_keys = {
+            "indexer_dp",
+            "indexer_cp",
+            "attn_dp",
+            "attn_cp",
+            "indexer_num_blocks",
+            "indexer_ql_chunk",
+            "indexer_q_block_size",
+            "indexer_topk_blocking",
+            "sparse_q_block_size",
+            "sparse_kv_num_blocks",
+        }
+        if blocking_config is None and qaic_config and qsa_config_keys.intersection(qaic_config):
+            blocking_config = AttentionBlockingConfig()
+            blocking_config.qsa_config = dict(qaic_config)
+            blocking_config.ctx_len = ctx_len
+            blocking_config.seq_len = seq_len
+
         if blocking_config is not None:
+            if qaic_config is not None:
+                blocking_config.qsa_config = {
+                    key: qaic_config[key]
+                    for key in (
+                        "indexer_dp",
+                        "indexer_cp",
+                        "attn_dp",
+                        "attn_cp",
+                        "num_cores_per_device",
+                        "indexer_num_blocks",
+                        "indexer_ql_chunk",
+                        "indexer_q_block_size",
+                        "indexer_topk_blocking",
+                        "sparse_q_block_size",
+                        "sparse_kv_num_blocks",
+                        "skip_kv",
+                    )
+                    if key in qaic_config
+                }
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
@@ -1050,6 +1088,25 @@ class QEFFBaseModel(ABC):
         else:
             self.hash_params.pop("qaic_config", None)
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
+        if qaic_config is not None:
+            self.hash_params["qsa_config"] = {
+                key: qaic_config[key]
+                for key in (
+                    "indexer_dp",
+                    "indexer_cp",
+                    "attn_dp",
+                    "attn_cp",
+                    "num_cores_per_device",
+                    "indexer_num_blocks",
+                    "indexer_ql_chunk",
+                    "indexer_q_block_size",
+                    "indexer_topk_blocking",
+                    "sparse_q_block_size",
+                    "sparse_kv_num_blocks",
+                    "skip_kv",
+                )
+                if key in qaic_config
+            }
 
         num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
         if num_cores is None:

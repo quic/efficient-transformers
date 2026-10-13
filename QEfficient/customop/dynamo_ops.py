@@ -11,6 +11,8 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
+    CtxGatherRows,
+    CtxPagedScatter,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
@@ -24,6 +26,41 @@ from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
 )
 from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
 from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
+
+
+@torch.library.custom_op("qefficient::ctx_paged_scatter", mutates_args=())
+def ctx_paged_scatter_op(
+    data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor
+) -> torch.Tensor:
+    out = data.clone()
+    valid = block_id != torch.iinfo(torch.int32).max
+    rows = torch.arange(updates.shape[1], device=data.device).view(1, -1, 1).expand_as(block_id)
+    safe_block = torch.where(valid, block_id, torch.zeros_like(block_id)).long()
+    safe_addr = addr.long().clamp(0, data.shape[2] - 1)
+    out[safe_block, rows.long(), safe_addr] = torch.where(
+        valid.unsqueeze(-1), updates, torch.zeros_like(updates)
+    )
+    return out
+
+
+@ctx_paged_scatter_op.register_fake
+def _(data: torch.Tensor, block_id: torch.Tensor, addr: torch.Tensor, updates: torch.Tensor):
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::ctx_gather_rows", mutates_args=())
+def ctx_gather_rows_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    batch_shape = (data.shape[0],) + (1,) * (ctx_indices.ndim - 1)
+    row_shape = (1, data.shape[1]) + (1,) * (ctx_indices.ndim - 2)
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(*batch_shape)
+    row_indices = torch.arange(data.shape[1], device=data.device).view(*row_shape)
+    safe_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, torch.zeros_like(ctx_indices), ctx_indices)
+    return data[batch_indices, row_indices, safe_indices.long()]
+
+
+@ctx_gather_rows_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor):
+    return data.new_empty((*ctx_indices.shape, data.shape[-1]))
 
 
 @torch.library.custom_op("qefficient::rms_norm", mutates_args=())
@@ -387,4 +424,6 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
+    torch.ops.qefficient.ctx_paged_scatter.default: get_dynamo_onnxscript_func(CtxPagedScatter),
+    torch.ops.qefficient.ctx_gather_rows.default: get_dynamo_onnxscript_func(CtxGatherRows),
 }

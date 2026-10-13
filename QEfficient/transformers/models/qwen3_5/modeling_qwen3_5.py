@@ -630,7 +630,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
-        self.chunk_gated_delta_solver = "tree"
+        self.chunk_gated_delta_solver = "forward_sub"
         chunk_size = int(getattr(self, "gdn_chunk_size", 64) or 64)
         if chunk_size <= 0:
             chunk_size = 64
@@ -676,6 +676,16 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             sub = attn[..., :i, :i].clone()
             attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
         return attn + eye.to(dtype=attn.dtype)
+
+    def _solve_chunk_attn_forward_sub(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        del mask
+        solved_rows = [attn[..., 0, :]]
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i]
+            sub = torch.stack(solved_rows, dim=-2)[..., :i]
+            solved = row + (row.unsqueeze(-1) * sub).sum(dim=-2)
+            solved_rows.append(torch.cat((solved, attn[..., i, i:]), dim=-1))
+        return torch.stack(solved_rows, dim=-2) + eye.to(dtype=attn.dtype)
 
     def _solve_chunk_attn_tree(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
         if chunk_size <= 0 or (chunk_size & (chunk_size - 1)) != 0:
@@ -793,6 +803,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
     def _solve_chunk_attn(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
         solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
+        if solver == "forward_sub":
+            return self._solve_chunk_attn_forward_sub(attn, mask, eye, chunk_size)
         if solver == "original":
             return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
         if solver in ("tree", "forward_sub_tree"):
@@ -903,7 +915,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             if initial_state is None
             else initial_state.to(value)
         )
-        core_attn_out = torch.zeros_like(value)
+        output_chunks = []
         mask = mask_strict
 
         # for each chunk
@@ -913,7 +925,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
             v_new = v_i - v_prime
             attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
-            core_attn_out[:, :, i] = attn_inter + attn @ v_new
+            output_chunks.append(attn_inter + attn @ v_new)
             last_recurrent_state = (
                 last_recurrent_state * g[:, :, i, -1, None, None].exp()
                 + (k_i * (g[:, :, i, -1, None] - g[:, :, i]).exp()[..., None]).transpose(-1, -2) @ v_new
@@ -921,6 +933,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         if not output_final_state:
             last_recurrent_state = None
+        core_attn_out = torch.stack(output_chunks, dim=2)
         core_attn_out = core_attn_out.reshape(
             core_attn_out.shape[0], core_attn_out.shape[1], -1, core_attn_out.shape[-1]
         )
@@ -1138,6 +1151,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
+                position_ids=position_ids,
                 chunk_size=self.gdn_chunk_size,
                 initial_state=None,
                 output_final_state=False,
@@ -1293,11 +1307,7 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
         else:
-            pos_max = 0
-            if position_ids is not None:
-                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
-                pos_max = int(text_position_ids.max().item()) + 1
-            target_length = max(past_seen_tokens, pos_max)
+            target_length = past_seen_tokens + text_position_ids.shape[-1]
         causal_mask = _create_causal_mask(
             position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
@@ -1797,10 +1807,10 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
 
     def _get_attention_blocking_config(self):
         for layer in getattr(self.language_model, "layers", ()):
-            attention = getattr(layer, "self_attn", None)
-            blocking_config = getattr(attention, "attn_blocking_config", None)
-            if blocking_config is not None:
-                return blocking_config
+            for attention in (getattr(layer, "self_attn", None), getattr(layer, "linear_attn", None)):
+                blocking_config = getattr(attention, "attn_blocking_config", None)
+                if blocking_config is not None:
+                    return blocking_config
         return None
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:

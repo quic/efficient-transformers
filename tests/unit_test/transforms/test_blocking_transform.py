@@ -359,6 +359,43 @@ def test_kv_batch_fold_preserves_optional_gdn_num_head_blocks():
     assert config.gdn_num_head_blocks == 8
 
 
+@pytest.mark.transforms
+@pytest.mark.parametrize(
+    "gdn_class",
+    [
+        pytest.param(
+            "QEffQwen3_5GatedDeltaNet",
+            id="qwen3_5",
+        ),
+        pytest.param(
+            "QEffQwen3_5MoeGatedDeltaNet",
+            id="qwen3_5_moe",
+        ),
+    ],
+)
+def test_blocking_transform_binds_qwen3_5_gated_delta_forward(gdn_class):
+    from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QEffQwen3_5GatedDeltaNet
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeGatedDeltaNet
+
+    classes = {
+        "QEffQwen3_5GatedDeltaNet": QEffQwen3_5GatedDeltaNet,
+        "QEffQwen3_5MoeGatedDeltaNet": QEffQwen3_5MoeGatedDeltaNet,
+    }
+    module_class = classes[gdn_class]
+    module = object.__new__(module_class)
+    torch.nn.Module.__init__(module)
+    model = torch.nn.Module()
+    model.gated_delta = module
+    config = AttentionBlockingConfig(mode=BlockingMode.KV_BATCH_FOLD, num_kv_blocks=2, batch_fold=True)
+
+    _, transformed = BlockingAttentionTransform.apply(model, config)
+
+    assert transformed
+    assert module.attn_blocking_config is config
+    assert module.forward.__func__ is module_class.forward
+
+
 # ---------------------------------------------------------------------------
 # Tests: re-application overrides the previous config
 # ---------------------------------------------------------------------------

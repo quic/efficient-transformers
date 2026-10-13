@@ -146,6 +146,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim("seq_len", min=seq_min, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif dim_name == "local_pooled_ctx_len":
+                # Folded QSA index caches expose a per-device pooled context
+                # dimension.  For small CP configurations this can be one
+                # even though the global pooled context has the usual minimum
+                # of two required by the generic cache exporters.
+                dim_registry[dim_name] = Dim("local_pooled_ctx_len", min=1, max=max_seq_len)
             elif "pooled_ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("pooled_ctx_len", min=2, max=max_seq_len)
             elif "ctx_len" in dim_name:
@@ -163,6 +169,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
     dynamic_shapes: Dict[str, Any] = {}
     past_keys: Dict[int, Any] = {}
     past_values: Dict[int, Any] = {}
+    linear_conv_states: Dict[int, Any] = {}
+    linear_recurrent_states: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
 
@@ -172,6 +180,10 @@ def convert_dynamic_axes_to_dynamic_shapes(
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            linear_conv_states[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("recurrent_state."):
+            linear_recurrent_states[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("compressed_kv."):
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
@@ -206,6 +218,19 @@ def convert_dynamic_axes_to_dynamic_shapes(
         dynamic_shapes["past_key_values"] = [
             [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
         ]
+
+    if linear_conv_states or linear_recurrent_states:
+        max_layer = max(list(linear_conv_states.keys()) + list(linear_recurrent_states.keys()))
+        past_key_values = dynamic_shapes.get("past_key_values", [])
+        if len(past_key_values) <= max_layer:
+            past_key_values.extend([[] for _ in range(max_layer + 1 - len(past_key_values))])
+        for layer_idx in range(max_layer + 1):
+            if layer_idx in linear_conv_states or layer_idx in linear_recurrent_states:
+                past_key_values[layer_idx] = [
+                    linear_conv_states.get(layer_idx, {}),
+                    linear_recurrent_states.get(layer_idx, {}),
+                ]
+        dynamic_shapes["past_key_values"] = past_key_values
 
     if compressed_kv_layers or k_pe_layers:
         max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))

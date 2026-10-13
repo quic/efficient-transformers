@@ -1554,12 +1554,28 @@ class BlockingAttentionTransform:
             for qeff_class in KVCacheTransform._module_mapping.values()
             if qeff_class.__name__.endswith("Attention")
         }
+        supported_gated_delta_classes = {QEffQwen3_5GatedDeltaNet, QEffQwen3_5MoeGatedDeltaNet}
         for module in model.modules():
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
-            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in model_architectures:
+            if (
+                type(module) in supported_attention_classes
+                or type(module) in supported_gated_delta_classes
+                or "DeepseekV3ForCausalLM" in model_architectures
+            ):
                 module.attn_blocking_config = attn_blocking_config
+                if isinstance(module, QEffQwen4ExpTextAttention):
+                    module.configure_qsa(
+                        getattr(attn_blocking_config, "qsa_config", None),
+                        ctx_len=getattr(attn_blocking_config, "ctx_len", None),
+                        seq_len=getattr(attn_blocking_config, "seq_len", None),
+                    )
+                    module.forward = MethodType(QEffQwen4ExpTextAttention.qsa_forward, module)
+                elif isinstance(module, QEffQwen3_5GatedDeltaNet):
+                    module.forward = MethodType(QEffQwen3_5GatedDeltaNet.forward, module)
+                elif isinstance(module, QEffQwen3_5MoeGatedDeltaNet):
+                    module.forward = MethodType(QEffQwen3_5MoeGatedDeltaNet.forward, module)
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
