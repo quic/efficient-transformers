@@ -30,6 +30,7 @@ from QEfficient.compile.mdp_generator import (
     _get_layer_num_from_inputs,
     _layer_partition_bounds,
     generate_disagg_mdp_intersection_config,
+    precheck_and_autofix_mdp_partition_order,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -804,19 +805,19 @@ class TestMdpCompileIntegration:
                     ),
                     helper.make_node(
                         "Identity",
-                        inputs=["hidden0"],
-                        outputs=["hidden1"],
+                        inputs=["input"],
+                        outputs=["scoped_hidden"],
                         name="/language_model/Gather_5",
                     ),
                     helper.make_node(
                         "Identity",
-                        inputs=["hidden1"],
-                        outputs=["hidden2"],
+                        inputs=["input"],
+                        outputs=["hidden1"],
                         name="/language_model/layers.1/hidden",
                     ),
                     helper.make_node(
                         "Identity",
-                        inputs=["hidden2"],
+                        inputs=["input"],
                         outputs=["output"],
                         name="/Gather_5",
                     ),
@@ -854,6 +855,13 @@ class TestMdpCompileIntegration:
             num_layers=2,
         )
 
+        precheck_removed = precheck_and_autofix_mdp_partition_order(
+            onnx_path=str(onnx_path),
+            mdp_json=mdp_json,
+        )
+
+        assert precheck_removed == 0
+        assert "/Gather_5" in mdp_json["partitions"][0]["nodeList"]
         assert mdp_json["partitions"][0]["nodeList"] == [
             "/language_model/layers.0/hidden",
             "/Gather_5",
