@@ -580,6 +580,14 @@ def _repair_scoped_alias_partitioning(onnx_path: str, mdp_json: Dict[str, Any], 
         for node_name in partition.get("nodeList", []):
             if node_name:
                 current_partition[node_name] = partition_idx
+    node_by_name = {node.name: node for node in model.graph.node if node.name}
+    consumers_by_value = {}
+    for node in model.graph.node:
+        if not node.name:
+            continue
+        for input_name in node.input:
+            if input_name:
+                consumers_by_value.setdefault(input_name, []).append(node.name)
     repairs = []
     for node_name, source_idx in current_partition.items():
         if not node_name.startswith("/") or node_name.startswith("/language_model/"):
@@ -588,6 +596,22 @@ def _repair_scoped_alias_partitioning(onnx_path: str, mdp_json: Dict[str, Any], 
         target_idx = compiler_partition.get(node_name)
         if peer_name not in names or peer_name in compiler_nodes or target_idx is None or target_idx == source_idx:
             continue
+        node = node_by_name.get(node_name)
+        if node is not None:
+            consumer_partitions = {
+                current_partition[consumer_name]
+                for output_name in node.output
+                for consumer_name in consumers_by_value.get(output_name, [])
+                if consumer_name in current_partition
+            }
+            if any(consumer_idx < target_idx for consumer_idx in consumer_partitions):
+                logger.warning(
+                    "Skipping MDP alias repair for %r: compiler target Partition%d would follow "
+                    "an existing consumer partition",
+                    node_name,
+                    target_idx,
+                )
+                continue
         repairs.append((node_name, source_idx, target_idx, compiler_position[node_name]))
     for node_name, source_idx, target_idx, dump_pos in sorted(repairs, key=lambda item: item[3]):
         mdp_json["partitions"][source_idx]["nodeList"].remove(node_name)
