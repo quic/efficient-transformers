@@ -29,6 +29,8 @@ from QEfficient.base.modeling_qeff import _weight_free_external_data_root, gener
 from QEfficient.compile.mdp_generator import (
     _get_layer_num_from_inputs,
     _layer_partition_bounds,
+    generate_disagg_mdp_intersection_config,
+    precheck_and_autofix_mdp_partition_order,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -788,6 +790,161 @@ class TestMdpCompileIntegration:
         compile_dir, _, _ = self._run_mdp_compile(compile_workspace)
         disagg_files = list(compile_dir.glob("mdp_disagg_4d_2p.json"))
         assert len(disagg_files) == 1, "Expected exactly one mdp_disagg_4d_2p.json in compile_dir"
+
+    def test_intersection_repairs_scoped_alias_to_compiler_partition(self, tmp_path: Path):
+        """Intersection moves an unscoped alias to the compiler-assigned partition."""
+        onnx_path = tmp_path / "scoped_alias.onnx"
+        model = helper.make_model(
+            helper.make_graph(
+                [
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["hidden0"],
+                        name="/language_model/layers.0/hidden",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["scoped_hidden"],
+                        name="/language_model/Gather_5",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["hidden1"],
+                        name="/language_model/layers.1/hidden",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["output"],
+                        name="/Gather_5",
+                    ),
+                ],
+                name="scoped_alias_graph",
+                inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, [1])],
+                outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [1])],
+            ),
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        onnx.save(model, onnx_path)
+
+        compiler_dump_path = tmp_path / "compiler_dump.json"
+        compiler_dump_path.write_text(
+            json.dumps(
+                {
+                    "partitions": [
+                        {
+                            "nodeList": [
+                                "/language_model/layers.0/hidden",
+                                "/Gather_5",
+                            ]
+                        },
+                        {"nodeList": ["/language_model/layers.1/hidden"]},
+                    ]
+                }
+            )
+        )
+
+        mdp_json = generate_disagg_mdp_intersection_config(
+            onnx_path=str(onnx_path),
+            compiler_dump_path=str(compiler_dump_path),
+            num_devices=2,
+            num_partitions=2,
+            num_layers=2,
+        )
+
+        precheck_removed = precheck_and_autofix_mdp_partition_order(
+            onnx_path=str(onnx_path),
+            mdp_json=mdp_json,
+        )
+
+        assert precheck_removed == 0
+        assert "/Gather_5" in mdp_json["partitions"][0]["nodeList"]
+        assert mdp_json["partitions"][0]["nodeList"] == [
+            "/language_model/layers.0/hidden",
+            "/Gather_5",
+        ]
+        assert mdp_json["partitions"][1]["nodeList"] == ["/language_model/layers.1/hidden"]
+
+    def test_intersection_skips_alias_move_that_follows_consumer(self, tmp_path: Path):
+        """Intersection keeps a producer in place when relocation would reverse its dependency."""
+        onnx_path = tmp_path / "scoped_alias_dependency.onnx"
+        model = helper.make_model(
+            helper.make_graph(
+                [
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["hidden0"],
+                        name="/language_model/layers.0/hidden",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["scoped_alias"],
+                        name="/language_model/Gather_9",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["producer_output"],
+                        name="/Gather_9",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["producer_output"],
+                        outputs=["consumer_output"],
+                        name="/language_model/Gather_11",
+                    ),
+                    helper.make_node(
+                        "Identity",
+                        inputs=["input"],
+                        outputs=["hidden1"],
+                        name="/language_model/layers.1/hidden",
+                    ),
+                ],
+                name="scoped_alias_dependency_graph",
+                inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, [1])],
+                outputs=[helper.make_tensor_value_info("consumer_output", TensorProto.FLOAT, [1])],
+            ),
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        onnx.save(model, onnx_path)
+
+        compiler_dump_path = tmp_path / "compiler_dump.json"
+        compiler_dump_path.write_text(
+            json.dumps(
+                {
+                    "partitions": [
+                        {
+                            "nodeList": [
+                                "/language_model/layers.0/hidden",
+                                "/language_model/Gather_11",
+                            ]
+                        },
+                        {"nodeList": ["/Gather_9", "/language_model/layers.1/hidden"]},
+                    ]
+                }
+            )
+        )
+
+        mdp_json = generate_disagg_mdp_intersection_config(
+            onnx_path=str(onnx_path),
+            compiler_dump_path=str(compiler_dump_path),
+            num_devices=2,
+            num_partitions=2,
+            num_layers=2,
+        )
+
+        precheck_removed = precheck_and_autofix_mdp_partition_order(
+            onnx_path=str(onnx_path),
+            mdp_json=mdp_json,
+        )
+
+        assert precheck_removed == 0
+        assert "/Gather_9" in mdp_json["partitions"][0]["nodeList"]
 
     def test_mdp_disagg_json_has_two_partitions(self, compile_workspace):
         """mdp_disagg_4d_2p.json contains exactly two partitions."""
