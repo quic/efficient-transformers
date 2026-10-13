@@ -658,6 +658,7 @@ class CheckpointTransformPipeline:
         from QEfficient.exporter.weight_free.checkpoint_transforms import (
             DtypeConversionCheckpointTransform,
             ExpertParallelPackingCheckpointTransform,
+            ReplicateKVHeadCheckpointTransform,
         )
 
         context = CheckpointPlanningContext(
@@ -674,6 +675,7 @@ class CheckpointTransformPipeline:
         for transform in self.transforms:
             if transform in seen_transforms or transform in (
                 ExpertParallelPackingCheckpointTransform,
+                ReplicateKVHeadCheckpointTransform,
                 DtypeConversionCheckpointTransform,
             ):
                 continue
@@ -688,6 +690,14 @@ class CheckpointTransformPipeline:
                 transform.plan_tasks(context)
 
         ExpertParallelPackingCheckpointTransform.plan_tasks(context)
+        if ReplicateKVHeadCheckpointTransform.is_applicable(
+            weight_map,
+            config=config,
+            hash_params=hash_params,
+            target_dtype=target_dtype,
+            source_dir=src,
+        ):
+            ReplicateKVHeadCheckpointTransform.plan_tasks(context)
         DtypeConversionCheckpointTransform.plan_tasks(context)
 
         if len(context.active_layout_ids) > 1:

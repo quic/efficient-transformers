@@ -27,6 +27,10 @@ from QEfficient.customop import (
     ctx_scatter_3d,
     ctx_scatter_cb,
     ctx_scatter_cb_3d,
+    glm_folded_row_gather,
+    glm_int_div,
+    glm_int_mod,
+    glm_paged_scatter,
 )
 
 
@@ -119,11 +123,11 @@ class QEffDynamicLayer(CacheLayerMixin):
     def get_seq_length(self) -> int:
         return self.keys.shape[-2] if self.keys is not None else 0
 
-    def get_max_length(self) -> int:
-        return -1
-
     def get_max_cache_shape(self) -> int:
         return -1
+
+    def get_max_length(self) -> int:
+        return self.get_max_cache_shape()
 
     @property
     def max_batch_size(self) -> int:
@@ -240,8 +244,10 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = k_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -358,8 +364,10 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = v_out.shape
-        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        ctx_indices = torch.arange(
+            start=start_index, end=end_index, dtype=position_ids.dtype, device=position_ids.device
+        )[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -761,13 +769,90 @@ class QEffDynamicLayer(CacheLayerMixin):
         return k_out, v_out
 
 
+def glm_dsa_scatter_cache(cache, position_ids, updates, *, dp: int, cp: int):
+    """Scatter logical ``[B,S,D]`` updates into ``[B/DP,DP*CP,T/CP,D]``."""
+    batch, seq_len, dim = updates.shape
+    if batch % dp:
+        raise ValueError("GLM DSA batch size must be divisible by DP.")
+    batch_local = batch // dp
+    if cache.ndim != 4 or cache.shape[:2] != (batch_local, dp * cp):
+        raise ValueError("GLM DSA cache must use [B/DP,DP*CP,T/CP,D].")
+    updates_dp = updates.view(dp, batch_local, seq_len, dim).permute(1, 0, 2, 3)
+    positions_dp = position_ids.view(dp, batch_local, seq_len).permute(1, 0, 2).to(torch.int32)
+    rows = dp * cp
+    updates_rows = (
+        updates_dp.unsqueeze(2).expand(batch_local, dp, cp, seq_len, dim).reshape(batch_local, rows, seq_len, dim)
+    )
+
+    owner = glm_int_mod(positions_dp, cp).unsqueeze(2).expand(batch_local, dp, cp, seq_len)
+    row_owner = torch.arange(cp, device=updates.device, dtype=torch.int32).view(1, 1, cp, 1)
+    row_live = (owner == row_owner).reshape(batch_local, rows, seq_len)
+    block_id = torch.arange(batch_local, device=updates.device, dtype=torch.int32).view(batch_local, 1, 1)
+    block_id = block_id.expand(batch_local, rows, seq_len)
+    block_id = torch.where(
+        row_live,
+        block_id,
+        torch.full_like(block_id, torch.iinfo(torch.int32).max),
+    )
+    addresses = (
+        glm_int_div(positions_dp, cp)
+        .unsqueeze(2)
+        .expand(batch_local, dp, cp, seq_len)
+        .reshape(batch_local, rows, seq_len)
+        .to(torch.int32)
+    )
+    return glm_paged_scatter(cache, block_id, addresses, updates_rows)
+
+
+def glm_dsa_gather_cache(cache, indices, valid, *, dp: int, cp: int):
+    """Gather logical indices from a folded GLM DSA retained state."""
+    batch = indices.shape[0]
+    selection_shape = indices.shape[1:]
+    batch_local = batch // dp
+    if cache.ndim != 4 or cache.shape[:2] != (batch_local, dp * cp):
+        raise ValueError("GLM DSA cache must use [B/DP,DP*CP,T/CP,D].")
+    indices = indices.view(dp, batch_local, *selection_shape).permute(1, 0, *range(2, 2 + len(selection_shape)))
+    valid = valid.view(dp, batch_local, *selection_shape).permute(1, 0, *range(2, 2 + len(selection_shape)))
+    safe_indices = torch.where(valid, indices, torch.zeros_like(indices)).to(torch.int64)
+    local_slots = cache.shape[2]
+    global_context = local_slots * cp
+    logical_positions = torch.arange(global_context, device=cache.device, dtype=torch.int32)
+    owner_table = glm_int_mod(logical_positions, cp)
+    address_table = glm_int_div(logical_positions, cp)
+    owner = owner_table[safe_indices]
+    local_indices = address_table[safe_indices]
+    cp_rows = torch.arange(cp, device=cache.device, dtype=torch.int32).view(1, 1, cp, *([1] * len(selection_shape)))
+    row_valid = valid.unsqueeze(2) & (owner.unsqueeze(2) == cp_rows)
+    local_indices = local_indices.unsqueeze(2).expand(batch_local, dp, cp, *selection_shape)
+    invalid = torch.full_like(local_indices, torch.iinfo(torch.int32).max)
+    gather_indices = torch.where(row_valid, local_indices, invalid).reshape(batch_local, dp * cp, -1)
+    gathered = glm_folded_row_gather(cache, gather_indices)
+    gathered = gathered.reshape(batch_local, dp, cp, *selection_shape, cache.shape[-1])
+    gathered = torch.where(row_valid.unsqueeze(-1), gathered, 0)
+    return gathered, row_valid
+
+
 class QEffDynamicCompressedKVRopeLayer:
-    def __init__(self, ckv, k_pe):
+    def __init__(self, ckv, k_pe, layout_config=None):
         self.ckv = ckv
         self.k_pe = k_pe
+        self.layout_config = layout_config
+
+    @property
+    def is_folded_dsa(self):
+        return self.layout_config is not None and self.layout_config.attention_type == "dsa"
 
     def update_ckv(self, compressed_kv, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        if self.is_folded_dsa:
+            self.ckv = glm_dsa_scatter_cache(
+                self.ckv,
+                position_ids,
+                compressed_kv.squeeze(1),
+                dp=self.layout_config.attn_dp,
+                cp=self.layout_config.attn_cp,
+            )
+            return self.ckv
         batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
         if batch_index is not None:
@@ -794,6 +879,15 @@ class QEffDynamicCompressedKVRopeLayer:
 
     def update_k_pe(self, k_pe_cache, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        if self.is_folded_dsa:
+            self.k_pe = glm_dsa_scatter_cache(
+                self.k_pe,
+                position_ids,
+                k_pe_cache.squeeze(1),
+                dp=self.layout_config.attn_dp,
+                cp=self.layout_config.attn_cp,
+            )
+            return self.k_pe
         batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
         if batch_index is not None:
@@ -899,8 +993,8 @@ class QEffDynamicCompressedKVRopeCache:
     ):
         self.layers = []
 
-    def add_new(self, ckv, k_pe, layer_idx):
-        self.layers.append(QEffDynamicCompressedKVRopeLayer(ckv, k_pe))
+    def add_new(self, ckv, k_pe, layer_idx, layout_config=None):
+        self.layers.append(QEffDynamicCompressedKVRopeLayer(ckv, k_pe, layout_config))
 
     def update_ckv(self, ckv, layer_idx, cache_kwargs):
         return self.layers[layer_idx].update_ckv(ckv, cache_kwargs)
@@ -923,12 +1017,13 @@ class QEffDynamicCompressedKVRopeCache:
         return self.layers[layer_idx].write_only_k_pe(k_pe, cache_kwargs)
 
     @classmethod
-    def from_legacy_cache(cls, past_key_values):
+    def from_legacy_cache(cls, past_key_values, layer_configs=None):
         cache = cls()
         if past_key_values is not None:
             for layer_idx in range(len(past_key_values)):
                 ckv, k_pe = past_key_values[layer_idx]
-                cache.add_new(ckv, k_pe, layer_idx)
+                layout_config = layer_configs[layer_idx] if layer_configs is not None else None
+                cache.add_new(ckv, k_pe, layer_idx, layout_config)
         return cache
 
     def to_legacy_cache(
@@ -2214,3 +2309,126 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
+
+
+class QEffQwen4ExpDynamicCache(Cache):
+    """Decode cache for Qwen4-Exp's separate GDN, PLE, and QSA states.
+
+    The upstream cache combines these states behind a dynamic cache object.  QEff
+    export needs each retained buffer to be an explicit tensor input/output, so
+    this adapter keeps the legacy tuple ordering while exposing named state lists.
+    """
+
+    def __init__(self, config):
+        super().__init__(layers=[])
+        self.config = config
+        self.layer_types = [
+            "qwen_sparse_attention" if layer_type == "full_attention" else layer_type
+            for layer_type in config.layer_types
+        ]
+        self.gdn_conv_states = [None] * len(self.layer_types)
+        self.gdn_recurrent_states = [None] * len(self.layer_types)
+        self.ple_conv_states = [None] * len(self.layer_types)
+        self.qsa_key_states = [None] * len(self.layer_types)
+        self.qsa_value_states = [None] * len(self.layer_types)
+        self.qsa_index_states = [None] * len(self.layer_types)
+        self.qsa_partial_states = [None] * len(self.layer_types)
+
+    def __len__(self):
+        return len(self.layer_types)
+
+    def _is_linear(self, layer_idx: int) -> bool:
+        return self.layer_types[layer_idx] == "linear_attention"
+
+    def _has_ple(self, layer_idx: int) -> bool:
+        return layer_idx + 1 in getattr(self.config, "ple_layer_ids", [])
+
+    def __getitem__(self, layer_idx: int):
+        if self._is_linear(layer_idx):
+            state = (self.gdn_conv_states[layer_idx], self.gdn_recurrent_states[layer_idx])
+            return state + ((self.ple_conv_states[layer_idx],) if self._has_ple(layer_idx) else ())
+        return (
+            self.qsa_key_states[layer_idx],
+            self.qsa_value_states[layer_idx],
+            self.qsa_index_states[layer_idx],
+            self.qsa_partial_states[layer_idx],
+        )
+
+    def update_gdn_state(self, layer_idx: int, conv_state: torch.Tensor, recurrent_state: torch.Tensor):
+        """Replace the decode buffers for a linear-attention layer."""
+        self.gdn_conv_states[layer_idx] = conv_state
+        self.gdn_recurrent_states[layer_idx] = recurrent_state
+
+    def update_ple_state(self, layer_idx: int, conv_state: torch.Tensor):
+        """Replace the PLE short-convolution buffer for one layer."""
+        self.ple_conv_states[layer_idx] = conv_state
+
+    def update_qsa_state(
+        self,
+        layer_idx: int,
+        key_state: torch.Tensor,
+        value_state: torch.Tensor,
+        index_state: torch.Tensor,
+        partial_state: torch.Tensor,
+    ):
+        """Replace QSA's independent retained buffers without aliasing inputs."""
+        self.qsa_key_states[layer_idx] = key_state
+        self.qsa_value_states[layer_idx] = value_state
+        self.qsa_index_states[layer_idx] = index_state
+        self.qsa_partial_states[layer_idx] = partial_state
+
+    @classmethod
+    def from_legacy_cache(cls, config, past_key_values=None):
+        cache = cls(config)
+        if past_key_values is None:
+            return cache
+        for layer_idx, state in enumerate(past_key_values):
+            if cache._is_linear(layer_idx):
+                cache.gdn_conv_states[layer_idx], cache.gdn_recurrent_states[layer_idx] = state[:2]
+                if cache._has_ple(layer_idx) and len(state) > 2:
+                    cache.ple_conv_states[layer_idx] = state[2]
+            else:
+                (
+                    cache.qsa_key_states[layer_idx],
+                    cache.qsa_value_states[layer_idx],
+                    cache.qsa_index_states[layer_idx],
+                    cache.qsa_partial_states[layer_idx],
+                ) = state
+        return cache
+
+    def to_legacy_cache(self):
+        return tuple(self[layer_idx] for layer_idx in range(len(self)))
+
+    def get_seq_length(self, layer_idx=None, cache_position=None):
+        del cache_position
+        if layer_idx is not None and not self._is_linear(layer_idx):
+            state = self.qsa_key_states[layer_idx]
+            return 0 if state is None else state.shape[-2]
+        for candidate_idx, layer_type in enumerate(self.layer_types):
+            if layer_type == "qwen_sparse_attention" and self.qsa_key_states[candidate_idx] is not None:
+                return self.qsa_key_states[candidate_idx].shape[-2]
+        return 0
+
+    def has_previous_state(self, layer_idx=None, state_idx=0):
+        if layer_idx is None or not self._is_linear(layer_idx):
+            return False
+        states = (
+            self.gdn_conv_states[layer_idx],
+            self.gdn_recurrent_states[layer_idx],
+            self.ple_conv_states[layer_idx],
+        )
+        return states[state_idx] is not None
+
+    def reorder_cache(self, beam_idx):
+        for states in (
+            self.gdn_conv_states,
+            self.gdn_recurrent_states,
+            self.ple_conv_states,
+            self.qsa_key_states,
+            self.qsa_value_states,
+            self.qsa_index_states,
+            self.qsa_partial_states,
+        ):
+            for layer_idx, state in enumerate(states):
+                if state is not None:
+                    states[layer_idx] = state.index_select(0, beam_idx.to(state.device))

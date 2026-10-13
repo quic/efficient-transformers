@@ -12,6 +12,7 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 """
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,6 +30,7 @@ from QEfficient.base.modeling_qeff import _weight_free_external_data_root, gener
 from QEfficient.compile.mdp_generator import (
     _get_layer_num_from_inputs,
     _layer_partition_bounds,
+    generate_disagg_mdp_intersection_config,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -603,6 +605,44 @@ def _build_synthetic_gpt2_onnx(
     )
 
 
+def _build_synthetic_qwen_mdp_onnx(out_path: Path) -> None:
+    """Write a small Qwen-shaped graph with compiler-visible external values."""
+    initializers = [
+        helper.make_tensor("model.layers.0.linear_attn._ones_lower", TensorProto.FLOAT, [1], [1.0]),
+        helper.make_tensor("model.layers.1.linear_attn._ones_lower", TensorProto.FLOAT, [1], [1.0]),
+    ]
+    inputs = [
+        helper.make_tensor_value_info("hidden_states", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("recurrent_state.0", TensorProto.FLOAT, [1]),
+        helper.make_tensor_value_info("recurrent_state.1", TensorProto.FLOAT, [1]),
+        # External parameters are graph inputs for weight-free exports, but
+        # they are not compiler partition nodes and must remain excluded.
+        helper.make_tensor_value_info("model.layers.0.self_attn.q_proj.weight", TensorProto.FLOAT, [1, 1]),
+    ]
+    nodes = [
+        helper.make_node(
+            "Identity",
+            inputs=["hidden_states"],
+            outputs=["layer_0_output"],
+            name="/model/layers.0/decoder",
+        ),
+        helper.make_node(
+            "Identity",
+            inputs=["layer_0_output"],
+            outputs=["logits"],
+            name="/model/layers.1/decoder",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "synthetic_qwen_mdp_graph",
+        inputs,
+        [helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1])],
+        initializer=initializers,
+    )
+    onnx.save(onnx.helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), str(out_path))
+
+
 def _fake_subprocess_run(command: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
     """Monkeypatch for subprocess.run: create compile artifacts requested by the command."""
     binary_dir: Optional[Path] = None
@@ -713,6 +753,63 @@ class TestMdpLayerPartitionBounds:
             assert sum(counts) == num_layers, (
                 f"Expected sum={num_layers} for {num_layers}/{num_partitions}, got {sum(counts)}"
             )
+
+
+@pytest.mark.cpu_only
+@pytest.mark.mdp
+class TestMdpExternalGraphValues:
+    """Cover compiler-visible graph values omitted by NodeProto-only enumeration."""
+
+    def test_intersection_keeps_layer_scoped_initializers_and_retained_states(self, tmp_path, caplog):
+        """Qwen compiler-dump values remain in their decoder-layer partition."""
+        onnx_path = tmp_path / "qwen_mdp.onnx"
+        compiler_dump_path = tmp_path / "compiler_dump.json"
+        _build_synthetic_qwen_mdp_onnx(onnx_path)
+        compiler_dump_path.write_text(
+            json.dumps(
+                {
+                    "partitions": [
+                        {
+                            "nodeList": [
+                                "recurrent_state.0",
+                                "model.layers.0.linear_attn._ones_lower",
+                                "/model/layers.0/decoder",
+                                "recurrent_state.1",
+                                "model.layers.1.linear_attn._ones_lower",
+                                "/model/layers.1/decoder",
+                                "compiler_generated_only",
+                            ]
+                        }
+                    ]
+                }
+            )
+        )
+
+        with caplog.at_level(logging.WARNING, logger="QEfficient.compile.mdp_generator"):
+            mdp = generate_disagg_mdp_intersection_config(
+                onnx_path=str(onnx_path),
+                compiler_dump_path=str(compiler_dump_path),
+                num_devices=2,
+                num_partitions=2,
+                num_layers=2,
+                num_cores=4,
+            )
+
+        assert mdp["partitions"][0]["nodeList"] == [
+            "recurrent_state.0",
+            "model.layers.0.linear_attn._ones_lower",
+            "/model/layers.0/decoder",
+        ]
+        assert mdp["partitions"][1]["nodeList"] == [
+            "recurrent_state.1",
+            "model.layers.1.linear_attn._ones_lower",
+            "/model/layers.1/decoder",
+        ]
+        assert "model.layers.0.self_attn.q_proj.weight" not in {
+            name for partition in mdp["partitions"] for name in partition["nodeList"]
+        }
+        assert "1 compiler-dump nodes not found in QEff MDP" in caplog.text
+        assert "compiler_generated_only" in caplog.text
 
 
 @pytest.mark.cpu_only

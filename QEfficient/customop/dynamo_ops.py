@@ -11,9 +11,15 @@ from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
     CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
+    CtxGatherDP,
+    CtxGatherDPCP,
+    CtxGatherFoldedRows,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
+    CtxScatterDP,
+    CtxScatterDPCP,
+    CtxScatterFoldedRows,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxGatherBlockedKVCB,
@@ -22,6 +28,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxScatterCB,
     CtxScatterCB3D,
 )
+from QEfficient.customop.glm_dsa import GlmFoldedRowGather, GlmIntDiv, GlmIntMod, GlmPagedScatter, GlmSparseScatter
 from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
 from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
 
@@ -74,6 +81,59 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
     return torch.empty_like(data)
 
 
+@torch.library.custom_op("qefficient::ctx_scatter_dp", mutates_args=())
+def ctx_scatter_dp_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[0], device=result.device).view(-1, 1, 1)
+    dp_idx = torch.arange(result.shape[1], device=result.device).view(1, -1, 1)
+    safe_positions = torch.where(position_ids == torch.iinfo(torch.int32).max, 0, position_ids)
+    result[batch_idx, dp_idx, safe_positions.long()] = updates
+    return result
+
+
+@ctx_scatter_dp_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::ctx_scatter_folded_rows", mutates_args=())
+def ctx_scatter_folded_rows_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[1], device=result.device).view(-1, 1).expand_as(position_ids)
+    valid = position_ids != torch.iinfo(torch.int32).max
+    result[0, batch_idx[valid], position_ids[valid].long()] = updates[:, 0][valid]
+    return result
+
+
+@ctx_scatter_folded_rows_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::ctx_scatter_dp_cp", mutates_args=())
+def ctx_scatter_dp_cp_op(
+    data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor, context_parallel: int
+) -> torch.Tensor:
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[0], device=result.device).view(-1, 1, 1)
+    dp_idx = torch.arange(result.shape[1], device=result.device).view(1, -1, 1)
+    valid = position_ids != torch.iinfo(torch.int32).max
+    safe_positions = torch.where(valid, position_ids, torch.zeros_like(position_ids))
+    slots_per_cp = result.shape[2] // context_parallel
+    address = (
+        torch.remainder(safe_positions, context_parallel) * slots_per_cp
+        + torch.div(safe_positions, context_parallel, rounding_mode="floor")
+    ).long()
+    current = result[batch_idx, dp_idx, address]
+    result[batch_idx, dp_idx, address] = torch.where(valid.unsqueeze(-1), updates, current)
+    return result
+
+
+@ctx_scatter_dp_cp_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor, context_parallel: int) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
 @torch.library.custom_op("qefficient::ctx_gather_3d", mutates_args=())
 def ctx_gather_3d_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
     """Custom 3D context gather operation"""
@@ -84,10 +144,61 @@ def ctx_gather_3d_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Ten
 @ctx_gather_3d_op.register_fake
 def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
     """Fake implementation for torch.export"""
-    # Return tensor with shape [batch_size, seq_len]
     batch_size = data.shape[0]
     seq_len = ctx_indices.shape[1]
-    return torch.empty(batch_size, seq_len, dtype=data.dtype, device=data.device)
+    feature_shape = data.shape[2:]
+    return torch.empty((batch_size, seq_len, *feature_shape), dtype=data.dtype, device=data.device)
+
+
+@torch.library.custom_op("qefficient::ctx_gather_dp", mutates_args=())
+def ctx_gather_dp_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    dp_idx = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    safe_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    return data[batch_idx, dp_idx, safe_indices.long()]
+
+
+@ctx_gather_dp_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    return torch.empty(
+        (*ctx_indices.shape, *data.shape[3:]),
+        dtype=data.dtype,
+        device=data.device,
+    )
+
+
+@torch.library.custom_op("qefficient::ctx_gather_folded_rows", mutates_args=())
+def ctx_gather_folded_rows_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    safe_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    batch_idx = torch.arange(data.shape[1], device=data.device).view(-1, 1)
+    return data[0, batch_idx, safe_indices.long()].unsqueeze(0)
+
+
+@ctx_gather_folded_rows_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    return torch.empty((1, *ctx_indices.shape, *data.shape[3:]), dtype=data.dtype, device=data.device)
+
+
+@torch.library.custom_op("qefficient::ctx_gather_dp_cp", mutates_args=())
+def ctx_gather_dp_cp_op(data: torch.Tensor, ctx_indices: torch.Tensor, context_parallel: int) -> torch.Tensor:
+    batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    dp_idx = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    safe_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    slots_per_cp = data.shape[2] // context_parallel
+    address = (
+        torch.remainder(safe_indices, context_parallel) * slots_per_cp
+        + torch.div(safe_indices, context_parallel, rounding_mode="floor")
+    ).long()
+    return data[batch_idx, dp_idx, address]
+
+
+@ctx_gather_dp_cp_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor, context_parallel: int) -> torch.Tensor:
+    return torch.empty(
+        (*ctx_indices.shape, *data.shape[3:]),
+        dtype=data.dtype,
+        device=data.device,
+    )
 
 
 @torch.library.custom_op("qefficient::ctx_gather", mutates_args=())
@@ -367,6 +478,69 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
     return torch.empty_like(data)
 
 
+@torch.library.custom_op("qefficient::glm_folded_row_gather", mutates_args=())
+def glm_folded_row_gather_op(data: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    safe = torch.where(indices == torch.iinfo(torch.int32).max, 0, indices).long()
+    return data.gather(2, safe.unsqueeze(-1).expand(*safe.shape, data.shape[-1]))
+
+
+@glm_folded_row_gather_op.register_fake
+def _(data: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    return torch.empty((*indices.shape, data.shape[-1]), dtype=data.dtype, device=data.device)
+
+
+@torch.library.custom_op("qefficient::glm_paged_scatter", mutates_args=())
+def glm_paged_scatter_op(
+    data: torch.Tensor,
+    block_id: torch.Tensor,
+    address: torch.Tensor,
+    updates: torch.Tensor,
+) -> torch.Tensor:
+    result = data.clone()
+    batch, rows, seq_len = updates.shape[:3]
+    row = torch.arange(rows, device=data.device).view(1, rows, 1).expand(batch, rows, seq_len)
+    valid = block_id != torch.iinfo(torch.int32).max
+    result[block_id[valid].long(), row[valid], address[valid].long()] = updates[valid]
+    return result
+
+
+@glm_paged_scatter_op.register_fake
+def _(data: torch.Tensor, block_id: torch.Tensor, address: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::glm_sparse_scatter", mutates_args=())
+def glm_sparse_scatter_op(data: torch.Tensor, indices: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    result = data.clone()
+    result[indices[..., 0].long(), indices[..., 1].long(), indices[..., 2].long()] = updates
+    return result
+
+
+@glm_sparse_scatter_op.register_fake
+def _(data: torch.Tensor, indices: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+@torch.library.custom_op("qefficient::glm_int_div", mutates_args=())
+def glm_int_div_op(values: torch.Tensor, divisor: int) -> torch.Tensor:
+    return torch.div(values, divisor, rounding_mode="floor")
+
+
+@glm_int_div_op.register_fake
+def _(values: torch.Tensor, divisor: int) -> torch.Tensor:
+    return torch.empty_like(values)
+
+
+@torch.library.custom_op("qefficient::glm_int_mod", mutates_args=())
+def glm_int_mod_op(values: torch.Tensor, divisor: int) -> torch.Tensor:
+    return torch.remainder(values, divisor)
+
+
+@glm_int_mod_op.register_fake
+def _(values: torch.Tensor, divisor: int) -> torch.Tensor:
+    return torch.empty_like(values)
+
+
 # ---------------------------------------------------------------------------
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
@@ -376,15 +550,26 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.rms_norm.default: get_dynamo_onnxscript_func(CustomRMSNorm),
     torch.ops.qefficient.ctx_scatter.default: get_dynamo_onnxscript_func(CtxScatter),
     torch.ops.qefficient.ctx_scatter_3d.default: get_dynamo_onnxscript_func(CtxScatter3D),
+    torch.ops.qefficient.ctx_scatter_dp.default: get_dynamo_onnxscript_func(CtxScatterDP),
+    torch.ops.qefficient.ctx_scatter_folded_rows.default: get_dynamo_onnxscript_func(CtxScatterFoldedRows),
+    torch.ops.qefficient.ctx_scatter_dp_cp.default: get_dynamo_onnxscript_func(CtxScatterDPCP),
     torch.ops.qefficient.ctx_scatter_cb.default: get_dynamo_onnxscript_func(CtxScatterCB),
     torch.ops.qefficient.ctx_scatter_cb_3d.default: get_dynamo_onnxscript_func(CtxScatterCB3D),
     torch.ops.qefficient.ctx_scatter_3d_int.default: get_dynamo_onnxscript_func(CtxScatter3DInt),
     torch.ops.qefficient.ctx_scatter_3d_generalized.default: get_dynamo_onnxscript_func(CtxScatter3D),
     torch.ops.qefficient.ctx_gather.default: get_dynamo_onnxscript_func(CtxGather),
     torch.ops.qefficient.ctx_gather_3d.default: get_dynamo_onnxscript_func(CtxGather3D),
+    torch.ops.qefficient.ctx_gather_dp.default: get_dynamo_onnxscript_func(CtxGatherDP),
+    torch.ops.qefficient.ctx_gather_folded_rows.default: get_dynamo_onnxscript_func(CtxGatherFoldedRows),
+    torch.ops.qefficient.ctx_gather_dp_cp.default: get_dynamo_onnxscript_func(CtxGatherDPCP),
     torch.ops.qefficient.ctx_gather_cb.default: get_dynamo_onnxscript_func(CtxGatherCB),
     torch.ops.qefficient.ctx_gather_cb_3d.default: get_dynamo_onnxscript_func(CtxGatherCB3D),
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
+    torch.ops.qefficient.glm_folded_row_gather.default: get_dynamo_onnxscript_func(GlmFoldedRowGather),
+    torch.ops.qefficient.glm_paged_scatter.default: get_dynamo_onnxscript_func(GlmPagedScatter),
+    torch.ops.qefficient.glm_sparse_scatter.default: get_dynamo_onnxscript_func(GlmSparseScatter),
+    torch.ops.qefficient.glm_int_div.default: get_dynamo_onnxscript_func(GlmIntDiv),
+    torch.ops.qefficient.glm_int_mod.default: get_dynamo_onnxscript_func(GlmIntMod),
 }

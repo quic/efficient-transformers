@@ -22,7 +22,9 @@ from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
+    DeduplicateRepeatedSubgraphTransform,
     LocalizeFunctionReduceSumAxesTransform,
+    DeduplicateRepeatedSubgraphTransform,
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
@@ -146,6 +148,8 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif dim_name.startswith("compressed_ctx_len_"):
+                dim_registry[dim_name] = Dim(dim_name, min=1, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
             elif "sliding_window" in dim_name:
@@ -161,33 +165,70 @@ def convert_dynamic_axes_to_dynamic_shapes(
     dynamic_shapes: Dict[str, Any] = {}
     past_keys: Dict[int, Any] = {}
     past_values: Dict[int, Any] = {}
+    conv_states: Dict[int, Any] = {}
+    recurrent_states: Dict[int, Any] = {}
     compressed_kv_layers: Dict[int, Any] = {}
     k_pe_layers: Dict[int, Any] = {}
+    indexer_key_layers: Dict[int, Any] = {}
+    deepseek_v4_past_states: Dict[int, list[Any]] = {}
 
     for input_name, axes_map in dynamic_axes.items():
-        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+        # Folded GLM cache dimensions are derived from fixed DP/CP topology
+        # values. Keep their distinct names in ONNX dynamic_axes metadata, but
+        # leave them static for torch.export, which cannot express B/DP or T/CP
+        # relationships and correctly infers these traced dimensions as static.
+        resolved = {
+            axis_idx: resolve_dim(dim_name)
+            for axis_idx, dim_name in axes_map.items()
+            if not dim_name.startswith("glm_")
+        }
         if input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
             past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("conv_state."):
+            conv_states[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("recurrent_state."):
+            recurrent_states[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("compressed_kv."):
             compressed_kv_layers[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("k_pe."):
             k_pe_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("indexer_key."):
+            indexer_key_layers[int(input_name.split(".")[1])] = resolved
+        elif model_type == "deepseek_v4" and input_name.startswith("past_"):
+            if input_name.endswith("_RetainedState"):
+                continue
+            _, layer_idx = input_name.rsplit(".", maxsplit=1)
+            deepseek_v4_past_states.setdefault(int(layer_idx), []).append(resolved)
         else:
             dynamic_shapes[input_name] = resolved
 
-    if past_keys or past_values:
-        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
-        dynamic_shapes["past_key_values"] = [
-            [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
-        ]
+    retained_layer_indices = set(past_keys) | set(past_values) | set(conv_states) | set(recurrent_states)
+    if retained_layer_indices:
+        max_layer = max(retained_layer_indices)
+        nested_past_key_values = []
+        for i in range(max_layer + 1):
+            if i in conv_states or i in recurrent_states:
+                nested_past_key_values.append([conv_states.get(i, {}), recurrent_states.get(i, {})])
+            else:
+                nested_past_key_values.append([past_keys.get(i, {}), past_values.get(i, {})])
+        dynamic_shapes["past_key_values"] = nested_past_key_values
 
     if compressed_kv_layers or k_pe_layers:
         max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
         dynamic_shapes["compressed_kvs"] = [
-            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+            [compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})] for i in range(max_layer + 1)
         ]
+
+    if indexer_key_layers:
+        dynamic_shapes["indexer_key_cache"] = [
+            resolved for _, resolved in sorted(indexer_key_layers.items(), key=lambda item: item[0])
+        ]
+
+    if deepseek_v4_past_states:
+        max_layer = max(deepseek_v4_past_states)
+        dynamic_shapes["past_key_values"] = [deepseek_v4_past_states.get(i, []) for i in range(max_layer + 1)]
 
     return dynamic_shapes
 
@@ -248,7 +289,10 @@ def get_decoder_layer_classes_for_export(model):
         try:
             submodule_classes = get_submodules_for_export()
             if submodule_classes:
-                return {cls for cls in submodule_classes if inspect.isclass(cls)}
+                if inspect.isclass(submodule_classes):
+                    return [submodule_classes]
+                # Preserve hook order and duplicate classes because dynamo uses this list to name repeated functions.
+                return [cls for cls in submodule_classes if inspect.isclass(cls)]
         except Exception as exc:
             logger.warning(
                 f"get_submodules_for_export failed for {model.__class__.__name__}: "
@@ -261,7 +305,7 @@ def get_decoder_layer_classes_for_export(model):
             "Auto-discovered repeated submodule classes for export: "
             + ", ".join(sorted(cls.__name__ for cls in discovered))
         )
-        return discovered
+        return sorted(discovered, key=lambda cls: cls.__name__)
     return []
 
 
@@ -425,10 +469,14 @@ def export_wrapper(func):
                 if use_onnx_subfunctions and dynamo
                 else nullcontext()
             )
+            # This is an inference export. Without no_grad, the first layer's
+            # input has requires_grad=False while later layer inputs have
+            # requires_grad=True. PyTorch's region comparison treats their
+            # otherwise identical bodies as different subgraphs.
+            grad_context = torch.no_grad() if use_onnx_subfunctions and dynamo else nullcontext()
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch, grad_context:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 QEFFLogger.log_api_failure("export", self.__class__.__name__, export_exc)
                 if use_onnx_subfunctions and dynamo:
@@ -535,10 +583,15 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "dynamo": all_args.get("dynamo", False),
         }
     )
+    if all_args.get("dynamo", False):
+        # Dynamo node names are compiler/MDP-facing artifacts. Bump this when
+        # their post-export normalization changes so cached generic-name ONNX
+        # files are not reused.
+        copy_of_hash_params["dynamo_node_name_version"] = 1
     if getattr(qeff_model, "_weight_free", False):
         copy_of_hash_params["weight_free"] = True
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        copy_of_hash_params["onnx_subfunction_version"] = 3
+        copy_of_hash_params["onnx_subfunction_version"] = 4
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
         model_params=copy_of_hash_params,
@@ -584,7 +637,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     orig_hash_subfunction_version = qeff_model.hash_params.get("onnx_subfunction_version")
     qeff_model._use_onnx_subfunctions = True
     qeff_model.hash_params["use_onnx_subfunctions"] = True
-    qeff_model.hash_params["onnx_subfunction_version"] = 3
+    qeff_model.hash_params["onnx_subfunction_version"] = 4
     # TorchScript patches are irrelevant on the dynamo path.
     if not dynamo:
         apply_torch_patches()
@@ -620,9 +673,11 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
 
     # Add subfunction-specific ONNX transforms based on export path
     if dynamo:
-        # Dynamo: PreserveNestedCacheRetainedStateTransform + RenameRepeatedSubgraphTransform.
+        # Dynamo repairs retained cache outputs, collapses duplicate local functions, then assigns semantic names.
         if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
+        if DeduplicateRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(DeduplicateRepeatedSubgraphTransform)
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
     else:
@@ -641,15 +696,15 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
     if decoder_layer_classes:
         if dynamo:
-            # Pass resolved classnames to RenameRepeatedSubgraphTransform; single resolution point to avoid double-call.
-            resolved_classnames = sorted(cls.__name__ for cls in decoder_layer_classes)
+            # Dynamo needs ordered duplicate names; TorchScript only accepts unique module classes below.
+            resolved_classnames = [cls.__name__ for cls in decoder_layer_classes]
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
             kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
         else:
             # TorchScript path: pass class objects for export_modules_as_functions
-            kwargs["export_modules_as_functions"] = decoder_layer_classes
+            kwargs["export_modules_as_functions"] = set(decoder_layer_classes)
 
     return (
         args,

@@ -51,48 +51,15 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
     return 4
 
 
-def _normalize_attention_mode(raw_mode: str) -> str:
-    mode = raw_mode.lower()
-    if "h" in mode and "q" in mode and "kv" in mode:
-        return "hqkv"
-    if "h" in mode and "q" in mode:
-        return "hq"
-    if "h" in mode and "kv" in mode:
-        return "hkv"
-    if "h" in mode:
-        return "h"
-    if "q" in mode and "kv" in mode:
-        return "qkv"
-    if "kv" in mode:
-        return "kv"
-    if "q" in mode:
-        return "q"
-    return ""
-
-
 def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mode: str) -> str:
-    mode = _normalize_attention_mode(requested_mode)
-    if mode == "":
-        return ""
-    num_q_blocks = attention_cfg.get("num_q_blocks") or 1
-    num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
-
-    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1:
-        return "hqkv"
-    if head_block_size > 1 and num_q_blocks > 1:
-        return "hq"
-    if head_block_size > 1 and num_kv_blocks > 1:
-        return "hkv"
-    if head_block_size > 1:
-        return "h"
-    if num_q_blocks > 1 and num_kv_blocks > 1:
-        return "qkv"
-    if num_q_blocks > 1:
-        return "q"
-    if num_kv_blocks > 1:
-        return "kv"
-    return ""
+    active = {
+        "h": head_block_size > 1,
+        "q": (attention_cfg.get("num_q_blocks") or 1) > 1,
+        "kv": (attention_cfg.get("num_kv_blocks") or 1) > 1,
+    }
+    mode = requested_mode.lower()
+    return "".join(dim for dim in ("h", "q", "kv") if dim in mode and active[dim])
 
 
 def _get_valid_num_blocks(config: Dict, requested_key: str) -> int:
@@ -250,9 +217,8 @@ def attention_configurator(
 
         for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
-            qkv_size_per_nsp = q_size_per_nsp
-            # For KV Blocking for loop, q input and qkv output should be persistent in VTCM
-            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp + qkv_size_per_nsp
+            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
+
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
@@ -360,10 +326,21 @@ def build_transformer_blocking_config_for_transform(
     if requested_blocking_mode is None:
         return None
 
-    # "paged" is an orthogonal flag on top of a base blocking mode (e.g. "kv_paged"), not its own
-    # BlockingMode member, so it must be stripped before resolving the base mode via the enum.
-    base_blocking_mode = str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
-    blocking_mode = BlockingMode.resolve(base_blocking_mode)
+    model_type = get_attr_or_key(model_config, ("model_type",))
+    if model_type == "glm_moe_dsa" and requested_blocking_mode in {
+        "none",
+        "par",
+        "prefill_par",
+        "prefill_par_online",
+    }:
+        # GLM owns these dense-MLA modes through GlmAttentionLayerConfig. They do
+        # not map to the generic BlockingMode strategies, and the GLM attention
+        # implementation consumes num_kv_blocks/par_num_split directly.
+        return None
+
+    blocking_mode = BlockingMode.resolve(
+        str(requested_blocking_mode).lower().replace("_paged", "").replace("paged", "")
+    )
 
     required_keys = BLOCKING_MODE_REQUIRED_PARAMS.get(blocking_mode, [])
     provided_keys = [key for key in required_keys if qaic_config.get(key)]

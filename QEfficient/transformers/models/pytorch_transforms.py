@@ -7,10 +7,9 @@
 
 import gc
 import warnings
-from collections.abc import Callable
 from types import MethodType
+from typing import Callable, Optional, Tuple, Union
 
-import torch
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -20,6 +19,21 @@ from transformers.models.codegen.modeling_codegen import (
 )
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
+)
+from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+    DeepseekV4Attention,
+    DeepseekV4DecoderLayer,
+    DeepseekV4Experts,
+    DeepseekV4ForCausalLM,
+    DeepseekV4HashRouter,
+    DeepseekV4HyperConnection,
+    DeepseekV4HyperHead,
+    DeepseekV4MLP,
+    DeepseekV4Model,
+    DeepseekV4RMSNorm,
+    DeepseekV4SparseMoeBlock,
+    DeepseekV4TopKRouter,
+    DeepseekV4UnweightedRMSNorm,
 )
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
@@ -70,6 +84,17 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    GlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer,
+    GlmMoeDsaForCausalLM,
+    GlmMoeDsaIndexer,
+    GlmMoeDsaModel,
+    GlmMoeDsaMoE,
+    GlmMoeDsaRMSNorm,
+    GlmMoeDsaRotaryEmbedding,
+    GlmMoeDsaTopkRouter,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -97,25 +122,14 @@ from transformers.models.granite.modeling_granite import (
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeDecoderLayer,
+    GraniteMoeExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKRouter,
 )
-
-try:
-    from transformers.models.granitemoe.modeling_granitemoe import (
-        GraniteMoeParallelExperts,
-        GraniteMoeTopKGating,
-    )
-except ImportError:
-    from transformers.models.granitemoe.modeling_granitemoe import (
-        GraniteMoeExperts as GraniteMoeParallelExperts,
-    )
-    from transformers.models.granitemoe.modeling_granitemoe import (
-        GraniteMoeTopKRouter as GraniteMoeTopKGating,
-    )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -226,7 +240,6 @@ from transformers.models.qwen3.modeling_qwen3 import (
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
     Qwen3_5DecoderLayer,
-    Qwen3_5ForCausalLM,
     Qwen3_5ForConditionalGeneration,
     Qwen3_5GatedDeltaNet,
     Qwen3_5Model,
@@ -288,6 +301,16 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
+from transformers.models.qwen4_exp.modeling_qwen4_exp import (
+    Qwen4ExpForCausalLM,
+    Qwen4ExpTextAttention,
+    Qwen4ExpTextDecoderLayer,
+    Qwen4ExpTextExperts,
+    Qwen4ExpTextGatedDeltaNet,
+    Qwen4ExpTextModel,
+    Qwen4ExpTextPLELayer,
+    Qwen4ExpTextSparseMoeBlock,
+)
 from transformers.models.roberta.modeling_roberta import RobertaModel
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
@@ -345,6 +368,21 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
 )
+from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+    QEffDeepseekV4Attention,
+    QEffDeepseekV4DecoderLayer,
+    QEffDeepseekV4Experts,
+    QEffDeepseekV4ForCausalLM,
+    QEffDeepseekV4HashRouter,
+    QEffDeepseekV4HyperConnection,
+    QEffDeepseekV4HyperHead,
+    QEffDeepseekV4MLP,
+    QEffDeepseekV4Model,
+    QEffDeepseekV4RMSNorm,
+    QEffDeepseekV4SparseMoeBlock,
+    QEffDeepseekV4TopKRouter,
+    QEffDeepseekV4UnweightedRMSNorm,
+)
 from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
     QEffDFlashAttention,
     QEffDFlashDecoderLayer,
@@ -398,6 +436,17 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeRotaryEmbedding,
     QEffGlm4MoeTopkRouter,
 )
+from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    QEffGlmMoeDsaAttention,
+    QEffGlmMoeDsaDecoderLayer,
+    QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaIndexer,
+    QEffGlmMoeDsaModel,
+    QEffGlmMoeDsaMoE,
+    QEffGlmMoeDsaRMSNorm,
+    QEffGlmMoeDsaRotaryEmbedding,
+    QEffGlmMoeDsaTopkRouter,
+)
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
     QEffGPT2Block,
@@ -436,12 +485,12 @@ from QEfficient.transformers.models.granite.modeling_granite import (
 from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeAttention,
     QEffGraniteMoeDecoderLayer,
+    QEffGraniteMoeExperts,
     QEffGraniteMoeForCausalLM,
     QEffGraniteMoeModel,
     QEffGraniteMoeMoE,
-    QEffGraniteMoeParallelExperts,
     QEffGraniteMoeRotaryEmbedding,
-    QEffGraniteMoeTopKGating,
+    QEffGraniteMoeTopKRouter,
 )
 from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEFFGrok1CustomRMSNormAIC,
@@ -577,7 +626,6 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Attention,
     QEffQwen3_5DecoderLayer,
-    QEffQwen3_5ForCausalLM,
     QEffQwen3_5ForConditionalGeneration,
     QEffQwen3_5GatedDeltaNet,
     QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
@@ -633,6 +681,16 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextTopKRouter,
     QEffQwen3VLMoeVisionAttention,
     QEffQwen3VLMoeVisionModel,
+)
+from QEfficient.transformers.models.qwen4_exp.modeling_qwen4_exp import (
+    QEffQwen4ExpForCausalLM,
+    QEffQwen4ExpTextAttention,
+    QEffQwen4ExpTextDecoderLayer,
+    QEffQwen4ExpTextExperts,
+    QEffQwen4ExpTextGatedDeltaNet,
+    QEffQwen4ExpTextModel,
+    QEffQwen4ExpTextPLELayer,
+    QEffQwen4ExpTextSparseMoeBlock,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
@@ -717,6 +775,9 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        GlmMoeDsaRMSNorm: QEffGlmMoeDsaRMSNorm,
+        DeepseekV4RMSNorm: QEffDeepseekV4RMSNorm,
+        DeepseekV4UnweightedRMSNorm: QEffDeepseekV4UnweightedRMSNorm,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -733,12 +794,31 @@ class CustomOpsTransform(ModuleMappingTransform):
 
 class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
+        # DeepSeek V4
+        DeepseekV4ForCausalLM: QEffDeepseekV4ForCausalLM,
+        DeepseekV4Model: QEffDeepseekV4Model,
+        DeepseekV4DecoderLayer: QEffDeepseekV4DecoderLayer,
+        DeepseekV4Attention: QEffDeepseekV4Attention,
+        DeepseekV4SparseMoeBlock: QEffDeepseekV4SparseMoeBlock,
+        DeepseekV4Experts: QEffDeepseekV4Experts,
+        DeepseekV4TopKRouter: QEffDeepseekV4TopKRouter,
+        DeepseekV4HashRouter: QEffDeepseekV4HashRouter,
+        DeepseekV4HyperConnection: QEffDeepseekV4HyperConnection,
+        DeepseekV4HyperHead: QEffDeepseekV4HyperHead,
+        DeepseekV4MLP: QEffDeepseekV4MLP,
         # GLMMoe
         Glm4MoeModel: QEffGlm4MoeModel,
         Glm4MoeForCausalLM: QEffGlm4MoeForCausalLM,
         Glm4MoeAttention: QEffGlm4MoeAttention,
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
+        # GLM-MoE-DSA
+        GlmMoeDsaModel: QEffGlmMoeDsaModel,
+        GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+        GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+        GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+        GlmMoeDsaRotaryEmbedding: QEffGlmMoeDsaRotaryEmbedding,
+        GlmMoeDsaIndexer: QEffGlmMoeDsaIndexer,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -896,7 +976,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
         Qwen3_5TextModel: QEffQwen3_5TextModel,
         Qwen3_5Model: QEffQwen3_5Model,
-        Qwen3_5ForCausalLM: QEffQwen3_5ForCausalLM,
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
         Qwen3_5VisionAttention: QEffQwen3_5VisionAttention,
@@ -911,6 +990,15 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeAttention: QEffQwen3_5MoeAttention,
         Qwen3_5MoeVisionAttention: QEffQwen3_5MoeVisionAttention,
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
+        # Qwen4-Exp text-only decode
+        Qwen4ExpForCausalLM: QEffQwen4ExpForCausalLM,
+        Qwen4ExpTextModel: QEffQwen4ExpTextModel,
+        Qwen4ExpTextDecoderLayer: QEffQwen4ExpTextDecoderLayer,
+        Qwen4ExpTextAttention: QEffQwen4ExpTextAttention,
+        Qwen4ExpTextGatedDeltaNet: QEffQwen4ExpTextGatedDeltaNet,
+        Qwen4ExpTextPLELayer: QEffQwen4ExpTextPLELayer,
+        Qwen4ExpTextSparseMoeBlock: QEffQwen4ExpTextSparseMoeBlock,
+        Qwen4ExpTextExperts: QEffQwen4ExpTextExperts,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,
@@ -946,7 +1034,7 @@ class KVCacheTransform(ModuleMappingTransform):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
 
@@ -992,7 +1080,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
     def mutate(
         cls,
         original_module: nn.Module,
-        parent_module: nn.Module,
+        parent_module: nn.Module,  # noqa: ARG003
         n_repeat: int,
         orig_kv_heads: int,
         new_kv_heads: int,
@@ -1034,7 +1122,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         return original_module
 
     @classmethod
-    def apply(cls, model: nn.Module, num_replicate_kv_heads: int | None = None, **kwargs) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, num_replicate_kv_heads: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
@@ -1146,7 +1234,7 @@ class SpDTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
         pretrained_model_name_or_path_temp = kwargs.pop("pretrained_model_name_or_path", None)
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
@@ -1213,7 +1301,7 @@ class SamplerTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
         if qaic_config is None or not qaic_config.get("include_sampler", False):
             return model, transformed
@@ -1249,7 +1337,7 @@ class DFlashTransform(ModuleMappingTransform):
 
 
 class DFlashDLMTransform:
-    """Inject lm_head/embed_tokens from the TLM checkpoint (dflash_tlm_repo) and drop fc/hidden_norm."""
+    """Inject target embeddings into the draft model and remove target-only modules."""
 
     @classmethod
     def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
@@ -1265,22 +1353,22 @@ class DFlashDLMTransform:
         if not tlm_repo:
             return model, True
 
-        w = load_checkpoint_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
-        embed_w = w.get("model.embed_tokens.weight")
-        lm_head_w = w.get("lm_head.weight", embed_w)  # tie_word_embeddings: lm_head is a view of embed_tokens
-        if lm_head_w is None or embed_w is None:
+        weights = load_checkpoint_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
+        embed_weight = weights.get("model.embed_tokens.weight")
+        lm_head_weight = weights.get("lm_head.weight", embed_weight)
+        if lm_head_weight is None or embed_weight is None:
             return model, True
 
         with torch.no_grad():
-            model.lm_head.weight.data.copy_(lm_head_w.float())
-            inner.embed_tokens.weight.data.copy_(embed_w.float())
-            if w.get("lm_head.bias") is not None:
-                model.lm_head.bias = nn.Parameter(w["lm_head.bias"].float())
+            model.lm_head.weight.data.copy_(lm_head_weight.float())
+            inner.embed_tokens.weight.data.copy_(embed_weight.float())
+            if weights.get("lm_head.bias") is not None:
+                model.lm_head.bias = nn.Parameter(weights["lm_head.bias"].float())
         return model, True
 
 
 class DFlashTLMTransform:
-    """Attach fc/hidden_norm (weights from dflash_dlm_repo, fc scaled for fp16 range) and set target_layer_ids."""
+    """Attach target-layer projection modules and configure collected hidden-state layers."""
 
     @classmethod
     def apply(cls, model: nn.Module, qaic_config: dict | None = None, **kwargs) -> tuple[nn.Module, bool]:
@@ -1288,46 +1376,42 @@ class DFlashTLMTransform:
         if not target_layer_ids:
             return model, False
 
-        # Conditional-generation (VLM) models (e.g. gemma4) nest the language config
-        # under text_config and the decoder under model.model.language_model; plain
-        # CausalLM models (qwen3/llama) expose them directly.
         config = model.config
         text_config = getattr(config, "text_config", config)
         hidden_size = text_config.hidden_size
         inner = model.model
         if hasattr(inner, "language_model"):
             inner = inner.language_model
-        n = len(target_layer_ids)
-        # Keep injected modules aligned with the decoder hidden-state precision.
+        num_target_layers = len(target_layer_ids)
         reference_weight = inner.embed_tokens.weight
         module_device = reference_weight.device
         module_dtype = reference_weight.dtype
 
-        # Skip if a caller pre-injected fc/hidden_norm before constructing the model.
         if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
             model_type = getattr(config, "model_type", "")
             eps = getattr(text_config, "rms_norm_eps", getattr(config, "rms_norm_eps", 1e-6))
             if "gemma" in model_type:
-                RMSNorm = Gemma4RMSNorm
+                rms_norm = Gemma4RMSNorm
             elif "qwen3_vl" in model_type:
-                RMSNorm = Qwen3VLTextRMSNorm
+                rms_norm = Qwen3VLTextRMSNorm
             elif "qwen3" in model_type:
-                RMSNorm = Qwen3RMSNorm
+                rms_norm = Qwen3RMSNorm
             elif "llama" in model_type:
-                RMSNorm = LlamaRMSNorm
+                rms_norm = LlamaRMSNorm
             else:
-                RMSNorm = nn.RMSNorm
-            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False).to(device=module_device, dtype=module_dtype)
-            inner.hidden_norm = RMSNorm(hidden_size, eps=eps).to(device=module_device, dtype=module_dtype)
+                rms_norm = nn.RMSNorm
+            inner.fc = nn.Linear(num_target_layers * hidden_size, hidden_size, bias=False).to(
+                device=module_device, dtype=module_dtype
+            )
+            inner.hidden_norm = rms_norm(hidden_size, eps=eps).to(device=module_device, dtype=module_dtype)
 
             dlm_repo = qaic_config.get("dflash_dlm_repo")
-            w = load_checkpoint_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
-            if "fc.weight" in w and "hidden_norm.weight" in w:
-                inner.fc.weight.data.copy_(w["fc.weight"].to(device=module_device, dtype=module_dtype))
+            weights = load_checkpoint_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
+            if "fc.weight" in weights and "hidden_norm.weight" in weights:
+                inner.fc.weight.data.copy_(weights["fc.weight"].to(device=module_device, dtype=module_dtype))
                 inner.hidden_norm.weight.data.copy_(
-                    w["hidden_norm.weight"].to(device=module_device, dtype=module_dtype)
+                    weights["hidden_norm.weight"].to(device=module_device, dtype=module_dtype)
                 )
-                # RMSNorm(x/s) == RMSNorm(x): scale fc down to keep activations in fp16 range.
                 with torch.no_grad():
                     bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.float().norm(dim=1).max().item()
                     inner.fc.weight.data.div_(max(bound / _DFLASH_TARGET_ABSMAX, 1.0))
@@ -1486,7 +1570,7 @@ class PoolingTransform:
     """
 
     @classmethod
-    def apply(cls, model: nn.Module, pooling: str | Callable) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
         transformed = False
         pooling_method = (
             POOLING_MAP[pooling]
@@ -1509,7 +1593,7 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     # Get all QEff classes that are decoder layers from the existing mapping
     decoder_layer_classes = set()
 
-    for qeff_class in KVCacheTransform._module_mapping.values():
+    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
         # Check if the QEff class name contains decoder layer patterns
         qeff_class_name = qeff_class.__name__
         if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
@@ -1528,16 +1612,58 @@ class BlockingAttentionTransform:
     _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, attn_blocking_config) -> tuple[nn.Module, bool]:
+    def apply(
+        cls,
+        model: nn.Module,
+        attn_blocking_config,
+        *,
+        qaic_config: Optional[dict] = None,
+        batch_size: int = 1,
+        seq_len: int = 1,
+        context_length: Optional[int] = None,
+        num_devices: int = 1,
+        num_cores: int = 16,
+        prefill_only: bool = False,
+    ) -> Tuple[nn.Module, bool]:
         transformed = False
         model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
         model_architectures = getattr(model_config, "architectures", None) or []
+        is_glm_moe_dsa = getattr(model_config, "model_type", None) == "glm_moe_dsa" or (
+            "GlmMoeDsaForCausalLM" in model_architectures
+        )
+        glm_layer_configs = None
+        if is_glm_moe_dsa:
+            from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+                QEffGlmMoeDsaAttention,
+                resolve_glm_attention_layer_configs,
+            )
+
+            glm_layer_configs = resolve_glm_attention_layer_configs(
+                model_config,
+                qaic_config,
+                batch_size=int(batch_size),
+                context_length=int(context_length or getattr(model_config, "max_position_embeddings", 1)),
+                num_devices=int(num_devices),
+                num_cores=int(num_cores),
+                seq_len=int(seq_len),
+                prefill_only=bool(prefill_only),
+            )
+            model._qeff_compile_batch_size = int(batch_size)
+            model._qeff_compile_seq_len = int(seq_len)
+            model._qeff_compile_context_length = int(
+                context_length or getattr(model_config, "max_position_embeddings", 1)
+            )
         supported_attention_classes = {
             qeff_class
             for qeff_class in KVCacheTransform._module_mapping.values()
             if qeff_class.__name__.endswith("Attention")
         }
         for module in model.modules():
+            if is_glm_moe_dsa and isinstance(module, QEffGlmMoeDsaAttention):
+                module.attn_blocking_config = attn_blocking_config
+                module.glm_attention_config = glm_layer_configs[module.layer_idx]
+                transformed = True
+                continue
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
@@ -1546,6 +1672,37 @@ class BlockingAttentionTransform:
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+
+class FFNBlockingTransform(PytorchTransform):
+    """Configure DeepSeek V4 routed-expert FFN tiling from ``qaic_config``."""
+
+    _VALID_MODES = {"default", "token", "weight", "token_weight"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        weight_block_size = config.get("ffn_weight_block_size")
+
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        for key, value in (
+            ("ffn_token_block_size", token_block_size),
+            ("ffn_weight_block_size", weight_block_size),
+        ):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+                raise ValueError(f"qaic_config['{key}'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffDeepseekV4Experts):
+                module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
+                transformed = True
         return model, transformed
 
 
@@ -1606,7 +1763,7 @@ def _iter_optimized_moe_modules(model: nn.Module):
             yield module
 
 
-def _get_moe_num_experts(module: nn.Module) -> int | None:
+def _get_moe_num_experts(module: nn.Module) -> Optional[int]:
     weights = getattr(module, "moe_weights", None)
     if weights is not None:
         return int(weights.num_experts)
@@ -1631,7 +1788,7 @@ def _resolve_expert_parallel_layout(
     num_devices: int,
     num_cores: int,
     cores_per_expert: int,
-) -> tuple[int, int, int, int | None]:
+) -> tuple[int, int, int, Optional[int]]:
     if num_devices <= 0:
         raise ValueError("num_devices must be greater than zero for MoE expert parallelism")
     if num_cores <= 0:
@@ -1674,6 +1831,9 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         # GLM4-MoE
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # GLM-MoE-DSA
+        GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+        GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
         # Llama4
         Llama4TextMoe: QEffLlama4TextMoe,
         Llama4TextExperts: QEffLlama4TextExperts,
@@ -1697,14 +1857,14 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         GptOssExperts: QEffGptOssExperts,
         # GraniteMoE
         GraniteMoeMoE: QEffGraniteMoeMoE,
-        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
-        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        GraniteMoeExperts: QEffGraniteMoeExperts,
+        GraniteMoeTopKRouter: QEffGraniteMoeTopKRouter,
         # Mixtral
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, mapped = super().apply(model)
         return model, mapped or any(True for _ in _iter_optimized_moe_modules(model))
 
@@ -1755,7 +1915,7 @@ class OptimizedMoEWeightsTransform(PytorchTransform):
     """Canonicalize MoE expert weights for modules using shared MoE flavours."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
         for module in list(_iter_optimized_moe_modules(model)):
             if getattr(module, "weights_transformed", False):
@@ -1775,13 +1935,12 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
-        batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        qaic_config: dict | None = None,
-        prefill_seq_len: int | None = None,
-        hash_params: dict | None = None,
-    ) -> tuple[nn.Module, bool]:
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
         from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
 
         moe_config = (qaic_config or {}).get("moe_config", {}) or {}
@@ -1806,11 +1965,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         if expert_parallel_chunk_size <= 0:
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        compile_batch_size = int(batch_size or 1)
-        if compile_batch_size <= 0:
-            raise ValueError("batch_size must be greater than zero for MoE expert parallelism")
-        compile_num_tokens = compile_batch_size * compile_seq_len
-        num_packed_chunks = max(1, -(-compile_num_tokens // expert_parallel_chunk_size))
+        num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
 
         transformed = False
         flavour = None
@@ -1852,10 +2007,10 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
             transformed = True
 
-        if uses_expert_parallel and compile_num_tokens % expert_parallel_chunk_size != 0:
+        if uses_expert_parallel and compile_seq_len % expert_parallel_chunk_size != 0:
             logger.warning(
                 f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
-                f"the compile token count {compile_num_tokens}; the number of packed chunks will be {num_packed_chunks}."
+                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
             )
 
         if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
@@ -1909,7 +2064,7 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
     """Pack or restore MoE weights according to the selected MoE export flavour."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
         for module in list(_iter_optimized_moe_modules(model)):
             if not getattr(module, "weights_transformed", False):
@@ -1945,6 +2100,41 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
         return model, transformed
 
 
+class FFNBlockingTransform(PytorchTransform):
+    """Configure optional token tiling for optimized routed MoE FFNs."""
+
+    _VALID_MODES = {"default", "token", "weight", "token_weight"}
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        config = qaic_config or {}
+        mode = config.get("ffn_blocking_mode", "default")
+        token_block_size = config.get("ffn_token_block_size")
+        weight_block_size = config.get("ffn_weight_block_size")
+        if mode not in cls._VALID_MODES:
+            raise ValueError(
+                f"qaic_config['ffn_blocking_mode'] must be one of {sorted(cls._VALID_MODES)}, got {mode!r}."
+            )
+        if token_block_size is not None and (
+            not isinstance(token_block_size, int) or isinstance(token_block_size, bool) or token_block_size < 1
+        ):
+            raise ValueError("qaic_config['ffn_token_block_size'] must be a positive integer when provided.")
+        if weight_block_size is not None and (
+            not isinstance(weight_block_size, int) or isinstance(weight_block_size, bool) or weight_block_size < 1
+        ):
+            raise ValueError("qaic_config['ffn_weight_block_size'] must be a positive integer when provided.")
+
+        transformed = False
+        for module in model.modules():
+            if isinstance(module, QEffDeepseekV4Experts):
+                module.configure_ffn_blocking(mode, token_block_size, weight_block_size)
+                transformed = True
+            elif isinstance(module, QEffMoEBlockMixin):
+                module.configure_ffn_blocking(mode, token_block_size)
+                transformed = True
+        return model, transformed
+
+
 class OptimizedMoETransform(PytorchTransform):
     """Compatibility facade for MoE mapping discovery, weights, and export config."""
 
@@ -1954,23 +2144,24 @@ class OptimizedMoETransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
-        batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        qaic_config: dict | None = None,
-        prefill_seq_len: int | None = None,
-        hash_params: dict | None = None,
-    ) -> tuple[nn.Module, bool]:
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
         model, mapped = OptimizedMoEMapperTransform.apply(model)
         model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
         if not (mapped or external_mapped):
-            return model, False
+            model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
+            return model, ffn_blocking_configured
+
+        model, ffn_blocking_configured = FFNBlockingTransform.apply(model, qaic_config=qaic_config)
 
         model, weights_ready = OptimizedMoEWeightsTransform.apply(model)
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
-            batch_size=batch_size,
             num_devices=num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
@@ -1978,14 +2169,21 @@ class OptimizedMoETransform(PytorchTransform):
             hash_params=hash_params,
         )
         _, expert_parallel_weights_ready = OptimizedMoEExpertParallelWeightsTransform.apply(model)
-        return model, mapped or external_mapped or weights_ready or export_configured or expert_parallel_weights_ready
+        return model, (
+            mapped
+            or external_mapped
+            or ffn_blocking_configured
+            or weights_ready
+            or export_configured
+            or expert_parallel_weights_ready
+        )
 
 
 class SimpleDecodeMoeTransform(OptimizedMoETransform):
     """Constructor-time MoE transform that uses legacy decode defaults."""
 
     @classmethod
-    def apply(cls, model: nn.Module) -> tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         return OptimizedMoETransform.apply(
             model,
             prefill_only=False,

@@ -33,6 +33,11 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     rotate_half,
 )
 
+try:
+    from transformers.models.qwen3_5.modeling_qwen3_5 import create_recurrent_attention_mask
+except ImportError:
+    create_recurrent_attention_mask = None
+
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     BlockingMode,
@@ -48,6 +53,7 @@ from QEfficient.customop import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
@@ -95,7 +101,7 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states, gate):
-        normed = CustomRMSNormFunc.apply(
+        normed = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
             hidden_states,
             self.weight.to(hidden_states.dtype),
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
@@ -389,7 +395,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
-    flat_pos = safe_position_ids.reshape(-1)
+    flat_pos = safe_position_ids.reshape(-1).to(cos.device)
     cos = cos.index_select(0, flat_pos).reshape(*safe_position_ids.shape, cos.shape[-1])
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
@@ -443,6 +449,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, mrope_section=N
 
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
     k_rot, k_pass = k[:, :, :, :rotary_dim], k[:, :, :, rotary_dim:]
 
@@ -588,7 +596,7 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
@@ -875,7 +883,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal
+        mask = mask_causal.to(device=g.device) if mask_causal is not None else None
+        mask_strict = mask_strict.to(device=g.device) if mask_strict is not None else None
 
         # chunk decay
         # g = g.cumsum(dim=-1)
@@ -1092,14 +1101,17 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else:
                 # General graphs serve both prefill and decode; select the
                 # matching branch at runtime after export.
-                recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
-                    query,
-                    key,
-                    value,
-                    g,
-                    beta,
-                    recurrent_state,
-                )
+                if seq_len == 1:
+                    recurrent_out, recurrent_state_new = recurrent_gdn_decode_forward(
+                        query,
+                        key,
+                        value,
+                        g,
+                        beta,
+                        recurrent_state,
+                    )
+                else:
+                    recurrent_out, recurrent_state_new = None, None
                 chunk_out, chunk_state = self.chunk_gated_delta_rule(
                     query,
                     key,
@@ -1116,9 +1128,17 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     ones_lower=self._ones_lower,
                     eye=self._eye,
                 )
-                is_decode = hidden_states.shape[1] == torch.tensor(1)
-                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-                last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
+                text_position_ids = (
+                    position_ids[0] if position_ids is not None and position_ids.ndim == 3 else position_ids
+                )
+                if recurrent_out is None:
+                    core_attn_out, last_recurrent_state = chunk_out, chunk_state
+                else:
+                    is_decode = (text_position_ids[:, :1] == text_position_ids[:, -1:]).view(
+                        batch_size, 1, 1, 1
+                    )
+                    core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                    last_recurrent_state = torch.where(is_decode, recurrent_state_new, chunk_state)
 
             if batch_index is not None:
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
@@ -1132,7 +1152,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     last_recurrent_state.to(recurrent_state_all.dtype),
                 )
             else:
-                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
+                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state.to(recurrent_state_all.dtype)
 
         else:
             # No cache — prefill only, no state needed
@@ -1167,6 +1187,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
 class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
     def __qeff_init__(self):
+        if not hasattr(self, "layer_type") and hasattr(self, "block_type"):
+            self.layer_type = self.block_type
         if self.layer_type == "linear_attention":
             self.linear_attn.__class__ = QEffQwen3_5GatedDeltaNet
             self.linear_attn.__qeff_init__()
@@ -1303,7 +1325,17 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         causal_mask = _create_causal_mask(
             position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
-        linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        if hasattr(self, "_update_linear_attn_mask"):
+            linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
+        elif create_recurrent_attention_mask is not None:
+            linear_attn_mask = create_recurrent_attention_mask(
+                config=self.config,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+            )
+        else:
+            linear_attn_mask = attention_mask
 
         hidden_states = inputs_embeds
 

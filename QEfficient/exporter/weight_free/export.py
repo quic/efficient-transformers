@@ -17,10 +17,16 @@ from accelerate import init_empty_weights
 
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
-from QEfficient.utils import load_json
-from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
+from QEfficient.utils import load_json, resolve_torch_dtype
+from QEfficient.utils.checkpoint_utils import read_weight_map, resolve_checkpoint_dir
 from QEfficient.utils.logging_utils import QEFFLogger
-from QEfficient.utils.torch_patches import dynamo_invoke_subgraph_fallback_env, preserve_subfunction_source_lines
+from QEfficient.utils.torch_patches import (
+    dynamo_invoke_subgraph_fallback_env,
+    isolate_invoke_subgraph_cache,
+    preserve_subfunction_source_lines,
+)
+
+logger = QEFFLogger.get_logger("INFRA")
 
 logger = QEFFLogger.get_logger("INFRA")
 
@@ -89,6 +95,18 @@ def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
         qeff_model.model = qeff_model.model.to(dtype=target_dtype)
 
     return qeff_model
+
+
+def _resolve_weight_free_target_dtype(config: Any) -> torch.dtype:
+    """Return the dtype used by the weight-free graph and prepared checkpoint."""
+    target_dtype = getattr(config, "torch_dtype", None)
+    if target_dtype is None:
+        target_dtype = getattr(config, "dtype", None)
+    target_dtype = resolve_torch_dtype(target_dtype, default=torch.float32)
+    # Keep checkpoint preparation and ONNX graph export on the same dtype source of truth.
+    config.torch_dtype = target_dtype
+    config.dtype = target_dtype
+    return target_dtype
 
 
 def _prune_unused_fake_initializers(onnx_program) -> None:
@@ -167,7 +185,40 @@ def _prepare_checkpoint_for_weight_free_export(
     from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
 
     source_dir = resolve_checkpoint_dir(model_ref)
-    hash_params = qeff_model.hash_params
+    hash_params = dict(qeff_model.hash_params)
+    text_config = getattr(qeff_model.model.config, "text_config", None) or qeff_model.model.config
+    orig_kv_heads = getattr(text_config, "orig_kv_heads", None)
+    if orig_kv_heads is not None:
+        hash_params["orig_kv_heads"] = int(orig_kv_heads)
+    config = getattr(qeff_model.model, "config", None)
+    if getattr(config, "model_type", None) == "deepseek_v4":
+        from QEfficient.exporter.weight_free.checkpoint_transforms import DeepseekV4CheckpointTransform
+
+        if DeepseekV4CheckpointTransform.is_applicable(read_weight_map(source_dir)):
+            prepared_hash = _prepared_checkpoint_hash(
+                model_ref=model_ref,
+                target_dtype=target_dtype,
+                active_group_transform_id=DeepseekV4CheckpointTransform.TRANSFORM_ID,
+                moe_prefill_flavour=hash_params.get("moe_prefill_flavour", "none"),
+                moe_prefill_num_pipeline_stages=hash_params.get("moe_prefill_num_pipeline_stages"),
+                moe_prefill_num_parallelized_experts=hash_params.get("moe_prefill_num_parallelized_experts"),
+                plan_payload={
+                    "transform": DeepseekV4CheckpointTransform.TRANSFORM_ID,
+                    "num_hidden_layers": getattr(config, "num_hidden_layers", None),
+                },
+            )
+            prepared_out = (
+                QEFF_CHECKPOINT_HOME.expanduser() / f"{source_dir.name}-qeff-prepared-{prepared_hash}"
+                if QEFF_CHECKPOINT_HOME
+                else source_dir.parent / f"{source_dir.name}-qeff-prepared-{prepared_hash}"
+            )
+            DeepseekV4CheckpointTransform.apply(
+                source_dir,
+                prepared_out,
+                target_dtype=target_dtype,
+                num_hidden_layers=getattr(config, "num_hidden_layers", None),
+            )
+            return str(prepared_out)
 
     prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
     plan, active_group_id = prep_pipeline.build_plan(
@@ -241,7 +292,7 @@ def export_weight_free_onnx(
     tuple
         Meta QEfficient model, updated ONNX transform kwargs, and cleanup callback.
     """
-    target_dtype = qeff_model.model.config.dtype
+    target_dtype = _resolve_weight_free_target_dtype(qeff_model.model.config)
     meta_qeff_model = _run_quantizer_for_wf(qeff_model, target_dtype)
 
     # export_wrapper (the @export_wrapper decorator on _export) already ran
@@ -259,7 +310,8 @@ def export_weight_free_onnx(
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
 
     meta_qeff_model.model.requires_grad_(False)
-    with dynamo_invoke_subgraph_fallback_env(), preserve_subfunction_source_lines():
+    export_start_time = time.perf_counter()
+    with dynamo_invoke_subgraph_fallback_env(), isolate_invoke_subgraph_cache(), preserve_subfunction_source_lines():
         onnx_program = torch.onnx.export(
             meta_qeff_model.model,
             args=(),
@@ -271,12 +323,15 @@ def export_weight_free_onnx(
             dynamic_shapes=dynamic_shapes,
             **export_kwargs,
         )
+    export_end_time = time.perf_counter()
+    print(f"Weight-free dynamo export completed in {export_end_time - export_start_time:.2f} seconds")
     if onnx_program is None:
         raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
     prep_start = time.perf_counter()
     prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
     prep_duration_seconds = time.perf_counter() - prep_start
+    print(f"Weight-free checkpoint preparation completed in {prep_duration_seconds:.2f} seconds: {prepared_model_ref}")
     logger.info(
         "Weight-free checkpoint preparation completed in %.2fs: %s",
         prep_duration_seconds,
@@ -315,11 +370,16 @@ def link_prepared_checkpoint_dir(onnx_path: Path, weight_spec_path: Path) -> Non
     it consumes the embedded weight spec.
     """
     spec = load_weight_spec(Path(weight_spec_path))
-    prepared_out = Path(spec.model_id)
+    prepared_out = Path(spec.model_id).expanduser()
     symlink = Path(onnx_path).parent / prepared_out.name
-    if prepared_out.exists() and not symlink.exists():
+    if prepared_out.exists():
+        prepared_out = prepared_out.resolve()
+        if symlink.is_symlink() and symlink.resolve(strict=False) != prepared_out:
+            symlink.unlink()
+        if symlink.exists():
+            return
         try:
-            symlink.symlink_to(prepared_out)
+            symlink.symlink_to(prepared_out, target_is_directory=prepared_out.is_dir())
         except OSError as exc:
             logger.warning(
                 "Could not create symlink %s -> %s: %s. "

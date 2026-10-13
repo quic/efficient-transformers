@@ -56,14 +56,16 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
+    ReplicateKVHeadCheckpointTransform,
 )
+from QEfficient.exporter.weight_free.export import _resolve_weight_free_target_dtype
 from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_free_ort_inputs
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
 from QEfficient.utils import runtime_requirements
 from QEfficient.utils.checkpoint_utils import checkpoint_root
-from QEfficient.utils.export_utils import _generate_export_hash
+from QEfficient.utils.export_utils import _generate_export_hash, get_decoder_layer_classes_for_export
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
@@ -232,6 +234,99 @@ def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_pipeline_reuses_full_checkpoint_across_configured_decoder_layer_counts(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.embed_tokens.weight": torch.ones(2, 2),
+                "model.layers.0.self_attn.q_proj.weight": torch.ones(2, 2),
+                "model.layers.1.self_attn.q_proj.weight": torch.ones(2, 2),
+                "model.layers.2.self_attn.q_proj.weight": torch.ones(2, 2),
+            },
+        )
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        plan_two_layers, _ = pipeline.build_plan(
+            src,
+            target_dtype=torch.float32,
+            config=SimpleNamespace(num_hidden_layers=2),
+        )
+        plan_three_layers, _ = pipeline.build_plan(
+            src,
+            target_dtype=torch.float32,
+            config=SimpleNamespace(num_hidden_layers=3),
+        )
+        assert plan_two_layers.fingerprint_payload() == plan_three_layers.fingerprint_payload()
+
+        pipeline.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            config=SimpleNamespace(num_hidden_layers=2),
+        )
+
+        assert set(_load_prepared_tensors(out)) == {
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.1.self_attn.q_proj.weight",
+            "model.layers.2.self_attn.q_proj.weight",
+        }
+
+    def test_pipeline_replicates_kv_projection_weights_and_tracks_plan_parameters(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        k_proj = torch.arange(16, dtype=torch.float16).reshape(4, 4)
+        v_bias = torch.arange(4, dtype=torch.float16)
+        _write_safetensors_checkpoint(
+            src,
+            {
+                "model.layers.0.self_attn.k_proj.weight": k_proj,
+                "model.layers.0.self_attn.v_proj.bias": v_bias,
+                "model.layers.0.self_attn.q_proj.weight": torch.ones(4, 4, dtype=torch.float16),
+            },
+        )
+
+        pipeline = CheckpointTransformPipeline([ReplicateKVHeadCheckpointTransform])
+        common_kwargs = {
+            "config": SimpleNamespace(num_hidden_layers=1),
+            "target_dtype": torch.float16,
+        }
+        plan_repeat_2, _ = pipeline.build_plan(
+            src,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 2},
+            **common_kwargs,
+        )
+        plan_repeat_4, _ = pipeline.build_plan(
+            src,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 4},
+            **common_kwargs,
+        )
+        assert plan_repeat_2.fingerprint_payload() != plan_repeat_4.fingerprint_payload()
+
+        pipeline.apply(
+            src,
+            out,
+            hash_params={"orig_kv_heads": 2, "num_replicate_kv_heads": 2},
+            **common_kwargs,
+        )
+        prepared = _load_prepared_tensors(out)
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.k_proj.weight"],
+            torch.repeat_interleave(k_proj.reshape(2, 2, 4), 2, dim=0).reshape(8, 4),
+        )
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.v_proj.bias"],
+            torch.repeat_interleave(v_bias.reshape(2, 2), 2, dim=0).reshape(8),
+        )
+        torch.testing.assert_close(
+            prepared["model.layers.0.self_attn.q_proj.weight"],
+            torch.ones(4, 4, dtype=torch.float16),
+        )
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
@@ -931,6 +1026,23 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.0.mlp.gate.weight"
         )
 
+    def test_resolver_accepts_language_model_checkpoint_prefix(self):
+        checkpoint_index = {
+            "model.language_model.embed_tokens.weight": "model.safetensors",
+            "model.language_model.layers.0.input_layernorm.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.embed_tokens.weight", checkpoint_index, backbone)
+            == "model.language_model.embed_tokens.weight"
+        )
+        assert (
+            find_checkpoint_key("model.layers.0.input_layernorm.weight", checkpoint_index, backbone)
+            == "model.language_model.layers.0.input_layernorm.weight"
+        )
+
     def test_resolver_combines_router_gate_alias_with_active_transform(self):
         checkpoint_name = "model.layers.0.block_sparse_moe.router.weight"
         backbone = MagicMock()
@@ -1095,6 +1207,44 @@ class TestWeightFreeCheckpointTransforms:
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
         assert spec.external_data_root == str(tmp_path)
 
+    def test_promotes_moe_alias_initializer(self, tmp_path, monkeypatch):
+        src = tmp_path / "src"
+        src.mkdir()
+        weight = torch.ones(2, 3, 4)
+        _write_safetensors_checkpoint(src, {"model.layers.0.mlp.moe_weights.gate": weight})
+
+        class MoEAliasModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.layers = torch.nn.ModuleList([torch.nn.Module()])
+                self.model.layers[0].mlp = torch.nn.Module()
+                self.model.layers[0].mlp.experts = torch.nn.Module()
+                self.model.layers[0].mlp.experts.moe_weights = torch.nn.ParameterDict(
+                    {"gate": torch.nn.Parameter(weight)}
+                )
+
+        initializer = SimpleNamespace(shape=weight.shape, dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={"model.layers.0.mlp.moe_weights.gate": initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-moe-alias",
+            qeff_model=SimpleNamespace(model=MoEAliasModel()),
+        )
+
+        assert "model.layers.0.mlp.moe_weights.gate" not in graph.initializers
+        assert [value.name for value in graph.inputs] == ["model.layers.0.mlp.moe_weights.gate"]
+        assert spec.inputs[0].name == "model.layers.0.mlp.moe_weights.gate"
+        assert spec.inputs[0].location.key == "model.layers.0.mlp.moe_weights.gate"
+
 
 def _fake_export(
     self,
@@ -1148,6 +1298,26 @@ class TestWeightFreeExportHash:
         assert regular_hash != weight_free_hash
         assert "weight_free" not in regular_params
         assert weight_free_params["weight_free"] is True
+
+
+class TestWeightFreeExportDtype:
+    def test_target_dtype_prefers_normalized_torch_dtype_over_dtype(self):
+        config = SimpleNamespace(torch_dtype=torch.float32, dtype=torch.float16)
+
+        target_dtype = _resolve_weight_free_target_dtype(config)
+
+        assert target_dtype is torch.float32
+        assert config.torch_dtype is torch.float32
+        assert config.dtype is torch.float32
+
+    def test_target_dtype_accepts_string_alias_from_dtype(self):
+        config = SimpleNamespace(torch_dtype=None, dtype="fp16")
+
+        target_dtype = _resolve_weight_free_target_dtype(config)
+
+        assert target_dtype is torch.float16
+        assert config.torch_dtype is torch.float16
+        assert config.dtype is torch.float16
 
 
 class TestRuntimeRequirements:
@@ -1413,6 +1583,25 @@ class TestRenameRepeatedSubgraphTransform:
         assert changed
         fn_names = {fn.name for fn in model.functions}
         assert "MyDecoderLayer" in fn_names
+
+
+class TestSubfunctionTargetDiscovery:
+    def test_preserves_ordered_duplicate_classes_from_model_hook(self):
+        class FirstBlock(torch.nn.Module):
+            pass
+
+        class SecondBlock(torch.nn.Module):
+            pass
+
+        class ModelWithSubfunctionTargets(torch.nn.Module):
+            def get_submodules_for_export(self):
+                return [FirstBlock, FirstBlock, SecondBlock]
+
+        assert get_decoder_layer_classes_for_export(ModelWithSubfunctionTargets()) == [
+            FirstBlock,
+            FirstBlock,
+            SecondBlock,
+        ]
 
 
 # ---------------------------------------------------------------------------
