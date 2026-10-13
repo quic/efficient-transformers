@@ -978,9 +978,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         if cache_params is not None:
             conv_state_all = cache_params.conv_states[self.layer_idx]
             recurrent_state_all = cache_params.recurrent_states[self.layer_idx]
-            # The decoder wrapper clears batch_index only after placing a full
-            # compute batch into physical cache-slot order.
-            state_batch_index = batch_index
+            # Singleton prefill replaces these states in full; decode clears batch_index in the decoder wrapper.
+            state_batch_index = None if self.gdn_full_state_update else batch_index
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if state_batch_index is not None:
@@ -1843,7 +1842,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             and blocking_config is not None
             and bool(blocking_config.batch_fold)
         )
-        full_batch_state_update_cb = batch_index is not None and self._uses_gdn_full_state_update()
+        full_batch_state_update_cb = batch_index is not None and seq_len == 1 and self._uses_gdn_full_state_update()
         physical_batch_cb = batch_fold_cb or full_batch_state_update_cb
         gdn_num_head_blocks = get_gdn_num_head_blocks(blocking_config, batch_fold_cb)
         layerwise = is_layerwise_active()
