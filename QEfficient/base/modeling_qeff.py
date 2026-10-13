@@ -1414,15 +1414,11 @@ class QEFFBaseModel(ABC):
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
 
-        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
-        io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_", "compressed_kv")
-        pkv_in_bfloat16 = (custom_io is not None) and any(
-            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
-            for key, value in custom_io.items()
+        custom_io_for_compiler = (
+            {key: value for key, value in custom_io.items() if "bfloat16" not in value} or None
+            if custom_io is not None
+            else None
         )
-        custom_io_for_compiler = custom_io
-        if model_in_bfloat16 and pkv_in_bfloat16:
-            custom_io_for_compiler = {key: value for key, value in custom_io.items() if "bfloat16" not in value} or None
 
         # MDP partition config selection (highest priority first):
         #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
