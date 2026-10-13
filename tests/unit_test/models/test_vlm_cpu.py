@@ -281,9 +281,15 @@ class TestDualQPCPagedAttentionQaicConfigRegression:
     @pytest.mark.parametrize(
         "modeling_module, class_name",
         [
-            ("QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl", "QEffQwen_2_5_vl_ForConditionalGeneration"),
+            (
+                "QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl",
+                "QEffQwen_2_5_vl_ForConditionalGeneration",
+            ),
             ("QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl", "QEffQwen3VLForConditionalGeneration"),
-            ("QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe", "QEffQwen3VLMoeForConditionalGeneration"),
+            (
+                "QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe",
+                "QEffQwen3VLMoeForConditionalGeneration",
+            ),
         ],
     )
     def test_get_dummy_inputs_paged_branch_uses_real_ctx_len_and_self_qaic_config(self, modeling_module, class_name):
