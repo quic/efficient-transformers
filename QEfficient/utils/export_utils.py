@@ -158,7 +158,15 @@ def convert_dynamic_axes_to_dynamic_shapes(
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
-            if observed_dim_values.get(dim_name) == {1}:
+            if (
+                "seq_len" in dim_name
+                and observed_dim_values.get(dim_name) == {1}
+                and model_type in {"qwen3_5", "qwen3_5_moe", "qwen3_5_text", "qwen3_5_moe_text"}
+            ):
+                dim_registry[dim_name] = Dim.STATIC
+            elif dim_name == "time" and observed_dim_values.get(dim_name) == {1}:
+                dim_registry[dim_name] = Dim("time")
+            elif observed_dim_values.get(dim_name) == {1}:
                 dim_registry[dim_name] = Dim.AUTO
             elif dim_name == "batch_size":
                 dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)

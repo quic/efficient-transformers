@@ -99,6 +99,49 @@ class TestONNXTransformsModuleStructure:
         assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
         assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
 
+    @pytest.mark.parametrize(
+        ("op_type", "function_name"),
+        [
+            ("CtxGatherBlockedKVBatch", "CtxGatherBlockedKVBatch"),
+            ("CtxChunkScatterBatch", "CtxChunkScatterBatch"),
+        ],
+    )
+    def test_batch_cache_custom_ops_register_function_protos(self, op_type, function_name):
+        import onnx
+        from onnx import TensorProto, helper
+
+        from QEfficient.base.onnx_transforms import CustomOpTransform
+
+        graph = helper.make_graph(
+            [
+                helper.make_node(
+                    op_type,
+                    inputs=["data", "indices"] if "Gather" in op_type else ["data", "indices", "updates"],
+                    outputs=["output"],
+                    domain="com.qti.aisw.onnx",
+                )
+            ],
+            "batch_cache_custom_op",
+            [
+                helper.make_tensor_value_info("data", TensorProto.FLOAT, [1]),
+                helper.make_tensor_value_info("indices", TensorProto.INT32, [1]),
+                *(
+                    [
+                        helper.make_tensor_value_info("updates", TensorProto.FLOAT, [1]),
+                    ]
+                    if "Gather" not in op_type
+                    else []
+                ),
+            ],
+            [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1])],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("com.qti.aisw.onnx", 1)])
+
+        CustomOpTransform.apply(model)
+
+        assert function_name in {function.name for function in model.functions}
+        onnx.checker.check_model(model)
+
     def test_base_onnx_transform_importable(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform
 

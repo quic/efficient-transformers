@@ -559,7 +559,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling

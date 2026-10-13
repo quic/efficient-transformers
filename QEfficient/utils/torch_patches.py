@@ -62,6 +62,7 @@ _original_model_to_graph = onnx_utils._model_to_graph
 _original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
 _original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map if _ts_utils_available else None
 _original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None) if _ts_utils_available else None
+_original_ts_model_to_graph = getattr(ts_utils, "_model_to_graph", None) if _ts_utils_available else None
 
 _PATCHES_ACTIVE = False
 _MISSING_INSTANCE_ATTR = object()
@@ -316,6 +317,8 @@ def apply_torch_patches():
     # Patch ts_utils (TorchScript-specific exporter utilities, torch >= 2.13 only)
     if _ts_utils_available:
         ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
+        if hasattr(ts_utils, "_model_to_graph"):
+            ts_utils._model_to_graph = _model_to_graph_patched
         if hasattr(ts_utils, "_get_module_attributes"):
             ts_utils._get_module_attributes = _get_module_attributes
 
@@ -339,6 +342,8 @@ def undo_torch_patches():
 
     if _ts_utils_available:
         ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
+        if _original_ts_model_to_graph:
+            ts_utils._model_to_graph = _original_ts_model_to_graph
         if _original_ts_get_module_attributes:
             ts_utils._get_module_attributes = _original_ts_get_module_attributes
 

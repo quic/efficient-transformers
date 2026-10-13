@@ -40,6 +40,7 @@ from QEfficient.base.checkpoint_transforms import (
     CheckpointTransformPipeline,
     TaskParams,
     TensorRef,
+    detect_group_transform,
     execute_checkpoint_plan,
 )
 from QEfficient.base.onnx_transforms import (
@@ -96,10 +97,24 @@ def test_dynamic_shapes_accept_qwen_decode_sequence_length():
 
     inputs = (torch.zeros((2, 1), dtype=torch.long),)
     dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
-        {"input_ids": {0: "batch_size", 1: "seq_len"}}, example_inputs={"input_ids": inputs[0]}
+        {"input_ids": {0: "batch_size", 1: "seq_len"}},
+        model_config=SimpleNamespace(model_type="qwen3_5"),
+        example_inputs={"input_ids": inputs[0]},
     )
 
     torch.export.export(Decode(), inputs, dynamic_shapes=dynamic_shapes, strict=True)
+
+    assert dynamic_shapes["input_ids"][1] is torch.export.Dim.STATIC
+
+
+def test_dynamic_shapes_preserve_qwen_vision_time_axis():
+    dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(
+        {"image_grid_thw": {0: "vision_batch_size", 1: "time", 2: "grid_h", 3: "grid_w"}},
+        model_config=SimpleNamespace(model_type="qwen3_5_moe"),
+        example_inputs={"image_grid_thw": torch.zeros((2, 1, 86, 128), dtype=torch.int64)},
+    )
+
+    assert dynamic_shapes["image_grid_thw"][1].__name__ == "time"
 
 
 def _make_minimal_onnx_with_repeated_subgraphs(
@@ -248,6 +263,17 @@ def test_checkpoint_root_symlinked_shards(tmp_path, monkeypatch):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_detects_gptoss_layout_without_model_type(self):
+        prefix = "model.layers.0.mlp.experts"
+        weight_map = {
+            f"{prefix}.gate_up_proj_blocks": "experts.safetensors",
+            f"{prefix}.down_proj_blocks": "experts.safetensors",
+        }
+
+        transform = detect_group_transform(SimpleNamespace(num_local_experts=2), weight_map)
+
+        assert transform is GptOssMxfp4ExpertDequantSplitCheckpointTransform
+
     def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"

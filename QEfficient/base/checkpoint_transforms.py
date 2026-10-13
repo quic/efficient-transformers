@@ -563,10 +563,11 @@ def detect_group_transform(
     if hash_params is None:
         hash_params = {}
 
-    # GptOss is identified by model_type — always uses MXFP4 dequant transform.
-    model_type = getattr(config, "model_type", None) if config else None
-    if model_type == "gpt_oss":
-        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
+    # Detect packed MXFP4 expert tensors from the checkpoint layout itself.
+    # This keeps the generic planner independent of model-specific names.
+    gptoss_cls = _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
+    if gptoss_cls is not None and gptoss_cls.is_applicable(weight_map):
+        return gptoss_cls
 
     num_experts = _config_num_experts(config)
     if not num_experts:
@@ -596,11 +597,6 @@ def detect_group_transform(
                     "The checkpoint may be incomplete or corrupted."
                 )
         return _find_transform_by_id("moe_expert_stacking_v1", transforms)
-
-    # GptOss is identified by model_type — always uses MXFP4 dequant transform.
-    model_type = getattr(config, "model_type", None) if config else None
-    if model_type == "gpt_oss":
-        return _find_transform_by_id("gptoss_mxfp4_dequant_v1", transforms)
 
     # Pre-stacked formats — delegate detection to each transform's is_applicable().
     # FusedExpertSplitCheckpointTransform handles both Mixtral fused and GraniteMoE
