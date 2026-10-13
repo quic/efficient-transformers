@@ -2738,9 +2738,7 @@ def test_qwen3_5_moe_full_state_export_has_no_retained_state_scatter(tmp_path, p
     )["lang"]
     export_batch_size = inputs["input_ids"].shape[0]
     inputs["input_ids"].fill_(1)
-    inputs["batch_index"] = torch.arange(export_batch_size - 1, -1, -1, dtype=torch.int64).view(
-        export_batch_size, 1
-    )
+    inputs["batch_index"] = torch.arange(export_batch_size - 1, -1, -1, dtype=torch.int64).view(export_batch_size, 1)
     if not prefill_only:
         inputs["position_ids"].fill_(3)
         for layer_state in inputs["past_key_values"]:

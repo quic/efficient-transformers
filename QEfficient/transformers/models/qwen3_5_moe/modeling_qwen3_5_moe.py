@@ -2083,8 +2083,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             and full_batch_size > 0
             and full_batch_size == kv_cache_batch_size
         )
-        if batch_size < 1 or (prefill_only is not True and prefill_only is not False) or not (
-            singleton_graph or full_batch_decode
+        if (
+            batch_size < 1
+            or (prefill_only is not True and prefill_only is not False)
+            or not (singleton_graph or full_batch_decode)
         ):
             raise ValueError(
                 "qaic_config['gdn_full_state_update'] requires qwen3_5_moe singleton prefill/decode or a "
