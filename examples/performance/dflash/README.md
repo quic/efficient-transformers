@@ -83,11 +83,12 @@ Qwen3.5 uses the VLM entry point with its DFlash target and draft checkpoints:
 ```bash
 python basic_inference_vision.py --model_name Qwen3.5-4B \
     --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
-    --ctx_len 4096 --prefill_seq_len 16 \
+    --ctx_len 4096 --prefill_seq_len 128 \
     --image --image_prompt "Describe this image in detail."
 ```
 
 Use `--prompt "..."` instead of `--image --image_prompt ...` for text-only input.
+Prefill length can be any positive multiple of the draft block size; verification and replay remain block-sized.
 
 ---
 

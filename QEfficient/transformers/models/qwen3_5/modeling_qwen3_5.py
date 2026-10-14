@@ -57,7 +57,7 @@ from QEfficient.transformers.models._layerwise import (
     is_layerwise_active,
     resolve_layer_window,
 )
-from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states, dflash_chunk_gated_delta_scan
 from QEfficient.transformers.spd.spd_transform_forward import filter_hidden_states
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -844,6 +844,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         ones_lower=None,
         eye=None,
         use_matrix_solve=False,
+        use_dynamic_chunk_loop=False,
     ):
         initial_dtype = query.dtype
         # if use_qk_l2norm_in_kernel:
@@ -928,21 +929,25 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             if initial_state is None
             else initial_state.to(value)
         )
-        core_attn_out = torch.zeros_like(value)
-        mask = mask_strict
-
-        # for each chunk
-        for i in range(total_sequence_length // chunk_size):
-            q_i, k_i, v_i = query[:, :, i], key[:, :, i], value[:, :, i]
-            attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
-            v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
-            v_new = v_i - v_prime
-            attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
-            core_attn_out[:, :, i] = attn_inter + attn @ v_new
-            last_recurrent_state = (
-                last_recurrent_state * g[:, :, i, -1, None, None].exp()
-                + (k_i * (g[:, :, i, -1, None] - g[:, :, i]).exp()[..., None]).transpose(-1, -2) @ v_new
+        if use_dynamic_chunk_loop:
+            core_attn_out, last_recurrent_state = dflash_chunk_gated_delta_scan(
+                query, key, value, k_cumdecay, g, decay_mask, mask_strict, last_recurrent_state
             )
+        else:
+            core_attn_out = torch.zeros_like(value)
+            mask = mask_strict
+
+            for i in range(total_sequence_length // chunk_size):
+                q_i, k_i, v_i = query[:, :, i], key[:, :, i], value[:, :, i]
+                attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
+                v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
+                v_new = v_i - v_prime
+                attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
+                core_attn_out[:, :, i] = attn_inter + attn @ v_new
+                last_recurrent_state = (
+                    last_recurrent_state * g[:, :, i, -1, None, None].exp()
+                    + (k_i * (g[:, :, i, -1, None] - g[:, :, i]).exp()[..., None]).transpose(-1, -2) @ v_new
+                )
 
         if not output_final_state:
             last_recurrent_state = None
@@ -1123,6 +1128,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     ones_lower=self._ones_lower[:dflash_chunk_size, :dflash_chunk_size],
                     eye=self._eye[:dflash_chunk_size, :dflash_chunk_size],
                     use_matrix_solve=getattr(self, "dflash_matrix_solve", True),
+                    use_dynamic_chunk_loop=True,
                 )
             elif batch_fold:
                 # Folded decode is exported with a static one-token sequence.
@@ -2136,8 +2142,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         if getattr(language_model, "target_layer_ids", None):
             chunk_size = getattr(language_model, "dflash_chunk_size", QWEN3_5_DFLASH_CHUNK_SIZE)
-            if prefill_seq_len != chunk_size:
-                raise ValueError(f"Qwen3.5 DFlash requires prefill_seq_len={chunk_size} for its gated-delta chunk.")
+            if prefill_seq_len < chunk_size or prefill_seq_len % chunk_size:
+                raise ValueError(f"Qwen3.5 DFlash requires prefill_seq_len to be a positive multiple of {chunk_size}.")
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
         channel = 3
@@ -2315,12 +2321,9 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         if is_dflash:
             if not kv_offload or continuous_batching:
                 raise ValueError("Qwen3.5 DFlash requires kv_offload=True and continuous_batching=False.")
-            if not 1 < dummy_seq_len <= 64:
-                raise ValueError(
-                    "Qwen3.5 DFlash requires 2 <= prefill_seq_len <= 64 for the exported gated-delta graph."
-                )
-            # The shared exporter supplies a 32-token dummy. Trace only one
-            # chunk: Python chunk loops do not generalize across chunk counts.
+            if dummy_seq_len < 2:
+                raise ValueError("Qwen3.5 DFlash requires prefill_seq_len >= 2 for the exported gated-delta graph.")
+            # Keep tracing small; the scripted scan preserves the dynamic chunk count.
             chunk_size = getattr(self.model.language_model, "dflash_chunk_size", QWEN3_5_DFLASH_CHUNK_SIZE)
             dummy_seq_len = min(dummy_seq_len, chunk_size)
         bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)

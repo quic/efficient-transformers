@@ -1597,6 +1597,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.dflash_tlm and self.model.config.model_type == "qwen3_5_moe":
             self.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_moe_dynamic_replay_v1"
             self.lang_model.hash_params["dflash_chunk_size"] = 16
+        if self.dflash_tlm and self.model.config.model_type == "qwen3_5":
+            self.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_dynamic_replay_v1"
+            self.lang_model.hash_params["dflash_chunk_size"] = 16
 
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -2108,12 +2111,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 full_batch_size=full_batch_size,
             )
 
-        if self.dflash_tlm and self.model.config.model_type == "qwen3_5_moe":
+        if self.dflash_tlm and self.model.config.model_type in {"qwen3_5", "qwen3_5_moe"}:
             language_model = self.lang_model.model.language_model
             previous_chunk_size = getattr(language_model, "dflash_chunk_size", 16)
             chunk_size = previous_chunk_size if dflash_block_size is None else dflash_block_size
             if not isinstance(chunk_size, int) or chunk_size < 2 or chunk_size & (chunk_size - 1):
-                raise ValueError("Qwen3.5-MoE DFlash requires a power-of-two dflash_block_size >= 2.")
+                raise ValueError("Qwen3.5 DFlash requires a power-of-two dflash_block_size >= 2.")
             if chunk_size != previous_chunk_size and self.lang_model.onnx_path is not None and lang_onnx_path is None:
                 raise ValueError("Changing dflash_block_size requires a fresh model instance to re-export the TLM.")
             language_model.dflash_chunk_size = chunk_size
@@ -2355,7 +2358,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # but one CCL value is silently dropped.
             lang_specs = specializations["lang"]
             if prefill_only:
-                if self.dflash_tlm and self.model.config.model_type == "qwen3_5_moe":
+                if self.dflash_tlm and self.model.config.model_type in {"qwen3_5", "qwen3_5_moe"}:
                     # Prefill and block-sized verification share the chunk graph.
                     specializations = []
                     for spec in lang_specs:

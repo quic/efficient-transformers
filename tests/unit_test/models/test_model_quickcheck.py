@@ -969,6 +969,8 @@ def test_dflash_mixed_window_ort_parity(tmp_path):
         (False, 64, 64, 64),
         (False, 8, 16, 16),
         (False, 16, 16, 16),
+        (False, 128, 16, 16),
+        (False, 256, 16, 16),
         (True, 16, 16, 16),
         (True, 128, 16, 16),
         (True, 128, 8, 8),
@@ -982,7 +984,8 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
 
     torch.manual_seed(11)
     model = make_tiny_qwen3_5_vlm(moe=moe)
-    model.config.text_config.max_position_embeddings = 256
+    ctx_len = max(256, prefill_length + verification_length)
+    model.config.text_config.max_position_embeddings = ctx_len
     qeff = QEFFAutoModelForImageTextToText(model, kv_offload=True, qaic_config={"target_layer_ids": [1, 3]})
     qeff.lang_model.model.language_model.dflash_chunk_size = dflash_chunk_size
     for layer in qeff.lang_model.model.language_model.layers:
@@ -995,7 +998,7 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
     for i, kind in enumerate(qeff.model.config.text_config.layer_types):
         if kind == "full_attention":
             inputs["past_key_values"][i] = [
-                tensor.new_zeros((tensor.shape[0], tensor.shape[1], 256, tensor.shape[3]))
+                tensor.new_zeros((tensor.shape[0], tensor.shape[1], ctx_len, tensor.shape[3]))
                 for tensor in inputs["past_key_values"][i]
             ]
     qeff.lang_model.export(
@@ -1023,7 +1026,8 @@ def test_qwen3_5_dflash_ort_recurrent_commit(
         (prompt_length + 2, verification_length, 1, 1),
         (prompt_length + 3, verification_length, verified_tokens, 0),
     ]:
-        inputs["input_ids"] = torch.full((batch_size, length), 10 + start, dtype=torch.int64)
+        token = (10 + start) % model.config.text_config.vocab_size
+        inputs["input_ids"] = torch.full((batch_size, length), token, dtype=torch.int64)
         positions = torch.arange(start, start + length).view(1, 1, -1).repeat(4, batch_size, 1)
         positions[:, :, valid:] = -1
         inputs["position_ids"] = positions

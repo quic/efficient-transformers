@@ -21,7 +21,6 @@ from QEfficient.generation.cloud_infer import (
     QAICInferenceSession,
     is_retained_state_name,
 )
-from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import QWEN3_5_DFLASH_CHUNK_SIZE
 from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("INFRA")
@@ -376,19 +375,11 @@ def compile_qwen3vl_vlm_qpcs(
     is_qwen35 = config.model_type == "qwen3_5"
     is_qwen35_moe = config.model_type == "qwen3_5_moe"
     qaic_config = {"target_layer_ids": tlm_target_ids}
-    if is_qwen35_moe:
+    if is_qwen35 or is_qwen35_moe:
         if block_size < 2 or block_size & (block_size - 1):
-            raise ValueError("Qwen3.5-MoE DFlash requires a power-of-two draft block_size >= 2.")
+            raise ValueError("Qwen3.5 DFlash requires a power-of-two draft block_size >= 2.")
         if prefill_seq_len < block_size or prefill_seq_len % block_size:
-            raise ValueError(f"Qwen3.5-MoE DFlash requires prefill_seq_len to be a positive multiple of {block_size}.")
-    if is_qwen35:
-        if prefill_seq_len != QWEN3_5_DFLASH_CHUNK_SIZE:
-            logger.warning(
-                f"Qwen3.5 DFlash uses prefill_seq_len={QWEN3_5_DFLASH_CHUNK_SIZE} for its fixed gated-delta chunk."
-            )
-            prefill_seq_len = QWEN3_5_DFLASH_CHUNK_SIZE
-        if block_size != QWEN3_5_DFLASH_CHUNK_SIZE:
-            raise ValueError(f"Qwen3.5 DFlash currently requires block_size={QWEN3_5_DFLASH_CHUNK_SIZE}.")
+            raise ValueError(f"Qwen3.5 DFlash requires prefill_seq_len to be a positive multiple of {block_size}.")
         logger.warning("Qwen3.5 DFlash uses accepted-prefix replay; target timing includes the extra commit pass.")
     tlm_qeff = QEFFAutoModelForImageTextToText.from_pretrained(
         tlm_repo,
@@ -412,10 +403,6 @@ def compile_qwen3vl_vlm_qpcs(
         text_model.fc.weight.data.div_(s)
     text_model.hidden_norm.weight.data.copy_(state_dict["hidden_norm.weight"].to(torch.float32))
     logger.info(f"[compile_qwen3vl_tlm] fc/hidden_norm injected (fc scale s={s:.6f})")
-    if is_qwen35:
-        # The fixed chunk and matrix solve change the graph, not its I/O names.
-        tlm_qeff.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_chunk16_matrix_replay_v3"
-
     compile_kwargs = {
         "prefill_seq_len": prefill_seq_len,
         "ctx_len": ctx_len,

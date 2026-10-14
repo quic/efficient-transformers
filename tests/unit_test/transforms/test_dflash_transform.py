@@ -250,20 +250,21 @@ def test_qwen3_5_dflash_requires_explicit_commit():
         qeff.lang_model.model(**inputs)
 
 
-@pytest.mark.parametrize("prefill_seq_len", [1, 65, 128])
+@pytest.mark.parametrize("prefill_seq_len", [1, 15, 65])
 def test_qwen3_5_dflash_rejects_unsupported_prefill(prefill_seq_len):
     from QEfficient import QEFFAutoModelForImageTextToText
 
     qeff = QEFFAutoModelForImageTextToText(
         make_tiny_qwen3_5_vlm(), kv_offload=True, qaic_config={"target_layer_ids": [1, 3]}
     )
-    with pytest.raises(ValueError, match="prefill_seq_len=16"):
+    with pytest.raises(ValueError, match="positive multiple of 16"):
         qeff.model.get_specializations(batch_size=1, prefill_seq_len=prefill_seq_len, ctx_len=256, kv_offload=True)
-    with pytest.raises(ValueError, match="prefill_seq_len <= 64"):
-        qeff.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=prefill_seq_len)
+    if prefill_seq_len < 2:
+        with pytest.raises(ValueError, match="prefill_seq_len >= 2"):
+            qeff.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=prefill_seq_len)
 
 
-@pytest.mark.parametrize("dummy_seq_len", [16, 32, 64])
+@pytest.mark.parametrize("dummy_seq_len", [16, 32, 128, 256, 1024])
 def test_qwen3_5_dflash_export_traces_one_chunk(dummy_seq_len):
     from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -273,8 +274,28 @@ def test_qwen3_5_dflash_export_traces_one_chunk(dummy_seq_len):
     inputs = qeff.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=dummy_seq_len)["lang"]
     assert inputs["input_ids"].shape[1] == 16
     assert inputs["position_ids"].shape[-1] == 16
-    with pytest.raises(ValueError, match="prefill_seq_len=16"):
-        qeff.model.get_specializations(batch_size=1, prefill_seq_len=64, ctx_len=256, kv_offload=True)
+    specs, _ = qeff.model.get_specializations(
+        batch_size=1, prefill_seq_len=dummy_seq_len, ctx_len=2048, kv_offload=True
+    )
+    assert [(spec["seq_len"], spec["num_logits_to_keep"]) for spec in specs["lang"]] == [
+        (dummy_seq_len, 1),
+        (16, 16),
+    ]
+    specs, _ = qeff.model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=dummy_seq_len,
+        ctx_len=2048,
+        kv_offload=True,
+        comp_ctx_lengths_prefill=[1024, 2048],
+        comp_ctx_lengths_decode=[512, 1024, 2048],
+    )
+    assert [(spec["seq_len"], spec["num_logits_to_keep"]) for spec in specs["lang"]] == [
+        (dummy_seq_len, 1),
+        (dummy_seq_len, 1),
+        (16, 16),
+        (16, 16),
+        (16, 16),
+    ]
 
 
 @pytest.mark.parametrize("chunk_size", [0, 1, 3, 24])

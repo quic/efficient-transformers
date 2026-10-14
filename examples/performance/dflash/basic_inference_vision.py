@@ -297,7 +297,7 @@ def main():
 
     dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, args.tlm_devices, args.dlm_devices)
     prompt_chunk_size = get_spd_prompt_chunk_size(tlm_session)
-    target_decode_length = prompt_chunk_size if tlm_config.model_type == "qwen3_5" else get_dflash_block_size(config)
+    target_decode_length = get_dflash_block_size(config)
     validate_spd_decode_specialization(tlm_session, target_decode_length)
 
     if is_qwen3vl:

@@ -23,7 +23,6 @@ from qwen_vl_utils import process_vision_info
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
-    QWEN3_5_DFLASH_CHUNK_SIZE,
     QEffQwen3_5ForConditionalGeneration,
 )
 from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
@@ -691,7 +690,7 @@ def get_qwen35_target_seq_len(tlm_session: QAICInferenceSession, block_size: int
     if block_size in lengths:
         return block_size
     raise ValueError(
-        f"Qwen3.5-MoE DFlash requires a {block_size}-token verification specialization "
+        f"Qwen3.5 DFlash requires a {block_size}-token verification specialization "
         f"(found {sorted(lengths)}). Recompile the TLM with dflash_block_size={block_size}."
     )
 
@@ -721,17 +720,10 @@ def run_spd_inference_qwen3_vl(
     is_qwen35 = tlm_config.model_type in {"qwen3_5", "qwen3_5_moe"}
     if is_qwen35 and (batch_size != 1 or "cache_commit" not in tlm_session.input_names):
         raise ValueError("Qwen3.5 DFlash requires batch size 1 and a TLM QPC with cache_commit input.")
-    if tlm_config.model_type == "qwen3_5" and (
-        prompt_chunk_size not in (QWEN3_5_DFLASH_CHUNK_SIZE, 64) or not 1 < block_size <= prompt_chunk_size
-    ):
-        raise ValueError(
-            "Qwen3.5 DFlash requires 16-token target calls (or a legacy 64-token QPC) and a block that fits; "
-            "rebuild with --prefill_seq_len 16."
-        )
-    target_seq_len = prompt_chunk_size if is_qwen35 else block_size
-    if tlm_config.model_type == "qwen3_5_moe":
+    target_seq_len = block_size
+    if is_qwen35:
         if block_size < 2 or prompt_chunk_size < block_size or prompt_chunk_size % block_size:
-            raise ValueError("Qwen3.5-MoE DFlash requires prefill length to be a positive multiple of block_size >= 2.")
+            raise ValueError("Qwen3.5 DFlash requires prefill length to be a positive multiple of block_size >= 2.")
         target_seq_len = get_qwen35_target_seq_len(tlm_session, block_size)
     metrics = SpecDecodingMetrics(block_size=block_size)
     image_processing_start = time.time()

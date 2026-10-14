@@ -139,9 +139,9 @@ def test_dflash_decode_specialization_accepts_fixed_and_dynamic_shapes(sequence_
         validate_spd_decode_specialization(session, 32)
 
 
-@pytest.mark.parametrize("prompt_chunk_size", [8, 32, 128])
+@pytest.mark.parametrize("prompt_chunk_size", [8, 31, 127])
 def test_qwen3_5_runtime_rejects_unsupported_prefill_qpc(prompt_chunk_size):
-    with pytest.raises(ValueError, match="rebuild with --prefill_seq_len 16"):
+    with pytest.raises(ValueError, match="positive multiple of block_size"):
         run_spd_inference_qwen3_vl(
             prompt_text="test",
             tokenizer=None,
@@ -159,7 +159,9 @@ def test_qwen3_5_runtime_rejects_unsupported_prefill_qpc(prompt_chunk_size):
     "model_type,prompt_chunk_size,target_seq_len",
     [
         ("qwen3_5", 16, 16),
-        ("qwen3_5", 64, 64),
+        ("qwen3_5", 64, 16),
+        ("qwen3_5", 128, 16),
+        ("qwen3_5", 256, 16),
         ("qwen3_5_moe", 16, 16),
         ("qwen3_5_moe", 128, 16),
     ],
@@ -181,7 +183,7 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, model_type, p
         }
 
     session = SimpleNamespace(
-        input_names=["cache_commit", "vision_embeds"],
+        input_names=["cache_commit", "vision_embeds", "num_logits_to_keep"],
         binding_index_map={"vision_embeds": 0, "input_ids": 1},
         bindings=[SimpleNamespace(type=0, dims=(1, 1, 32)), SimpleNamespace(dims=(1, prompt_chunk_size))],
         allowed_shapes=[[(0, [1, 1, 32]), (8, [1, length])] for length in {prompt_chunk_size, target_seq_len}],
@@ -205,6 +207,7 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, model_type, p
         kwargs["tlm_prefill"](0, prompt_chunk_size)
         assert calls[-1]["input_ids"].shape[1] == prompt_chunk_size
         assert calls[-1]["cache_commit"].item() == 1
+        assert calls[-1]["num_logits_to_keep"].shape == (1, 1)
         kwargs["prepare_decode"]()
         ids = np.arange(16, dtype=np.int64).reshape(1, 16)
         positions = np.arange(5, 21, dtype=np.int64).reshape(1, 16)
@@ -216,9 +219,11 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, model_type, p
         np.testing.assert_array_equal(verify["position_ids"][0, :, :16], positions)
         assert np.all(verify["position_ids"][..., 16:] == -1)
         assert verify["cache_commit"].item() == 0
+        assert verify["num_logits_to_keep"].shape == (16, 1)
         kwargs["tlm_commit"](ids, positions, 2)
         commit = calls[-1]
         assert commit["cache_commit"].item() == 1
+        assert commit["num_logits_to_keep"].shape == (16, 1)
         np.testing.assert_array_equal(commit["position_ids"][0, :, :2], positions[:, :2])
         assert np.all(commit["position_ids"][..., 2:] == -1)
         return kwargs["metrics"]
@@ -234,11 +239,11 @@ def test_qwen3_5_runtime_pads_verification_and_commit(monkeypatch, model_type, p
         mask_token_id=2,
         vocab_size=64,
         prompt_chunk_size=prompt_chunk_size,
-        ctx_len=256,
+        ctx_len=512,
         block_size=16,
         hidden_size=32,
     )
-    assert [item["logits"].shape[1] for item in buffers if "logits" in item] == [prompt_chunk_size, target_seq_len]
+    assert [item["logits"].shape[1] for item in buffers if "logits" in item] == [1, target_seq_len]
 
 
 @pytest.mark.parametrize("with_image", [False, True])
@@ -261,7 +266,8 @@ def test_qwen35_moe_runtime_mrope_matches_hf(with_image):
 
 
 @pytest.mark.parametrize("block_size", [8, 16])
-def test_qwen35_moe_compile_preserves_dflash_metadata(monkeypatch, block_size):
+@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_moe"])
+def test_qwen35_compile_preserves_dflash_metadata(monkeypatch, block_size, model_type):
     import torch
 
     from examples.performance.dflash import utils
@@ -281,7 +287,7 @@ def test_qwen35_moe_compile_preserves_dflash_metadata(monkeypatch, block_size):
             lang_model=SimpleNamespace(model=SimpleNamespace(language_model=text_model)), compile=compile_model
         )
 
-    monkeypatch.setattr(utils.AutoConfig, "from_pretrained", lambda *a, **k: SimpleNamespace(model_type="qwen3_5_moe"))
+    monkeypatch.setattr(utils.AutoConfig, "from_pretrained", lambda *a, **k: SimpleNamespace(model_type=model_type))
     monkeypatch.setattr(
         utils,
         "read_dlm_meta",
@@ -291,10 +297,12 @@ def test_qwen35_moe_compile_preserves_dflash_metadata(monkeypatch, block_size):
     assert utils.compile_qwen3vl_vlm_qpcs(
         "target", "draft", ctx_len=8192, prefill_seq_len=128, num_cores=8, num_devices=4
     ) == ("target.qpc", "vision.qpc")
-    assert calls[0]["qaic_config"] == qaic_config
-    assert calls[0]["prefill_only"] and calls[0]["enable_chunking"]
+    assert calls[0]["prefill_only"]
     assert calls[0]["prefill_seq_len"] == 128 and calls[0]["dflash_block_size"] == block_size
-    assert calls[0]["mxint8_kv_cache"]
+    if model_type == "qwen3_5_moe":
+        assert calls[0]["qaic_config"] == qaic_config
+        assert calls[0]["enable_chunking"]
+        assert calls[0]["mxint8_kv_cache"]
 
 
 class _FakeTokenizer:
