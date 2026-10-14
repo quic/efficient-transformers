@@ -597,7 +597,8 @@
       "layer_types": [
         "sliding_attention",
         "full_attention"
-      ]
+      ],
+      "known_bf16_compile_issue": "Gemma-3 bf16 compilation fails because qaic-compile glow error"
     },
     {
       "id": "qwen2_dense_text",
@@ -790,7 +791,8 @@
       "tokenizer_id": "gpt2",
       "is_moe": true,
       "supports_blocking": false,
-      "num_hidden_layers": 2
+      "num_hidden_layers": 2,
+      "known_bf16_compile_issue": "GPT-OSS bf16 compilation fails because qaic-compile glow error"
     },
     {
       "id": "glm4_moe_text",
