@@ -1739,6 +1739,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 onnx_kwargs["batch_fold"] = batch_fold
                 dynamic_axes_kwargs["batch_fold"] = batch_fold
         onnx_kwargs.update(gdn_export_kwargs)
+        if gdn_export_kwargs and not prefill_only:
+            # Full-state decode reorders rows by batch_index only for one-token graphs; trace that shape.
+            onnx_kwargs["prefill_seq_len"] = 1
         dynamic_axes_kwargs.update(gdn_export_kwargs)
         inputs = self.model.get_dummy_inputs(
             kv_offload=True,
