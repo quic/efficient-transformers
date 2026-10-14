@@ -958,7 +958,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             if initial_state is None
             else initial_state.to(value)
         )
-        core_attn_out = torch.zeros_like(value)
+        chunk_outputs = []
         mask = mask_strict
 
         # for each chunk
@@ -968,12 +968,13 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
             v_new = v_i - v_prime
             attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
-            core_attn_out[:, :, i] = attn_inter + attn @ v_new
+            chunk_outputs.append(attn_inter + attn @ v_new)
             last_recurrent_state = (
                 last_recurrent_state * g[:, :, i, -1, None, None].exp()
                 + (k_i * (g[:, :, i, -1, None] - g[:, :, i]).exp()[..., None]).transpose(-1, -2) @ v_new
             )
 
+        core_attn_out = torch.stack(chunk_outputs, dim=2).to(value.dtype)
         if not output_final_state:
             last_recurrent_state = None
         core_attn_out = core_attn_out.reshape(

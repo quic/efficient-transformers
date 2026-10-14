@@ -615,9 +615,16 @@ def _build_synthetic_qwen_mdp_onnx(out_path: Path) -> None:
         helper.make_tensor_value_info("hidden_states", TensorProto.FLOAT, [1, 1]),
         helper.make_tensor_value_info("recurrent_state.0", TensorProto.FLOAT, [1]),
         helper.make_tensor_value_info("recurrent_state.1", TensorProto.FLOAT, [1]),
-        # External parameters are graph inputs for weight-free exports, but
-        # they are not compiler partition nodes and must remain excluded.
+        # Ordinary external parameters are not compiler partition nodes.
         helper.make_tensor_value_info("model.layers.0.self_attn.q_proj.weight", TensorProto.FLOAT, [1, 1]),
+        # Weight-free MoE expert tensors are compiler-visible graph values and
+        # must follow their decoder layer's MDP partition.
+        helper.make_tensor_value_info("model.layers.0.mlp.experts.moe_weights.gate", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("model.layers.0.mlp.experts.moe_weights.up", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("model.layers.0.mlp.experts.moe_weights.down", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("model.layers.1.mlp.experts.moe_weights.gate", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("model.layers.1.mlp.experts.moe_weights.up", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("model.layers.1.mlp.experts.moe_weights.down", TensorProto.FLOAT, [1, 1]),
     ]
     nodes = [
         helper.make_node(
@@ -773,9 +780,15 @@ class TestMdpExternalGraphValues:
                             "nodeList": [
                                 "recurrent_state.0",
                                 "model.layers.0.linear_attn._ones_lower",
+                                "model.layers.0.mlp.experts.moe_weights.gate",
+                                "model.layers.0.mlp.experts.moe_weights.up",
+                                "model.layers.0.mlp.experts.moe_weights.down",
                                 "/model/layers.0/decoder",
                                 "recurrent_state.1",
                                 "model.layers.1.linear_attn._ones_lower",
+                                "model.layers.1.mlp.experts.moe_weights.gate",
+                                "model.layers.1.mlp.experts.moe_weights.up",
+                                "model.layers.1.mlp.experts.moe_weights.down",
                                 "/model/layers.1/decoder",
                                 "compiler_generated_only",
                             ]
@@ -797,11 +810,17 @@ class TestMdpExternalGraphValues:
 
         assert mdp["partitions"][0]["nodeList"] == [
             "recurrent_state.0",
+            "model.layers.0.mlp.experts.moe_weights.gate",
+            "model.layers.0.mlp.experts.moe_weights.up",
+            "model.layers.0.mlp.experts.moe_weights.down",
             "model.layers.0.linear_attn._ones_lower",
             "/model/layers.0/decoder",
         ]
         assert mdp["partitions"][1]["nodeList"] == [
             "recurrent_state.1",
+            "model.layers.1.mlp.experts.moe_weights.gate",
+            "model.layers.1.mlp.experts.moe_weights.up",
+            "model.layers.1.mlp.experts.moe_weights.down",
             "model.layers.1.linear_attn._ones_lower",
             "/model/layers.1/decoder",
         ]
