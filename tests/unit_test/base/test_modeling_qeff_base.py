@@ -1463,6 +1463,40 @@ class TestMdpCompileIntegration:
         assert f"-mdp-load-partition-config={mdp_dir / 'mdp_disagg_4d_2p.json'}" in final_command_str
         assert "-aic-binary-dir=" in final_command_str
 
+    @pytest.mark.parametrize(
+        ("custom_io", "expected_io"),
+        [
+            ({"past_key.0": "bfloat16", "input_ids": "float16"}, {"input_ids": "float16"}),
+            ({"past_key.0": "bfloat16"}, None),
+            ({"input_ids": "float16"}, {"input_ids": "float16"}),
+        ],
+    )
+    def test_custom_io_drops_bfloat16_entries(self, compile_workspace, custom_io, expected_io):
+        """Compiler custom IO contains only non-bfloat16 entries."""
+        _, onnx_path, compile_dir = compile_workspace
+        model_hf, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model_hf)
+
+        with patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run) as run_mock:
+            qeff._compile(
+                onnx_path=str(onnx_path),
+                compile_dir=str(compile_dir),
+                custom_io=custom_io,
+            )
+
+        final_command = next(
+            call.args[0]
+            for call in run_mock.call_args_list
+            if any(str(arg).startswith("-aic-binary-dir=") for arg in call.args[0])
+        )
+        custom_io_flags = [arg for arg in final_command if str(arg).startswith("-custom-IO-list-file=")]
+        if expected_io is None:
+            assert custom_io_flags == []
+        else:
+            assert len(custom_io_flags) == 1
+            custom_io_path = Path(str(custom_io_flags[0]).split("=", 1)[1])
+            assert custom_io_path.read_text() == " - IOName: input_ids\n   Precision: float16\n\n"
+
     def test_mdp_compiler_dump_hash_changes_with_custom_io(self, compile_workspace):
         """Different custom_io creates a different mdp_<hash> dump directory."""
         _, onnx_path, compile_dir = compile_workspace
