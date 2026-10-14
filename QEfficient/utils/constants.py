@@ -72,6 +72,7 @@ KWARGS_INCLUSION_LIST = [
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
 HEADPAR_MASKED_ATTENTION_VALUE = -3.0e4
+FP16_SAFE_MASKED_ATTENTION_VALUE = -65504.0
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
