@@ -1016,7 +1016,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_ctx_indices = torch.arange(
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                conv_state = ctx_gather_cb_3d(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = ctx_gather_cb_3d(conv_state_all_flat, conv_batch_index, conv_ctx_indices)
+                if conv_state_grouped:
+                    conv_state = conv_state.reshape(
+                        conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
+                    )
 
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
@@ -1073,7 +1077,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
                 updated_conv_state = ctx_scatter_cb_3d(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state_flat
+                    conv_state_all_flat, conv_batch_index, conv_position_ids, new_conv_state_flat
                 )
                 if conv_state_all.ndim == 4:
                     updated_conv_state = updated_conv_state.reshape(
