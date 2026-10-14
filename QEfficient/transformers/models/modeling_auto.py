@@ -7,6 +7,7 @@
 
 import math
 import os
+import inspect
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -4065,6 +4066,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             cache_context_length = export_dimensions["cache_context_length"]
             dynamic_seq_len = export_dimensions.get("dynamic_seq_len", True)
 
+        # Weight-free export only needs tensor metadata for the large retained
+        # caches. Allocate those examples on meta so long-context/full-model
+        # exports do not materialize enormous CPU buffers before the exporter
+        # converts the inputs to meta tensors.
+        cache_device = torch.device("meta") if self._weight_free else None
+
+        def _get_dummy_cache(method, *args):
+            if cache_device is not None and "device" in inspect.signature(method).parameters:
+                return method(*args, device=cache_device)
+            return method(*args)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -4102,13 +4114,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
             and hasattr(self.model, "get_dummy_pkv_cache")
         ):
-            pkv_cache = self.model.get_dummy_pkv_cache(
-                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            pkv_cache = _get_dummy_cache(
+                self.model.get_dummy_pkv_cache,
+                self.model.config,
+                fbs if self.continuous_batching else bs,
+                seq_len,
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[i][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(
+                            pkv_cache[i][0].shape,
+                            dtype=self.model.config.torch_dtype,
+                            device=cache_device,
+                        )
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
@@ -4133,7 +4152,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype, device=cache_device)
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
@@ -4150,7 +4169,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
                 cache_compressed = is_glm_moe_dsa
-            pkv_cache = self.model.get_dummy_pkv_cache(
+            pkv_cache = _get_dummy_cache(
+                self.model.get_dummy_pkv_cache,
                 self.model.config,
                 fbs if self.continuous_batching else bs,
                 cache_context_length if is_glm_moe_dsa else seq_len,
@@ -4167,10 +4187,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     example_inputs["compressed_kvs"][i].append(
-                        torch.zeros(pkv_cache[i][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(
+                            pkv_cache[i][0].shape,
+                            dtype=self.model.config.torch_dtype,
+                            device=cache_device,
+                        )
                     )
                     example_inputs["compressed_kvs"][i].append(
-                        torch.zeros(pkv_cache[i][1].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(
+                            pkv_cache[i][1].shape,
+                            dtype=self.model.config.torch_dtype,
+                            device=cache_device,
+                        )
                     )
                     cache_axes = (
                         glm_compressed_axes[i]
@@ -4185,7 +4213,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     indexer_cache_layers = self.model.get_indexer_cache_layers(self.model.config)
                     if indexer_cache_layers:
                         example_inputs["indexer_key_cache"] = list(
-                            self.model.get_dummy_indexer_cache(
+                            _get_dummy_cache(
+                                self.model.get_dummy_indexer_cache,
                                 self.model.config,
                                 fbs if self.continuous_batching else bs,
                                 cache_context_length,
@@ -4205,10 +4234,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 example_inputs["past_key_values"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[i][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(
+                            pkv_cache[i][0].shape,
+                            dtype=self.model.config.torch_dtype,
+                            device=cache_device,
+                        )
                     )
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[i][1].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(
+                            pkv_cache[i][1].shape,
+                            dtype=self.model.config.torch_dtype,
+                            device=cache_device,
+                        )
                     )
 
         if self.continuous_batching:
@@ -4238,8 +4275,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and not getattr(self.model, "_qeff_export_gemma3_cache_patch", False)
         ):
             import functools
-            import inspect
-
             from transformers.cache_utils import Cache, DynamicCache
 
             model_forward = self.model.forward
