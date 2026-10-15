@@ -360,6 +360,7 @@ def generic_blocked_attention_interface(
     block_table: Optional[torch.LongTensor] = None,
     slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
+    preserve_attention_mask_on_export: bool = False,
     non_blocked_forward: Optional[Callable] = None,
     score_mod: Optional[Callable] = None,
     position_bias: Optional[torch.Tensor] = None,
@@ -456,6 +457,7 @@ def generic_blocked_attention_interface(
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
         paged_attention=blocking_config.paged_attention,
+        preserve_attention_mask_on_export=preserve_attention_mask_on_export,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
         num_cores_per_device=blocking_config.num_cores_per_device,

@@ -113,9 +113,9 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
 
 
 class DiffusionGemmaEncoderQPC(UnifiedQPC):
-    def __init__(self, model):
+    def __init__(self, model, include_image_idx: bool = True):
         QEFFBaseModel.__init__(self, model)
-        self.model = model.get_qeff_diffusion_encoder()
+        self.model = model.get_qeff_diffusion_encoder(include_image_idx=include_image_idx)
         self.model.qaic_config = None
         self.num_layers = self.model.text_config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -956,6 +956,8 @@ def compile_split_qpcs(
     num_devices: int,
     num_cores: int,
     prefill_stages: int = 1,
+    text_only: bool = False,
+    encoder_blocking_config: Optional[Dict[str, object]] = None,
 ):
     prefill_stages = _validate_prefill_stages(prefill_stages)
     if prefill_seq_len != canvas_length:
@@ -963,7 +965,7 @@ def compile_split_qpcs(
 
     print(f"Compiling split DiffusionGemma QPCs ({num_devices} devices, {num_cores} cores)...")
     start = time.time()
-    encoder = DiffusionGemmaEncoderQPC(qeff_model)
+    encoder = DiffusionGemmaEncoderQPC(qeff_model, include_image_idx=not text_only)
     decoder = DiffusionGemmaDecoderQPC(qeff_model)
     qaic_config_moe = {
         "moe_config": {
@@ -972,6 +974,19 @@ def compile_split_qpcs(
             "tree_reduce": True,
         }
     }
+    encoder_qaic_config = dict(qaic_config_moe)
+    if encoder_blocking_config:
+        blocking_keys = {
+            "enable_blocking",
+            "blocking_mode",
+            "num_kv_blocks",
+            "num_q_blocks",
+            "head_block_size",
+            "num_batch_blocks",
+        }
+        encoder_qaic_config.update(
+            {key: value for key, value in encoder_blocking_config.items() if key in blocking_keys}
+        )
     encoder_specializations, _ = encoder.model.get_specializations(
         batch_size=1,
         prefill_seq_len=prefill_seq_len,
@@ -1003,8 +1018,9 @@ def compile_split_qpcs(
         specializations=encoder_specializations,
         offload_pt_weights=False,
         retain_full_kv=True,
+        use_onnx_subfunctions=True,
         mdp_ts_num_devices=num_devices,
-        qaic_config=qaic_config_moe,
+        qaic_config=encoder_qaic_config,
         aic_num_cores=num_cores,
     )
     print(f"  encoder ONNX: {encoder_onnx_path}")
@@ -1020,8 +1036,9 @@ def compile_split_qpcs(
     encoder_qpc_path = encoder._compile(
         onnx_path=encoder_onnx_path,
         specializations=encoder_specializations,
-        qaic_config=qaic_config_moe,
+        qaic_config=encoder_qaic_config,
         mdp_num_partitions=prefill_stages,
+        use_onnx_subfunctions=True,
         **common_compile_kwargs,
     )
     print(f"  encoder QPC: {encoder_qpc_path}")

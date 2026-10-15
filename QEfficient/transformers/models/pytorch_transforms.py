@@ -353,6 +353,12 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
 )
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffDFlashAttention,
+    QEffDFlashDecoderLayer,
+    QEffDFlashForCausalLM,
+    QEffDFlashModel,
+)
 from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     QEffDiffusionGemmaEncoderTextAttention,
     QEffDiffusionGemmaEncoderTextLayer,

@@ -77,6 +77,9 @@ class QAICInferenceSession:
         stages: Optional[int] = 1,
         cluster_id: Optional[str] = None,
         full_batch_size: int = 1,
+        profiling_type: str | None = None,
+        profiling_output_dir: Path | str | None = None,
+        profiling_file_prefix: str = "aic-profiling-python",
     ):
         """
         Initialise for QAIC inference Session
@@ -263,12 +266,29 @@ class QAICInferenceSession:
     def activate(self):
         """Activate qpc"""
         if not self.is_active:
-            self.program.activate()
-            if self._kv_dma is None:
-                self.execObj = qaicrt.ExecObj(self.context, self.program)
-            else:
-                self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
-            self.is_active = True
+            try:
+                self.program.activate()
+                self.is_active = True
+                if self._kv_dma is not None:
+                    self.execObj = [qaicrt.ExecObj(self.context, self.program) for _ in range(self._queue_len)]
+                else:
+                    self.execObj = qaicrt.ExecObj(self.context, self.program)
+            except Exception:
+                try:
+                    self._deactivate(force=True)
+                except Exception as cleanup_error:
+                    warn(f"Failed to deactivate QAIC program after activation error: {cleanup_error}", RuntimeWarning)
+                raise
+
+    def _deactivate(self, force: bool = False):
+        """Deactivate qpc"""
+        if force or getattr(self, "is_active", False):
+            if hasattr(self, "execObj"):
+                del self.execObj
+            try:
+                self.program.deactivate()
+            finally:
+                self.is_active = False
 
     def deactivate(self):
         """Deactivate qpc"""

@@ -157,6 +157,7 @@ def blocked_kv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -184,7 +185,7 @@ def blocked_kv_attention_forward(
     )
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1111,6 +1112,7 @@ def blocked_qkv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -1129,7 +1131,7 @@ def blocked_qkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked QKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1280,6 +1282,7 @@ def blocked_hqkv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -1293,7 +1296,7 @@ def blocked_hqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked HQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1463,6 +1466,7 @@ def blocked_bhqkv_attention_forward(
     paged_attention: bool = False,
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -1476,7 +1480,7 @@ def blocked_bhqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")

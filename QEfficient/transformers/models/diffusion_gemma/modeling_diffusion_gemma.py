@@ -25,6 +25,11 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     rotate_half,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.moe import (
@@ -82,7 +87,7 @@ _NPI_FLOATING_POINT_TENSOR_TYPES = {
     onnx.TensorProto.DOUBLE,
     onnx.TensorProto.FLOAT,
     onnx.TensorProto.FLOAT16,
-    }
+}
 
 
 def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
@@ -447,40 +452,65 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
         value_states = self.v_norm(value_states)
         value_states = value_states.transpose(1, 2)
 
+        cache_position_ids = cache_position_ids if cache_position_ids is not None else position_ids
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and blocking_config.mode != BlockingMode.NONE
+        kv_blocking_modes = {
+            BlockingMode.KV,
+            BlockingMode.QKV,
+            BlockingMode.HQ,
+            BlockingMode.HKV,
+            BlockingMode.HQKV,
+            BlockingMode.BHQKV,
+        }
+        use_kv_blocking = use_blocking and blocking_config.mode in kv_blocking_modes
+        past_seen_tokens = None
         if past_key_values is not None:
             if use_physical_kv:
-                write_positions = cache_position_ids if cache_position_ids is not None else position_ids
-                past_key_values.update(
-                    key_states,
-                    value_states,
-                    self.layer_idx,
-                    {"position_ids": write_positions},
-                )
-                layer = past_key_values.layers[self.layer_idx]
-                retained_key_states = layer.keys
-                retained_value_states = layer.values
-                key_states = torch.cat([retained_key_states, key_states], dim=2)
-                value_states = torch.cat([retained_value_states, value_states], dim=2)
+                if use_kv_blocking:
+                    past_seen_tokens = past_key_values.layers[self.layer_idx].keys.shape[-2]
+                else:
+                    past_key_values.update(
+                        key_states,
+                        value_states,
+                        self.layer_idx,
+                        {"position_ids": cache_position_ids},
+                    )
+                    layer = past_key_values.layers[self.layer_idx]
+                    key_states = torch.cat([layer.keys, key_states], dim=2)
+                    value_states = torch.cat([layer.values, value_states], dim=2)
             else:
                 key_states, value_states = past_key_values.update(
                     key_states,
                     value_states,
                     self.layer_idx,
-                    {"position_ids": cache_position_ids if cache_position_ids is not None else position_ids},
+                    {"position_ids": cache_position_ids},
                 )
 
-        key_states_for_attn = _repeat_kv(key_states, self.num_key_value_groups)
-        value_states_for_attn = _repeat_kv(value_states, self.num_key_value_groups)
-
-        attn_weights = torch.matmul(query_states, key_states_for_attn.transpose(2, 3)) * self.scaling
-        if self.config.final_logit_softcapping is not None:
-            pass  # softcapping is on logits only, not on attn_weights for this arch
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states_for_attn)
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask < 0 if attention_mask is not None else None,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values if use_kv_blocking else None,
+                blocking_config=blocking_config,
+                position_ids=cache_position_ids,
+                past_seen_tokens=past_seen_tokens,
+                preserve_attention_mask_on_export=True,
+            )
+        else:
+            key_states_for_attn = _repeat_kv(key_states, self.num_key_value_groups)
+            value_states_for_attn = _repeat_kv(value_states, self.num_key_value_groups)
+            attn_weights = torch.matmul(query_states, key_states_for_attn.transpose(2, 3)) * self.scaling
+            if attention_mask is not None:
+                attn_weights = attn_weights + attention_mask
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights, value_states_for_attn)
+            attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1)
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
@@ -840,12 +870,13 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
 
     supports_autoregressive_generate = False
 
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion", include_image_idx: bool = True):
         super().__init__()
         self.model = model
         self.unified = model.get_qeff_unified_wrapper()
         self.config = model.config
         self.text_config = model.config.text_config
+        self.include_image_idx = include_image_idx
 
     def get_submodules_for_export(self):
         return self.unified.get_submodules_for_export()
@@ -875,7 +906,9 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
         )
         next_image_idx = outputs[6]
         pkv = outputs[7]
-        return next_image_idx, pkv
+        if self.include_image_idx:
+            return next_image_idx, pkv
+        return pkv
 
     def get_dummy_inputs(self, **kwargs):
         inputs = self.unified.get_dummy_inputs(**kwargs)
@@ -920,7 +953,7 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
         ], compiler_options
 
     def get_output_names(self, **kwargs):
-        names = ["image_idx_output"]
+        names = ["image_idx_output"] if self.include_image_idx else []
         for layer_index in range(self.text_config.num_hidden_layers):
             for kv_name in ("key", "value"):
                 names.append(f"past_{kv_name}.{layer_index}_RetainedState")
@@ -984,6 +1017,9 @@ class QEffDiffusionGemmaDecoderWrapper(nn.Module):
         return (*outputs[:6], outputs[7])
 
     def get_dummy_inputs(self, **kwargs):
+        for layer in self.model.model.encoder.language_model.layers:
+            if hasattr(layer.self_attn, "attn_blocking_config"):
+                delattr(layer.self_attn, "attn_blocking_config")
         inputs = self.unified.get_dummy_inputs(**kwargs)
         inputs.pop("vision_embeds")
         inputs.pop("image_idx")
@@ -1040,8 +1076,8 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
         """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
         return QEffDiffusionGemmaUnifiedWrapper(self)
 
-    def get_qeff_diffusion_encoder(self) -> QEffDiffusionGemmaEncoderWrapper:
-        return QEffDiffusionGemmaEncoderWrapper(self)
+    def get_qeff_diffusion_encoder(self, include_image_idx: bool = True) -> QEffDiffusionGemmaEncoderWrapper:
+        return QEffDiffusionGemmaEncoderWrapper(self, include_image_idx=include_image_idx)
 
     def get_qeff_diffusion_decoder(self) -> QEffDiffusionGemmaDecoderWrapper:
         return QEffDiffusionGemmaDecoderWrapper(self)
