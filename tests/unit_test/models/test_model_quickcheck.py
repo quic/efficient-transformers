@@ -5640,6 +5640,90 @@ def test_qaic_input_dumper_writes_multi_invocation_runner_inputs(tmp_path):
     manifest = json.loads((dumper.session_dir / "manifest.json").read_text())
     assert "qpc_path" not in manifest
     assert [invocation["kind"] for invocation in manifest["invocations"]] == ["prefill", "decode"]
+    aggregate_manifest = json.loads((tmp_path / "dumps/manifest.json").read_text())
+    assert aggregate_manifest["capture_kind"] == "single_qpc_text"
+    assert aggregate_manifest["component_order"] == ["text"]
+    assert aggregate_manifest["required_component_counts"] == {"text": 1}
+    assert aggregate_manifest["all_required_components_captured"] is True
+    assert aggregate_manifest["replay_component"] == "text"
+    assert [component["component"] for component in aggregate_manifest["components"]] == ["text"]
+
+
+@pytest.mark.cpu_only
+def test_qaic_input_dumper_writes_multicomponent_capture_contract(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper
+
+    bindings = [
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, 1]),
+        SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
+    ]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={binding.name: index for index, binding in enumerate(bindings)},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64), "float32": np.dtype(np.float32)},
+        required_input_names=["input_ids"],
+    )
+    root = tmp_path / "dumps"
+    text_dumper = QAICInputDumper(session=session, qpc_path=tmp_path / "text_qpc", root=root, component_name="text")
+    vision_dumper = QAICInputDumper(
+        session=session,
+        qpc_path=tmp_path / "vision_qpc",
+        root=root,
+        component_name="vision",
+    )
+
+    text_dumper.record_invocation(
+        kind="decode",
+        inputs={"input_ids": np.array([[7]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+    vision_dumper.record_invocation(
+        kind="vision",
+        inputs={"input_ids": np.array([[3]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+
+    aggregate_manifest = json.loads((root / "manifest.json").read_text())
+    assert aggregate_manifest["capture_kind"] == "dual_qpc_multimodal"
+    assert aggregate_manifest["component_order"] == ["vision", "text"]
+    assert aggregate_manifest["dependencies"] == {"vision": [], "text": ["vision"]}
+    assert aggregate_manifest["required_component_counts"] == {"vision": 1, "text": 1}
+    assert aggregate_manifest["component_counts"] == {"text": 1, "vision": 1}
+    assert aggregate_manifest["all_required_components_captured"] is True
+    assert aggregate_manifest["replay_component"] == "text"
+    assert [component["component"] for component in aggregate_manifest["components"]] == ["vision", "text"]
+    assert [component["depends_on"] for component in aggregate_manifest["components"]] == [[], ["vision"]]
+    assert [component["replay"] for component in aggregate_manifest["components"]] == [False, True]
+    assert [component["invocation_count"] for component in aggregate_manifest["components"]] == [1, 1]
+
+
+@pytest.mark.cpu_only
+def test_qaic_input_dumper_writes_single_qpc_vlm_capture_contract(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper
+
+    bindings = [SimpleNamespace(name="input_ids", type="int64", dims=[1, 1])]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={"input_ids": 0},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64)},
+        required_input_names=["input_ids"],
+    )
+    QAICInputDumper(
+        session=session,
+        qpc_path=tmp_path / "vision_text_qpc",
+        root=tmp_path / "dumps",
+        component_name="vision_text",
+    )
+
+    aggregate_manifest = json.loads((tmp_path / "dumps/manifest.json").read_text())
+    assert aggregate_manifest["capture_kind"] == "single_qpc_multimodal"
+    assert aggregate_manifest["component_order"] == ["vision_text"]
+    assert aggregate_manifest["required_component_counts"] == {"vision_text": 1}
+    assert aggregate_manifest["all_required_components_captured"] is True
+    assert aggregate_manifest["replay_component"] == "vision_text"
+    assert [component["component"] for component in aggregate_manifest["components"]] == ["vision_text"]
 
 
 @pytest.mark.cpu_only

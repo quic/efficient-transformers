@@ -27,6 +27,10 @@ import numpy as np
 _DUMP_ENV_VAR = "QEFFICIENT_DUMP_INPUTS"
 _DEFAULT_DUMP_DIR = "qeff_input_dumps"
 _SESSION_COUNTER = count()
+_DUAL_QPC_MULTIMODAL_DEPENDENCIES = {"vision": [], "text": ["vision"]}
+_DUAL_QPC_MULTIMODAL_ORDER = ["vision", "text"]
+_SINGLE_QPC_TEXT_ORDER = ["text"]
+_SINGLE_QPC_MULTIMODAL_ORDER = ["vision_text"]
 
 
 class InputDumpValidationError(ValueError):
@@ -105,6 +109,111 @@ def _make_unique_dir(root: Path, component_name: str) -> Path:
     return session_dir
 
 
+def _component_contract(component_names: set[str]) -> dict[str, Any]:
+    if component_names == {"vision", "text"}:
+        return {
+            "capture_kind": "dual_qpc_multimodal",
+            "component_order": _DUAL_QPC_MULTIMODAL_ORDER,
+            "dependencies": _DUAL_QPC_MULTIMODAL_DEPENDENCIES,
+            "required_component_counts": {"vision": 1, "text": 1},
+            "replay_component": "text",
+        }
+    if component_names == {"vision_text"}:
+        return {
+            "capture_kind": "single_qpc_multimodal",
+            "component_order": _SINGLE_QPC_MULTIMODAL_ORDER,
+            "dependencies": {"vision_text": []},
+            "required_component_counts": {"vision_text": 1},
+            "replay_component": "vision_text",
+        }
+    if component_names == {"text"}:
+        return {
+            "capture_kind": "single_qpc_text",
+            "component_order": _SINGLE_QPC_TEXT_ORDER,
+            "dependencies": {"text": []},
+            "required_component_counts": {"text": 1},
+            "replay_component": "text",
+        }
+
+    component_order = sorted(component_names)
+    return {
+        "capture_kind": "custom_or_incomplete",
+        "component_order": component_order,
+        "dependencies": {component: [] for component in component_order},
+        "required_component_counts": {component: 1 for component in component_order},
+        "replay_component": component_order[-1] if component_order else None,
+    }
+
+
+def _write_aggregate_manifest(root: Path) -> None:
+    component_manifests = []
+    for manifest_path in sorted(root.glob("*/manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        component = str(manifest.get("component", manifest_path.parent.name))
+        component_manifests.append((manifest_path.parent, component, manifest))
+
+    component_names = {component for _, component, _ in component_manifests}
+    contract = _component_contract(component_names)
+    component_order = contract["component_order"]
+    order_index = {component: index for index, component in enumerate(component_order)}
+    required_component_counts = contract["required_component_counts"]
+
+    component_counts = {component: 0 for component in sorted(component_names)}
+    for _, component, _ in component_manifests:
+        component_counts[component] = component_counts.get(component, 0) + 1
+
+    missing_components = [
+        component
+        for component, count in required_component_counts.items()
+        if component_counts.get(component, 0) < count
+    ]
+    unexpected_components = sorted(set(component_counts) - set(required_component_counts))
+    all_required_components_captured = (
+        not missing_components
+        and not unexpected_components
+        and all(component_counts.get(component, 0) == count for component, count in required_component_counts.items())
+    )
+
+    components = []
+    for session_dir, component, manifest in sorted(
+        component_manifests, key=lambda item: (order_index.get(item[1], len(order_index)), item[0].name)
+    ):
+        components.append(
+            {
+                "id": session_dir.name,
+                "component": component,
+                "path": session_dir.name,
+                "manifest": f"{session_dir.name}/manifest.json",
+                "aic_batch_io": f"{session_dir.name}/{manifest.get('aic_batch_io', 'aic_batch_io.json')}",
+                "order": order_index.get(component),
+                "depends_on": contract["dependencies"].get(component, []),
+                "required": component in required_component_counts,
+                "replay": component == contract["replay_component"],
+                "invocation_count": len(manifest.get("invocations", [])),
+            }
+        )
+
+    aggregate_manifest = {
+        "version": 1,
+        "format": "qefficient-runtime-input-dump",
+        "capture_kind": contract["capture_kind"],
+        "component_order": component_order,
+        "dependencies": contract["dependencies"],
+        "required_component_counts": required_component_counts,
+        "component_counts": component_counts,
+        "captured_components": sorted(component_counts),
+        "missing_components": missing_components,
+        "unexpected_components": unexpected_components,
+        "all_required_components_captured": all_required_components_captured,
+        "replay_component": contract["replay_component"],
+        "components": components,
+    }
+    (root / "manifest.json").write_text(json.dumps(aggregate_manifest, indent=2))
+
+
 class QAICInputDumper:
     """Collect qaic-runner inputs for every invocation of one QPC session."""
 
@@ -112,7 +221,8 @@ class QAICInputDumper:
         self.session = session
         self.qpc_path = Path(qpc_path)
         self.component_name = component_name
-        self.session_dir = _make_unique_dir(Path(root), component_name)
+        self.root = Path(root)
+        self.session_dir = _make_unique_dir(self.root, component_name)
         self.data_dir = self.session_dir / "data"
         self.data_dir.mkdir()
         self.io_batches: list[list[dict[str, Any]]] = []
@@ -456,3 +566,4 @@ class QAICInputDumper:
                 "events": self.runtime_schedule_events,
             }
         (self.session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        _write_aggregate_manifest(self.root)
