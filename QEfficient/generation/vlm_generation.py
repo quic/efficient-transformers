@@ -295,15 +295,35 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         """
         for decode_batch_id in range(self.full_batch_size):
             next_prompt = prompt_queue.popleft()
+            self._record_runtime_schedule_event(
+                {
+                    "type": "prompt_arrival",
+                    "phase": "initial_prefill",
+                    "logical_prompt_index": decode_batch_id,
+                    "slot": decode_batch_id,
+                    "queue_depth_after_pop": len(prompt_queue),
+                    **self._prompt_descriptor(next_prompt),
+                }
+            )
 
             # run prefill for num_chunks
             outputs, position_ids, generation_len = self.run_prefill(
                 next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
             )
             if self.is_qwen_vl:
-                _ = self.update_decode_inputs_qwen_vl(outputs, position_ids, generation_len, decode_batch_id)
+                new_token_id = self.update_decode_inputs_qwen_vl(outputs, position_ids, generation_len, decode_batch_id)
             else:
-                _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
+                new_token_id = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
+            self._record_runtime_schedule_event(
+                {
+                    "type": "slot_assigned",
+                    "phase": "initial_prefill",
+                    "logical_prompt_index": decode_batch_id,
+                    "slot": decode_batch_id,
+                    "prefill_token": int(np.asarray(new_token_id).reshape(-1)[-1]),
+                    "generation_len": int(np.asarray(generation_len).reshape(-1)[-1]),
+                }
+            )
 
     def update_decode_inputs_qwen_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
@@ -984,7 +1004,17 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         """
         for decode_batch_id in range(self.full_batch_size):
             # Pop the promt as we are processing
-            _ = prompt_queue.popleft()
+            prompt = prompt_queue.popleft()
+            self._record_runtime_schedule_event(
+                {
+                    "type": "prompt_arrival",
+                    "phase": "initial_prefill",
+                    "logical_prompt_index": decode_batch_id,
+                    "slot": decode_batch_id,
+                    "queue_depth_after_pop": len(prompt_queue),
+                    **self._prompt_descriptor(prompt),
+                }
+            )
 
             # Get cached vision outputs for this batch slot
             cached = self._vision_outputs_cache.get(decode_batch_id)
@@ -1020,11 +1050,23 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
                 # Update decode inputs
                 if self.is_qwen_vl:
-                    self.update_decode_inputs_qwen_vl(
+                    new_token_id = self.update_decode_inputs_qwen_vl(
                         outputs, position_ids_decode, generation_len_final, decode_batch_id
                     )
                 else:
-                    self.update_decode_input(outputs, position_ids_decode, generation_len_final, decode_batch_id)
+                    new_token_id = self.update_decode_input(
+                        outputs, position_ids_decode, generation_len_final, decode_batch_id
+                    )
+                self._record_runtime_schedule_event(
+                    {
+                        "type": "slot_assigned",
+                        "phase": "initial_prefill",
+                        "logical_prompt_index": decode_batch_id,
+                        "slot": decode_batch_id,
+                        "prefill_token": int(np.asarray(new_token_id).reshape(-1)[-1]),
+                        "generation_len": int(np.asarray(generation_len_final).reshape(-1)[-1]),
+                    }
+                )
             else:
                 logger.error(f"No cached vision outputs for batch_id {decode_batch_id}")
                 raise RuntimeError(f"Vision outputs not cached for batch_id {decode_batch_id}")

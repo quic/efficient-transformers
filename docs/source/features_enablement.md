@@ -271,6 +271,8 @@ The dump directory contains one subdirectory per QPC session, such as `text`, `v
 
 Runtime dumps are validated as they are written. Required QPC host-input bindings must be present in the descriptor exactly once, descriptor input files must exist, and input shape, dtype, element-size, and byte-size metadata must match the raw file contents. If a non-required input is intentionally skipped because its value is `None` or because it is not a QPC binding, the component manifest records it under the invocation's `skipped_inputs` field.
 
+Continuous-batching dumps include a component-level `runtime_schedule` section. Its ordered event list records prompt arrivals, initial slot assignments, decode invocations, slot advancement, EOS or generation-length completion, replacement prefills, terminal decode decisions, and slot releases. This schedule metadata is part of the replay contract because continuous-batching invocation counts and slot occupancy depend on generated token values, EOS timing, prompt replacement, and terminal decode behavior rather than only on prompt lengths and batch parameters.
+
 For weight-free CausalLM export, instantiate the model with `weight_free=True`
 and pass `artifacts=True` to `compile()`. The returned compile directory
 includes the ONNX model, `weight_spec.json`, the replay script, and compile

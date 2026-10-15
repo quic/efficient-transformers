@@ -950,6 +950,54 @@ class TestContinuousBatching:
         obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
         assert len(prompt_queue) == 0
 
+    def test_continuous_batching_records_terminal_decode_schedule(self):
+        obj, _, mock_session = self._make_cb_instance(full_batch_size=2)
+        schedule_events = []
+        mock_session.input_dumper = SimpleNamespace(record_schedule_event=schedule_events.append)
+        obj.initialize_decode_inputs(2, 2, CTX_LEN)
+        obj.decode_input_ids[:] = np.array([[11], [12]], dtype=np.int64)
+        obj.decode_pos_ids[:] = np.array([[1], [1]], dtype=np.int64)
+        obj.generation_len[:] = 1
+        obj.generated_ids[:, 0] = obj.decode_input_ids[:, 0]
+        obj.batch_index = np.arange(2).reshape(-1, 1)
+
+        obj.run_continuous_batching_decode(deque(), generation_len=1)
+
+        event_types = [event["type"] for event in schedule_events]
+        assert event_types == [
+            "decode_invocation",
+            "slot_completed",
+            "slot_released",
+            "slot_completed",
+            "slot_released",
+        ]
+        assert schedule_events[0]["active_slots"] == [0, 1]
+        assert schedule_events[1]["reason"] == "generation_len"
+        assert schedule_events[1]["terminal_decode"] is True
+        assert schedule_events[3]["terminal_decode"] is True
+
+    def test_continuous_batching_records_replacement_prefill_schedule(self):
+        obj, tok, mock_session = self._make_cb_instance(full_batch_size=1)
+        schedule_events = []
+        mock_session.input_dumper = SimpleNamespace(record_schedule_event=schedule_events.append)
+        obj.initialize_decode_inputs(2, 1, CTX_LEN)
+        obj.decode_input_ids[:] = np.array([[11]], dtype=np.int64)
+        obj.decode_pos_ids[:] = np.array([[1]], dtype=np.int64)
+        obj.generation_len[:] = 1
+        obj.generated_ids[0, 0] = 11
+        obj.batch_index = np.arange(1).reshape(-1, 1)
+
+        obj.run_continuous_batching_decode(deque(["replacement"]), generation_len=1)
+
+        event_types = [event["type"] for event in schedule_events]
+        assert "replacement_prefill" in event_types
+        replacement_event = next(event for event in schedule_events if event["type"] == "replacement_prefill")
+        assert replacement_event["slot"] == 0
+        assert replacement_event["logical_prompt_index"] == 1
+        assert replacement_event["trigger"] == "generation_len"
+        assert replacement_event["queue_depth_before_pop"] == 1
+        assert replacement_event["queue_depth_after_pop"] == 0
+
 
 # ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id

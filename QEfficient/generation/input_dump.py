@@ -117,6 +117,7 @@ class QAICInputDumper:
         self.data_dir.mkdir()
         self.io_batches: list[list[dict[str, Any]]] = []
         self.invocations: list[dict[str, Any]] = []
+        self.runtime_schedule_events: list[dict[str, Any]] = []
         self.pending_slice_configs: dict[int, list[dict[str, Any]]] = {}
         self._write_manifest()
 
@@ -310,6 +311,12 @@ class QAICInputDumper:
             if unreferenced_paths:
                 raise InputDumpValidationError(f"Input files not referenced by descriptor: {unreferenced_paths}")
 
+    def record_schedule_event(self, event: Mapping[str, Any]) -> None:
+        runtime_event = _as_jsonable(dict(event))
+        runtime_event.setdefault("index", len(self.runtime_schedule_events))
+        self.runtime_schedule_events.append(runtime_event)
+        self._write_manifest()
+
     def _output_entry(self, invocation_dir: Path, name: str, shape: Optional[Sequence[int]] = None) -> dict[str, Any]:
         relative_path = Path("data") / invocation_dir.name / f"{_safe_filename(name)}.raw"
         return {
@@ -443,4 +450,9 @@ class QAICInputDumper:
         }
         if self.pending_slice_configs:
             manifest["pending_slice_configs"] = _as_jsonable(self.pending_slice_configs)
+        if self.runtime_schedule_events:
+            manifest["runtime_schedule"] = {
+                "version": 1,
+                "events": self.runtime_schedule_events,
+            }
         (self.session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
