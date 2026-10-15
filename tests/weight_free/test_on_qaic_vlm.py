@@ -6,17 +6,13 @@
 # -----------------------------------------------------------------------------
 
 """
-Weight-free on-QAIC tests.
+Weight-free VLM tests on QAIC.
 
 All tests require QAIC hardware (marked @pytest.mark.on_qaic).
 All tests run with weight_free=True (set on the QEff model, which forces
 dynamo=True internally) and use_onnx_subfunctions=True.
 
-Covers:
-  - Generate smoke test (weight-free export -> compile -> generate on QAIC)
-  - HF PT vs QAIC HW parity (HF PT tokens == weight-free QAIC top-1 token)
-  - Weight-free vs legacy/dynamo QAIC parity (two independently compiled QPCs
-    of the same model, generated output compared directly)
+Covers VLM export, multi-specialization compilation, and HF/QAIC parity.
 """
 
 from __future__ import annotations
@@ -31,31 +27,15 @@ import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
     AutoProcessor,
-    AutoTokenizer,
 )
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModel, QEFFAutoModelForCausalLM
-from QEfficient.utils import get_num_layers_from_config
 from QEfficient.utils.test_utils import load_vlm_model_from_config
 
 from ._helpers import (
-    BATCH_SIZE,
-    CTX_LEN,
-    PROMPT_LEN,
-    WEIGHT_FREE_EMBEDDING_MODEL_PARAMS,
-    WEIGHT_FREE_QAIC_MODEL_PARAMS,
     WEIGHT_FREE_VLM_MODEL_PARAMS,
-    exported_onnx_path,
-    load_hf_model,
-    load_tokenizer,
-    load_weight_free_vlm_model,
     skip_on_model_fetch_error,
 )
 
@@ -158,6 +138,10 @@ def _prepare_vlm_test_inputs(
             prefill_seq_len=model_config["prompt_len"],
             batch_size=model_config["batch_size"],
         )
+    if "image_grid_thw" in qeff_inputs and qeff_inputs["image_grid_thw"].ndim == 2:
+        grid = qeff_inputs["image_grid_thw"][0]
+        time, grid_height, grid_width = (int(value.item()) for value in grid)
+        qeff_inputs["image_grid_thw"] = torch.zeros((1, time, grid_height, grid_width), dtype=grid.dtype)
     if "pixel_values" in hf_inputs:
         hf_inputs["pixel_values"] = hf_inputs["pixel_values"].to(torch.float32)
     if "pixel_values" in qeff_inputs:
@@ -214,6 +198,37 @@ def _update_retained_states(target_inputs, source_outputs, layer_types):
                 target_inputs[state_name] = np.array(source_outputs[retained_name], copy=True)
 
 
+def _reshape_vision_output_for_language_session(session, name: str, value: np.ndarray) -> np.ndarray:
+    """Restore the ranked tensor shape expected by the language QPC input binding."""
+    binding_index = session.binding_index_map.get(name)
+    if binding_index is None:
+        return value
+
+    for allowed_shape in session.allowed_shapes:
+        shape = allowed_shape[binding_index][1]
+        if len(shape) > 1 and int(np.prod(shape)) == value.size:
+            return value.reshape(shape)
+    return value
+
+
+def _set_vision_output_buffers(session, vision_inputs: dict[str, np.ndarray]) -> None:
+    """Select output dimensions for the vision specialization matching the input image grid."""
+    pixel_values_index = session.binding_index_map["pixel_values"]
+    pixel_values_shape = list(vision_inputs["pixel_values"].shape)
+    specialization_index = next(
+        index
+        for index, allowed_shape in enumerate(session.allowed_shapes)
+        if allowed_shape[pixel_values_index][1] == pixel_values_shape
+    )
+    buffers = {}
+    for output_name in session.output_names:
+        binding_index = session.binding_index_map[output_name]
+        output_shape = session.allowed_shapes[specialization_index][binding_index][1]
+        if output_shape:
+            buffers[output_name] = np.zeros(output_shape, dtype=np.float16)
+    session.set_buffers(buffers)
+
+
 def _run_qwen35_three_qpc(qeff_model, qeff_inputs, qpc_paths, layer_types, generation_len):
     vision_session = QAICInferenceSession(qpc_paths["vision_qpc_path"])
     prefill_session = None
@@ -227,11 +242,16 @@ def _run_qwen35_three_qpc(qeff_model, qeff_inputs, qpc_paths, layer_types, gener
         for name in ("pixel_values", "image_embeds"):
             if name in vision_inputs:
                 vision_inputs[name] = vision_inputs[name].astype(np.float16)
+        _set_vision_output_buffers(vision_session, vision_inputs)
         vision_outputs = vision_session.run(vision_inputs)
         vision_session.deactivate()
         vision_session = None
 
         prefill_session = QAICInferenceSession(qpc_paths["lang_prefill_qpc_path"])
+        if "vision_embeds" in vision_outputs:
+            vision_outputs["vision_embeds"] = _reshape_vision_output_for_language_session(
+                prefill_session, "vision_embeds", vision_outputs["vision_embeds"]
+            )
 
         prefill_binding = prefill_session.binding_index_map["input_ids"]
         prefill_seq_len = prefill_session.bindings[prefill_binding].dims[1]
@@ -351,28 +371,6 @@ def test_weight_free_vlm_dummy_cpu_export_and_multispec_structure(model_type, tm
     assert len({(spec["grid_height"], spec["grid_width"]) for spec in specializations["vision"]}) == 2
 
 
-def _load_vlm_hf_reference(model_id: str):
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    config.text_config.num_hidden_layers = 1
-    try:
-        model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            config=config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-            torch_dtype=torch.float32,
-        )
-    except ValueError:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            config=config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-            torch_dtype=torch.float32,
-        )
-    return model.eval()
-
-
 def _prepare_vlm_inputs(processor: AutoProcessor, image: Image.Image) -> dict:
     process_vision_info = pytest.importorskip("qwen_vl_utils").process_vision_info
     messages = [
@@ -415,10 +413,16 @@ def _run_vlm_hf_reference(model, inputs: dict) -> np.ndarray:
 @pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_VLM_MODEL_PARAMS)
 def test_weight_free_vlm_combined_compile(model_type, model_id, tmp_export_dir):
     """Run a weight-free dual-QPC VLM and compare generated tokens with HF."""
+    checkpoint_dir = tmp_export_dir / f"{model_type}_combined_checkpoint"
     try:
-        hf_model = _load_vlm_hf_reference(model_id)
         processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-        qeff_model = load_weight_free_vlm_model(model_id)
+        hf_model, _ = _build_vlm_test_checkpoint(model_type, checkpoint_dir, model_id)
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            str(checkpoint_dir),
+            kv_offload=True,
+            weight_free=True,
+            dtype=torch.float32,
+        )
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
@@ -458,244 +462,6 @@ def test_weight_free_vlm_combined_compile(model_type, model_id, tmp_export_dir):
     assert np.array_equal(qaic_tokens, hf_tokens), (
         f"Weight-free VLM QAIC/HF parity failed for {model_id}: HF={hf_tokens.tolist()}, QAIC={qaic_tokens.tolist()}"
     )
-
-
-@pytest.mark.weight_free
-@pytest.mark.on_qaic
-@pytest.mark.embedding_audio_model
-@pytest.mark.parametrize("model_type,model_id,pooling", WEIGHT_FREE_EMBEDDING_MODEL_PARAMS)
-def test_weight_free_embedding_hw_hf_parity(model_type, model_id, pooling, tmp_export_dir):
-    """HF embedding output matches weight-free embedding output on QAIC."""
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        model_hf = AutoModel.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-            attn_implementation="eager",
-            low_cpu_mem_usage=False,
-            torch_dtype=torch.float32,
-        )
-        model_hf.eval()
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:
-        if model_type in {"jina", "nomic"}:
-            raise
-        skip_on_model_fetch_error(exc, model_id)
-
-    inputs = tokenizer("hello world", return_tensors="pt")
-    with torch.no_grad():
-        hf_hidden_states = model_hf(**inputs).last_hidden_state
-        hf_output = POOLING_MAP[pooling](hf_hidden_states, inputs["attention_mask"]).cpu().numpy()
-
-    qeff_model = QEFFAutoModel.from_pretrained(model_id, pooling=pooling, weight_free=True)
-    onnx_path = exported_onnx_path(
-        qeff_model.export(
-            tmp_export_dir / f"{model_type}_export",
-            dynamo=True,
-            offload_pt_weights=False,
-        )
-    )
-    qeff_model.compile(
-        onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"{model_type}_compile"),
-        seq_len=32,
-        batch_size=1,
-        num_cores=16,
-    )
-    qaic_output = qeff_model.generate(inputs=inputs)
-
-    assert qaic_output is not None, f"Weight-free QAIC generate returned None for {model_type}"
-    qaic_embeddings = qaic_output["output"]
-    if qaic_embeddings.ndim == 3:
-        qaic_embeddings = qaic_embeddings[:, 0, :]
-    mad = np.mean(np.abs(hf_output - qaic_embeddings))
-    assert mad <= 1e-2, f"HF PT vs weight-free QAIC parity failed for {model_type}: MAD={mad}"
-
-
-@pytest.mark.weight_free
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
-def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
-    """End-to-end weight-free export -> compile -> generate on real QAIC hardware."""
-    try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        config.num_hidden_layers = 2
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
-
-    onnx_path = exported_onnx_path(
-        qeff_model.export(
-            tmp_export_dir / "wf_gen_export",
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
-        )
-    )
-    qeff_model.compile(
-        onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / "wf_gen_compile"),
-        prefill_seq_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=True,
-    )
-    tokenizer = load_tokenizer(model_id)
-    output = qeff_model.generate(
-        tokenizer=tokenizer,
-        prompts=["hello world"],
-    )
-    assert output is not None
-    assert output.generated_texts is not None
-
-
-@pytest.mark.weight_free
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
-def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
-    """HF PT tokens == weight-free QAIC FP16 tokens (exact equality)."""
-    from QEfficient.utils.run_utils import ApiRunner
-
-    try:
-        tokenizer = load_tokenizer(model_id)
-        model_hf = load_hf_model(model_id)
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
-
-    api_runner = ApiRunner(
-        batch_size=BATCH_SIZE,
-        tokenizer=tokenizer,
-        config=model_hf.config,
-        prompt=["hello world"],
-        prompt_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        full_batch_size=None,
-    )
-    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
-    assert hf_tokens is not None, "HF PT inference returned None"
-
-    try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
-
-    onnx_path = exported_onnx_path(
-        qeff_model.export(
-            tmp_export_dir / "wf_hw_parity_export",
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
-        )
-    )
-    qeff_model.compile(
-        onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / "wf_hw_parity_compile"),
-        prefill_seq_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=True,
-    )
-    qaic_output = qeff_model.generate(
-        tokenizer=tokenizer,
-        prompts=["hello world"],
-    )
-
-    assert qaic_output is not None, "QAIC generate returned None"
-    if hasattr(qaic_output, "generated_ids") and qaic_output.generated_ids is not None:
-        gen_len = CTX_LEN - PROMPT_LEN
-        qaic_tokens = qaic_output.generated_ids[0].flatten()[:gen_len]
-        assert np.array_equal(hf_tokens, qaic_tokens), (
-            f"Weight-free HW/HF parity failed for {model_id}: HF={hf_tokens.tolist()}, QAIC={qaic_tokens.tolist()}"
-        )
-
-
-@pytest.mark.weight_free
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_QAIC_MODEL_PARAMS)
-def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir):
-    """Weight-free-compiled and legacy dynamo-compiled QPCs produce identical tokens on QAIC."""
-    try:
-        tokenizer = load_tokenizer(model_id)
-        model_hf = load_hf_model(model_id)
-        if model_type == "gpt_oss":
-            model_hf = model_hf.to(torch.float32)
-            model_hf.config.torch_dtype = torch.float32
-            model_hf.config.dtype = torch.float32
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
-
-    # Legacy/dynamo leg — real weights, no weight-free export.
-    qeff_legacy = QEFFAutoModelForCausalLM(model_hf)
-
-    legacy_onnx_path = exported_onnx_path(
-        qeff_legacy.export(
-            tmp_export_dir / "legacy_export",
-            dynamo=True,
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
-        )
-    )
-    qeff_legacy.compile(
-        onnx_path=str(legacy_onnx_path),
-        compile_dir=str(tmp_export_dir / "legacy_compile"),
-        prefill_seq_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=True,
-    )
-    legacy_output = qeff_legacy.generate(
-        tokenizer=tokenizer,
-        prompts=["hello world"],
-    )
-    assert legacy_output is not None, "Legacy QAIC generate returned None"
-
-    # Weight-free leg — meta-device model, matching layer count.
-    try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
-        qeff_weight_free = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
-
-    weight_free_onnx_path = exported_onnx_path(
-        qeff_weight_free.export(
-            tmp_export_dir / "wf_vs_legacy_export",
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
-        )
-    )
-    qeff_weight_free.compile(
-        onnx_path=str(weight_free_onnx_path),
-        compile_dir=str(tmp_export_dir / "wf_vs_legacy_compile"),
-        prefill_seq_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=True,
-    )
-    weight_free_output = qeff_weight_free.generate(
-        tokenizer=tokenizer,
-        prompts=["hello world"],
-    )
-    assert weight_free_output is not None, "Weight-free QAIC generate returned None"
-
-    if (
-        hasattr(legacy_output, "generated_ids")
-        and legacy_output.generated_ids is not None
-        and hasattr(weight_free_output, "generated_ids")
-        and weight_free_output.generated_ids is not None
-    ):
-        legacy_tokens = legacy_output.generated_ids[0].flatten()
-        weight_free_tokens = weight_free_output.generated_ids[0].flatten()
-        assert np.array_equal(legacy_tokens, weight_free_tokens), (
-            f"Weight-free vs legacy QAIC parity failed for {model_id}: "
-            f"legacy={legacy_tokens.tolist()}, weight_free={weight_free_tokens.tolist()}"
-        )
 
 
 @pytest.mark.weight_free
@@ -942,12 +708,12 @@ def test_weight_free_vlm_multi_specialization_hf_qaic_parity(model_type, tmp_exp
             enable_chunking=True,
             skip_vision=True,
         )
+        decode_compile_kwargs = {**compile_kwargs, "prefill_seq_len": 1}
         decode_qpc = qeff_model.compile(
-            **compile_kwargs,
+            **decode_compile_kwargs,
             retain_full_kv=True,
             split_model_io=True,
             aic_enable_depth_first=True,
-            prefill_seq_len=1,
             prefill_only=False,
             skip_vision=True,
         )

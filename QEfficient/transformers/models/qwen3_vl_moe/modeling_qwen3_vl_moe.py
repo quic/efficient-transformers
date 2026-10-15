@@ -855,6 +855,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
+        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -1147,10 +1148,11 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         )
         # Add data for KV
 
+        cache_seq_len = int(kwargs.get("ctx_len") or prefill_seq_len)
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=cache_seq_len,
         )
 
         qaic_config = getattr(self.model, "qaic_config", None)

@@ -969,10 +969,11 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
 
         # Add data for KV
+        cache_seq_len = int(kwargs.get("ctx_len") or prefill_seq_len)
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=cache_seq_len,
         )
 
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
