@@ -2029,8 +2029,14 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                     hidden_states = filter_hidden_states(hidden_states, position_ids[0], num_logits_to_keep)
                 logits = self.model.lm_head(hidden_states).float()
                 image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+                qaic_config = getattr(self, "qaic_config", None) or {}
+                predictions = (
+                    logits
+                    if qaic_config.get("speculative_model_type") == "target"
+                    else logits.argmax(dim=-1).to(torch.int32)
+                )
                 return (
-                    logits.argmax(dim=-1).to(torch.int32),
+                    predictions,
                     vision_embeds,
                     image_idx,
                     outputs.hidden_states,

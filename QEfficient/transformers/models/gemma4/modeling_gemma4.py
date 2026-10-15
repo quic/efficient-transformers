@@ -743,6 +743,12 @@ class QEffGemma4TextModel(Gemma4TextModel):
         elif use_cache and past_key_values is None:
             past_key_values = QEffGemma4DynamicCache(config=self.config)
 
+        if getattr(self, "target_layer_ids", None) and past_key_values is not None:
+            # DFlash reserves block headroom; the attention window stays unchanged.
+            for layer in past_key_values.layers:
+                if layer.is_sliding and layer.keys is not None:
+                    layer.sliding_window = layer.keys.shape[2]
+
         if position_ids is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
@@ -1395,6 +1401,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         dflash_block_size = None
         if getattr(self.model.language_model, "target_layer_ids", None):
             dflash_block_size = compiler_options.pop("dflash_block_size", None)
+        sliding_cache_len = self.model.language_model.config.sliding_window
+        if dflash_block_size is not None:
+            sliding_cache_len = min(ctx_len, sliding_cache_len + max(prefill_seq_len, dflash_block_size) - 1)
         user_vision_size = compiler_options.pop("vision_size", None)
         if user_vision_size:
             if user_vision_size >= ctx_len:
@@ -1410,7 +1419,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "sliding_window": self.model.language_model.config.sliding_window,
+                "sliding_window": sliding_cache_len,
                 "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
@@ -1431,7 +1440,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": dflash_block_size or "1",
                 "ctx_len": ctx_len,
-                "sliding_window": self.model.language_model.config.sliding_window,
+                "sliding_window": sliding_cache_len,
                 "vision_batch_size": vision_batch_size,
                 "vision_size": vision_size,
             }
@@ -1499,12 +1508,13 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return lang_output_names
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        dflash_tlm = bool(getattr(self.model.language_model, "target_layer_ids", None))
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = seq_len if dflash_tlm else min(config.sliding_window, seq_len)
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (

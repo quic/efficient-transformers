@@ -1594,12 +1594,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
         # ---Sampling---
+        if self.dflash_tlm and qaic_config.get("speculative_model_type") == "target":
+            self.lang_model.hash_params["dflash_output_logits"] = True
+            self.lang_model.hash_params["dflash_dlm_repo"] = qaic_config.get("dflash_dlm_repo")
         if self.dflash_tlm and self.model.config.model_type == "qwen3_5_moe":
             self.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_moe_dynamic_replay_v1"
             self.lang_model.hash_params["dflash_chunk_size"] = 16
         if self.dflash_tlm and self.model.config.model_type == "qwen3_5":
             self.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_dynamic_replay_v1"
             self.lang_model.hash_params["dflash_chunk_size"] = 16
+        if self.dflash_tlm and self.model.config.model_type == "gemma4":
+            self.lang_model.hash_params["dflash_cache_protocol"] = "gemma4_block_window_v1"
 
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -3836,6 +3841,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model, _ = DFlashTransform.apply(self.model, qaic_config)
             self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
             self.hash_params["dflash_attention"] = "per_layer_window_v1"
+            if qaic_config.get("dflash_tlm_embedding_key"):
+                self.hash_params["dflash_tlm_embedding_key"] = qaic_config["dflash_tlm_embedding_key"]
+                self.hash_params["dflash_tlm_repo"] = qaic_config["dflash_tlm_repo"]
         if self.dflash_tlm:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 

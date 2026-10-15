@@ -786,9 +786,10 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             if num_logits_to_keep is not None:
                 hidden_states = filter_hidden_states(hidden_states, position_ids[0], num_logits_to_keep)
             logits = self.model.lm_head(hidden_states).float()
-            predicted_token_ids = logits.argmax(dim=-1).to(torch.int32)
+            output_logits = (getattr(self, "qaic_config", None) or {}).get("speculative_model_type") == "target"
+            predictions = logits if output_logits else logits.argmax(dim=-1).to(torch.int32)
             return (
-                predicted_token_ids,
+                predictions,
                 vision_embeds,
                 deepstack_features,
                 image_idx,
