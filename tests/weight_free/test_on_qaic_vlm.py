@@ -215,15 +215,24 @@ def _set_vision_output_buffers(session, vision_inputs: dict[str, np.ndarray]) ->
     """Select output dimensions for the vision specialization matching the input image grid."""
     pixel_values_index = session.binding_index_map["pixel_values"]
     pixel_values_shape = list(vision_inputs["pixel_values"].shape)
-    specialization_index = next(
+    allowed_shapes = session.allowed_shapes or [[(None, list(binding.dims)) for binding in session.bindings]]
+    matching_specializations = [
         index
-        for index, allowed_shape in enumerate(session.allowed_shapes)
+        for index, allowed_shape in enumerate(allowed_shapes)
         if allowed_shape[pixel_values_index][1] == pixel_values_shape
-    )
+    ]
+    if not matching_specializations:
+        allowed_pixel_shapes = [allowed_shape[pixel_values_index][1] for allowed_shape in allowed_shapes]
+        raise ValueError(
+            "No vision specialization matches pixel_values shape "
+            f"{pixel_values_shape}; binding_index={pixel_values_index}, "
+            f"allowed_shapes={allowed_pixel_shapes}"
+        )
+    specialization_index = matching_specializations[0]
     buffers = {}
     for output_name in session.output_names:
         binding_index = session.binding_index_map[output_name]
-        output_shape = session.allowed_shapes[specialization_index][binding_index][1]
+        output_shape = allowed_shapes[specialization_index][binding_index][1]
         if output_shape:
             buffers[output_name] = np.zeros(output_shape, dtype=np.float16)
     session.set_buffers(buffers)

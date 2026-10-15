@@ -161,7 +161,15 @@ def convert_dynamic_axes_to_dynamic_shapes(
             if (
                 "seq_len" in dim_name
                 and observed_dim_values.get(dim_name) == {1}
-                and model_type in {"qwen3_5", "qwen3_5_moe", "qwen3_5_text", "qwen3_5_moe_text"}
+                and model_type
+                in {
+                    "qwen3_vl",
+                    "qwen3_vl_moe",
+                    "qwen3_5",
+                    "qwen3_5_moe",
+                    "qwen3_5_text",
+                    "qwen3_5_moe_text",
+                }
             ):
                 dim_registry[dim_name] = Dim.STATIC
             elif dim_name == "time" and observed_dim_values.get(dim_name) == {1}:
