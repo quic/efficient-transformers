@@ -4250,10 +4250,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = (for_loop_number_forced_by_expert_parallel * seq_len) // math.gcd(
                 for_loop_number_forced_by_expert_parallel, seq_len
             )
-        if blocking_enabled:
-            seq_len = (for_loop_number_forced_by_blocking * seq_len) // math.gcd(
-                for_loop_number_forced_by_blocking, seq_len
-            )
+
         ##################################
 
         example_inputs = {
