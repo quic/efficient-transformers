@@ -2292,7 +2292,9 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         **kwargs,
     ):
         inputs_shapes = {}
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE + 1
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if kwargs.get("weight_free", False):
+            bs = max(2, bs)
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         dummy_seq_len = int(kwargs.get("prefill_seq_len") or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["input_ids"] = (bs, dummy_seq_len)

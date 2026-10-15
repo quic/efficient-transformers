@@ -2435,7 +2435,9 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs_shapes = {}
         dummy_seq_len = int(kwargs.get("prefill_seq_len", 32))
         bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
-        if kwargs.get("weight_free", False) or bs > 1:
+        if kwargs.get("weight_free", False):
+            bs = max(2, bs)
+        elif bs > 1:
             bs = 2
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         batch_fold = kwargs.pop("batch_fold", False)

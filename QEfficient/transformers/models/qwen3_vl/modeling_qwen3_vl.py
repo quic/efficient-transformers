@@ -931,7 +931,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE + 1
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if kwargs.get("weight_free", False):
+            bs = max(2, bs)
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         prefill_seq_len = kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         if prefill_seq_len is None:
