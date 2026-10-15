@@ -242,6 +242,7 @@ def blocked_kv_attention_forward(
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+        ctx_len = kv_block_size * num_kv_blocks
     else:
         kv_block_size = -(-ctx_len // num_kv_blocks)
 
