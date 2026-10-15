@@ -29,6 +29,10 @@ _DEFAULT_DUMP_DIR = "qeff_input_dumps"
 _SESSION_COUNTER = count()
 
 
+class InputDumpValidationError(ValueError):
+    """Raised when a runtime input dump is internally inconsistent."""
+
+
 def _as_jsonable(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return {
@@ -51,6 +55,10 @@ def _as_jsonable(value: Any) -> Any:
 def _safe_filename(name: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
     return safe or "buffer"
+
+
+def _dims_nbytes(dims: Sequence[int], elem_size: int) -> int:
+    return int(np.prod([int(dim) for dim in dims], dtype=np.int64)) * int(elem_size)
 
 
 def _resolve_dump_root(path: Optional[Union[str, Path, bool]]) -> Optional[Path]:
@@ -131,12 +139,49 @@ class QAICInputDumper:
         binding = self.session.bindings[self.session.binding_index_map[name]]
         return int(self.session.aic_to_np_dtype_mapping[binding.type].itemsize)
 
+    def _binding_dtype(self, name: str) -> np.dtype:
+        binding = self.session.bindings[self.session.binding_index_map[name]]
+        return np.dtype(self.session.aic_to_np_dtype_mapping[binding.type])
+
     def _canonical_binding_name(self, name: str) -> str:
         return self.session.bindings[self.session.binding_index_map[name]].name
 
     def _binding_dims(self, name: str) -> list[int]:
         binding = self.session.bindings[self.session.binding_index_map[name]]
         return [int(dim) for dim in binding.dims]
+
+    def _required_input_names(self, exec_obj_index: Optional[int]) -> list[str]:
+        required_names = getattr(self.session, "required_input_names", None)
+        if required_names is None:
+            if exec_obj_index is not None or not hasattr(self.session, "input_names"):
+                return []
+            required_names = self.session.input_names
+
+        required_inputs = []
+        seen = set()
+        for name in required_names:
+            if name not in self.session.binding_index_map:
+                raise InputDumpValidationError(f"Unknown required input binding: {name}")
+            canonical_name = self._canonical_binding_name(name)
+            if canonical_name in seen:
+                raise InputDumpValidationError(f"Duplicate required input binding: {canonical_name}")
+            if self._is_required_buffer_present(name, exec_obj_index):
+                required_inputs.append(canonical_name)
+                seen.add(canonical_name)
+        return required_inputs
+
+    def _is_required_buffer_present(self, name: str, exec_obj_index: Optional[int]) -> bool:
+        if getattr(self.session, "required_input_names", None) is not None:
+            return True
+        qbuffers = getattr(self.session, "qbuffers", None)
+        if qbuffers is None:
+            return True
+        binding_index = self.session.binding_index_map[name]
+        if exec_obj_index is not None and qbuffers and isinstance(qbuffers[0], list):
+            qbuffer = qbuffers[exec_obj_index][binding_index]
+        else:
+            qbuffer = qbuffers[binding_index]
+        return int(getattr(qbuffer, "size", 1)) != 0
 
     @staticmethod
     def _array_dims(value: np.ndarray) -> list[int]:
@@ -153,6 +198,117 @@ class QAICInputDumper:
             "map-to": name,
             "dims": self._array_dims(array),
         }
+
+    def _input_detail(self, entry: Mapping[str, Any], value: np.ndarray) -> dict[str, Any]:
+        array = np.ascontiguousarray(np.asarray(value))
+        return {
+            "name": entry["map-to"],
+            "path": entry["path"],
+            "dims": self._array_dims(array),
+            "dtype": str(array.dtype),
+            "elem-size": int(array.itemsize),
+            "byte-size": int(array.nbytes),
+        }
+
+    def _validate_array_for_binding(self, name: str, value: np.ndarray) -> np.ndarray:
+        array = np.ascontiguousarray(np.asarray(value))
+        expected_dtype = self._binding_dtype(name)
+        if array.dtype != expected_dtype:
+            raise InputDumpValidationError(
+                f"Input {name!r} has dtype {array.dtype}, expected {expected_dtype} for the QPC binding"
+            )
+        expected_elem_size = self._binding_item_size(name)
+        if int(array.itemsize) != expected_elem_size:
+            raise InputDumpValidationError(
+                f"Input {name!r} has element size {array.itemsize}, expected {expected_elem_size}"
+            )
+        return array
+
+    def _validate_invocation_inputs(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+        required_inputs: Sequence[str],
+        input_details: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        input_entries = [entry for entry in entries if entry.get("io-direction") == "in"]
+        descriptor_inputs = [str(entry.get("map-to")) for entry in input_entries]
+        duplicate_inputs = sorted({name for name in descriptor_inputs if descriptor_inputs.count(name) > 1})
+        if duplicate_inputs:
+            raise InputDumpValidationError(f"Duplicate input bindings in descriptor: {duplicate_inputs}")
+
+        unknown_descriptor_inputs = [name for name in descriptor_inputs if name not in self.session.binding_index_map]
+        if unknown_descriptor_inputs:
+            raise InputDumpValidationError(f"Unknown descriptor input bindings: {unknown_descriptor_inputs}")
+
+        missing_required = sorted(set(required_inputs) - set(descriptor_inputs))
+        if missing_required:
+            raise InputDumpValidationError(f"Missing required input bindings: {missing_required}")
+
+        descriptor_paths = [str(entry.get("path")) for entry in input_entries]
+        duplicate_paths = sorted({path for path in descriptor_paths if descriptor_paths.count(path) > 1})
+        if duplicate_paths:
+            raise InputDumpValidationError(f"Duplicate input file paths in descriptor: {duplicate_paths}")
+
+        for entry in input_entries:
+            name = str(entry["map-to"])
+            path = str(entry["path"])
+            dims = [int(dim) for dim in entry["dims"]]
+            elem_size = int(entry["elem-size"])
+            file_path = self.session_dir / path
+            if not file_path.is_file():
+                raise InputDumpValidationError(f"Descriptor input {name!r} references missing file: {path}")
+            expected_elem_size = self._binding_item_size(name)
+            if elem_size != expected_elem_size:
+                raise InputDumpValidationError(
+                    f"Descriptor input {name!r} has element size {elem_size}, expected {expected_elem_size}"
+                )
+            detail = input_details.get(name)
+            if detail is not None:
+                if dims != [int(dim) for dim in detail["dims"]]:
+                    raise InputDumpValidationError(
+                        f"Descriptor input {name!r} has dims {dims}, expected {detail['dims']}"
+                    )
+                if elem_size != int(detail["elem-size"]):
+                    raise InputDumpValidationError(
+                        f"Descriptor input {name!r} has element size {elem_size}, expected {detail['elem-size']}"
+                    )
+                expected_nbytes = int(detail["byte-size"])
+            else:
+                expected_nbytes = _dims_nbytes(dims, elem_size)
+            actual_nbytes = file_path.stat().st_size
+            if actual_nbytes != expected_nbytes:
+                raise InputDumpValidationError(
+                    f"Descriptor input {name!r} file {path} has {actual_nbytes} bytes, expected {expected_nbytes}"
+                )
+
+    def validate(self) -> None:
+        """Validate descriptor input bindings and raw files for this component dump."""
+        descriptor_path = self.session_dir / "aic_batch_io.json"
+        if not descriptor_path.exists():
+            if self.io_batches:
+                raise InputDumpValidationError("Missing aic_batch_io.json descriptor")
+            return
+        descriptor = json.loads(descriptor_path.read_text())
+        io_batches = descriptor.get("IO-files", [])
+        if len(io_batches) != len(self.invocations):
+            raise InputDumpValidationError(
+                f"Descriptor has {len(io_batches)} invocation batches, expected {len(self.invocations)}"
+            )
+        for invocation_index, entries in enumerate(io_batches):
+            invocation = self.invocations[invocation_index]
+            input_details = {detail["name"]: detail for detail in invocation.get("input_details", [])}
+            self._validate_invocation_inputs(entries, invocation.get("required_inputs", []), input_details)
+
+            descriptor_input_paths = {
+                str(entry["path"]) for entry in entries if entry.get("io-direction") == "in" and "path" in entry
+            }
+            invocation_dir = self.data_dir / f"{invocation_index:05d}"
+            actual_input_paths = {
+                path.relative_to(self.session_dir).as_posix() for path in invocation_dir.glob("*.raw")
+            }
+            unreferenced_paths = sorted(actual_input_paths - descriptor_input_paths)
+            if unreferenced_paths:
+                raise InputDumpValidationError(f"Input files not referenced by descriptor: {unreferenced_paths}")
 
     def _output_entry(self, invocation_dir: Path, name: str, shape: Optional[Sequence[int]] = None) -> dict[str, Any]:
         relative_path = Path("data") / invocation_dir.name / f"{_safe_filename(name)}.raw"
@@ -180,13 +336,28 @@ class QAICInputDumper:
 
         entries: list[dict[str, Any]] = []
         recorded_inputs = []
+        skipped_inputs = []
+        input_details = []
+        required_inputs = self._required_input_names(exec_obj_index)
+        seen_input_bindings = set()
         for name, value in inputs.items():
-            if value is None or name not in self.session.binding_index_map:
+            if value is None:
+                skipped_inputs.append({"name": str(name), "reason": "value_is_none"})
+                continue
+            if name not in self.session.binding_index_map:
+                skipped_inputs.append({"name": str(name), "reason": "unknown_binding"})
                 continue
             name = self._canonical_binding_name(name)
-            entry = self._write_input(invocation_dir, name, value)
+            if name in seen_input_bindings:
+                raise InputDumpValidationError(f"Duplicate input binding: {name}")
+            seen_input_bindings.add(name)
+            array = self._validate_array_for_binding(name, value)
+            entry = self._write_input(invocation_dir, name, array)
             entries.append(entry)
             recorded_inputs.append(name)
+            input_details.append(self._input_detail(entry, array))
+
+        self._validate_invocation_inputs(entries, required_inputs, {detail["name"]: detail for detail in input_details})
 
         output_shapes = output_shapes or {}
         recorded_outputs = []
@@ -210,14 +381,19 @@ class QAICInputDumper:
             "kind": kind,
             "exec_obj_index": exec_obj_index,
             "inputs": recorded_inputs,
+            "required_inputs": required_inputs,
             "outputs": recorded_outputs,
+            "input_details": input_details,
         }
+        if skipped_inputs:
+            invocation_metadata["skipped_inputs"] = skipped_inputs
         if metadata:
             invocation_metadata.update(_as_jsonable(metadata))
         if exec_obj_index in self.pending_slice_configs:
             invocation_metadata["slice_configs"] = self.pending_slice_configs.pop(exec_obj_index)
         self.invocations.append(invocation_metadata)
         self._write_batch_io()
+        self.validate()
         self._write_manifest()
 
     def record_slice_config(
@@ -261,7 +437,6 @@ class QAICInputDumper:
         manifest = {
             "version": 1,
             "component": self.component_name,
-            "qpc_path": str(self.qpc_path),
             "aic_batch_io": "aic_batch_io.json",
             "env_var": _DUMP_ENV_VAR,
             "invocations": self.invocations,
