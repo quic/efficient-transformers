@@ -93,10 +93,10 @@ def gptoss_clamp(
     This preserves clamp semantics while keeping all operands dtype-consistent.
     """
     if min_value is not None:
-        min_tensor = x.new_full((), min_value)
+        min_tensor = torch.full_like(x, min_value)
         x = torch.maximum(x, min_tensor)
     if max_value is not None:
-        max_tensor = x.new_full((), max_value)
+        max_tensor = torch.full_like(x, max_value)
         x = torch.minimum(x, max_tensor)
     return x
 
