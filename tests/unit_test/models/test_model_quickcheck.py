@@ -5650,6 +5650,43 @@ def test_qaic_input_dumper_writes_multi_invocation_runner_inputs(tmp_path):
 
 
 @pytest.mark.cpu_only
+def test_qaic_input_dumper_persists_invocation_context_metadata(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper
+
+    bindings = [
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, 1]),
+        SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
+    ]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={binding.name: index for index, binding in enumerate(bindings)},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64), "float32": np.dtype(np.float32)},
+        required_input_names=["input_ids"],
+    )
+    dumper = QAICInputDumper(session=session, qpc_path=tmp_path / "qpc", root=tmp_path / "dumps", component_name="text")
+
+    dumper.record_invocation(
+        kind="run",
+        inputs={"input_ids": np.array([[5]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+        metadata={
+            "invocation_context": {
+                "phase": "prefill",
+                "prefill_chunk": 0,
+                "logical_invocation": "prefill_chunk",
+            }
+        },
+    )
+
+    manifest = json.loads((dumper.session_dir / "manifest.json").read_text())
+    context = manifest["invocations"][0]["invocation_context"]
+    assert context["phase"] == "prefill"
+    assert context["prefill_chunk"] == 0
+    assert context["logical_invocation"] == "prefill_chunk"
+
+
+@pytest.mark.cpu_only
 def test_qaic_input_dumper_writes_multicomponent_capture_contract(tmp_path):
     from QEfficient.generation.input_dump import QAICInputDumper
 

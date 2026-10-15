@@ -457,7 +457,16 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 for op in Constants.SAMPLER_OPS | ({"token_bitmasks"} if self.include_guided_decoding else set()):
                     chunk_inputs[op] = lang_inputs[op]
 
-            outputs = self._session.run(chunk_inputs)
+            outputs = self._session_run_with_context(
+                chunk_inputs,
+                phase="prefill",
+                prefill_chunk=i,
+                prefill_chunks=num_chunks,
+                slot=int(np.asarray(decode_batch_id).reshape(-1)[0]) if decode_batch_id is not None else None,
+                logical_invocation="vlm_prefill_chunk",
+                is_prefill=True,
+                is_decode=False,
+            )
 
             if "image_idx_output" in outputs:
                 chunk_image_idx = outputs["image_idx_output"]

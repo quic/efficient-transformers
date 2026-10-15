@@ -195,6 +195,7 @@ class QAICInferenceSession:
             dump_inputs_path=dump_inputs_path,
             component_name=dump_component_name,
         )
+        self._dump_invocation_context = None
         self._dump_bound_inputs: Dict[str, np.ndarray] = {}
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
@@ -417,6 +418,15 @@ class QAICInferenceSession:
         buf_dims = self.buf_dims if buf_dims is None else buf_dims
         return {name: tuple(buf_dims[self.binding_index_map[name]][1]) for name in output_names}
 
+    @contextmanager
+    def invocation_context(self, **metadata):
+        previous_context = self._dump_invocation_context
+        self._dump_invocation_context = metadata or None
+        try:
+            yield
+        finally:
+            self._dump_invocation_context = previous_context
+
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
         Execute on cloud AI 100
@@ -433,11 +443,13 @@ class QAICInferenceSession:
         if input_dumper is not None:
             output_names = self._dumpable_output_names()
             dumped_inputs = {**self._dump_bound_inputs, **inputs}
+            invocation_context = getattr(self, "_dump_invocation_context", None)
             input_dumper.record_invocation(
                 kind="run",
                 inputs=dumped_inputs,
                 output_names=output_names,
                 output_shapes=self._output_shapes_from_buf_dims(output_names),
+                metadata={"invocation_context": invocation_context} if invocation_context else None,
             )
         if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
             self._release_program_after_run_failure()

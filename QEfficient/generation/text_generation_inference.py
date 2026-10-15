@@ -722,6 +722,13 @@ class QEffTextGenerationBase:
         if input_dumper is not None:
             input_dumper.record_schedule_event(event)
 
+    def _session_run_with_context(self, inputs: Dict[str, np.ndarray], **context):
+        invocation_context = getattr(self._session, "invocation_context", None)
+        if invocation_context is None:
+            return self._session.run(inputs)
+        with invocation_context(**context):
+            return self._session.run(inputs)
+
     @staticmethod
     def _prompt_descriptor(prompt) -> Dict[str, Any]:
         prompt_count = len(prompt) if isinstance(prompt, list) else 1
@@ -866,7 +873,16 @@ class QEffTextGenerationBase:
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
 
-            outputs = self._session.run(chunk_inputs)
+            outputs = self._session_run_with_context(
+                chunk_inputs,
+                phase="prefill",
+                prefill_chunk=i,
+                prefill_chunks=num_chunks,
+                slot=int(np.asarray(decode_batch_id).reshape(-1)[0]) if decode_batch_id is not None else None,
+                logical_invocation="prefill_chunk",
+                is_prefill=True,
+                is_decode=False,
+            )
 
         return (
             outputs,
@@ -940,7 +956,16 @@ class QEffTextGenerationBase:
                     ],
                 }
             )
-            outputs = self._session.run(decode_inputs)
+            outputs = self._session_run_with_context(
+                decode_inputs,
+                phase="decode",
+                decode_step=decode_step,
+                active_slots=active_slots,
+                queue_depth_before=len(prompt_queue),
+                logical_invocation="continuous_batching_decode",
+                is_prefill=False,
+                is_decode=True,
+            )
 
             # Prepare inputs for next iteration
             next_token_id = self._fetch_next_token_id(outputs)
@@ -1109,7 +1134,14 @@ class QEffTextGenerationBase:
 
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
-            outputs = self._session.run(decode_inputs)
+            outputs = self._session_run_with_context(
+                decode_inputs,
+                phase="decode",
+                decode_step=num_token,
+                logical_invocation="decode",
+                is_prefill=False,
+                is_decode=True,
+            )
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
