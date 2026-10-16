@@ -219,8 +219,6 @@ def find_checkpoint_key(
         elif candidate.startswith("vision_model."):
             candidates.append(candidate.replace("vision_model.", "visual.", 1))
             candidates.append(candidate.replace(".vision_model.", ".vision_tower.", 1))
-        # elif candidate.startswith("vision_tower."):
-        #     candidates.append(candidate.replace("vision_tower.", "visual.", 1))
         if ".visual." in candidate:
             candidates.append(candidate.replace(".visual.", ".vision_model.", 1))
             candidates.append(candidate.replace(".visual.", ".vision_tower.", 1))
