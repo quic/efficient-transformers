@@ -98,7 +98,7 @@ OFFICIAL_MODEL_ENV = "QEFF_REPRODUCER_USE_OFFICIAL_MODELS"
 REPORT_PATH_ENV = "QEFF_REPRODUCER_REPORT_MD"
 SCENARIO_FILTER_ENV = "QEFF_REPRODUCER_SCENARIO"
 DEFAULT_REPORT_PATH = Path("tests/reproducer_configs/reproducer_config_results.md")
-EXPECTED_SCENARIO_COUNT = 53
+EXPECTED_SCENARIO_COUNT = 54
 EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
     {
         "retain_full_kv",
@@ -771,6 +771,63 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
             "batch_size": 1,
             "full_batch_size": 1,
             "kv_cache_batch_size": 1,
+            "prefill_seq_len": 1,
+            "ctx_len": 65536,
+            "height": 354,
+            "width": 536,
+            "num_cores": 16,
+            "num_devices": 2,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "retain_full_kv": True,
+            "split_model_io": True,
+            "aic_enable_depth_first": False,
+            "user_tiled": True,
+            "prefill_only": False,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "kv_cache_prefix": "vllmKvCache",
+            "allow_mxint8_mdp_io": True,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+    ),
+    RegressionScenario(
+        name="qwen36-gdn-full-batch-decode-state-update-bsz4",
+        stage="compile",
+        source_model_card="Qwen/Qwen3.6-35B-A3B",
+        tiny_model_id=None,
+        official_model_id="Qwen/Qwen3.6-35B-A3B",
+        summary="Qwen3.6 kv_headpar full-batch decode must compile with batch size 4 GDN retained-state updates",
+        model_api="image_text_to_text",
+        config={"compile_components": ("decode",)},
+        load_kwargs={
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "continuous_batching": True,
+            "dtype": torch.float16,
+            "text_num_hidden_layers": 8,
+        },
+        export_kwargs={
+            "prefill_only": False,
+            "prefill_seq_len": 1,
+            "use_onnx_subfunctions": True,
+            "offload_pt_weights": False,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+        compile_kwargs={
+            "batch_size": 4,
+            "full_batch_size": 4,
+            "kv_cache_batch_size": 4,
             "prefill_seq_len": 1,
             "ctx_len": 65536,
             "height": 354,
