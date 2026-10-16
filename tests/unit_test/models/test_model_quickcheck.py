@@ -5525,20 +5525,32 @@ def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
 
 @pytest.mark.cpu_only
 def test_path_valued_artifacts_resolves_runtime_input_dump(tmp_path):
-    from QEfficient.generation.input_dump import resolve_runtime_dump_inputs_path
+    from QEfficient.generation.input_dump import RuntimeInputDumpCapture, resolve_runtime_dump_inputs_path
 
     dump_dir = tmp_path / "input-dumps"
     legacy_dir = tmp_path / "legacy-dumps"
 
     assert resolve_runtime_dump_inputs_path(True) is None
     assert resolve_runtime_dump_inputs_path(False) is None
-    assert resolve_runtime_dump_inputs_path(dump_dir) == dump_dir
-    assert resolve_runtime_dump_inputs_path(str(dump_dir)) == str(dump_dir)
-    assert resolve_runtime_dump_inputs_path(dump_dir, legacy_dir) == legacy_dir
+
+    first_capture = resolve_runtime_dump_inputs_path(dump_dir)
+    second_capture = resolve_runtime_dump_inputs_path(str(dump_dir))
+    legacy_capture = resolve_runtime_dump_inputs_path(dump_dir, legacy_dir)
+
+    assert isinstance(first_capture, RuntimeInputDumpCapture)
+    assert isinstance(second_capture, RuntimeInputDumpCapture)
+    assert isinstance(legacy_capture, RuntimeInputDumpCapture)
+    assert first_capture.root.parent == dump_dir.resolve()
+    assert second_capture.root.parent == dump_dir.resolve()
+    assert legacy_capture.root.parent == legacy_dir.resolve()
+    assert first_capture.root != second_capture.root
+    assert first_capture.root.is_dir()
+    assert second_capture.root.is_dir()
 
 
 @pytest.mark.cpu_only
 def test_causal_generate_uses_path_valued_artifacts_for_runtime_input_dump(monkeypatch, tmp_path):
+    from QEfficient.generation.input_dump import RuntimeInputDumpCapture
     from QEfficient.transformers.models import modeling_auto
 
     model = object.__new__(QEFFAutoModelForCausalLM)
@@ -5565,7 +5577,10 @@ def test_causal_generate_uses_path_valued_artifacts_for_runtime_input_dump(monke
     result = model.generate(tokenizer=object(), prompts=["Hello"], artifacts=dump_dir)
 
     assert result is exec_info
-    assert captured_kwargs["dump_inputs_path"] == dump_dir
+    dump_capture = captured_kwargs["dump_inputs_path"]
+    assert isinstance(dump_capture, RuntimeInputDumpCapture)
+    assert dump_capture.root.parent == dump_dir.resolve()
+    assert dump_capture.root.is_dir()
 
 
 @pytest.mark.cpu_only
@@ -5594,8 +5609,8 @@ def test_qaic_input_dumper_writes_multi_invocation_runner_inputs(tmp_path):
     from QEfficient.generation.input_dump import QAICInputDumper
 
     bindings = [
-        SimpleNamespace(name="input_ids", type="int64", dims=[1, 4]),
-        SimpleNamespace(name="position_ids", type="int64", dims=[1, 4]),
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, -1]),
+        SimpleNamespace(name="position_ids", type="int64", dims=[1, -1]),
         SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
     ]
     session = SimpleNamespace(
@@ -5734,6 +5749,71 @@ def test_qaic_input_dumper_writes_multicomponent_capture_contract(tmp_path):
     assert [component["depends_on"] for component in aggregate_manifest["components"]] == [[], ["vision"]]
     assert [component["replay"] for component in aggregate_manifest["components"]] == [False, True]
     assert [component["invocation_count"] for component in aggregate_manifest["components"]] == [1, 1]
+
+
+@pytest.mark.cpu_only
+def test_runtime_dump_capture_roots_scope_logical_generations(tmp_path):
+    from QEfficient.generation.input_dump import QAICInputDumper, resolve_runtime_dump_inputs_path
+
+    bindings = [
+        SimpleNamespace(name="input_ids", type="int64", dims=[1, 1]),
+        SimpleNamespace(name="logits", type="float32", dims=[1, 1, 8]),
+    ]
+    session = SimpleNamespace(
+        bindings=bindings,
+        binding_index_map={binding.name: index for index, binding in enumerate(bindings)},
+        aic_to_np_dtype_mapping={"int64": np.dtype(np.int64), "float32": np.dtype(np.float32)},
+        required_input_names=["input_ids"],
+    )
+    dump_parent = tmp_path / "input-dumps"
+
+    first_capture = resolve_runtime_dump_inputs_path(dump_parent)
+    first_text_dumper = QAICInputDumper.from_config(
+        session=session,
+        qpc_path=tmp_path / "text_qpc",
+        dump_inputs_path=first_capture,
+        component_name="text",
+    )
+    first_vision_dumper = QAICInputDumper.from_config(
+        session=session,
+        qpc_path=tmp_path / "vision_qpc",
+        dump_inputs_path=first_capture,
+        component_name="vision",
+    )
+    first_text_dumper.record_invocation(
+        kind="decode",
+        inputs={"input_ids": np.array([[7]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+    first_vision_dumper.record_invocation(
+        kind="vision",
+        inputs={"input_ids": np.array([[3]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+
+    second_capture = resolve_runtime_dump_inputs_path(dump_parent)
+    second_text_dumper = QAICInputDumper.from_config(
+        session=session,
+        qpc_path=tmp_path / "text_qpc",
+        dump_inputs_path=second_capture,
+        component_name="text",
+    )
+    second_text_dumper.record_invocation(
+        kind="decode",
+        inputs={"input_ids": np.array([[9]], dtype=np.int64)},
+        output_names=["logits"],
+        output_shapes={"logits": [1, 1, 8]},
+    )
+
+    first_manifest = json.loads((first_capture.root / "manifest.json").read_text())
+    second_manifest = json.loads((second_capture.root / "manifest.json").read_text())
+    assert first_capture.root != second_capture.root
+    assert first_manifest["component_counts"] == {"text": 1, "vision": 1}
+    assert first_manifest["all_required_components_captured"] is True
+    assert second_manifest["component_counts"] == {"text": 1}
+    assert second_manifest["all_required_components_captured"] is True
 
 
 @pytest.mark.cpu_only
@@ -5899,6 +5979,19 @@ def test_qaic_input_dumper_rejects_dtype_shape_elem_and_byte_mismatches(tmp_path
         dtype_dumper.record_invocation(
             kind="prefill",
             inputs={"input_ids": np.array([[1, 2]], dtype=np.int32)},
+            output_names=["logits"],
+        )
+
+    shape_record_dumper = QAICInputDumper(
+        session=make_dumper("shape_record_base").session,
+        qpc_path=tmp_path / "shape_record_qpc",
+        root=tmp_path / "shape_record_dumps",
+        component_name="text",
+    )
+    with pytest.raises(InputDumpValidationError, match="has shape"):
+        shape_record_dumper.record_invocation(
+            kind="prefill",
+            inputs={"input_ids": np.array([[1]], dtype=np.int64)},
             output_names=["logits"],
         )
 

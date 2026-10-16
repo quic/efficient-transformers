@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Union
@@ -26,11 +27,19 @@ import numpy as np
 
 _DUMP_ENV_VAR = "QEFFICIENT_DUMP_INPUTS"
 _DEFAULT_DUMP_DIR = "qeff_input_dumps"
+_CAPTURE_COUNTER = count()
 _SESSION_COUNTER = count()
 _DUAL_QPC_MULTIMODAL_DEPENDENCIES = {"vision": [], "text": ["vision"]}
 _DUAL_QPC_MULTIMODAL_ORDER = ["vision", "text"]
 _SINGLE_QPC_TEXT_ORDER = ["text"]
 _SINGLE_QPC_MULTIMODAL_ORDER = ["vision_text"]
+
+
+@dataclass(frozen=True)
+class RuntimeInputDumpCapture:
+    """Prepared root for one logical runtime-input capture."""
+
+    root: Path
 
 
 class InputDumpValidationError(ValueError):
@@ -65,7 +74,9 @@ def _dims_nbytes(dims: Sequence[int], elem_size: int) -> int:
     return int(np.prod([int(dim) for dim in dims], dtype=np.int64)) * int(elem_size)
 
 
-def _resolve_dump_root(path: Optional[Union[str, Path, bool]]) -> Optional[Path]:
+def _resolve_dump_base(path: Optional[Union[str, Path, bool, RuntimeInputDumpCapture]]) -> Optional[Path]:
+    if isinstance(path, RuntimeInputDumpCapture):
+        return path.root
     if path is False:
         return None
     if path is None:
@@ -78,22 +89,49 @@ def _resolve_dump_root(path: Optional[Union[str, Path, bool]]) -> Optional[Path]
     return Path(path).expanduser().resolve()
 
 
+def _make_unique_capture_root(base: Path) -> Path:
+    base.mkdir(parents=True, exist_ok=True)
+    capture_id = next(_CAPTURE_COUNTER)
+    capture_root = base / f"capture_{capture_id:02d}"
+    suffix = 1
+    while capture_root.exists():
+        capture_root = base / f"capture_{capture_id:02d}_{suffix}"
+        suffix += 1
+    capture_root.mkdir(parents=True)
+    return capture_root
+
+
+def _resolve_dump_root(path: Optional[Union[str, Path, bool, RuntimeInputDumpCapture]]) -> Optional[Path]:
+    base = _resolve_dump_base(path)
+    if base is None:
+        return None
+    if isinstance(path, RuntimeInputDumpCapture):
+        return base
+    return _make_unique_capture_root(base)
+
+
 def resolve_runtime_dump_inputs_path(
     artifacts: Optional[Union[str, Path, bool]],
-    dump_inputs_path: Optional[Union[str, Path, bool]] = None,
-) -> Optional[Union[str, Path, bool]]:
+    dump_inputs_path: Optional[Union[str, Path, bool, RuntimeInputDumpCapture]] = None,
+) -> Optional[Union[str, Path, bool, RuntimeInputDumpCapture]]:
     """Resolve runtime input dumping from path-valued artifacts mode.
 
     ``artifacts=True`` keeps the existing dry-run runner-bundle behavior in
     public ``generate`` APIs. A string or ``Path`` value enables executed runtime
-    input dumps at that location. ``dump_inputs_path`` is retained for internal
-    plumbing and backward compatibility.
+    input dumps under a fresh capture directory at that location. ``dump_inputs_path``
+    is retained for internal plumbing and backward compatibility.
     """
-    if dump_inputs_path is not None:
-        return dump_inputs_path
-    if isinstance(artifacts, (str, Path)):
-        return artifacts
-    return None
+    path = dump_inputs_path
+    if path is None and isinstance(artifacts, (str, Path)):
+        path = artifacts
+    if path is None:
+        return None
+    if isinstance(path, RuntimeInputDumpCapture):
+        return path
+    base = _resolve_dump_base(path)
+    if base is None:
+        return None
+    return RuntimeInputDumpCapture(_make_unique_capture_root(base))
 
 
 def _make_unique_dir(root: Path, component_name: str) -> Path:
@@ -237,7 +275,7 @@ class QAICInputDumper:
         *,
         session,
         qpc_path: Union[str, Path],
-        dump_inputs_path: Optional[Union[str, Path, bool]],
+        dump_inputs_path: Optional[Union[str, Path, bool, RuntimeInputDumpCapture]],
         component_name: Optional[str],
     ) -> Optional["QAICInputDumper"]:
         root = _resolve_dump_root(dump_inputs_path)
@@ -260,6 +298,14 @@ class QAICInputDumper:
     def _binding_dims(self, name: str) -> list[int]:
         binding = self.session.bindings[self.session.binding_index_map[name]]
         return [int(dim) for dim in binding.dims]
+
+    @staticmethod
+    def _dims_match(expected_dims: Sequence[int], actual_dims: Sequence[int]) -> bool:
+        if len(expected_dims) != len(actual_dims):
+            return False
+        return all(
+            int(expected) <= 0 or int(expected) == int(actual) for expected, actual in zip(expected_dims, actual_dims)
+        )
 
     def _required_input_names(self, exec_obj_index: Optional[int]) -> list[str]:
         required_names = getattr(self.session, "required_input_names", None)
@@ -332,6 +378,12 @@ class QAICInputDumper:
         if int(array.itemsize) != expected_elem_size:
             raise InputDumpValidationError(
                 f"Input {name!r} has element size {array.itemsize}, expected {expected_elem_size}"
+            )
+        expected_dims = self._binding_dims(name)
+        actual_dims = self._array_dims(array)
+        if not self._dims_match(expected_dims, actual_dims):
+            raise InputDumpValidationError(
+                f"Input {name!r} has shape {actual_dims}, expected {expected_dims} for the QPC binding"
             )
         return array
 

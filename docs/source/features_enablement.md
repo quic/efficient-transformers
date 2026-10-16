@@ -257,7 +257,7 @@ The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `spec
 
 ## Dump executed inference inputs
 
-To replay the exact inputs submitted to a Cloud AI 100 inference, pass a path-valued `artifacts` argument to `generate()` or set the `QEFFICIENT_DUMP_INPUTS` environment variable before constructing runtime sessions. This extends artifacts mode: `artifacts=True` still writes the non-executed runner bundle, while a path dumps every attempted runtime invocation:
+To replay the exact inputs submitted to a Cloud AI 100 inference, pass a path-valued `artifacts` argument to `generate()` or set the `QEFFICIENT_DUMP_INPUTS` environment variable before constructing runtime sessions. This extends artifacts mode: `artifacts=True` still writes the non-executed runner bundle, while a path dumps every attempted runtime invocation. Path-valued `generate()` calls create a fresh capture subdirectory under the requested path so repeated generations do not share capture metadata:
 
 ```python
 exec_info = model.generate(
@@ -267,7 +267,7 @@ exec_info = model.generate(
 )
 ```
 
-The dump directory contains a top-level `manifest.json` that defines the logical capture. For single-QPC text generation, the manifest requires exactly one `text` component and marks `text` as the replay component. For dual-QPC multimodal generation, it requires one `vision` component and one `text` component, orders them as `vision` then `text`, and records the `text` component's dependency on `vision`. For combined single-QPC multimodal generation, it requires exactly one `vision_text` component and marks `vision_text` as the replay component. The manifest also records component counts, missing or unexpected components, and whether all required components were captured.
+Each capture subdirectory contains a top-level `manifest.json` that defines the logical capture. For single-QPC text generation, the manifest requires exactly one `text` component and marks `text` as the replay component. For dual-QPC multimodal generation, it requires one `vision` component and one `text` component, orders them as `vision` then `text`, and records the `text` component's dependency on `vision`. For combined single-QPC multimodal generation, it requires exactly one `vision_text` component and marks `vision_text` as the replay component. The manifest also records component counts, missing or unexpected components, and whether all required components were captured.
 
 Each component has its own subdirectory, such as `text`, `vision`, or `vision_text`. Each session directory includes an `aic_batch_io.json` descriptor and raw inputs under `data/`, with one descriptor entry for every runtime invocation. Chunked prefill writes every prefill chunk, decode writes every decode step, and multimodal generation writes inputs for each active model. Disaggregated serving paths that use KV-cache slice handoff also write slice metadata and KV-cache buffer snapshots in the component-level `manifest.json`.
 
@@ -275,7 +275,7 @@ Component manifests record attempted invocations, not per-invocation completion.
 
 For normal `QAICInferenceSession.run()` captures, `kind="run"` identifies the physical runtime entry point and is not phase metadata by itself. Generation schedulers attach logical context under each invocation's `invocation_context` field when available, including prefill/decode phase, prefill chunk, decode step, continuous-batching slot state, and logical invocation identity. If that context is absent, downstream tools must treat the dump as an ordered physical-invocation log only and cannot distinguish same-shaped warmup, retry, or substituted logical invocations from the descriptor alone.
 
-Runtime dumps are validated as they are written. Required QPC host-input bindings must be present in the descriptor exactly once, descriptor input files must exist, and input shape, dtype, element-size, and byte-size metadata must match the raw file contents. If a non-required input is intentionally skipped because its value is `None` or because it is not a QPC binding, the component manifest records it under the invocation's `skipped_inputs` field.
+Runtime dumps are validated as they are written. Required QPC host-input bindings must be present in the descriptor exactly once, descriptor input files must exist, and input shape, dtype, element-size, and byte-size metadata must match the QPC binding contract and raw file contents. If a non-required input is intentionally skipped because its value is `None` or because it is not a QPC binding, the component manifest records it under the invocation's `skipped_inputs` field.
 
 Continuous-batching dumps include a component-level `runtime_schedule` section. Its ordered event list records prompt arrivals, initial slot assignments, decode invocations, slot advancement, EOS or generation-length completion, replacement prefills, terminal decode decisions, and slot releases. This schedule metadata is part of the replay contract because continuous-batching invocation counts and slot occupancy depend on generated token values, EOS timing, prompt replacement, and terminal decode behavior rather than only on prompt lengths and batch parameters.
 
