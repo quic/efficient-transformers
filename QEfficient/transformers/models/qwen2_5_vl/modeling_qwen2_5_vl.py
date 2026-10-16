@@ -50,26 +50,14 @@ logger = QEFFLogger.get_logger("MODEL")
 
 
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
-    """Apply interleaved MRoPE to 3D rotary embeddings.
-    Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
-    interleaved [THWTHWTHW...TT], preserving frequency continuity.
-    args:
-        x: (3, bs, seq_len, head_dim // 2)
-        mrope_section: (3,)
-    returns:
-        x_t: (bs, seq_len, head_dim // 2)
+    """Apply Qwen2.5-VL MRoPE channel selection.
+
+    Hugging Face splits the rotary channel dimension by ``mrope_section * 2``
+    and selects temporal/height/width chunks cyclically. ``freqs`` is expected
+    to contain only the three MRoPE rows.
     """
-    freqs_t = freqs[0]  # just overwrite the first dimension T
-    half_shape = freqs.shape[-1] // 2
-    for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-        offset += half_shape
-        length += half_shape
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-    return freqs_t
+    mrope_section = [int(section) for section in mrope_section] * 2
+    return torch.cat([m[i % 3] for i, m in enumerate(freqs.split(mrope_section, dim=-1))], dim=-1)
 
 
 def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
@@ -685,11 +673,12 @@ class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+        rope_parameters = getattr(self.config, "rope_parameters", None) or getattr(self.config, "rope_scaling", {})
         cos, sin = qeff_prepare_mrope_cos_sin(
             self.cos_cached,
             self.sin_cached,
             position_ids[1:],
-            self.config.rope_scaling["mrope_section"],
+            rope_parameters.get("mrope_section", [16, 24, 24]),
             dtype=hidden_states.dtype,
         )
 
