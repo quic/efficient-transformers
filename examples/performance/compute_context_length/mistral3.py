@@ -42,13 +42,14 @@ def run_model(
     config.text_config.num_hidden_layers = 4
     config.vision_config.num_hidden_layers = 2
 
+    qaic_config = {
+        "ccl_enabled": ccl_enabled,
+    }
+
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_name,
         kv_offload=kv_offload,
         config=config,
-        qaic_config={
-            "ccl_enabled": ccl_enabled,
-        },
     )
 
     ## STEP - 2 Export & Compile the Model
@@ -62,6 +63,7 @@ def run_model(
         mxfp6_matmul=False,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+        qaic_config=qaic_config,
     )
 
     ## STEP - 3 Load and process the inputs for Inference

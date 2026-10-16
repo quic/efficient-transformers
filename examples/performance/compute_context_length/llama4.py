@@ -17,7 +17,7 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
+## Activate Compute-Context-Length (CCL) feature by passing ccl_enabled=True to compile().
 ## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
@@ -27,6 +27,9 @@ config.vision_config.num_hidden_layers = 2
 
 ctx_len = 8192
 ccl_enabled = True
+qaic_config = {
+    "ccl_enabled": ccl_enabled,
+}
 # Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
 # Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [3072]
@@ -38,9 +41,6 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     attn_implementation="eager",
     kv_offload=True,
     config=config,
-    qaic_config={
-        "ccl_enabled": ccl_enabled,
-    },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -64,6 +64,7 @@ if skip_vision:
         mos=1,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+        qaic_config=qaic_config,
     )
 
     messages = [
@@ -107,6 +108,7 @@ else:
         mos=1,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+        qaic_config=qaic_config,
     )
 
     ### IMAGE + TEXT ###

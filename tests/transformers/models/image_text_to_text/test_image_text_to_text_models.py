@@ -200,7 +200,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
-                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
                 ignore_mismatched_sizes=True,
             )
@@ -210,7 +209,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
-                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
                 ignore_mismatched_sizes=True,
             )
@@ -223,7 +221,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
-            qaic_config=qaic_config,
             torch_dtype=torch_dtype,
             ignore_mismatched_sizes=True,
         )

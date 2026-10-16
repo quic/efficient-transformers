@@ -110,7 +110,6 @@ def main() -> None:
         kv_offload=True,
         trust_remote_code=True,
         config=config,
-        qaic_config={"export_embedding": True},
     )
 
     # 2) Build embedding helper and reference payload.
@@ -135,6 +134,7 @@ def main() -> None:
         num_cores=args.num_cores,
         num_devices=args.num_devices,
         mxfp6_matmul=args.mxfp6_matmul,
+        qaic_config={"export_embedding": True},
     )
 
     # 5) Run AI100 embedding generation on precompiled QPCs.

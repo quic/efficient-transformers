@@ -109,13 +109,10 @@ def main():
     print(f"Loading model: {args.model_name}")
     print(f"Continuous batching: {args.continuous_batching}")
 
-    # Load model with CCL configuration
+    # Load model
     model = QEFFAutoModelForCausalLM.from_pretrained(
         args.model_name,
         continuous_batching=args.continuous_batching,
-        qaic_config={
-            "ccl_enabled": args.ccl_enabled,
-        },
     )
 
     # Compile the model
@@ -134,6 +131,7 @@ def main():
     if args.ccl_enabled:
         compile_kwargs["comp_ctx_lengths_prefill"] = args.comp_ctx_lengths_prefill
         compile_kwargs["comp_ctx_lengths_decode"] = args.comp_ctx_lengths_decode
+        compile_kwargs["qaic_config"] = {"ccl_enabled": args.ccl_enabled}
 
     qpc_path = model.compile(**compile_kwargs)
     print(f"Model compiled successfully to: {qpc_path}")

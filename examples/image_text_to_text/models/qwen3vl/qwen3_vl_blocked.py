@@ -35,7 +35,6 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     attn_implementation="eager",
     kv_offload=True,
     config=config,
-    qaic_config=qaic_config,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -60,6 +59,7 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=False,
+        qaic_config=qaic_config,
     )
 
     messages = [
@@ -105,6 +105,7 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=False,
+        qaic_config=qaic_config,
     )
 
     ### IMAGE + TEXT ###

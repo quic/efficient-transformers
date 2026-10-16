@@ -34,7 +34,7 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
+qeff_model = QEFFAutoModelForCausalLM(model)
 
 prefill_seq_len = 1
 ctx_len = 16 * 1024

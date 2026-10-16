@@ -39,7 +39,7 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     """
     # Export with subfunctions, NO blocking
     model_no_block = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config)
-    qeff_no_block = QEFFAutoModelForCausalLM(model_no_block, pretrained_model_name_or_path=model_name, qaic_config=None)
+    qeff_no_block = QEFFAutoModelForCausalLM(model_no_block, pretrained_model_name_or_path=model_name)
     qeff_no_block.export(use_onnx_subfunctions=True, offload_pt_weights=False)
     onnx_no_block = onnx.load(qeff_no_block.onnx_path, load_external_data=False)
     num_functions_no_block = len(onnx_no_block.functions)
@@ -49,10 +49,8 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     qaic_config = dict(blocking_mode="kv", num_kv_blocks=NUM_KV_BLOCKS)
 
     model_kv_block = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config)
-    qeff_kv_block = QEFFAutoModelForCausalLM(
-        model_kv_block, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
-    )
-    qeff_kv_block.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+    qeff_kv_block = QEFFAutoModelForCausalLM(model_kv_block, pretrained_model_name_or_path=model_name)
+    qeff_kv_block.export(use_onnx_subfunctions=True, offload_pt_weights=False, qaic_config=qaic_config)
     onnx_kv_block = onnx.load(qeff_kv_block.onnx_path, load_external_data=False)
     num_functions_kv_block = len(onnx_kv_block.functions)
 

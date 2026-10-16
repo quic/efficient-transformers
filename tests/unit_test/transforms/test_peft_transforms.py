@@ -203,6 +203,7 @@ class TestLoRAWrapping:
 
         lora_model, cfg = self._make_lora_model()
         qeff_peft = QEffAutoPeftModelForCausalLM(lora_model)
+        qeff_peft.transform(ctx_len=CTX_LEN, seq_len=SEQ_LEN, bs=1)
 
         n_layers = cfg.num_hidden_layers
         n_kv = cfg.num_key_value_heads
