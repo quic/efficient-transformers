@@ -137,7 +137,6 @@ def run(
         config=config,
         dtype="float32",
         trust_remote_code=True,
-        # weight_free=True,
     )
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
     processor = AutoProcessor.from_pretrained(model_id)

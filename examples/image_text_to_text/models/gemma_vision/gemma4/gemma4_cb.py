@@ -36,7 +36,7 @@ MODEL_ID = "google/gemma-4-E2B-it"
 # Continuous-batching parameters
 # ---------------------------------------------------------------------------
 BATCH_SIZE = 1  # Per-slot prefill batch size
-FULL_BATCH_SIZE = 4  # Total concurrent CB slots
+FULL_BATCH_SIZE = 2  # Total concurrent CB slots
 
 # ---------------------------------------------------------------------------
 # Sequence-length budget
