@@ -39,7 +39,6 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
     ExpertParallelPackingCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-    MoEExpertParallelCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
@@ -962,12 +961,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     _hf_auto_class = AutoModelForSequenceClassification
     _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
     _onnx_transforms = []
-    _checkpoint_transforms = [
-        GptOssMxfp4ExpertDequantSplitCheckpointTransform,
-        MoEExpertStackingCheckpointTransform,
-        MoEFusedExpertSplitCheckpointTransform,
-        DtypeConversionCheckpointTransform,
-    ]
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -1269,7 +1262,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the vision encoder.
         """
-        dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
         return self._export(
             inputs,
             output_names=output_names,
@@ -1277,7 +1269,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-            dynamo=dynamo,
         )
 
     def compile(
@@ -1362,7 +1353,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         PackQuantizedInt4ToMatMulNBitsTransform,
         FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         FP8BlockWiseDequantLinearToLinearTransform,
-        FP8DeQuantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
@@ -1371,11 +1361,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _onnx_transforms = []
 
     _checkpoint_transforms = [
-        MoEExpertParallelCheckpointTransform,
+        ExpertParallelPackingCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
         MoEFusedExpertSplitCheckpointTransform,
-        ExpertParallelPackingCheckpointTransform,
         DtypeConversionCheckpointTransform,
     ]
 
@@ -1394,17 +1383,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
-        if kwargs.pop("fp8_retain_weights", False):
-            self._pytorch_transforms = [
-                t
-                for t in self._pytorch_transforms
-                if t
-                not in (
-                    FP8DeQuantLinearToLinearTransform,
-                    FP8BlockWiseDequantLinearToLinearTransform,
-                    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
-                )
-            ]
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.qaic_config = qaic_config
@@ -1500,7 +1478,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 prefill_seq_len=prefill_seq_len,
             )
         else:
-            dynamo = kwargs.get("dynamo", False) or getattr(self, "_weight_free", False)
             return self._export(
                 inputs,
                 output_names=output_names,
@@ -1508,7 +1485,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-                dynamo=dynamo,
             )
 
     def compile(
@@ -1681,11 +1657,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         _resolve_torch_dtype(kwargs)
         if enable_proxy:
             prepare_proxy_config(pretrained_model_name_or_path, kwargs)
-        weight_free = kwargs.get("weight_free", False)
-        if weight_free:
-            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
-        else:
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -1840,7 +1812,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.lang_model.get_model_config["vocab_size"],
-                qaic_config=lang_qaic_config,
+                qaic_config=self.lang_model.qaic_config,
             )
 
         layerwise_export = QEFFBaseModel._layerwise_active
@@ -1880,6 +1852,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 prefill_only=prefill_only,
+                dynamo=dynamo,
                 enable_chunking=enable_chunking,
                 num_cores=num_cores,
                 prefill_seq_len=prefill_seq_len,
@@ -1887,7 +1860,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
-                dynamo=dynamo,
             )
         return self.onnx_path
 
@@ -2149,11 +2121,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 batch_size=batch_size,
                 full_batch_size=full_batch_size,
             )
-        weight_free = getattr(self, "_weight_free", False)
-        dynamo = dynamo or weight_free
-        use_onnx_subfunctions = use_onnx_subfunctions or weight_free
-        if layerwise and dynamo:
-            raise NotImplementedError("Dynamo export is not supported for layerwise VLM compilation.")
 
         if layerwise:
             if skip_lang and not skip_vision:
@@ -2326,7 +2293,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     offload_pt_weights=offload_pt_weights,
-                    dynamo=dynamo,
                 )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -3086,7 +3052,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
-            dynamo=kwargs.get("dynamo", False),
         )
 
     def compile(
@@ -3659,7 +3624,6 @@ class QEFFAutoModelForImageTextToText:
             If `continuous_batching` is provided as True, or if weight-free
             export is requested with single-QPC mode.
         """
-
         if layerwise and weight_free:
             raise ValueError(
                 "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
@@ -3670,16 +3634,7 @@ class QEFFAutoModelForImageTextToText:
             kv_offload = True
             validate_dynamo_export_requirements("weight_free=True")
 
-        if layerwise and weight_free:
-            raise ValueError("`layerwise=True` and `weight_free=True` are mutually exclusive for VLM.")
-        if weight_free:
-            validate_dynamo_export_requirements("weight_free=True")
-            if kv_offload is False:
-                raise NotImplementedError("weight_free=True for VLM is supported only with kv_offload=True.")
-            kv_offload = True
-
         enable_proxy = kwargs.pop("enable_proxy", False)
-        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
@@ -3702,12 +3657,12 @@ class QEFFAutoModelForImageTextToText:
         _resolve_torch_dtype(kwargs)
         if enable_proxy:
             prepare_proxy_config(pretrained_model_name_or_path, kwargs)
-        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
-        if layerwise or weight_free:
+        if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
-            # into RAM. Weight-free export later supplies checkpoint tensors
-            # through the generated weight specification.
+            # into RAM. compile()/export() rebuilds a real per-window model
+            # internally via the layer-wise driver, so the outer instance is
+            # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         elif weight_free:
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
@@ -3716,8 +3671,6 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
-        if fp8_retain_weights:
-            kwargs["fp8_retain_weights"] = fp8_retain_weights
         instance = cls(
             model,
             kv_offload=kv_offload,
@@ -3767,7 +3720,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
-        FP8BlockWiseDequantLinearToLinearTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
@@ -3779,7 +3731,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _onnx_transforms = []
 
     _checkpoint_transforms = [
-        MoEExpertParallelCheckpointTransform,
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,
         MoEExpertStackingCheckpointTransform,
         MoEFusedExpertSplitCheckpointTransform,
@@ -3880,12 +3831,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
-        if kwargs.pop("fp8_retain_weights", False):
-            self._pytorch_transforms = [
-                t
-                for t in self._pytorch_transforms
-                if t not in (FP8DeQuantLinearToLinearTransform, FP8BlockWiseDequantLinearToLinearTransform)
-            ]
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
@@ -4033,7 +3978,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         )
 
-        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         _resolve_torch_dtype(kwargs)
         if enable_proxy:
             prepare_proxy_config(pretrained_model_name_or_path, kwargs)
@@ -4062,8 +4006,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-        if fp8_retain_weights:
-            kwargs["fp8_retain_weights"] = fp8_retain_weights
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -4560,7 +4502,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
-                if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
+                if torch.onnx.is_in_onnx_export():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
                         return outputs.logits, _legacyify_cache(outputs.past_key_values)
                     return _legacyify_cache(outputs)
