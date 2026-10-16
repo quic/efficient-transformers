@@ -19,7 +19,7 @@ classifiers = [
 ]
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "transformers==5.15.1",
+    "transformers==5.19.0",
     "diffusers==0.38.0",
     "huggingface-hub==1.33.0",
     "hf_transfer==0.1.9",
