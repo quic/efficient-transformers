@@ -17,10 +17,10 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import onnx
 import numpy as np
-import requests
+import onnx
 import pytest
+import requests
 import torch
 from PIL import Image
 from transformers import AutoConfig, AutoProcessor
