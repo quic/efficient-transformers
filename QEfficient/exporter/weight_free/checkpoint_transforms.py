@@ -229,54 +229,6 @@ class _LayerStacker:
         }
 
 
-def _is_expert_parallel_prefill_checkpoint(kwargs: dict) -> bool:
-    hash_params = kwargs.get("hash_params") or {}
-    flavour = hash_params.get("moe_prefill_flavour")
-    if hasattr(flavour, "value"):
-        flavour = flavour.value
-    return flavour == "expert_parallel"
-
-
-def _expert_parallel_checkpoint_layout(kwargs: dict) -> Optional[Tuple[int, int]]:
-    if not _is_expert_parallel_prefill_checkpoint(kwargs):
-        return None
-    hash_params = kwargs.get("hash_params") or {}
-    num_pipeline_stages = hash_params.get("moe_prefill_num_pipeline_stages")
-    num_parallelized_experts = hash_params.get("moe_prefill_num_parallelized_experts")
-    if num_pipeline_stages is None or num_parallelized_experts is None:
-        return None
-    return int(num_pipeline_stages), int(num_parallelized_experts)
-
-
-def _pack_expert_parallel_checkpoint_tensor(
-    key: str,
-    tensor: torch.Tensor,
-    *,
-    num_pipeline_stages: int,
-    num_parallelized_experts: int,
-) -> torch.Tensor:
-    if tensor.ndim == 4:
-        return tensor.contiguous()
-    if tensor.shape[0] != num_pipeline_stages * num_parallelized_experts:
-        raise ValueError(
-            f"Cannot pack {key}: first dimension {tensor.shape[0]} does not match "
-            f"num_pipeline_stages * num_parallelized_experts "
-            f"({num_pipeline_stages} * {num_parallelized_experts})."
-        )
-    return tensor.view(num_pipeline_stages, num_parallelized_experts, *tensor.shape[1:]).transpose(0, 1).contiguous()
-
-
-class MoEExpertParallelCheckpointTransform(BaseCheckpointTransform):
-    """Pack canonical MoE checkpoint tensors for expert-parallel prefill export."""
-
-    MOE_WEIGHTS_RE = re.compile(r"^(.+\.moe_weights)\.(gate|up|down|gate_bias|up_bias|down_bias)$")
-
-    @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
-        layout = _expert_parallel_checkpoint_layout(kwargs)
-        return layout is not None and any(cls.MOE_WEIGHTS_RE.match(key) for key in weight_map)
-
-
 # ---------------------------------------------------------------------------
 # Transform 2: MoE expert stacking
 # ---------------------------------------------------------------------------
