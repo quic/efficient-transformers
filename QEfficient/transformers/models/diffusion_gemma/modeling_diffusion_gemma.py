@@ -431,6 +431,8 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
         position_ids: Optional[torch.LongTensor] = None,
         cache_position_ids: Optional[torch.LongTensor] = None,
         use_physical_kv: bool = False,
+        is_encode_export: Optional[bool] = None,
+        enable_diffusion_decoder_blocking: bool = False,
         **kwargs,
     ):
         input_shape = hidden_states.shape[:-1]
@@ -454,7 +456,13 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
 
         cache_position_ids = cache_position_ids if cache_position_ids is not None else position_ids
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and blocking_config.mode != BlockingMode.NONE
+        use_blocking = (
+            blocking_config is not None
+            and blocking_config.mode != BlockingMode.NONE
+            and self.sliding_window is None
+            and (is_encode_export is not False or enable_diffusion_decoder_blocking)
+        )
+        use_diffusion_decoder_blocking = enable_diffusion_decoder_blocking and is_encode_export is False
         kv_blocking_modes = {
             BlockingMode.KV,
             BlockingMode.QKV,
@@ -465,6 +473,7 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
         }
         use_kv_blocking = use_blocking and blocking_config.mode in kv_blocking_modes
         past_seen_tokens = None
+        # breakpoint()
         if past_key_values is not None:
             if use_physical_kv:
                 if use_kv_blocking:
@@ -477,8 +486,12 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
                         {"position_ids": cache_position_ids},
                     )
                     layer = past_key_values.layers[self.layer_idx]
-                    key_states = torch.cat([layer.keys, key_states], dim=2)
-                    value_states = torch.cat([layer.values, value_states], dim=2)
+                    if is_encode_export is True:
+                        key_states = layer.keys
+                        value_states = layer.values
+                    else:
+                        key_states = torch.cat([layer.keys, key_states], dim=2)
+                        value_states = torch.cat([layer.values, value_states], dim=2)
             else:
                 key_states, value_states = past_key_values.update(
                     key_states,
@@ -498,9 +511,11 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values if use_kv_blocking else None,
                 blocking_config=blocking_config,
-                position_ids=cache_position_ids,
+                position_ids=position_ids,
+                cache_position_ids=cache_position_ids,
                 past_seen_tokens=past_seen_tokens,
                 preserve_attention_mask_on_export=True,
+                diffusion_gemma_ephemeral_kv=use_diffusion_decoder_blocking,
             )
         else:
             key_states_for_attn = _repeat_kv(key_states, self.num_key_value_groups)
@@ -536,7 +551,9 @@ class QEffDiffusionGemmaEncoderTextLayer(DiffusionGemmaEncoderTextLayer):
         cache_position_ids: Optional[torch.LongTensor] = None,
         decoder_layer_scalar: Optional[torch.Tensor] = None,
         is_encode: Optional[torch.LongTensor] = None,
+        is_encode_export: Optional[bool] = None,
         use_physical_kv: bool = False,
+        enable_diffusion_decoder_blocking: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         hidden_states = _clamp_to_fp16_range(hidden_states)
@@ -550,7 +567,9 @@ class QEffDiffusionGemmaEncoderTextLayer(DiffusionGemmaEncoderTextLayer):
             position_ids=position_ids,
             past_key_values=past_key_values,
             cache_position_ids=cache_position_ids,
+            is_encode_export=is_encode_export,
             use_physical_kv=use_physical_kv,
+            enable_diffusion_decoder_blocking=enable_diffusion_decoder_blocking,
             **kwargs,
         )
         hidden_states = self.post_attention_layernorm(hidden_states)
@@ -603,11 +622,18 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
 
     supports_autoregressive_generate = False
 
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+    def __init__(
+        self,
+        model: "QEffDiffusionGemmaForBlockDiffusion",
+        is_encode_export: Optional[bool] = None,
+        enable_diffusion_decoder_blocking: bool = False,
+    ):
         super().__init__()
         self.model = model
         self.config = model.config
         self.text_config = model.config.text_config
+        self.is_encode_export = is_encode_export
+        self.enable_diffusion_decoder_blocking = enable_diffusion_decoder_blocking
 
     def get_submodules_for_export(self):
         return {QEffDiffusionGemmaEncoderTextLayer}
@@ -681,7 +707,9 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
                 past_key_values=past_key_values,
                 decoder_layer_scalar=decoder_layer_scalar,
                 is_encode=is_encode,
+                is_encode_export=self.is_encode_export,
                 use_physical_kv=True,
+                enable_diffusion_decoder_blocking=self.enable_diffusion_decoder_blocking,
                 mm_token_type_ids=mm_token_type_ids,
             )
         hidden_states = language_model.norm(_clamp_to_fp16_range(hidden_states))
@@ -870,10 +898,15 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
 
     supports_autoregressive_generate = False
 
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion", include_image_idx: bool = True):
+    def __init__(
+        self,
+        model: "QEffDiffusionGemmaForBlockDiffusion",
+        include_image_idx: bool = True,
+        is_encode_export: bool = True,
+    ):
         super().__init__()
         self.model = model
-        self.unified = model.get_qeff_unified_wrapper()
+        self.unified = model.get_qeff_unified_wrapper(is_encode_export=is_encode_export)
         self.config = model.config
         self.text_config = model.config.text_config
         self.include_image_idx = include_image_idx
@@ -912,7 +945,7 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
 
     def get_dummy_inputs(self, **kwargs):
         inputs = self.unified.get_dummy_inputs(**kwargs)
-        return {
+        inputs = {
             name: value
             for name, value in inputs.items()
             if name
@@ -925,6 +958,19 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
                 "use_self_conditioning",
             }
         }
+        full_layer_index = next(
+            index for index, layer_type in enumerate(self.text_config.layer_types) if layer_type == "full_attention"
+        )
+        sliding_layer_index = next(
+            index for index, layer_type in enumerate(self.text_config.layer_types) if layer_type == "sliding_attention"
+        )
+        inputs["full_attention_mask"] = inputs["full_attention_mask"][
+            ..., : inputs["past_key_values"][full_layer_index][0].shape[-2]
+        ]
+        inputs["sliding_attention_mask"] = inputs["sliding_attention_mask"][
+            ..., : inputs["past_key_values"][sliding_layer_index][0].shape[-2]
+        ]
+        return inputs
 
     def get_onnx_dynamic_axes(self, **kwargs):
         axes = self.unified.get_onnx_dynamic_axes(**kwargs)
@@ -935,6 +981,8 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
             "temperature",
         ):
             axes.pop(name, None)
+        axes["full_attention_mask"][3] = "ctx_len"
+        axes["sliding_attention_mask"][3] = "sliding_window"
         return axes
 
     def get_specializations(self, batch_size: int, prefill_seq_len: int, ctx_len: int, **compiler_options):
@@ -945,8 +993,6 @@ class QEffDiffusionGemmaEncoderWrapper(nn.Module):
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "sliding_window": self.text_config.sliding_window,
-                "full_kv_plus_seq_len": ctx_len + prefill_seq_len,
-                "sliding_kv_plus_seq_len": self.text_config.sliding_window + prefill_seq_len,
                 "vision_batch_size": batch_size,
                 "vision_tokens": self.model._get_mm_tokens_per_image(),
             }
@@ -965,10 +1011,18 @@ class QEffDiffusionGemmaDecoderWrapper(nn.Module):
 
     supports_autoregressive_generate = False
 
-    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+    def __init__(
+        self,
+        model: "QEffDiffusionGemmaForBlockDiffusion",
+        is_encode_export: bool = False,
+        enable_diffusion_decoder_blocking: bool = False,
+    ):
         super().__init__()
         self.model = model
-        self.unified = model.get_qeff_unified_wrapper()
+        self.unified = model.get_qeff_unified_wrapper(
+            is_encode_export=is_encode_export,
+            enable_diffusion_decoder_blocking=enable_diffusion_decoder_blocking,
+        )
         self.config = model.config
         self.text_config = model.config.text_config
 
@@ -1017,9 +1071,6 @@ class QEffDiffusionGemmaDecoderWrapper(nn.Module):
         return (*outputs[:6], outputs[7])
 
     def get_dummy_inputs(self, **kwargs):
-        for layer in self.model.model.encoder.language_model.layers:
-            if hasattr(layer.self_attn, "attn_blocking_config"):
-                delattr(layer.self_attn, "attn_blocking_config")
         inputs = self.unified.get_dummy_inputs(**kwargs)
         inputs.pop("vision_embeds")
         inputs.pop("image_idx")
@@ -1072,15 +1123,39 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
     Supports a single QPC containing encoder prefill and decoder canvas denoising.
     """
 
-    def get_qeff_unified_wrapper(self) -> QEffDiffusionGemmaUnifiedWrapper:
+    def get_qeff_unified_wrapper(
+        self,
+        is_encode_export: Optional[bool] = None,
+        enable_diffusion_decoder_blocking: bool = False,
+    ) -> QEffDiffusionGemmaUnifiedWrapper:
         """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
-        return QEffDiffusionGemmaUnifiedWrapper(self)
+        return QEffDiffusionGemmaUnifiedWrapper(
+            self,
+            is_encode_export=is_encode_export,
+            enable_diffusion_decoder_blocking=enable_diffusion_decoder_blocking,
+        )
 
-    def get_qeff_diffusion_encoder(self, include_image_idx: bool = True) -> QEffDiffusionGemmaEncoderWrapper:
-        return QEffDiffusionGemmaEncoderWrapper(self, include_image_idx=include_image_idx)
+    def get_qeff_diffusion_encoder(
+        self,
+        include_image_idx: bool = True,
+        is_encode_export: bool = True,
+    ) -> QEffDiffusionGemmaEncoderWrapper:
+        return QEffDiffusionGemmaEncoderWrapper(
+            self,
+            include_image_idx=include_image_idx,
+            is_encode_export=is_encode_export,
+        )
 
-    def get_qeff_diffusion_decoder(self) -> QEffDiffusionGemmaDecoderWrapper:
-        return QEffDiffusionGemmaDecoderWrapper(self)
+    def get_qeff_diffusion_decoder(
+        self,
+        is_encode_export: bool = False,
+        enable_diffusion_decoder_blocking: bool = False,
+    ) -> QEffDiffusionGemmaDecoderWrapper:
+        return QEffDiffusionGemmaDecoderWrapper(
+            self,
+            is_encode_export=is_encode_export,
+            enable_diffusion_decoder_blocking=enable_diffusion_decoder_blocking,
+        )
 
     def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
         del model_name

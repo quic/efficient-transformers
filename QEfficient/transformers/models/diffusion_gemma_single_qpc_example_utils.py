@@ -115,7 +115,10 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
 class DiffusionGemmaEncoderQPC(UnifiedQPC):
     def __init__(self, model, include_image_idx: bool = True):
         QEFFBaseModel.__init__(self, model)
-        self.model = model.get_qeff_diffusion_encoder(include_image_idx=include_image_idx)
+        self.model = model.get_qeff_diffusion_encoder(
+            include_image_idx=include_image_idx,
+            is_encode_export=True,
+        )
         self.model.qaic_config = None
         self.num_layers = self.model.text_config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -123,11 +126,15 @@ class DiffusionGemmaEncoderQPC(UnifiedQPC):
 
 
 class DiffusionGemmaDecoderQPC(UnifiedQPC):
-    def __init__(self, model):
+    def __init__(self, model, enable_diffusion_decoder_blocking: bool = False):
         QEFFBaseModel.__init__(self, model)
-        self.model = model.get_qeff_diffusion_decoder()
+        self.model = model.get_qeff_diffusion_decoder(
+            is_encode_export=False,
+            enable_diffusion_decoder_blocking=enable_diffusion_decoder_blocking,
+        )
         self.model.qaic_config = None
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["enable_diffusion_decoder_blocking"] = enable_diffusion_decoder_blocking
         self.continuous_batching = False
 
 
@@ -292,9 +299,18 @@ class DiffusionGemmaSingleQPCGenerator:
         self._load_prompt_chunk(0, initial_image_idx)
         return sequence_length
 
-    def _build_additive_mask(self, *, cache_length: int, sliding: bool, cache_position_ids, is_encode: bool):
+    def _build_additive_mask(
+        self,
+        *,
+        cache_length: int,
+        sliding: bool,
+        cache_position_ids,
+        is_encode: bool,
+        include_current_tokens: bool = True,
+    ):
         block_length = self.prefill_seq_len
-        mask = np.full((1, 1, block_length, cache_length + block_length), self._MASK_VALUE, dtype=np.float32)
+        key_length = cache_length + (block_length if include_current_tokens else 0)
+        mask = np.full((1, 1, block_length, key_length), self._MASK_VALUE, dtype=np.float32)
         current_positions = self.position_ids[0]
         cache_positions = cache_position_ids[0]
         valid_history_end = self._retained_last_position
@@ -337,7 +353,7 @@ class DiffusionGemmaSingleQPCGenerator:
                         continue
                     physical_indices = np.flatnonzero(slot_positions == cache_positions[key_index])
                     mask[0, 0, query_index, physical_indices] = 0.0
-        else:
+        elif include_current_tokens:
             mask[:, :, :, cache_length:] = 0.0
         return mask
 
@@ -349,6 +365,7 @@ class DiffusionGemmaSingleQPCGenerator:
         sampling_uniforms,
         temperature,
         use_self_conditioning,
+        cache_only_mask: bool = False,
     ):
         cache_position_ids = np.asarray(cache_position_ids, dtype=np.int64)
         return {
@@ -360,12 +377,14 @@ class DiffusionGemmaSingleQPCGenerator:
                 sliding=False,
                 cache_position_ids=cache_position_ids,
                 is_encode=is_encode,
+                include_current_tokens=not cache_only_mask,
             ),
             "sliding_attention_mask": self._build_additive_mask(
                 cache_length=self.sliding_cache_length,
                 sliding=True,
                 cache_position_ids=cache_position_ids,
                 is_encode=is_encode,
+                include_current_tokens=not cache_only_mask,
             ),
             "vision_embeds": self.vision_embeds,
             "image_idx": self.image_idx,
@@ -696,6 +715,7 @@ class DiffusionGemmaSplitQPCGenerator(DiffusionGemmaSingleQPCGenerator):
                 sampling_uniforms=np.zeros((1, self.canvas_length, 1), dtype=np.float32),
                 temperature=np.ones((1, 1), dtype=np.float32),
                 use_self_conditioning=False,
+                cache_only_mask=True,
             )
             is_last_chunk = chunk_index == len(self._prompt_chunks) - 1
             exec_idx = self.encoder_session.np_run_pipeline(
@@ -958,6 +978,7 @@ def compile_split_qpcs(
     prefill_stages: int = 1,
     text_only: bool = False,
     encoder_blocking_config: Optional[Dict[str, object]] = None,
+    decoder_blocking_config: Optional[Dict[str, object]] = None,
 ):
     prefill_stages = _validate_prefill_stages(prefill_stages)
     if prefill_seq_len != canvas_length:
@@ -966,7 +987,12 @@ def compile_split_qpcs(
     print(f"Compiling split DiffusionGemma QPCs ({num_devices} devices, {num_cores} cores)...")
     start = time.time()
     encoder = DiffusionGemmaEncoderQPC(qeff_model, include_image_idx=not text_only)
-    decoder = DiffusionGemmaDecoderQPC(qeff_model)
+    if decoder_blocking_config and decoder_blocking_config.get("blocking_mode") != "qkv":
+        raise ValueError("Split DiffusionGemma decoder blocking requires `blocking_mode='qkv'`.")
+    decoder = DiffusionGemmaDecoderQPC(
+        qeff_model,
+        enable_diffusion_decoder_blocking=bool(decoder_blocking_config),
+    )
     qaic_config_moe = {
         "moe_config": {
             "flavour": "expert_parallel",
@@ -986,6 +1012,19 @@ def compile_split_qpcs(
         }
         encoder_qaic_config.update(
             {key: value for key, value in encoder_blocking_config.items() if key in blocking_keys}
+        )
+    decoder_qaic_config = dict(qaic_config_moe)
+    if decoder_blocking_config:
+        blocking_keys = {
+            "enable_blocking",
+            "blocking_mode",
+            "num_kv_blocks",
+            "num_q_blocks",
+            "head_block_size",
+            "num_batch_blocks",
+        }
+        decoder_qaic_config.update(
+            {key: value for key, value in decoder_blocking_config.items() if key in blocking_keys}
         )
     encoder_specializations, _ = encoder.model.get_specializations(
         batch_size=1,
@@ -1029,7 +1068,7 @@ def compile_split_qpcs(
         offload_pt_weights=False,
         retain_full_kv=True,
         mdp_ts_num_devices=num_devices,
-        qaic_config=qaic_config_moe,
+        qaic_config=decoder_qaic_config,
         aic_num_cores=num_cores,
     )
     print(f"  decoder ONNX: {decoder_onnx_path}")
@@ -1046,7 +1085,7 @@ def compile_split_qpcs(
         onnx_path=decoder_onnx_path,
         specializations=decoder_specializations,
         node_precision_info=qeff_model.generate_npi_file(decoder_onnx_path),
-        qaic_config=qaic_config_moe,
+        qaic_config=decoder_qaic_config,
         **common_compile_kwargs,
     )
     print(f"  decoder QPC: {decoder_qpc_path} ({time.time() - start:.0f}s)")

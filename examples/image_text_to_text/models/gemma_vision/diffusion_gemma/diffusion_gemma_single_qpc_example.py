@@ -31,12 +31,12 @@ IMAGE_URL = "https://huggingface.co/datasets/huggingface/documentation-images/re
 IMAGE_PROMPT = "Describe this image in detail in not less than 512 tokens"
 # TEXT_PROMPT = "What is the capital city of Zimbabwe? Answer in one sentence."
 # TEXT_PROMPT = "What are the seven continents? Answer in one sentence."
-# TEXT_PROMPT = "Can you summarize Romeo and Juliet story by William Shakespere? Explain in more detail with answer no less than 1280 tokens"
-TEXT_PROMPT = "What is diffusion based generative learning?"
+TEXT_PROMPT = "Can you summarize Romeo and Juliet and Macbeth by William Shakespere? Explain in more detail with answer no less than 20 canvases"
+# TEXT_PROMPT = "What is diffusion based generative learning?"
 # TEXT_PROMPT = "How to make pizza?"
 # TEXT_PROMPT = "What is diffusion based generative learning? Answer in one sentence."
 
-TEXT_PROMPT_big = """
+TEXT_PROMPT = """
 You are an expert researcher specializing in large language models, probabilistic generative modeling,
 diffusion processes, scalable Transformer architectures, and long-context evaluation methodologies.
 
@@ -49,9 +49,7 @@ The document intentionally contains repetition, reinforcement of concepts,
 rephrasing across sections, and overlapping explanations.
 All of this content is relevant and should be treated as authoritative.
 
-After reading the document, answer the questions at the end.
-Base your answers strictly and exclusively on the document content.
-Do not rely on outside knowledge or assumptions.
+After reading the document, answer the questions at the end. Answer in atleast 5000 tokens.
 
 ==================== DOCUMENT ====================
 
@@ -1160,7 +1158,55 @@ Questions:
 5. Based on the document, discuss the trade-offs between flexibility and efficiency in diffusion versus autoregressive models.
 
 """
-
+TEXT_PROMPT_ = """
+What is diffusion based generative learning?
+ 
+Provide the most exhaustive and detailed explanation possible. Do not summarize. Expand every concept thoroughly. Cover:
+ 
+1. Historical background and motivation
+2. Mathematical foundations
+3. Forward diffusion process
+4. Reverse diffusion process
+5. Noise scheduling
+6. Training objectives
+7. Variational inference perspective
+8. Score matching interpretation
+9. Sampling algorithms
+10. DDPM
+11. DDIM
+12. Consistency models
+13. Flow matching
+14. Latent diffusion
+15. Stable Diffusion architecture
+16. U-Net architecture details
+17. Transformer-based diffusion models
+18. Diffusion language models
+19. Multimodal diffusion
+20. Audio diffusion
+21. Video diffusion
+22. Image generation pipelines
+23. Text conditioning methods
+24. Classifier guidance
+25. Classifier-free guidance
+26. LoRA finetuning
+27. Quantization considerations
+28. Deployment challenges
+29. Research trends
+30. Future directions
+ 
+For every section:
+- Include detailed explanations.
+- Include equations where relevant.
+- Include worked examples.
+- Include implementation details.
+- Include advantages and disadvantages.
+- Include comparisons with GANs, VAEs, autoregressive models, and flow-based models.
+- Include industry use cases.
+- Include common interview questions and answers.
+- Include practical engineering considerations.
+ 
+After completing all sections, generate an additional deep-dive appendix that expands every major concept with further technical detail. Continue elaborating until the maximum output length is reached. Do not ask questions, do not wait for user input, and do not stop early. Produce continuous technical content until generation naturally terminates.
+"""
 
 _BLOCKING_MODE_OPTIONS = ("kv", "q", "h", "qkv", "hq", "hkv", "hqkv", "bhqkv")
 _BLOCKING_MODE_ARGS = {
@@ -1223,6 +1269,11 @@ def parse_args():
         help="Enable generic attention blocking for split encoder prefill.",
     )
     parser.add_argument(
+        "--enable-decoder-blocking",
+        action="store_true",
+        help="Enable QKV attention blocking for the split decoder canvas path.",
+    )
+    parser.add_argument(
         "--blocking-mode",
         choices=_BLOCKING_MODE_OPTIONS,
         default="kv",
@@ -1262,6 +1313,10 @@ def main():
         raise ValueError("Number of layers must be positive.")
     if args.enable_blocking and args.runtime_mode == "unified":
         raise ValueError("Blocking is supported only for split encoder prefill.")
+    if args.enable_decoder_blocking and args.runtime_mode != "split":
+        raise ValueError("Decoder blocking is supported only for split runtime mode.")
+    if args.enable_decoder_blocking and args.blocking_mode != "qkv":
+        raise ValueError("Decoder blocking requires --blocking-mode qkv.")
     blocking_option_values = {
         "num_kv_blocks": args.num_kv_blocks,
         "num_q_blocks": args.num_q_blocks,
@@ -1279,6 +1334,13 @@ def main():
     encoder_blocking_config = None
     if args.enable_blocking:
         encoder_blocking_config = {
+            "enable_blocking": True,
+            "blocking_mode": args.blocking_mode,
+            **{name: value for name, value in blocking_option_values.items() if value is not None},
+        }
+    decoder_blocking_config = None
+    if args.enable_decoder_blocking:
+        decoder_blocking_config = {
             "enable_blocking": True,
             "blocking_mode": args.blocking_mode,
             **{name: value for name, value in blocking_option_values.items() if value is not None},
@@ -1312,6 +1374,7 @@ def main():
             prefill_stages=args.prefill_stages,
             text_only=args.text_only,
             encoder_blocking_config=encoder_blocking_config,
+            decoder_blocking_config=decoder_blocking_config,
         )
         qpc_kwargs = {
             "encoder_qpc_path": encoder_qpc_path,

@@ -1118,6 +1118,8 @@ def blocked_qkv_attention_forward(
     ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    ephemeral_key: Optional[torch.Tensor] = None,
+    ephemeral_value: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Compute attention by streaming query and key/value blocks.
@@ -1252,6 +1254,29 @@ def blocked_qkv_attention_forward(
                 v_block_states,
                 skip_kv,
                 skip_future,
+            )
+
+        if ephemeral_key is not None and ephemeral_value is not None:
+            ephemeral_key_states, ephemeral_value_states = _get_kv_states(module, ephemeral_key, ephemeral_value)
+            ephemeral_start_index = attention_mask.shape[-1] - ephemeral_key_states.shape[-2]
+            ephemeral_end_index = attention_mask.shape[-1]
+            attn_weights_block = torch.matmul(q_block, ephemeral_key_states.transpose(2, 3)) * scaling
+            if position_bias is not None:
+                attn_weights_block = attn_weights_block + position_bias[:, :, ephemeral_start_index:ephemeral_end_index]
+            if attention_mask is not None:
+                attn_mask_block = attention_mask[
+                    :, :, q_start : q_start + q_len_block, ephemeral_start_index:ephemeral_end_index
+                ]
+                attn_weights_block = torch.where(attn_mask_block, masked_tensor, attn_weights_block)
+            ephemeral_skip_future = torch.zeros_like(current_max, dtype=torch.bool)
+            current_max, current_denominator, output_blocks = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output_blocks,
+                ephemeral_value_states,
+                skip_kv,
+                ephemeral_skip_future,
             )
 
         # If present, apply Attention Sinks, needed for GPT-OSS
