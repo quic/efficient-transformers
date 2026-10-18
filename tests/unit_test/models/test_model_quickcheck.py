@@ -2154,8 +2154,8 @@ def test_minimax_sparse_cache_cp_write_keeps_rank_four(monkeypatch):
     expected_keys = torch.zeros_like(key_cache)
     expected_values = torch.zeros_like(value_cache)
     for dp_lane in range(dp):
-        cp_lane = int(position_ids[dp_lane, 0]) % cp
-        local_position = int(position_ids[dp_lane, 0]) // cp
+        cp_lane = int(position_ids[dp_lane, 0]) // local_ctx_len
+        local_position = int(position_ids[dp_lane, 0]) % local_ctx_len
         for kv_head in range(hkv):
             row = dp_lane * cp * hkv + cp_lane * hkv + kv_head
             expected_keys[0, row, local_position] = key_states[dp_lane, kv_head, 0]
@@ -2201,11 +2201,11 @@ def test_minimax_m3_retained_cp_attention_uses_cp_before_kv_heads(use_block_indi
     value_cache[1, 2:4] = 9.0
 
     if use_block_indices:
-        token_indices = torch.tensor([[[0], [1]], [[0], [1]]], dtype=torch.int64)
+        token_indices = torch.tensor([[[0, 1], [0, 1]], [[0, 1], [0, 1]]], dtype=torch.int64)
         token_valid = torch.ones_like(token_indices, dtype=torch.bool)
     else:
         token_indices = torch.tensor(
-            [[[[0, 1]], [[4, 5]]], [[[0, 1]], [[4, 5]]]],
+            [[[[0, 4]], [[0, 4]]], [[[0, 4]], [[0, 4]]]],
             dtype=torch.int64,
         )
         token_valid = torch.ones_like(token_indices, dtype=torch.bool)
@@ -2225,6 +2225,35 @@ def test_minimax_m3_retained_cp_attention_uses_cp_before_kv_heads(use_block_indi
     expected = expected.view(batch_local, config.num_attention_heads, 1, 1)
     expected = expected.expand_as(output)
     assert torch.allclose(output, expected, atol=1e-6, rtol=0)
+
+
+@pytest.mark.cpu_only
+def test_minimax_m3_retained_cp_attention_zeroes_invalid_selector_rows():
+    """A CP row with no selected block must not softmax over its safe gather index."""
+    config = _tiny_minimax_m3_text_config()
+    attention = QEffMiniMaxM3VLAttention(config, layer_idx=1).eval()
+    cp, hkv, local_ctx_len = 2, config.num_key_value_heads, 4
+    rows = cp * hkv
+    query = torch.zeros(1, config.num_attention_heads, 1, config.head_dim)
+    key_cache = torch.zeros(1, rows, local_ctx_len, config.head_dim)
+    value_cache = torch.zeros_like(key_cache)
+    value_cache[:, :hkv] = 1.0
+    value_cache[:, hkv:] = 7.0
+    token_indices = torch.tensor([[[0, 0], [0, 0]]], dtype=torch.int64)
+    token_valid = torch.ones_like(token_indices, dtype=torch.bool)
+
+    output, _, _ = attention._baseline_attention_gp(
+        query,
+        token_indices,
+        token_valid,
+        key_cache,
+        value_cache,
+        dp=1,
+        blocking_config=SimpleNamespace(msa_attn_cp=cp, ctx_len=cp * local_ctx_len, num_cores_per_device=1),
+        position_ids=torch.tensor([[cp * local_ctx_len - 1]], dtype=torch.int64),
+    )
+
+    assert torch.allclose(output, torch.ones_like(output), atol=1e-6, rtol=0)
 
 
 @pytest.mark.llm_model
@@ -2447,6 +2476,7 @@ def test_minimax_m3_contiguous_dp_cp_decode_hf_qeff_pytorch_parity():
         assert cache_batch == batch
         assert cache_len == ctx_len
         batch_local = cache_batch // dp
+        local_ctx_len = ctx_len // cp
         packed = torch.empty(batch_local, dp * cp * num_heads, cache_len // cp, head_dim, dtype=cache.dtype)
         for local_batch_idx in range(batch_local):
             for dp_lane in range(dp):
@@ -2454,7 +2484,9 @@ def test_minimax_m3_contiguous_dp_cp_decode_hf_qeff_pytorch_parity():
                 for cp_lane in range(cp):
                     row_start = (dp_lane * cp + cp_lane) * num_heads
                     row_end = row_start + num_heads
-                    packed[local_batch_idx, row_start:row_end] = cache[source_batch_idx, :, cp_lane::cp]
+                    packed[local_batch_idx, row_start:row_end] = cache[
+                        source_batch_idx, :, cp_lane * local_ctx_len : (cp_lane + 1) * local_ctx_len
+                    ]
         return packed
 
     logical_caches = []

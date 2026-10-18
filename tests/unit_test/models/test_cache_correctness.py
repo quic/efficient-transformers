@@ -243,8 +243,8 @@ class TestQEffMiniMaxSparseCacheCorrectness:
         cache = QEffMiniMaxSparseCache(
             (
                 (
-                    torch.zeros(rows, local_ctx_len, head_dim),
-                    torch.zeros(rows, local_ctx_len, head_dim),
+                    torch.zeros(batch_local, rows, local_ctx_len, head_dim),
+                    torch.zeros(batch_local, rows, local_ctx_len, head_dim),
                 ),
             )
         )
@@ -265,12 +265,12 @@ class TestQEffMiniMaxSparseCacheCorrectness:
             owner_cp = int(position_ids[dp_lane, 0]) // local_ctx_len
             local_pos = int(position_ids[dp_lane, 0]) % local_ctx_len
             for head in range(hkv):
-                owner_row = dp_lane * hkv * cp + head * cp + owner_cp
-                expected_keys[owner_row, local_pos] = key_states[dp_lane, head, 0]
-                expected_values[owner_row, local_pos] = value_states[dp_lane, head, 0]
+                owner_row = dp_lane * cp * hkv + owner_cp * hkv + head
+                expected_keys[0, owner_row, local_pos] = key_states[dp_lane, head, 0]
+                expected_values[0, owner_row, local_pos] = value_states[dp_lane, head, 0]
 
-        assert cache.layers[0].keys.shape == (rows, local_ctx_len, head_dim)
-        assert cache.layers[0].values.shape == (rows, local_ctx_len, head_dim)
+        assert cache.layers[0].keys.shape == (batch_local, rows, local_ctx_len, head_dim)
+        assert cache.layers[0].values.shape == (batch_local, rows, local_ctx_len, head_dim)
         assert torch.equal(cache.layers[0].keys, expected_keys)
         assert torch.equal(cache.layers[0].values, expected_values)
 

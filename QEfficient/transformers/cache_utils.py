@@ -1579,9 +1579,9 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
                     .reshape(batch_local, rows, query_len, head_dim)
                 )
                 position_ids_dp = position_ids.view(dp, batch_local, query_len).permute(1, 0, 2)
-                owner_cp = position_ids_dp.remainder(cp)
+                owner_cp = position_ids_dp // local_ctx_len
                 owner_valid = (owner_cp >= 0) & (owner_cp < cp)
-                local_pos = position_ids_dp // cp
+                local_pos = position_ids_dp - owner_cp * local_ctx_len
                 row_cp = torch.arange(rows, device=layer.keys.device).remainder(hkv * cp) // hkv
                 row_live = row_cp.view(1, dp, cp, hkv, 1) == owner_cp.view(batch_local, dp, 1, 1, query_len)
                 row_live = row_live & owner_valid.view(batch_local, dp, 1, 1, query_len)
@@ -1654,8 +1654,12 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         token_valid: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Gather K/V by block-sparse token indices. Returns (selected_k, selected_v, flat_valid)."""
-        flat_indices = token_indices.flatten(-2)
-        flat_valid = token_valid.flatten(-2)
+        if token_indices.ndim == 4:
+            flat_indices = token_indices.flatten(-2)
+            flat_valid = token_valid.flatten(-2)
+        else:
+            flat_indices = token_indices
+            flat_valid = token_valid
         layer = self.layers[layer_idx]
         selected_k, selected_v = read_kv_cache_with_indices(layer.keys, layer.values, flat_indices)
         return selected_k, selected_v, flat_valid
@@ -1684,8 +1688,8 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         Returns:          ``[B_local, rows, end - start, D]``
 
         For ``cp == 1`` the causal validity limit per row is the DP-lane's
-        maximum position_id.  For ``cp > 1`` the compact CP-interleaved layout
-        is assumed and the per-way limit is computed accordingly.
+        maximum position_id.  For ``cp > 1`` the contiguous CP layout is
+        assumed and the per-way limit is computed accordingly.
         """
         if cache_gp is not None:
             cache = cache_gp
@@ -1744,7 +1748,7 @@ class QEffMiniMaxSparseCache(QEffDynamicCache):
         Returns:          ``[B_local, rows, end - start, D]``
 
         For ``cp == 1`` the per-row validity limit equals the maximum position_id of the
-        owning DP lane.  For ``cp > 1`` the CP-interleaved layout is assumed and the
+        owning DP lane.  For ``cp > 1`` the contiguous CP layout is assumed and the
         per-way limit is derived accordingly (same logic as read_index_key_block_gp).
         """
         batch_local, rows, _, _ = cache_gp.shape
