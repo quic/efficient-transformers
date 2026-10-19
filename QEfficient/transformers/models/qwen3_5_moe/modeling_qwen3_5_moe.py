@@ -1066,7 +1066,9 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_keep = (~conv_reset_mask).to(conv_state.dtype)
                 conv_state = conv_state * conv_keep
 
-                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device)
+                recurrent_reset_mask = zero_cumsum.to(dtype=torch.bool, device=recurrent_state.device).reshape(
+                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
+                )
                 recurrent_keep = (~recurrent_reset_mask).to(recurrent_state.dtype)
                 recurrent_state = recurrent_state * recurrent_keep
 
