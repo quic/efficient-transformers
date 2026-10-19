@@ -654,6 +654,14 @@ class QEFFBaseModel(ABC):
             active_transforms = [
                 transform for transform in self._onnx_transforms if transform not in excluded_transforms
             ]
+            # Dynamo exports can emit first-class Qualcomm custom-op nodes, but
+            # their ONNXScript function bodies are added by the post-export
+            # transform.  Keep this registration independent of the model
+            # wrapper's default transform list so weight-free `.compile()`
+            # exports receive the same compiler-facing ONNX ABI as legacy
+            # exports.
+            if dynamo and CustomOpTransform not in active_transforms:
+                active_transforms.append(CustomOpTransform)
             needs_external_tensor_data = any(
                 transform in active_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
             )

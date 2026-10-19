@@ -63,7 +63,11 @@ def qeff_custom_op(domain: str, version: int):
 
 def get_dynamo_onnxscript_func(onnxscript_func):
     """Return the dynamo/opset18 variant attached by ``qeff_custom_op``."""
-    return getattr(onnxscript_func, _DYNAMO_FUNC_ATTR)
+    # A few older/custom definitions use ``onnxscript.script`` directly and
+    # therefore do not carry a separately compiled opset-18 variant.  They are
+    # still valid function bodies for Dynamo exports; retain the original
+    # function instead of failing while probing unused custom ops.
+    return getattr(onnxscript_func, _DYNAMO_FUNC_ATTR, onnxscript_func)
 
 
 def get_onnxscript_func(onnxscript_func, onnx_export_opset: int):

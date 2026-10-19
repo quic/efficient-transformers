@@ -28,6 +28,10 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherRows,
+    CtxGatherRowsFunc,
+    CtxPagedScatter,
+    CtxPagedScatterFunc,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
@@ -118,6 +122,8 @@ class CustomOpTransform(BaseOnnxTransform):
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
         "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
         "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch),
+        "CtxPagedScatterFunc": (CtxPagedScatterFunc, CtxPagedScatter),
+        "CtxGatherRowsFunc": (CtxGatherRowsFunc, CtxGatherRows),
     }
 
     @classmethod
@@ -300,6 +306,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             "CtxScatter3D",
             "CtxScatter3DInt",
             "CtxScatterCB3D",
+            "CtxPagedScatter",
         }
     )
 

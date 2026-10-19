@@ -4131,6 +4131,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             bs = max(2, bs)
         ###########################################
 
+        if hasattr(self.model, "get_export_batch_size"):
+            bs = self.model.get_export_batch_size(bs)
+
         #### HANDLE KV CACHE SHAPE ################
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config,
@@ -4420,6 +4423,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if getattr(self, "dflash_tlm", None):
             output_names.append("hidden_states")
 
+        if hasattr(self.model, "prepare_export_dynamic_axes"):
+            dynamic_axes = self.model.prepare_export_dynamic_axes(dynamic_axes)
+
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 example_inputs,
@@ -4706,6 +4712,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if artifacts:
             compiler_options["artifacts"] = True
+        qaic_config = compiler_options.pop("qaic_config", getattr(self.model, "qaic_config", None))
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         _ignore_public_mdp_ts_num_devices(compiler_options)
         enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
@@ -4993,6 +5000,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
             num_speculative_tokens=num_speculative_tokens,
+            qaic_config=qaic_config,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
