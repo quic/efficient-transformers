@@ -524,7 +524,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             key_states = key_states.transpose(1, 2)
             if key_states.dtype != target_dtype:
                 key_states = key_states.to(target_dtype)
-
             value_states = self.v_norm(value_states)
             value_states = value_states.transpose(1, 2)
             if value_states.dtype != target_dtype:
