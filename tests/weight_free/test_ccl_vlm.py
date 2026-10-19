@@ -50,6 +50,16 @@ with _VLM_CONFIG_PATH.open() as config_file:
     _VLM_CONFIGS = {entry["model_type"]: entry for entry in json.load(config_file)["image_text_models"]}
 
 
+def _supports_ccl(model_type):
+    config_model_type = "gemma4" if model_type == "gemma4_moe" else model_type
+    return _VLM_CONFIGS[config_model_type].get("supports_ccl", True)
+
+
+WEIGHT_FREE_CCL_VLM_MODEL_PARAMS = [
+    model_param for model_param in WEIGHT_FREE_VLM_MODEL_PARAMS if _supports_ccl(model_param.values[0])
+]
+
+
 def _get_configured_image_size(model_config):
     path_parts = [part for part in urlsplit(model_config["img_url"]).path.split("/") if part]
     if len(path_parts) >= 2 and path_parts[-1].isdigit() and path_parts[-2].isdigit():
@@ -90,7 +100,7 @@ def _get_explicit_ccl_lengths(lang_onnx_path, ccl_lengths):
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_VLM_MODEL_PARAMS)
+@pytest.mark.parametrize("model_type,model_id", WEIGHT_FREE_CCL_VLM_MODEL_PARAMS)
 def test_weight_free_ccl_compile_and_generate(model_type, model_id, tmp_export_dir):
     """Export once, compile twice (normal and with explicit CCL), generate on each QPC."""
     config_model_type = "gemma4" if model_type == "gemma4_moe" else model_type
