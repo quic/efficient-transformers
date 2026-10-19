@@ -534,9 +534,9 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.keys = key_states
             self.values = value_states
             self._mark_initialized(self.keys)
-            self._ensure_cache_dtype(key_states, value_states)
         else:
             self._mark_initialized(self.keys)
+            self._ensure_cache_dtype(key_states, value_states)
             position_ids = cache_kwargs.get("position_ids")
             block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
             slot_id = cache_kwargs.get("slot_id")
