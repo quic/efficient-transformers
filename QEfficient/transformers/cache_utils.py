@@ -536,7 +536,6 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(self.keys)
         else:
             self._mark_initialized(self.keys)
-            self._ensure_cache_dtype(key_states, value_states)
             position_ids = cache_kwargs.get("position_ids")
             block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
             slot_id = cache_kwargs.get("slot_id")
@@ -584,7 +583,6 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(self.keys)
         else:
             self._mark_initialized(self.keys)
-            self._ensure_cache_dtype(key_states, value_states)
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
@@ -621,7 +619,6 @@ class QEffDynamicLayer(CacheLayerMixin):
             full_batch_size, Hkv, ctx_len, head_dim = self.keys.shape
             cache_bh = full_batch_size * Hkv
             self._mark_initialized(self.keys)
-            self._ensure_cache_dtype(key_states, value_states)
             position_ids = cache_kwargs.get("position_ids")
 
             # batch_index = cache_kwargs.get("batch_index")
@@ -2188,7 +2185,6 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
         key_states = torch.where(valid_mask, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
         value_states = torch.where(valid_mask, value_states, torch.zeros_like(value_states, dtype=value_states.dtype))
-        self._ensure_cache_dtype(key_states, value_states)
 
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
