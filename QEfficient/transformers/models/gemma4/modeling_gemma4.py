@@ -543,11 +543,11 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         query_states = query_states.transpose(1, 2)
 
         if self.is_kv_shared_layer and past_key_values is not None:
-            key_states, value_states = past_key_values.shared_layers[self.kv_shared_layer_index]
+            key_states, value_states = past_key_values.shared_layers[self.layer_idx]
             key_states = key_states.to(query_states.device, dtype=target_dtype)
             value_states = value_states.to(query_states.device, dtype=target_dtype)
             if hasattr(past_key_values, "shared_layers_token"):
-                token_states = past_key_values.shared_layers_token.get(self.kv_shared_layer_index)
+                token_states = past_key_values.shared_layers_token.get(self.layer_idx)
                 if token_states is not None:
                     token_key_states, token_value_states = token_states
         else:
