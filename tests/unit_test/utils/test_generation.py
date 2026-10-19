@@ -1079,10 +1079,11 @@ class TestBfloat16GenerationRegression:
         assert logits.dtype == np.float16
         assert logits.itemsize == 2
 
-    def test_kv_dma_decodes_logits_and_preserves_bfloat16_payloads(self):
+    @pytest.mark.parametrize("output_name", ["logits", "language_model/logits"])
+    def test_kv_dma_decodes_plain_and_prefixed_logits(self, output_name):
         from QEfficient.generation._kv_dma_handoff import KvDmaHandoff
 
-        output_names = ["logits", "vision_embeds"]
+        output_names = [output_name, "vision_embeds"]
         session = SimpleNamespace(
             cluster_id="decode",
             stages=1,
@@ -1090,7 +1091,7 @@ class TestBfloat16GenerationRegression:
             output_names=output_names,
             binding_index_map={name: index for index, name in enumerate(output_names)},
             bindings=[
-                SimpleNamespace(name="logits", dims=[1, 1, 4], type=11),
+                SimpleNamespace(name=output_name, dims=[1, 1, 4], type=11),
                 SimpleNamespace(name="vision_embeds", dims=[2], type=11),
             ],
             aic_to_np_dtype_mapping={11: np.dtype(np.float16)},
@@ -1100,14 +1101,15 @@ class TestBfloat16GenerationRegression:
         handoff.init_buffer_maps()
         raw_logits = np.array([0x3F00, 0x3F80, 0x4000, 0xBF80], dtype=np.uint16).view(np.float16).reshape(1, 1, 4)
         raw_vision = np.array([0x3F80, 0xC020], dtype=np.uint16).view(np.float16)
-        handoff.output_buffers[0]["logits"][:] = raw_logits
+        handoff.output_buffers[0][output_name][:] = raw_logits
         handoff.output_buffers[0]["vision_embeds"][:] = raw_vision
 
         outputs = handoff.get_outputs(0)
 
-        assert outputs["logits"].dtype == np.float32
-        assert outputs["logits"].shape == (1, 1, 4)
-        assert outputs["logits"].argmax(2).item() == 2
+        assert outputs[output_name].dtype == np.float32
+        assert outputs[output_name].shape == (1, 1, 4)
+        assert outputs[output_name].argmax(2).item() == 2
+        assert outputs["logits"] is outputs[output_name]
         np.testing.assert_array_equal(outputs["vision_embeds"].view(np.uint16), raw_vision.view(np.uint16))
 
 
