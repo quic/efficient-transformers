@@ -242,7 +242,7 @@ def blocked_kv_attention_forward(
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
-        ctx_len = kv_block_size * num_kv_blocks
+        past_seen_tokens = kv_block_size * num_kv_blocks
     else:
         kv_block_size = -(-ctx_len // num_kv_blocks)
 
@@ -259,7 +259,7 @@ def blocked_kv_attention_forward(
     for kv_block_idx in range(num_kv_blocks):
         start_index = kv_block_idx * kv_block_size
         if kv_block_idx == num_kv_blocks - 1:
-            kv_len_block = ctx_len - start_index
+            kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
         end_index = start_index + kv_len_block
@@ -298,8 +298,8 @@ def blocked_kv_attention_forward(
 
         if use_causal_mask or mask_block is None:
             target_length = torch.where(
-                torch.tensor(ctx_len, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                ctx_len,
+                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                past_seen_tokens,
                 end_index,
             )
             causal_mask_block = _create_causal_mask(
@@ -341,7 +341,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     cache_kwargs: Dict[str, Any],
     layer_idx: int,
     past_key_value: Cache,
-    ctx_len: int,
+    past_seen_tokens: int,
     *,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -362,7 +362,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     BH = batch_size * num_kv_heads  # static at compile time
     position_ids = cache_kwargs.get("position_ids")
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-ctx_len // num_kv_blocks)
+    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     current_position = position_ids.max(dim=-1).values
 
     # Reshape query: [B, NQH, 1, D] -> [1, BH, num_kv_groups, D]
@@ -382,7 +382,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
     for kv_block_idx in range(num_kv_blocks):
         start_index = kv_block_idx * kv_block_size
-        kv_len_block = (ctx_len - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
+        kv_len_block = (past_seen_tokens - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
         end_index = start_index + kv_len_block
 
         skip_future = None
@@ -479,7 +479,7 @@ def blocked_kv_attention_forward_headpar_offline(
     cache_kwargs: Dict[str, Any],
     layer_idx: int,
     past_key_value: Cache,
-    ctx_len: int,
+    past_seen_tokens: int,
     *,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -494,7 +494,6 @@ def blocked_kv_attention_forward_headpar_offline(
     # merged (across kv-blocks, then across splits).
     batch_size, num_heads, seq_len, head_dim = query.shape
     num_kv_groups = getattr(module, "num_key_value_groups", None)
-    past_seen_tokens = ctx_len
     position_ids = cache_kwargs.get("position_ids")
     num_kv_heads = num_heads // num_kv_groups
     split = configured_split
@@ -654,7 +653,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     cache_kwargs: Dict[str, Any],
     layer_idx: int,
     past_key_value: Cache,
-    ctx_len: int,
+    past_seen_tokens: int,
     *,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -678,7 +677,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     num_kv_heads = num_heads // num_kv_groups
     split = configured_split
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-ctx_len // num_kv_blocks)
+    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     n_rep_chunk = kwargs.get("n_rep_chunk")
     if n_rep_chunk is None:
         n_rep_chunk = num_kv_groups
@@ -733,7 +732,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
 
         for kv_block_idx in range(num_kv_blocks):
             start_index = kv_block_idx * kv_block_size
-            kv_len_block = (ctx_len - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
+            kv_len_block = (past_seen_tokens - start_index) if kv_block_idx == num_kv_blocks - 1 else kv_block_size
             end_index = start_index + kv_len_block
             split_block_len = kv_len_block // split
 
