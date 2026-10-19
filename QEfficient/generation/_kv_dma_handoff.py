@@ -33,6 +33,11 @@ except ImportError:
     qaicrt = None
 
 
+def _bfloat16_to_float32(values: np.ndarray) -> np.ndarray:
+    """Decode a numpy float16-sized array containing raw bfloat16 bit patterns."""
+    return (values.view(np.uint16).astype(np.uint32) << 16).view(np.float32)
+
+
 def _is_linear_state_name(name: str) -> bool:
     """Return True for linear/recurrent (3-D) retained-state bindings."""
     return name.startswith(("conv_state.", "recurrent_state."))
@@ -357,6 +362,8 @@ class KvDmaHandoff:
         outputs: Dict[str, np.ndarray] = {}
         for name, _ in self.readable_output_bindings:
             output = self.output_buffers[index][name]
+            if name.rsplit("/", 1)[-1] == "logits" and self.session.binding_is_bfloat16(name):
+                output = _bfloat16_to_float32(output)
             outputs[name] = output
             outputs.setdefault(name.rsplit("/", 1)[-1], output)
         return outputs
