@@ -134,9 +134,9 @@ DLM and vision QPCs are unchanged.
 | `--tlm_devices` | `0,1,2,3` | TLM device IDs |
 | `--dlm_devices` | `0,1,2,3` | DLM device IDs |
 | `--tlm_cores` / `--dlm_cores` | `8` | per-side core count |
-| `--ctx_len` | `4096` (text) / `2048` (vision) | |
+| `--ctx_len` | `4096` | both scripts |
 | `--prefill_seq_len` | `128` | |
-| `--generation_len` | `256` | |
+| `--generation_len` | `256` (text script) / `1800` (vision script) | |
 | `--iteration` | `300` | max SPD iterations |
 | `--hf_token` | `$HF_TOKEN` | required for gated repos |
 | `--tlm_hf_path` | from `MODEL_MAP` | required when the map entry has `None` (VLM entries) |

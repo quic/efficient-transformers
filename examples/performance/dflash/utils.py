@@ -303,7 +303,7 @@ def compile_gemma_vlm_qpcs(
         kv_offload=True,
         ignore_mismatched_sizes=True,
         token=hf_token,
-        qaic_config={"target_layer_ids": tlm_target_ids},
+        qaic_config={"target_layer_ids": tlm_target_ids, "dflash_dlm_repo": dlm_repo},
     )
 
     # DFlashTLMTransform attached fc/hidden_norm but left them random; copy in the real
@@ -374,7 +374,7 @@ def compile_qwen3vl_vlm_qpcs(
     config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=hf_token)
     is_qwen35 = config.model_type == "qwen3_5"
     is_qwen35_moe = config.model_type == "qwen3_5_moe"
-    qaic_config = {"target_layer_ids": tlm_target_ids}
+    qaic_config = {"target_layer_ids": tlm_target_ids, "dflash_dlm_repo": dlm_repo}
     if is_qwen35 or is_qwen35_moe:
         if block_size < 2 or block_size & (block_size - 1):
             raise ValueError("Qwen3.5 DFlash requires a power-of-two draft block_size >= 2.")
@@ -409,8 +409,7 @@ def compile_qwen3vl_vlm_qpcs(
         "num_cores": num_cores,
         "num_devices": num_devices,
         "mxfp6_matmul": True,
-        # Keep hybrid verification/replay state in FP16 until MXINT8 is validated.
-        "mxint8_kv_cache": not is_qwen35,
+        "mxint8_kv_cache": True,
         "mos": 1,
         "use_onnx_subfunctions": False,
         "split_model_io": True,

@@ -141,8 +141,10 @@ def _get_gdn_full_state_update_kwargs(
     qaic_config: dict | None,
     *,
     prefill_only: bool,
+    prefill_seq_len: int | None = None,
     batch_size: int = 1,
     full_batch_size: int = 1,
+    kv_cache_batch_size: int = 1,
 ) -> dict:
     if not (qaic_config and qaic_config.get("gdn_full_state_update") is True):
         return {}
@@ -154,8 +156,10 @@ def _get_gdn_full_state_update_kwargs(
     return get_kwargs(
         qaic_config=qaic_config,
         prefill_only=prefill_only,
+        prefill_seq_len=prefill_seq_len,
         batch_size=batch_size,
         full_batch_size=full_batch_size,
+        kv_cache_batch_size=kv_cache_batch_size,
     )
 
 
@@ -1592,11 +1596,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.dflash_tlm:
             qaic_config.setdefault("pretrained_model_name_or_path", kwargs.get("pretrained_model_name_or_path"))
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+            self.lang_model.hash_params["dflash_dlm_repo"] = qaic_config.get("dflash_dlm_repo")
 
         # ---Sampling---
         if self.dflash_tlm and qaic_config.get("speculative_model_type") == "target":
             self.lang_model.hash_params["dflash_output_logits"] = True
-            self.lang_model.hash_params["dflash_dlm_repo"] = qaic_config.get("dflash_dlm_repo")
         if self.dflash_tlm and self.model.config.model_type == "qwen3_5_moe":
             self.lang_model.hash_params["dflash_cache_protocol"] = "qwen35_moe_dynamic_replay_v1"
             self.lang_model.hash_params["dflash_chunk_size"] = 16
@@ -1753,6 +1757,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.model,
             qaic_config,
             prefill_only=prefill_only,
+            prefill_seq_len=prefill_seq_len,
         )
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -2112,8 +2117,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 self.model,
                 qaic_config,
                 prefill_only=prefill_only,
+                prefill_seq_len=prefill_seq_len,
                 batch_size=batch_size,
                 full_batch_size=full_batch_size,
+                kv_cache_batch_size=kv_cache_batch_size,
             )
 
         if self.dflash_tlm and self.model.config.model_type in {"qwen3_5", "qwen3_5_moe"}:
