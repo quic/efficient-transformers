@@ -22,6 +22,7 @@ import torch
 from qwen_vl_utils import process_vision_info
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.dflash_tlm_handoff import DFlashTlmHandoff
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5ForConditionalGeneration,
 )
@@ -312,25 +313,35 @@ def run_spd_inference_single(
     hidden_size: int = 4096,
     generation_len: int = 256,
     batch_size: int = 1,
+    tlm_prefill_session: QAICInferenceSession | None = None,
 ) -> SpecDecodingMetrics:
     input_ids, position_ids = _prepare_text_inputs(tokenizer, prompt_text, prompt_chunk_size)
     generated_ids = _initialize_generated_ids(batch_size, ctx_len, input_ids.shape[1], tokenizer.pad_token_id)
     metrics = SpecDecodingMetrics(block_size=block_size)
 
-    prefill_selection = _dflash_logit_selection_inputs(tlm_session, 1)
+    prefill_session = tlm_prefill_session or tlm_session
+    handoff = DFlashTlmHandoff(prefill_session, tlm_session) if tlm_prefill_session is not None else None
+    prefill_selection = _dflash_logit_selection_inputs(prefill_session, 1)
     decode_selection = _dflash_logit_selection_inputs(tlm_session, block_size)
-    prefill_logits = 1 if prefill_selection else prompt_chunk_size
-    tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
-    tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
+    prefill_logits = 1 if prefill_selection or tlm_prefill_session is not None else prompt_chunk_size
+    prefill_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
+    prefill_session.set_buffers(
+        {"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)}
+    )
 
     def tlm_prefill(chunk_start, chunk_end):
-        outputs = tlm_session.run(
+        last_chunk = chunk_end == input_ids.shape[1]
+        outputs = prefill_session.run(
             {
                 "input_ids": input_ids[:, chunk_start:chunk_end],
                 "position_ids": position_ids[:, chunk_start:chunk_end],
                 **prefill_selection,
+                **(handoff.outputs if handoff is not None and last_chunk else {}),
             }
         )
+        if handoff is not None and last_chunk:
+            handoff.capture(outputs)
+            prefill_session.skip_buffers(handoff.outputs)
         return outputs["logits"], outputs["hidden_states"]
 
     def prepare_decode():
@@ -338,7 +349,18 @@ def run_spd_inference_single(
         tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, block_size, hidden_size), dtype=np.float32)})
 
     def tlm_decode(draft_ids, decode_position_ids):
-        outputs = tlm_session.run({"input_ids": draft_ids, "position_ids": decode_position_ids, **decode_selection})
+        nonlocal handoff
+        outputs = tlm_session.run(
+            {
+                "input_ids": draft_ids,
+                "position_ids": decode_position_ids,
+                **decode_selection,
+                **(handoff.inputs if handoff is not None else {}),
+            }
+        )
+        if handoff is not None:
+            tlm_session.skip_buffers(handoff.inputs)
+            handoff = None
         return outputs["logits"], outputs["hidden_states"]
 
     eos_token_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
@@ -715,6 +737,7 @@ def run_spd_inference_qwen3_vl(
     compiled_height: int = 354,
     compiled_width: int = 536,
     batch_size: int = 1,
+    tlm_prefill_session: QAICInferenceSession | None = None,
 ) -> SpecDecodingMetrics:
     """Run Qwen3-VL, Qwen3.5 or Qwen3.5-MoE DFlash for a text or image prompt."""
     is_qwen35 = tlm_config.model_type in {"qwen3_5", "qwen3_5_moe"}
@@ -726,6 +749,8 @@ def run_spd_inference_qwen3_vl(
             raise ValueError("Qwen3.5 DFlash requires prefill length to be a positive multiple of block_size >= 2.")
         target_seq_len = get_qwen35_target_seq_len(tlm_session, block_size)
     metrics = SpecDecodingMetrics(block_size=block_size)
+    prefill_session = tlm_prefill_session or tlm_session
+    handoff = DFlashTlmHandoff(prefill_session, tlm_session) if tlm_prefill_session is not None else None
     image_processing_start = time.time()
 
     if image is not None:
@@ -789,25 +814,34 @@ def run_spd_inference_qwen3_vl(
     }
     if has_deepstack:
         vision_outputs["deepstack_features"] = deepstack_features.astype(deepstack_dtype)
-    tlm_session.set_buffers(vision_outputs)
+    prefill_session.set_buffers(vision_outputs)
+    if handoff is not None:
+        tlm_session.set_buffers(vision_outputs)
     lang_extra = {"image_idx": np.array([[0]], dtype=np.int64)}
     if is_qwen35:
         lang_extra["cache_commit"] = np.ones(1, dtype=np.int64)
-    prefill_selection = _dflash_logit_selection_inputs(tlm_session, 1)
+    prefill_selection = _dflash_logit_selection_inputs(prefill_session, 1)
     decode_selection = _dflash_logit_selection_inputs(tlm_session, target_seq_len)
-    prefill_logits = 1 if prefill_selection else prompt_chunk_size
-    tlm_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
-    tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)})
+    prefill_logits = 1 if prefill_selection or tlm_prefill_session is not None else prompt_chunk_size
+    prefill_session.set_buffers({"logits": np.zeros((batch_size, prefill_logits), dtype=np.int32)})
+    prefill_session.set_buffers(
+        {"hidden_states": np.zeros((batch_size, prompt_chunk_size, hidden_size), dtype=np.float32)}
+    )
 
     def tlm_prefill(chunk_start, chunk_end):
-        outputs = tlm_session.run(
+        last_chunk = chunk_end == padded_len
+        outputs = prefill_session.run(
             {
                 "input_ids": input_ids_np[:, chunk_start:chunk_end],
                 "position_ids": position_ids_np[:, :, chunk_start:chunk_end],
                 **prefill_selection,
                 **lang_extra,
+                **(handoff.outputs if handoff is not None and last_chunk else {}),
             }
         )
+        if handoff is not None and last_chunk:
+            handoff.capture(outputs)
+            prefill_session.skip_buffers(handoff.outputs)
         lang_extra["image_idx"] = outputs["image_idx_output"]
         return outputs["logits"], outputs["hidden_states"]
 
@@ -816,7 +850,8 @@ def run_spd_inference_qwen3_vl(
         tlm_session.set_buffers(
             {"hidden_states": np.zeros((batch_size, target_seq_len, hidden_size), dtype=np.float32)}
         )
-        tlm_session.skip_buffers(vision_outputs.keys())
+        if handoff is None:
+            tlm_session.skip_buffers(vision_outputs.keys())
         if is_qwen35:
             lang_extra["cache_commit"] = np.zeros(1, dtype=np.int64)
 
@@ -830,7 +865,15 @@ def run_spd_inference_qwen3_vl(
         return {"input_ids": draft_ids, "position_ids": positions, **decode_selection, **lang_extra}
 
     def tlm_decode(draft_ids, decode_position_ids):
-        outputs = tlm_session.run(decode_inputs(draft_ids, decode_position_ids, block_size))
+        nonlocal handoff
+        inputs = decode_inputs(draft_ids, decode_position_ids, block_size)
+        if handoff is not None:
+            inputs.update(handoff.inputs)
+        outputs = tlm_session.run(inputs)
+        if handoff is not None:
+            tlm_session.skip_buffers(handoff.inputs)
+            tlm_session.skip_buffers(vision_outputs.keys())
+            handoff = None
         return outputs["logits"][:, :block_size], outputs["hidden_states"][:, :block_size]
 
     def tlm_commit(draft_ids, decode_position_ids, count):

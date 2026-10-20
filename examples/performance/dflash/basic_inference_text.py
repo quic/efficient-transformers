@@ -44,6 +44,7 @@ from utils import (
     compile_tlm_qpc,
     format_prompt,
     get_spd_prompt_chunk_size,
+    load_spd_session,
     load_spd_sessions,
     resolve_model_name,
     validate_spd_decode_specialization,
@@ -96,6 +97,15 @@ def parse_args():
     # Optional pre-built QPCs (skip compilation)
     p.add_argument("--tlm_qpc", default=None, help="Pre-compiled TLM qpc dir (skip TLM compile).")
     p.add_argument("--dlm_qpc", default=None, help="Pre-compiled DLM qpc dir (skip DLM compile).")
+    p.add_argument(
+        "--disagg-tlm",
+        "--disagg_tlm",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Separate TLM prefill/verification QPCs (default: enabled for MoE models).",
+    )
+    p.add_argument("--tlm-prefill-qpc", "--tlm_prefill_qpc")
+    p.add_argument("--tlm-prefill-devices", "--tlm_prefill_devices", type=parse_device_list)
 
     # Devices / cores
     p.add_argument(
@@ -150,6 +160,20 @@ def main():
     if tlm_repo is None:
         raise SystemExit(f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path.")
 
+    tlm_config = AutoConfig.from_pretrained(tlm_repo, token=args.hf_token)
+    if args.disagg_tlm is None:
+        args.disagg_tlm = tlm_config.model_type == "gpt_oss"
+    if args.disagg_tlm and tlm_config.model_type != "gpt_oss":
+        raise ValueError("Split text DFlash TLM is currently supported for GPT-OSS only.")
+    if args.tlm_qpc and args.disagg_tlm and not args.tlm_prefill_qpc:
+        raise ValueError("Split TLM requires --tlm-prefill-qpc as well as --tlm_qpc, or use --no-disagg-tlm.")
+    if args.tlm_prefill_qpc and not args.disagg_tlm:
+        raise ValueError("--tlm-prefill-qpc requires --disagg-tlm.")
+    if args.tlm_prefill_qpc and not args.tlm_qpc:
+        raise ValueError("Provide both --tlm-prefill-qpc and --tlm_qpc to reuse a split TLM pair.")
+    if args.tlm_prefill_devices and len(args.tlm_prefill_devices) != len(args.tlm_devices):
+        raise ValueError("Split TLM prefill and verification device groups must have the same device count.")
+
     if args.tlm_qpc:
         logger.info(f"[skip compile] using provided TLM qpc: {args.tlm_qpc}")
         tlm_qpc = args.tlm_qpc
@@ -162,7 +186,10 @@ def main():
             num_cores=args.tlm_cores,
             num_devices=len(args.tlm_devices),
             hf_token=args.hf_token,
+            disagg_tlm=args.disagg_tlm,
         )
+        if args.disagg_tlm:
+            args.tlm_prefill_qpc, tlm_qpc = tlm_qpc["prefill"], tlm_qpc["decode"]
 
     if args.dlm_qpc:
         logger.info(f"[skip compile] using provided DLM qpc: {args.dlm_qpc}")
@@ -177,6 +204,8 @@ def main():
             hf_token=args.hf_token,
         )
     logger.info(f"TLM qpc        : {tlm_qpc}")
+    if args.disagg_tlm:
+        logger.info(f"TLM prefill qpc: {args.tlm_prefill_qpc}")
     logger.info(f"DLM qpc        : {dlm_qpc}")
 
     prompt_text = format_prompt(args.prompt, args.category) if args.format_prompt else args.prompt
@@ -186,7 +215,12 @@ def main():
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, args.tlm_devices, args.dlm_devices)
-    prompt_chunk_size = get_spd_prompt_chunk_size(tlm_session)
+    tlm_prefill_session = (
+        load_spd_session(args.tlm_prefill_qpc, args.tlm_prefill_devices or args.tlm_devices)
+        if args.disagg_tlm
+        else None
+    )
+    prompt_chunk_size = get_spd_prompt_chunk_size(tlm_prefill_session or tlm_session)
     validate_spd_decode_specialization(tlm_session, config.block_size)
 
     dflash_config = getattr(config, "dflash_config", None) or config.to_dict().get("dflash_config", {})
@@ -209,6 +243,7 @@ def main():
         hidden_size=config.hidden_size,
         generation_len=args.generation_len,
         batch_size=batch_size,
+        tlm_prefill_session=tlm_prefill_session,
     )
 
     output_parts = ["Output: "]

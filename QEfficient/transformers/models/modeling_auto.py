@@ -2322,6 +2322,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
         self.qpc_paths = {}
+        kw_spec = compiler_options.pop("specializations", None)
         if not skip_vision:
             compiler_options_vision = compiler_options.copy()
             compiler_options_vision["node_precision_info"] = False
@@ -2391,6 +2392,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 specializations = lang_specs
                 qpc_key = "lang_qpc_path"
 
+            if kw_spec:
+                specializations = kw_spec
             lang_qpc_path = self.lang_model._compile(
                 onnx_path=self.lang_model.onnx_path,
                 compile_dir=compile_dir,
@@ -3853,6 +3856,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params["dflash_tlm_repo"] = qaic_config["dflash_tlm_repo"]
         if self.dflash_tlm:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+            if self.model.config.model_type == "gpt_oss":
+                self.hash_params["dflash_hidden_norm"] = "custom_rms_norm_v1"
 
         self.model, transformed = SpDTransform.apply(self.model, qaic_config=qaic_config, **kwargs)
         self.is_tlm = transformed

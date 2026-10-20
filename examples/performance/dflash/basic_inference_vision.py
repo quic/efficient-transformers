@@ -25,6 +25,7 @@ from utils import (
     compile_qwen3vl_vlm_qpcs,
     get_dflash_block_size,
     get_spd_prompt_chunk_size,
+    load_spd_session,
     load_spd_sessions,
     resolve_model_name,
     validate_spd_decode_specialization,
@@ -72,6 +73,15 @@ def parse_args():
     parser.add_argument("--tlm_qpc", default=None)
     parser.add_argument("--vision_qpc", default=None)
     parser.add_argument("--dlm_qpc", default=None)
+    parser.add_argument(
+        "--disagg-tlm",
+        "--disagg_tlm",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Separate TLM prefill/verification QPCs (default: enabled for MoE models).",
+    )
+    parser.add_argument("--tlm-prefill-qpc", "--tlm_prefill_qpc")
+    parser.add_argument("--tlm-prefill-devices", "--tlm_prefill_devices", type=parse_device_list)
     parser.add_argument("--tlm_devices", type=parse_device_list, default=[0, 1, 2, 3])
     parser.add_argument("--dlm_devices", type=parse_device_list, default=[0, 1, 2, 3])
     parser.add_argument("--vision_devices", type=parse_device_list, default=[0, 1, 2, 3])
@@ -194,6 +204,7 @@ def _run_qwen3_vl(
     prompt_chunk_size,
     vision_qpc,
     batch_size,
+    tlm_prefill_session=None,
 ):
     if processor is None:
         raise RuntimeError("Qwen3-VL requires a processor, which failed to load.")
@@ -233,6 +244,7 @@ def _run_qwen3_vl(
         compiled_height=args.height if args.height is not None else 354,
         compiled_width=args.width if args.width is not None else 536,
         batch_size=batch_size,
+        tlm_prefill_session=tlm_prefill_session,
     )
     return metrics, {"vision_encode_time_s": metrics.vision_prefill_time if args.image else None}
 
@@ -250,6 +262,18 @@ def main():
 
     tlm_config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=args.hf_token)
     is_qwen3vl = tlm_config.model_type in {"qwen3_vl", "qwen3_5", "qwen3_5_moe"}
+    if args.disagg_tlm is None:
+        args.disagg_tlm = tlm_config.model_type == "qwen3_5_moe"
+    if args.disagg_tlm and tlm_config.model_type != "qwen3_5_moe":
+        raise ValueError("Split VLM TLM is currently supported for Qwen3.5-MoE only.")
+    if args.tlm_qpc and args.disagg_tlm and not args.tlm_prefill_qpc:
+        raise ValueError("Split TLM requires --tlm-prefill-qpc as well as --tlm_qpc, or use --no-disagg-tlm.")
+    if args.tlm_prefill_qpc and not args.disagg_tlm:
+        raise ValueError("--tlm-prefill-qpc requires --disagg-tlm.")
+    if args.tlm_prefill_qpc and not args.tlm_qpc:
+        raise ValueError("Provide both --tlm-prefill-qpc and --tlm_qpc to reuse a split TLM pair.")
+    if args.tlm_prefill_devices and len(args.tlm_prefill_devices) != len(args.tlm_devices):
+        raise ValueError("Split TLM prefill and verification device groups must have the same device count.")
 
     if args.tlm_qpc and args.vision_qpc:
         tlm_qpc, vision_qpc = args.tlm_qpc, args.vision_qpc
@@ -265,8 +289,10 @@ def main():
             "hf_token": args.hf_token,
         }
         if is_qwen3vl:
-            compile_kwargs.update({"height": args.height, "width": args.width})
+            compile_kwargs.update({"height": args.height, "width": args.width, "disagg_tlm": args.disagg_tlm})
         tlm_qpc, vision_qpc = compile_vlm(tlm_repo, dlm_repo, **compile_kwargs)
+        if args.disagg_tlm:
+            args.tlm_prefill_qpc, tlm_qpc = tlm_qpc["prefill"], tlm_qpc["decode"]
 
     if args.dlm_qpc:
         dlm_qpc = args.dlm_qpc
@@ -282,6 +308,8 @@ def main():
         )
 
     logger.info(f"TLM lang qpc: {tlm_qpc}")
+    if args.disagg_tlm:
+        logger.info(f"TLM prefill qpc: {args.tlm_prefill_qpc}")
     logger.info(f"Vision qpc: {vision_qpc}")
     logger.info(f"DLM qpc: {dlm_qpc}")
 
@@ -296,7 +324,12 @@ def main():
         logger.warning(f"No processor for {tlm_repo} ({error}); using tokenizer template.")
 
     dlm_session, tlm_session = load_spd_sessions(tlm_qpc, dlm_qpc, args.tlm_devices, args.dlm_devices)
-    prompt_chunk_size = get_spd_prompt_chunk_size(tlm_session)
+    tlm_prefill_session = (
+        load_spd_session(args.tlm_prefill_qpc, args.tlm_prefill_devices or args.tlm_devices)
+        if args.disagg_tlm
+        else None
+    )
+    prompt_chunk_size = get_spd_prompt_chunk_size(tlm_prefill_session or tlm_session)
     target_decode_length = get_dflash_block_size(config)
     validate_spd_decode_specialization(tlm_session, target_decode_length)
 
@@ -312,6 +345,7 @@ def main():
             prompt_chunk_size,
             vision_qpc,
             batch_size,
+            tlm_prefill_session,
         )
     else:
         metrics, output_extra = _run_gemma(

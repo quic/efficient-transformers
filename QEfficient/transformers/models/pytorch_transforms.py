@@ -1166,6 +1166,12 @@ class SpDTransform:
             raise ValueError(
                 f"Speculative model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
             )
+        elif (
+            speculative_model_type == SPD_TARGET
+            and qaic_config.get("target_layer_ids")
+            and isinstance(model, QEffGptOssForCausalLM)
+        ):
+            return model, True
         elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
             if speculative_model_type != SPD_TARGET:
@@ -1325,6 +1331,8 @@ class DFlashTLMTransform:
                 RMSNorm = Qwen3RMSNorm
             elif "llama" in model_type:
                 RMSNorm = LlamaRMSNorm
+            elif model_type == "gpt_oss":
+                RMSNorm = CustomRMSNormAIC
             else:
                 RMSNorm = nn.RMSNorm
             inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False).to(device=module_device, dtype=module_dtype)
