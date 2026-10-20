@@ -707,10 +707,12 @@ class TestSpDTransformMoE:
 
     def test_moe_output_fields_match_non_spd_forward(self, arch):
         model, cfg = make_kv_transformed_moe(arch)
-        SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
 
         input_ids = torch.randint(0, VOCAB_SIZE, (1, 4))
         position_ids = torch.arange(4).view(1, 4)
+        base = self._run(model, cfg, input_ids, position_ids, output_router_logits=True)
+
+        SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         spd = self._run(
             model,
             cfg,
@@ -719,7 +721,6 @@ class TestSpDTransformMoE:
             output_router_logits=True,
             num_logits_to_keep=torch.arange(4).view(4, 1),
         )
-        base = self._run(model, cfg, input_ids, position_ids, output_router_logits=True)
 
         assert type(spd) is type(base)
         assert set(spd.keys()) == set(base.keys())
