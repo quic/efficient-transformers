@@ -98,9 +98,10 @@ OFFICIAL_MODEL_ENV = "QEFF_REPRODUCER_USE_OFFICIAL_MODELS"
 REPORT_PATH_ENV = "QEFF_REPRODUCER_REPORT_MD"
 SCENARIO_FILTER_ENV = "QEFF_REPRODUCER_SCENARIO"
 DEFAULT_REPORT_PATH = Path("tests/reproducer_configs/reproducer_config_results.md")
-EXPECTED_SCENARIO_COUNT = 51
+EXPECTED_SCENARIO_COUNT = 54
 EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
     {
+        "retain_full_kv",
         "height",
         "mdp_compiler_dump_path",
         "mdp_dump_partition_config",
@@ -112,6 +113,10 @@ EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
         "node_precision_info",
         "num_frames",
         "parallel",
+        # These QAIC flags are forwarded through the VLM compile API's
+        # ``**compiler_options`` and therefore do not appear in its signature.
+        "split_model_io",
+        "user_tiled",
         "vision_size",
         "width",
     }
@@ -735,6 +740,120 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
         },
     ),
     RegressionScenario(
+        name="qwen36-gdn-full-batch-decode-state-update",
+        stage="compile",
+        source_model_card="Qwen/Qwen3.6-35B-A3B",
+        tiny_model_id=None,
+        official_model_id="Qwen/Qwen3.6-35B-A3B",
+        summary="Qwen3.6 kv_headpar full-batch decode must update GDN retained state without CB gather/scatter",
+        model_api="image_text_to_text",
+        config={"compile_components": ("decode",)},
+        load_kwargs={
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "continuous_batching": True,
+            "dtype": torch.float16,
+            "text_num_hidden_layers": 8,
+        },
+        export_kwargs={
+            "prefill_only": False,
+            "prefill_seq_len": 1,
+            "use_onnx_subfunctions": True,
+            "offload_pt_weights": False,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+        compile_kwargs={
+            "batch_size": 1,
+            "full_batch_size": 1,
+            "kv_cache_batch_size": 1,
+            "prefill_seq_len": 1,
+            "ctx_len": 65536,
+            "height": 354,
+            "width": 536,
+            "num_cores": 16,
+            "num_devices": 2,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "retain_full_kv": True,
+            "split_model_io": True,
+            "aic_enable_depth_first": False,
+            "user_tiled": True,
+            "prefill_only": False,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "kv_cache_prefix": "vllmKvCache",
+            "allow_mxint8_mdp_io": True,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+    ),
+    RegressionScenario(
+        name="qwen36-gdn-full-batch-decode-state-update-bsz4",
+        stage="compile",
+        source_model_card="Qwen/Qwen3.6-35B-A3B",
+        tiny_model_id=None,
+        official_model_id="Qwen/Qwen3.6-35B-A3B",
+        summary="Qwen3.6 kv_headpar full-batch decode must compile with batch size 4 GDN retained-state updates",
+        model_api="image_text_to_text",
+        config={"compile_components": ("decode",)},
+        load_kwargs={
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "continuous_batching": True,
+            "dtype": torch.float16,
+            "text_num_hidden_layers": 8,
+        },
+        export_kwargs={
+            "prefill_only": False,
+            "prefill_seq_len": 1,
+            "use_onnx_subfunctions": True,
+            "offload_pt_weights": False,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+        compile_kwargs={
+            "batch_size": 4,
+            "full_batch_size": 4,
+            "kv_cache_batch_size": 4,
+            "prefill_seq_len": 1,
+            "ctx_len": 65536,
+            "height": 354,
+            "width": 536,
+            "num_cores": 16,
+            "num_devices": 2,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "retain_full_kv": True,
+            "split_model_io": True,
+            "aic_enable_depth_first": False,
+            "user_tiled": True,
+            "prefill_only": False,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "kv_cache_prefix": "vllmKvCache",
+            "allow_mxint8_mdp_io": True,
+            "qaic_config": {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": 8,
+                "skip_kv": True,
+                "gdn_full_state_update": True,
+            },
+        },
+    ),
+    RegressionScenario(
         name="qwen3vl-custom-io-subfunctions",
         stage="compile",
         source_model_card="Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -751,6 +870,54 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
             "num_devices": 1,
             "num_cores": 16,
             "use_onnx_subfunctions": True,
+        },
+    ),
+    RegressionScenario(
+        name="qwen3vl-moe-batch-fold-subfunction",
+        stage="compile",
+        source_model_card="Qwen/Qwen3-VL-235B-A22B-Instruct",
+        tiny_model_id=TINY_QWEN3_VL_MOE,
+        official_model_id="Qwen/Qwen3-VL-235B-A22B-Instruct",
+        summary="batch-folded decode range ops must remain inside Qwen3-VL-MoE decoder subfunctions",
+        model_api="image_text_to_text",
+        load_kwargs={
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "continuous_batching": True,
+            "dtype": torch.float16,
+            "num_hidden_layers": 4,
+            "layerwise": False,
+        },
+        compile_kwargs={
+            "batch_size": 256,
+            "full_batch_size": 256,
+            "kv_cache_batch_size": 256,
+            "prefill_seq_len": 1,
+            "ctx_len": 10240,
+            "height": 354,
+            "width": 536,
+            "num_cores": 16,
+            "num_devices": 16,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "split_model_io": True,
+            "user_tiled": True,
+            "prefill_only": False,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "layerwise": False,
+            "offload_pt_weights": False,
+            "qaic_config": {
+                "blocking_mode": "kv_batch_fold",
+                "num_kv_blocks": 4,
+                "ctx_len": 10240,
+                "moe_config": {
+                    "flavour": "expert_parallel",
+                    "tree_reduce": False,
+                    "cores_per_expert": 2,
+                    "expert_parallel_chunk_size": 128,
+                },
+            },
         },
     ),
     RegressionScenario(
@@ -1142,11 +1309,30 @@ def _load_vlm_model(scenario: RegressionScenario):
     The helper exists because VLM reports must exercise the dual-QPC API rather
     than the causal-LM helper used by text-only models.
     """
+    from transformers import AutoConfig
+
     from QEfficient import QEFFAutoModelForImageTextToText
+    from QEfficient.utils.test_utils import set_num_layers_vlm
 
     model_id = _scenario_model_id(scenario)
     load_kwargs = {"trust_remote_code": True, **scenario.load_kwargs}
     load_kwargs.setdefault("cache_dir", os.environ["HF_HUB_CACHE"])
+    # VLM constructors reject ``num_hidden_layers`` as a top-level argument.
+    # Apply the reduced-layer setting to the nested text config instead, then
+    # allow unused official checkpoint layers to be ignored.
+    num_hidden_layers = load_kwargs.pop("num_hidden_layers", -1)
+    text_num_hidden_layers = load_kwargs.pop("text_num_hidden_layers", -1)
+    if num_hidden_layers != -1 and text_num_hidden_layers != -1:
+        raise ValueError(f"{scenario.name}: choose num_hidden_layers or text_num_hidden_layers, not both")
+    if num_hidden_layers != -1 or text_num_hidden_layers != -1:
+        config = AutoConfig.from_pretrained(model_id, **load_kwargs)
+        if text_num_hidden_layers != -1:
+            config.text_config.num_hidden_layers = text_num_hidden_layers
+            config.text_config.layer_types = config.text_config.layer_types[:text_num_hidden_layers]
+        else:
+            set_num_layers_vlm(config, num_hidden_layers)
+        load_kwargs["config"] = config
+        load_kwargs.setdefault("ignore_mismatched_sizes", True)
     return QEFFAutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
 
 
@@ -1346,12 +1532,43 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     export_dir = tmp_path / scenario.name / "export"
     export_kwargs = dict(scenario.export_kwargs)
     export_kwargs.setdefault("offload_pt_weights", False)
-    onnx_paths = qeff_model.export(export_dir=export_dir, **export_kwargs)
+    compile_components = tuple(scenario.config.get("compile_components", ("vision", "prefill", "decode")))
+    assert compile_components in {("vision", "prefill", "decode"), ("decode",)}, (
+        f"{scenario.name}: unsupported VLM compile component sequence {compile_components}"
+    )
+    # Export must use the same component selection as compile.  In particular,
+    # skip_vision prevents the tiny language-only reproducer from tracing the
+    # unsupported vision rotary-input shape.
+    skip_vision = bool(scenario.compile_kwargs.get("skip_vision", False))
+    skip_lang = bool(scenario.compile_kwargs.get("skip_lang", False))
+    onnx_paths = qeff_model.export(
+        export_dir=export_dir,
+        skip_vision=skip_vision,
+        skip_lang=skip_lang,
+        **export_kwargs,
+    )
     vision_onnx_path, lang_onnx_path = onnx_paths
     common_kwargs = dict(scenario.compile_kwargs)
     use_intersection = common_kwargs.pop("_mdp_intersection", False)
     common_kwargs.pop("skip_vision", None)
     common_kwargs.pop("skip_lang", None)
+    if compile_components == ("decode",):
+        decode_kwargs = {**common_kwargs, "prefill_only": False, "prefill_seq_len": 1}
+        for prefill_only_key in ("enable_chunking", "mdp_num_partitions", "mdp_strategy"):
+            decode_kwargs.pop(prefill_only_key, None)
+        _assert_compile_kwargs_supported(qeff_model, scenario, {**decode_kwargs, "skip_vision": True})
+        decode_qpcs = qeff_model.compile(
+            compile_dir=compile_dir / "lang_decode",
+            vision_onnx_path=vision_onnx_path,
+            lang_onnx_path=lang_onnx_path,
+            skip_vision=True,
+            **decode_kwargs,
+        )
+        for qpc_path in decode_qpcs.values():
+            _qpc_succeeded(qpc_path)
+        _record_result(scenario, "PASSED", f"VLM decode QPCs: {decode_qpcs}")
+        return
+
     vision_kwargs = dict(common_kwargs)
     for language_only_key in (
         "prefill_only",
@@ -1363,14 +1580,18 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
         "mdp_dump_partition_config",
     ):
         vision_kwargs.pop(language_only_key, None)
-    _assert_compile_kwargs_supported(qeff_model, scenario, {**vision_kwargs, "skip_lang": True})
-    vision_qpcs = qeff_model.compile(
-        compile_dir=compile_dir / "vision",
-        vision_onnx_path=vision_onnx_path,
-        lang_onnx_path=lang_onnx_path,
-        skip_lang=True,
-        **vision_kwargs,
-    )
+    vision_qpcs = {}
+    # Do not call compile() for a component explicitly excluded by the
+    # scenario: omitting its ONNX path would make QEff re-export that component.
+    if not skip_vision:
+        _assert_compile_kwargs_supported(qeff_model, scenario, {**vision_kwargs, "skip_lang": True})
+        vision_qpcs = qeff_model.compile(
+            compile_dir=compile_dir / "vision",
+            vision_onnx_path=vision_onnx_path,
+            lang_onnx_path=lang_onnx_path,
+            skip_lang=True,
+            **vision_kwargs,
+        )
     prefill_kwargs = dict(common_kwargs)
     prefill_kwargs["prefill_only"] = True
     if use_intersection:
