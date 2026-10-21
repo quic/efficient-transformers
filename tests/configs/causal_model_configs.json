@@ -516,7 +516,6 @@
       "supports_blocking": false,
       "config_attr": "text_config",
       "num_hidden_layers": 4,
-      "known_ccl_export_or_compile_issue": "Llama4 CCL subfunction compilation fails because qaic-compile does not support the dynamic Slice ends tensor in the prefill decoder layer.",
       "config_overrides": {
         "rope_parameters": {
           "rope_type": "llama3",
@@ -534,8 +533,7 @@
           "original_max_position_embeddings": 8192,
           "rope_theta": 500000.0
         }
-      },
-      "known_bf16_compile_issue": "Llama4 MoE forward uses .float() for sigmoid routing which causes dtype mismatch (float vs half) during bf16-to-fp16 export on ai100."
+      }
     },
     {
       "id": "llava_text",
