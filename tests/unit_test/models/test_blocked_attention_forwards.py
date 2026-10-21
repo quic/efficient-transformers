@@ -31,7 +31,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_qkv_attention_forward,
     repeat_kv,
 )
-from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicLayer
+from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicLayer, QEffGemma4DynamicLayer
 
 HEAD_DIM = 4
 BLOCK_SIZE = 2
@@ -460,3 +460,147 @@ class TestSkipKvBreakPreserved:
             "Hoisted-gather hqkv output with skip_kv=True diverged from manual causal attention "
             f"(max abs diff={(attn_output - expected).abs().max().item()})"
         )
+
+
+@pytest.mark.cache
+def test_qkv_ephemeral_kv_matches_concatenated_attention():
+    heads = 2
+    ctx_len = 6
+    canvas_len = 3
+    query_len = 3
+    cache = QEffDynamicCache()
+    layer = QEffDynamicLayer()
+    layer.keys = torch.randn(1, heads, ctx_len, HEAD_DIM)
+    layer.values = torch.randn(1, heads, ctx_len, HEAD_DIM)
+    layer.is_initialized = True
+    cache.layers.append(layer)
+
+    module = _DummyModule()
+    query = torch.randn(1, heads, query_len, HEAD_DIM)
+    ephemeral_key = torch.randn(1, heads, canvas_len, HEAD_DIM)
+    ephemeral_value = torch.randn(1, heads, canvas_len, HEAD_DIM)
+    attention_mask = torch.zeros(1, 1, query_len, ctx_len + canvas_len, dtype=torch.bool)
+    attention_mask[..., 0, -1] = True
+
+    attn_output, _ = blocked_qkv_attention_forward(
+        module=module,
+        query=query,
+        key=ephemeral_key,
+        value=ephemeral_value,
+        attention_mask=attention_mask,
+        scaling=SCALING,
+        num_kv_blocks=2,
+        num_q_blocks=2,
+        cache_kwargs={"position_ids": torch.full((1, query_len), ctx_len - 1, dtype=torch.int64)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        ephemeral_key=ephemeral_key,
+        ephemeral_value=ephemeral_value,
+    )
+
+    full_key = torch.cat([layer.keys, ephemeral_key], dim=2)
+    full_value = torch.cat([layer.values, ephemeral_value], dim=2)
+    expected_weights = torch.matmul(query, full_key.transpose(2, 3)) * SCALING
+    expected_weights = expected_weights.masked_fill(attention_mask, float("-inf"))
+    expected = torch.matmul(torch.softmax(expected_weights, dim=-1), full_value).transpose(1, 2).contiguous()
+
+    assert torch.allclose(attn_output, expected, atol=1e-4, rtol=1e-4)
+
+    export_attention_mask = torch.zeros(1, 1, query_len, query_len + canvas_len, dtype=torch.bool)
+    export_attention_mask[..., 0, -1] = True
+    export_output, _ = blocked_qkv_attention_forward(
+        module=module,
+        query=query,
+        key=ephemeral_key,
+        value=ephemeral_value,
+        attention_mask=export_attention_mask,
+        scaling=SCALING,
+        num_kv_blocks=2,
+        num_q_blocks=2,
+        cache_kwargs={"position_ids": torch.full((1, query_len), ctx_len - 1, dtype=torch.int64)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        ephemeral_key=ephemeral_key,
+        ephemeral_value=ephemeral_value,
+    )
+
+    export_full_mask = torch.cat([export_attention_mask, export_attention_mask[..., -canvas_len:]], dim=-1)
+    export_full_key = torch.cat([layer.keys, ephemeral_key], dim=2)
+    export_full_value = torch.cat([layer.values, ephemeral_value], dim=2)
+    export_weights = torch.matmul(query, export_full_key.transpose(2, 3)) * SCALING
+    export_weights = export_weights.masked_fill(export_full_mask, float("-inf"))
+    expected_export_output = torch.matmul(torch.softmax(export_weights, dim=-1), export_full_value).transpose(1, 2)
+
+    assert torch.allclose(export_output, expected_export_output, atol=1e-4, rtol=1e-4)
+
+
+@pytest.mark.cache
+def test_diffusion_gemma_safe_write_ignores_negative_cache_positions():
+    layer = QEffGemma4DynamicLayer.from_tensors(
+        torch.randn(1, 2, 5, HEAD_DIM),
+        torch.randn(1, 2, 5, HEAD_DIM),
+    )
+    original_keys = layer.keys.clone()
+    original_values = layer.values.clone()
+    key_states = torch.randn(1, 2, 3, HEAD_DIM)
+    value_states = torch.randn(1, 2, 3, HEAD_DIM)
+
+    layer.write_only_diffusion_gemma(
+        key_states,
+        value_states,
+        {"cache_position_ids": torch.full((1, 3), -1, dtype=torch.int64)},
+    )
+
+    assert torch.equal(layer.keys, original_keys)
+    assert torch.equal(layer.values, original_values)
+
+    layer.write_only_diffusion_gemma(
+        key_states,
+        value_states,
+        {"cache_position_ids": torch.tensor([[-1, 3, -1]], dtype=torch.int64)},
+    )
+
+    expected_keys = original_keys.clone()
+    expected_values = original_values.clone()
+    expected_keys[:, :, 3, :] = key_states[:, :, 1, :]
+    expected_values[:, :, 3, :] = value_states[:, :, 1, :]
+    assert torch.equal(layer.keys, expected_keys)
+    assert torch.equal(layer.values, expected_values)
+
+
+@pytest.mark.cache
+def test_qkv_ephemeral_kv_supports_export_skip_kv(monkeypatch):
+    heads = 2
+    ctx_len = 6
+    canvas_len = 3
+    query_len = 3
+    cache = QEffDynamicCache()
+    layer = QEffDynamicLayer()
+    layer.keys = torch.randn(1, heads, ctx_len, HEAD_DIM)
+    layer.values = torch.randn(1, heads, ctx_len, HEAD_DIM)
+    layer.is_initialized = True
+    cache.layers.append(layer)
+
+    monkeypatch.setattr(torch.onnx, "is_in_onnx_export", lambda: True)
+    output, _ = blocked_qkv_attention_forward(
+        module=_DummyModule(),
+        query=torch.randn(1, heads, query_len, HEAD_DIM),
+        key=torch.randn(1, heads, canvas_len, HEAD_DIM),
+        value=torch.randn(1, heads, canvas_len, HEAD_DIM),
+        attention_mask=torch.zeros(1, 1, query_len, ctx_len + canvas_len, dtype=torch.bool),
+        scaling=SCALING,
+        num_kv_blocks=2,
+        num_q_blocks=2,
+        cache_kwargs={"position_ids": torch.full((1, query_len), ctx_len - 1, dtype=torch.int64)},
+        layer_idx=0,
+        past_key_value=cache,
+        ctx_len=ctx_len,
+        preserve_attention_mask_on_export=True,
+        skip_kv=True,
+        ephemeral_key=torch.randn(1, heads, canvas_len, HEAD_DIM),
+        ephemeral_value=torch.randn(1, heads, canvas_len, HEAD_DIM),
+    )
+
+    assert torch.isfinite(output).all()

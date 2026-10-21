@@ -2135,6 +2135,10 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
             )
         return cache
 
+    def write_only_diffusion_gemma(self, key_states, value_states, layer_idx, cache_kwargs):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_diffusion_gemma(key_states, value_states, cache_kwargs)
+
 
 class QEffGemma4DynamicLayer(QEffDynamicLayer):
     def __init__(self, is_sliding: bool = False, sliding_window: Optional[int] = None):
@@ -2214,3 +2218,34 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
+
+    def write_only_diffusion_gemma(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> None:
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+            return
+
+        position_ids = cache_kwargs.get("cache_position_ids", cache_kwargs.get("position_ids"))
+        if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.keys = ctx_scatter(self.keys, scatter_position_ids, key_states)
+            self.values = ctx_scatter(self.values, scatter_position_ids, value_states)
+            return
+
+        valid_positions = position_ids >= 0
+        if not valid_positions.any():
+            return
+
+        batch_indices, token_indices = valid_positions.nonzero(as_tuple=True)
+        cache_indices = position_ids[valid_positions].long()
+        self.keys = self.keys.clone()
+        self.values = self.values.clone()
+        self.keys[batch_indices, :, cache_indices, :] = key_states[batch_indices, :, token_indices, :]
+        self.values[batch_indices, :, cache_indices, :] = value_states[batch_indices, :, token_indices, :]

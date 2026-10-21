@@ -5449,40 +5449,700 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
         )
 
 
-@pytest.mark.cpu_only
-def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
-    from onnx import TensorProto, helper
+def test_diffusion_gemma_split_compile_uses_paired_mxint8_kv_io(monkeypatch, tmp_path):
+    from types import SimpleNamespace
 
-    from QEfficient.generation.runner_io import write_runner_io_bundle
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
 
-    input_info = helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "seq_len"])
-    output_info = helper.make_tensor_value_info("output", TensorProto.INT64, ["batch_size", "seq_len"])
-    graph = helper.make_graph(
-        [helper.make_node("Identity", ["input_ids"], ["output"])], "runner", [input_info], [output_info]
+    captured = []
+    exported = []
+    constructed = []
+
+    class FakeQPC:
+        role = "qpc"
+
+        def __init__(self, model, include_image_idx=True):
+            self.model = self
+            self.include_image_idx = include_image_idx
+            constructed.append(self)
+
+        def get_specializations(self, **kwargs):
+            return ([{"_graph_name": self.role}], {})
+
+        def get_onnx_path(self, **kwargs):
+            exported.append((self.role, kwargs))
+            return tmp_path / f"{self.role}.onnx"
+
+        def _compile(self, **kwargs):
+            captured.append((self.role, kwargs))
+            return tmp_path / f"{self.role}_qpc"
+
+    class FakeEncoderQPC(FakeQPC):
+        role = "encoder"
+
+    class FakeDecoderQPC(FakeQPC):
+        role = "decoder"
+
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaEncoderQPC", FakeEncoderQPC)
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaDecoderQPC", FakeDecoderQPC)
+
+    qeff_model = SimpleNamespace(
+        config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=2)),
+        generate_npi_file=lambda path: tmp_path / "decoder_npi.yaml",
     )
-    onnx_path = tmp_path / "model.onnx"
-    onnx.save(helper.make_model(graph), onnx_path)
-
-    compile_dir = tmp_path / "qpc-hash"
-    compile_dir.mkdir()
-    inputs = np.arange(4, dtype=np.int64).reshape(1, 4)
-    io_dir = write_runner_io_bundle(
-        onnx_path=onnx_path,
-        compile_dir=compile_dir,
-        specialization={"batch_size": 1, "seq_len": 4},
-        host_inputs={"input_ids": inputs},
-    )
-
-    descriptor = json.loads((io_dir / "aic_batch_io.json").read_text())
-    entries = descriptor["IO-files"][0]
-    assert entries[0] == {
-        "path": "data/input_ids.raw",
-        "io-direction": "in",
-        "elem-size": 8,
-        "map-to": "input_ids",
-        "dims": [1, 4],
+    encoder_blocking_config = {
+        "enable_blocking": True,
+        "blocking_mode": "bhqkv",
+        "num_kv_blocks": 2,
+        "num_q_blocks": 2,
+        "head_block_size": 8,
+        "num_batch_blocks": 1,
     }
-    assert entries[1]["io-direction"] == "out"
-    assert entries[1]["dims"] == [1, 4]
-    assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
-    assert not (io_dir / "data/output.raw").exists()
+
+    diffusion_utils.compile_split_qpcs(
+        qeff_model,
+        prefill_seq_len=256,
+        ctx_len=1024,
+        canvas_length=256,
+        num_devices=4,
+        num_cores=16,
+        prefill_stages=3,
+        text_only=True,
+        encoder_blocking_config=encoder_blocking_config,
+    )
+
+    assert [role for role, _ in captured] == ["encoder", "decoder"]
+    assert constructed[0].include_image_idx is False
+    assert captured[0][1]["mdp_num_partitions"] == 3
+    assert "mdp_num_partitions" not in captured[1][1]
+    assert captured[0][1]["use_onnx_subfunctions"] is True
+    assert "use_onnx_subfunctions" not in captured[1][1]
+    expected_custom_io = {
+        f"past_{kv_name}.{layer_index}{suffix}": "mxint8"
+        for layer_index in range(2)
+        for kv_name in ("key", "value")
+        for suffix in ("", "_RetainedState")
+    }
+    for _, kwargs in captured:
+        assert kwargs["custom_io"] == expected_custom_io
+
+    encoder_export_config = next(kwargs["qaic_config"] for role, kwargs in exported if role == "encoder")
+    decoder_export_config = next(kwargs["qaic_config"] for role, kwargs in exported if role == "decoder")
+    encoder_export_kwargs = next(kwargs for role, kwargs in exported if role == "encoder")
+    decoder_export_kwargs = next(kwargs for role, kwargs in exported if role == "decoder")
+    encoder_compile_config = next(kwargs["qaic_config"] for role, kwargs in captured if role == "encoder")
+    decoder_compile_config = next(kwargs["qaic_config"] for role, kwargs in captured if role == "decoder")
+    assert encoder_export_kwargs["use_onnx_subfunctions"] is True
+    assert "use_onnx_subfunctions" not in decoder_export_kwargs
+    assert encoder_export_config["blocking_mode"] == "bhqkv"
+    assert encoder_export_config["num_kv_blocks"] == 2
+    assert encoder_export_config["num_q_blocks"] == 2
+    assert encoder_export_config["head_block_size"] == 8
+    assert encoder_export_config["num_batch_blocks"] == 1
+    assert encoder_compile_config == encoder_export_config
+    assert "enable_blocking" not in decoder_export_config
+    assert "enable_blocking" not in decoder_compile_config
+
+    with pytest.raises(ValueError, match="prefill_stages"):
+        diffusion_utils.compile_split_qpcs(
+            qeff_model,
+            prefill_seq_len=256,
+            ctx_len=1024,
+            canvas_length=256,
+            num_devices=4,
+            num_cores=16,
+            prefill_stages=0,
+        )
+
+
+def test_diffusion_gemma_unified_qpc_export_forwards_subfunction_options():
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
+
+    captured = {}
+    unified = object.__new__(diffusion_utils.UnifiedQPC)
+
+    def fake_export(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return "encoder.onnx"
+
+    unified._export = fake_export
+    inputs = {"input_ids": torch.zeros((1, 1), dtype=torch.int64)}
+    output_names = ["past_key.0_RetainedState"]
+    dynamic_axes = {"input_ids": {0: "batch_size"}}
+    qaic_config = {"enable_blocking": True}
+
+    result = unified.export(
+        inputs=inputs,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        qaic_config=qaic_config,
+        use_onnx_subfunctions=True,
+    )
+
+    assert result == "encoder.onnx"
+    assert captured["args"] == (inputs,)
+    assert captured["kwargs"] == {
+        "output_names": output_names,
+        "dynamic_axes": dynamic_axes,
+        "qaic_config": qaic_config,
+        "use_onnx_subfunctions": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("blocking_mode", "uses_physical_cache"),
+    [
+        ("kv", True),
+        ("q", False),
+        ("h", False),
+        ("qkv", True),
+        ("hq", True),
+        ("hkv", True),
+        ("hqkv", True),
+        ("bhqkv", True),
+    ],
+)
+def test_diffusion_gemma_encoder_attention_routes_generic_blocking_modes(
+    monkeypatch,
+    blocking_mode,
+    uses_physical_cache,
+):
+    from types import SimpleNamespace
+
+    from torch import nn
+
+    import QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma as diffusion_modeling
+    from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
+
+    attention = object.__new__(diffusion_modeling.QEffDiffusionGemmaEncoderTextAttention)
+    nn.Module.__init__(attention)
+    attention.q_proj = nn.Identity()
+    attention.k_proj = nn.Identity()
+    attention.v_proj = nn.Identity()
+    attention.o_proj = nn.Identity()
+    attention.q_norm = nn.Identity()
+    attention.k_norm = nn.Identity()
+    attention.v_norm = nn.Identity()
+    attention.head_dim = 2
+    attention.num_key_value_groups = 1
+    attention.layer_idx = 0
+    attention.scaling = 1.0
+    attention.config = SimpleNamespace(final_logit_softcapping=None)
+    attention.attn_blocking_config = AttentionBlockingConfig(
+        mode=BlockingMode(blocking_mode),
+        num_kv_blocks=2,
+        num_q_blocks=2,
+        head_block_size=1,
+        num_batch_blocks=1,
+    )
+
+    class FakeCache:
+        def __init__(self):
+            self.layers = [SimpleNamespace(keys=torch.zeros((1, 1, 4, 2)), values=torch.zeros((1, 1, 4, 2)))]
+            self.update_calls = []
+
+        def update(self, key_states, value_states, layer_idx, cache_kwargs):
+            self.update_calls.append((key_states, value_states, layer_idx, cache_kwargs))
+            layer = self.layers[layer_idx]
+            return layer.keys, layer.values
+
+    captured = {}
+
+    def fake_generic_blocked_attention_interface(**kwargs):
+        captured.update(kwargs)
+        return torch.tensor([[[1.0, 2.0], [3.0, 4.0]]]), None
+
+    monkeypatch.setattr(
+        diffusion_modeling,
+        "generic_blocked_attention_interface",
+        fake_generic_blocked_attention_interface,
+    )
+    cache = FakeCache()
+    hidden_states = torch.zeros((1, 2, 2))
+    position_ids = torch.tensor([[0, 1]])
+    attention_mask = torch.tensor([[[[0.0, -1.0, 0.0, 0.0, 0.0, 0.0]]]])
+
+    output, attn_weights = attention(
+        hidden_states=hidden_states,
+        position_embeddings=(torch.ones((1, 2, 1, 2)), torch.zeros((1, 2, 1, 2))),
+        attention_mask=attention_mask,
+        past_key_values=cache,
+        position_ids=position_ids,
+        cache_position_ids=position_ids,
+        use_physical_kv=True,
+    )
+
+    assert attn_weights is None
+    assert torch.equal(output, torch.tensor([[[1.0, 2.0], [3.0, 4.0]]]))
+    if uses_physical_cache:
+        assert captured["past_key_value"] is cache
+    else:
+        assert captured["past_key_value"] is None
+    assert captured["preserve_attention_mask_on_export"] is True
+    assert captured["attention_mask"].dtype == torch.bool
+    assert captured["attention_mask"][0, 0, 0, 1]
+    if uses_physical_cache:
+        assert cache.update_calls == []
+        assert captured["past_seen_tokens"] == 4
+    else:
+        assert len(cache.update_calls) == 1
+
+
+def test_diffusion_gemma_encoder_attention_reads_current_kv_from_physical_cache():
+    from types import SimpleNamespace
+
+    from torch import nn
+
+    from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+        QEffDiffusionGemmaEncoderTextAttention,
+    )
+
+    attention = object.__new__(QEffDiffusionGemmaEncoderTextAttention)
+    nn.Module.__init__(attention)
+    attention.q_proj = nn.Identity()
+    attention.k_proj = nn.Identity()
+    attention.v_proj = nn.Identity()
+    attention.o_proj = nn.Identity()
+    attention.q_norm = nn.Identity()
+    attention.k_norm = nn.Identity()
+    attention.v_norm = nn.Identity()
+    attention.head_dim = 2
+    attention.num_key_value_groups = 1
+    attention.layer_idx = 0
+    attention.scaling = 1.0
+    attention.config = SimpleNamespace(final_logit_softcapping=None)
+
+    retained_keys = torch.zeros((1, 1, 4, 2))
+    retained_values = torch.full((1, 1, 4, 2), 2.0)
+
+    class FakeCache:
+        def __init__(self):
+            self.layers = [SimpleNamespace(keys=retained_keys, values=retained_values)]
+            self.update_calls = []
+
+        def update(self, key_states, value_states, layer_idx, cache_kwargs):
+            self.update_calls.append((key_states, value_states, layer_idx, cache_kwargs))
+            return retained_keys, retained_values
+
+    cache = FakeCache()
+    hidden_states = torch.zeros((1, 2, 2))
+    position_ids = torch.tensor([[4, 5]])
+    attention_mask = torch.zeros((1, 1, 2, 4))
+
+    output, attn_weights = attention(
+        hidden_states=hidden_states,
+        position_embeddings=(torch.ones((1, 2, 1, 2)), torch.zeros((1, 2, 1, 2))),
+        attention_mask=attention_mask,
+        past_key_values=cache,
+        position_ids=position_ids,
+        cache_position_ids=position_ids,
+        use_physical_kv=True,
+        is_encode_export=True,
+    )
+
+    assert len(cache.update_calls) == 1
+    assert cache.update_calls[0][3]["position_ids"] is position_ids
+    assert attn_weights.shape == (1, 1, 2, 4)
+    assert torch.equal(output, torch.full((1, 2, 2), 2.0))
+
+
+def test_diffusion_gemma_uses_encoder_and_canvas_attention_mask_contracts():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+        QEffDiffusionGemmaDecoderWrapper,
+        QEffDiffusionGemmaEncoderWrapper,
+        QEffDiffusionGemmaUnifiedWrapper,
+    )
+
+    unified = object.__new__(QEffDiffusionGemmaUnifiedWrapper)
+    unified.config = SimpleNamespace(canvas_length=4)
+    unified.text_config = SimpleNamespace(layer_types=["full_attention", "sliding_attention"], sliding_window=3)
+    unified.model = SimpleNamespace(_get_mm_tokens_per_image=lambda: 5)
+
+    axes = unified.get_onnx_dynamic_axes()
+    assert axes["full_attention_mask"][3] == "full_kv_plus_seq_len"
+    assert axes["sliding_attention_mask"][3] == "sliding_kv_plus_seq_len"
+    unified_specialization = unified.get_specializations(batch_size=1, prefill_seq_len=4, ctx_len=8)[0][0]
+    assert unified_specialization["full_kv_plus_seq_len"] == 12
+    assert unified_specialization["sliding_kv_plus_seq_len"] == 7
+
+    encoder = object.__new__(QEffDiffusionGemmaEncoderWrapper)
+    encoder.text_config = unified.text_config
+    encoder.model = unified.model
+    encoder.unified = unified
+    encoder_axes = encoder.get_onnx_dynamic_axes()
+    assert encoder_axes["full_attention_mask"][3] == "ctx_len"
+    assert encoder_axes["sliding_attention_mask"][3] == "sliding_window"
+    encoder_specialization = encoder.get_specializations(batch_size=1, prefill_seq_len=4, ctx_len=8)[0][0]
+    assert "full_kv_plus_seq_len" not in encoder_specialization
+    assert "sliding_kv_plus_seq_len" not in encoder_specialization
+
+    decoder = object.__new__(QEffDiffusionGemmaDecoderWrapper)
+    decoder.text_config = unified.text_config
+    decoder_specialization = decoder.get_specializations(batch_size=1, canvas_length=4, ctx_len=8)[0][0]
+    assert decoder_specialization["full_kv_plus_seq_len"] == 12
+    assert decoder_specialization["sliding_kv_plus_seq_len"] == 7
+
+
+def test_diffusion_gemma_encoder_mask_uses_physical_kv_width_only():
+    from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import DiffusionGemmaSingleQPCGenerator
+
+    generator = object.__new__(DiffusionGemmaSingleQPCGenerator)
+    generator.prefill_seq_len = 2
+    generator.position_ids = np.array([[3, 4]], dtype=np.int64)
+    generator.mm_token_type_ids = np.zeros((1, 2), dtype=np.int64)
+    generator._retained_last_position = 2
+    generator._full_slot_positions = np.array([0, 1, 2, -1, -1, -1], dtype=np.int64)
+    generator._sliding_slot_positions = np.array([0, 1, 2, -1], dtype=np.int64)
+    cache_position_ids = np.array([[3, 4]], dtype=np.int64)
+
+    full_mask = generator._build_additive_mask(
+        cache_length=6,
+        sliding=False,
+        cache_position_ids=cache_position_ids,
+        is_encode=True,
+        include_current_tokens=False,
+    )
+    sliding_mask = generator._build_additive_mask(
+        cache_length=4,
+        sliding=True,
+        cache_position_ids=cache_position_ids,
+        is_encode=True,
+        include_current_tokens=False,
+    )
+
+    assert full_mask.shape == (1, 1, 2, 6)
+    assert sliding_mask.shape == (1, 1, 2, 4)
+
+
+def test_diffusion_gemma_decode_keeps_canvas_out_of_retained_cache_until_commit():
+    from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import DiffusionGemmaSingleQPCGenerator
+
+    generator = object.__new__(DiffusionGemmaSingleQPCGenerator)
+    generator.rng = np.random.RandomState(0)
+    generator.canvas_length = 2
+    generator.prefill_seq_len = 2
+    generator.vocab_size = 8
+    generator.pad_token_id = 0
+    generator._retained_last_position = 2
+    generator._next_encoder_position = lambda: 3
+    generator._emit_debug = lambda *args, **kwargs: None
+    decode_feeds = []
+    commit_feeds = []
+    recorded_writes = []
+
+    def shared_feed(**kwargs):
+        if kwargs["is_encode"]:
+            commit_feeds.append(kwargs)
+        else:
+            decode_feeds.append(kwargs)
+        return kwargs
+
+    generator._shared_feed = shared_feed
+    generator._run_session = lambda feed, **kwargs: {
+        "denoiser_canvas": np.array([[4, 5]], dtype=np.int64),
+        "newly_accepted_mask": np.ones((1, 2), dtype=bool),
+        "mean_entropy": np.zeros((1, 1), dtype=np.float32),
+        "top1_indices": np.array([[4, 5]], dtype=np.int64),
+    }
+    generator._record_cache_write = lambda cache_position_ids: recorded_writes.append(cache_position_ids.copy())
+
+    tokens, steps, _, accepted_count = generator._denoise_canvas(
+        block_index=0,
+        max_denoising_steps=2,
+        sampler="local",
+        entropy_bound=0.1,
+        t_min=0.4,
+        t_max=0.8,
+        stability_threshold=0,
+        confidence_threshold=0.005,
+        step_callback=None,
+        debug_callback=None,
+    )
+
+    assert steps == 1
+    assert accepted_count == 2
+    assert np.array_equal(tokens, np.array([[4, 5]], dtype=np.int64))
+    assert len(decode_feeds) == 1
+    assert decode_feeds[0]["is_encode"] is False
+    assert np.array_equal(decode_feeds[0]["cache_position_ids"], np.array([[-1, -1]], dtype=np.int64))
+    assert generator._retained_last_position == 2
+
+    generator._commit_canvas(tokens)
+
+    assert len(commit_feeds) == 1
+    assert commit_feeds[0]["is_encode"] is True
+    assert np.array_equal(commit_feeds[0]["cache_position_ids"], np.array([[3, 4]], dtype=np.int64))
+    assert len(recorded_writes) == 1
+    assert np.array_equal(recorded_writes[0], np.array([[3, 4]], dtype=np.int64))
+    assert generator._retained_last_position == 4
+
+
+def test_diffusion_gemma_decode_mask_reads_retained_history_and_appended_canvas():
+    from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import DiffusionGemmaSingleQPCGenerator
+
+    generator = object.__new__(DiffusionGemmaSingleQPCGenerator)
+    generator.prefill_seq_len = 2
+    generator.position_ids = np.array([[3, 4]], dtype=np.int64)
+    generator._retained_last_position = 2
+    generator._full_slot_positions = np.array([0, 1, 2, -1, -1, -1], dtype=np.int64)
+    generator._sliding_slot_positions = np.array([0, 1, 2, -1], dtype=np.int64)
+    cache_position_ids = np.array([[3, 4]], dtype=np.int64)
+
+    full_mask = generator._build_additive_mask(
+        cache_length=6,
+        sliding=False,
+        cache_position_ids=cache_position_ids,
+        is_encode=False,
+    )
+    sliding_mask = generator._build_additive_mask(
+        cache_length=4,
+        sliding=True,
+        cache_position_ids=cache_position_ids,
+        is_encode=False,
+    )
+
+    assert full_mask.shape == (1, 1, 2, 8)
+    assert np.all(full_mask[:, :, :, :3] == 0.0)
+    assert np.all(full_mask[:, :, :, 3:6] == generator._MASK_VALUE)
+    assert np.all(full_mask[:, :, :, 6:] == 0.0)
+    assert sliding_mask.shape == (1, 1, 2, 6)
+    assert np.all(sliding_mask[:, :, :, :3] == 0.0)
+    assert np.all(sliding_mask[:, :, :, 3] == generator._MASK_VALUE)
+    assert np.all(sliding_mask[:, :, :, 4:] == 0.0)
+
+
+def test_diffusion_gemma_encoder_qpc_exposes_num_layers_for_mdp(monkeypatch):
+    from types import SimpleNamespace
+
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
+
+    def fake_base_model_init(instance, model):
+        instance.hash_params = {}
+
+    encoder_wrapper = SimpleNamespace(
+        qaic_config=object(),
+        text_config=SimpleNamespace(num_hidden_layers=4),
+    )
+    qeff_model = SimpleNamespace(get_qeff_diffusion_encoder=lambda **kwargs: encoder_wrapper)
+    monkeypatch.setattr(diffusion_utils.QEFFBaseModel, "__init__", fake_base_model_init)
+
+    encoder = diffusion_utils.DiffusionGemmaEncoderQPC(qeff_model)
+
+    assert encoder.num_layers == 4
+    assert encoder.model.qaic_config is None
+
+
+def test_diffusion_gemma_encoder_wrapper_can_omit_image_idx_output():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+        QEffDiffusionGemmaEncoderWrapper,
+    )
+
+    encoder = object.__new__(QEffDiffusionGemmaEncoderWrapper)
+    encoder.include_image_idx = False
+    encoder.text_config = SimpleNamespace(num_hidden_layers=2)
+
+    assert encoder.get_output_names() == [
+        "past_key.0_RetainedState",
+        "past_value.0_RetainedState",
+        "past_key.1_RetainedState",
+        "past_value.1_RetainedState",
+    ]
+
+
+def test_diffusion_gemma_split_runtime_configures_encoder_pipeline_stages(monkeypatch):
+    from types import SimpleNamespace
+
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
+
+    sessions = []
+
+    class FakeSession:
+        def __init__(self, path, **kwargs):
+            self.path = path
+            self.kwargs = kwargs
+            self.deactivated = False
+            sessions.append(self)
+
+        def deactivate(self):
+            self.deactivated = True
+
+    class FakeGenerator:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def generate(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr(diffusion_utils, "QAICInferenceSession", FakeSession)
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaSplitQPCGenerator", FakeGenerator)
+    qeff_model = SimpleNamespace(
+        model=SimpleNamespace(config=object(), generation_config=SimpleNamespace(pad_token_id=0))
+    )
+
+    result = diffusion_utils.diffusion_gemma_generate_split_qpc_chunked(
+        qeff_model=qeff_model,
+        inputs={},
+        generation_len=4,
+        encoder_qpc_path="encoder.qpc",
+        decoder_qpc_path="decoder.qpc",
+        prefill_stages=3,
+    )
+
+    assert sessions[0].kwargs == {
+        "device_ids": None,
+        "kv_dma_share": True,
+        "stages": 3,
+        "cluster_id": "prefill",
+        "full_batch_size": 1,
+    }
+    assert sessions[1].kwargs == {
+        "device_ids": None,
+        "kv_dma_share": True,
+        "cluster_id": "decode",
+        "full_batch_size": 1,
+    }
+    assert result["generation_len"] == 4
+
+
+def test_diffusion_gemma_split_prefill_handoff_uses_kv_buffers_on_final_chunk():
+    from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import DiffusionGemmaSplitQPCGenerator
+
+    calls = []
+
+    class FakeEncoderSession:
+        input_names = ["input_ids"]
+
+        def np_run_pipeline(self, feed, *, last_chunk, kv_cache_buffers):
+            calls.append((feed, last_chunk, kv_cache_buffers))
+            return len(calls) - 1
+
+        def complete_inf(self, exec_idx, *, is_prefill):
+            assert is_prefill
+            assert exec_idx >= 0
+
+        def get_outputs(self, exec_idx):
+            return {"image_idx_output": np.array([[exec_idx + 1]], dtype=np.int64)}
+
+    generator = object.__new__(DiffusionGemmaSplitQPCGenerator)
+    generator.encoder_session = FakeEncoderSession()
+    generator._input_session = generator.encoder_session
+    generator._kv_caches = [np.zeros((1, 2), dtype=np.int8)]
+    generator._prompt_chunks = [object(), object()]
+    generator._last_encoder_outputs = {}
+    generator.canvas_length = 2
+    generator.position_ids = np.array([[0, 1]], dtype=np.int64)
+    generator.image_idx = np.zeros((1, 1), dtype=np.int64)
+    generator._retained_last_position = -1
+    generator._load_prompt_chunk = lambda chunk_index, image_idx: None
+    generator._shared_feed = lambda **kwargs: {"input_ids": np.zeros((1, 2), dtype=np.int64)}
+    generator._record_cache_write = lambda cache_position_ids: None
+    generator._emit_debug = lambda debug_callback, event: None
+
+    total_time, retained_kv_count = generator.prefill()
+
+    assert total_time >= 0
+    assert retained_kv_count == 1
+    assert calls[0][1:] == (False, None)
+    assert calls[1][1:] == (True, generator._kv_caches)
+    assert np.array_equal(generator.image_idx, np.array([[2]], dtype=np.int64))
+    assert np.array_equal(generator._last_encoder_outputs["image_idx_output"], np.array([[2]], dtype=np.int64))
+
+
+def test_diffusion_gemma_split_generator_allows_compiler_elided_encoder_masks():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import DiffusionGemmaSplitQPCGenerator
+
+    class FakeBinding:
+        def __init__(self, name, dims):
+            self.name = name
+            self.dims = dims
+
+    decoder_session = SimpleNamespace(
+        bindings=[
+            FakeBinding("input_ids", [1, 2]),
+            FakeBinding("full_attention_mask", [1, 1, 2, 6]),
+            FakeBinding("sliding_attention_mask", [1, 1, 2, 4]),
+        ],
+        kv_cache_info=[((1, 1, 4, 2), np.int8)],
+    )
+    encoder_session = SimpleNamespace(input_names=["input_ids"], bindings=[])
+    model_config = SimpleNamespace(text_config=SimpleNamespace(vocab_size=8))
+
+    generator = DiffusionGemmaSplitQPCGenerator(
+        model_config=model_config,
+        encoder_session=encoder_session,
+        decoder_session=decoder_session,
+    )
+
+    assert generator.encoder_session is encoder_session
+    assert len(generator._kv_caches) == 1
+
+
+def test_diffusion_gemma_prefill_runtime_returns_decoder_ready_kv(monkeypatch):
+    from types import SimpleNamespace
+
+    import QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils as diffusion_utils
+
+    sessions = []
+    kv_caches = [np.ones((1, 2), dtype=np.int8)]
+
+    class FakeSession:
+        def __init__(self, path, **kwargs):
+            self.kwargs = kwargs
+            self.deactivated = False
+            sessions.append(self)
+
+        def deactivate(self):
+            self.deactivated = True
+
+    class FakeGenerator:
+        def __init__(self, **kwargs):
+            self._kv_caches = kv_caches
+            self._last_encoder_outputs = {"image_idx_output": np.array([[0]], dtype=np.int64)}
+
+        def _prepare_prompt(self, inputs, pad_token_id):
+            assert inputs["input_ids"].shape == (1, 3)
+            assert pad_token_id == 0
+            return 3
+
+        def prefill(self):
+            return 0.25, len(self._kv_caches)
+
+        def _next_encoder_position(self):
+            return 3
+
+    monkeypatch.setattr(diffusion_utils, "QAICInferenceSession", FakeSession)
+    monkeypatch.setattr(diffusion_utils, "DiffusionGemmaSplitQPCGenerator", FakeGenerator)
+    qeff_model = SimpleNamespace(
+        model=SimpleNamespace(config=object(), generation_config=SimpleNamespace(pad_token_id=0))
+    )
+
+    result = diffusion_utils.diffusion_gemma_prefill_split_qpc_chunked(
+        qeff_model=qeff_model,
+        inputs={"input_ids": np.zeros((1, 3), dtype=np.int64)},
+        encoder_qpc_path="encoder.qpc",
+        decoder_qpc_path="decoder.qpc",
+        prefill_stages=2,
+    )
+
+    assert result.kv_caches is kv_caches
+    assert result.prompt_length == 3
+    assert result.next_position == 3
+    assert result.total_time == 0.25
+    assert np.array_equal(result.encoder_outputs["image_idx_output"], np.array([[0]], dtype=np.int64))
+    assert sessions[0].kwargs["stages"] == 2
+    assert all(session.deactivated for session in sessions)
+
+    with pytest.raises(ValueError, match="text-only"):
+        diffusion_utils.diffusion_gemma_prefill_split_qpc_chunked(
+            qeff_model=qeff_model,
+            inputs={"input_ids": np.zeros((1, 3), dtype=np.int64), "vision_embeds": np.zeros((1, 1, 1))},
+            encoder_qpc_path="encoder.qpc",
+            decoder_qpc_path="decoder.qpc",
+        )

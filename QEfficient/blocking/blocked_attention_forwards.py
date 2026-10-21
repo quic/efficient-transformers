@@ -204,6 +204,7 @@ def blocked_kv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -231,7 +232,7 @@ def blocked_kv_attention_forward(
     )
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1184,11 +1185,14 @@ def blocked_qkv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    ephemeral_key: Optional[torch.Tensor] = None,
+    ephemeral_value: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Compute attention by streaming query and key/value blocks.
@@ -1202,7 +1206,7 @@ def blocked_qkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked QKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1325,6 +1329,29 @@ def blocked_qkv_attention_forward(
                 skip_future,
             )
 
+        if ephemeral_key is not None and ephemeral_value is not None:
+            ephemeral_key_states, ephemeral_value_states = _get_kv_states(module, ephemeral_key, ephemeral_value)
+            ephemeral_start_index = attention_mask.shape[-1] - ephemeral_key_states.shape[-2]
+            ephemeral_end_index = attention_mask.shape[-1]
+            attn_weights_block = torch.matmul(q_block, ephemeral_key_states.transpose(2, 3)) * scaling
+            if position_bias is not None:
+                attn_weights_block = attn_weights_block + position_bias[:, :, ephemeral_start_index:ephemeral_end_index]
+            if attention_mask is not None:
+                attn_mask_block = attention_mask[
+                    :, :, q_start : q_start + q_len_block, ephemeral_start_index:ephemeral_end_index
+                ]
+                attn_weights_block = torch.where(attn_mask_block, masked_tensor, attn_weights_block)
+            ephemeral_skip_future = torch.zeros_like(current_max, dtype=torch.bool)
+            current_max, current_denominator, output_blocks = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output_blocks,
+                ephemeral_value_states,
+                skip_kv,
+                ephemeral_skip_future,
+            )
+
         # If present, apply Attention Sinks, needed for GPT-OSS
         if sinks is not None:
             _, _, output_blocks = update_running_softmax(current_max, sinks, current_denominator, output_blocks, None)
@@ -1353,11 +1380,14 @@ def blocked_hqkv_attention_forward(
     *,
     paged_attention: bool = False,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    ephemeral_key: Optional[torch.Tensor] = None,
+    ephemeral_value: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize Running Maximum and Denominator
@@ -1366,7 +1396,7 @@ def blocked_hqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked HQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
@@ -1395,6 +1425,11 @@ def blocked_hqkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    ephemeral_key_states = None
+    ephemeral_value_states = None
+    if ephemeral_key is not None and ephemeral_value is not None:
+        ephemeral_key_states, ephemeral_value_states = _get_kv_states(module, ephemeral_key, ephemeral_value)
 
     # Gather each KV block once: block_index/updated/cache_kwargs only depend on `kv_block_idx`,
     # not on head_block_idx/q_block_idx, so hoist the read out of the loops below.
@@ -1499,6 +1534,33 @@ def blocked_hqkv_attention_forward(
                 current_max, current_denominator, output_blocks = update_running_softmax(
                     current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
                 )
+
+            if ephemeral_key_states is not None and ephemeral_value_states is not None:
+                ephemeral_key_block = ephemeral_key_states[:, h_start:h_end, :, :]
+                ephemeral_value_block = ephemeral_value_states[:, h_start:h_end, :, :]
+                ephemeral_start_index = attention_mask.shape[-1] - ephemeral_key_block.shape[-2]
+                ephemeral_end_index = attention_mask.shape[-1]
+                attn_weights_block = torch.matmul(q_block, ephemeral_key_block.transpose(2, 3)) * scaling
+                if position_bias is not None:
+                    attn_weights_block = attn_weights_block + position_bias[
+                        h_start:h_end, :, ephemeral_start_index:ephemeral_end_index
+                    ]
+                if attention_mask is not None:
+                    attn_mask_block = attention_mask[
+                        :, :, q_start : q_start + q_len_block, ephemeral_start_index:ephemeral_end_index
+                    ]
+                    attn_weights_block = torch.where(attn_mask_block, masked_tensor, attn_weights_block)
+                ephemeral_skip_future = torch.zeros_like(current_max, dtype=torch.bool)
+                current_max, current_denominator, output_blocks = update_running_softmax(
+                    current_max,
+                    attn_weights_block,
+                    current_denominator,
+                    output_blocks,
+                    ephemeral_value_block,
+                    skip_kv,
+                    ephemeral_skip_future,
+                )
+
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
                 _, _, output_blocks = update_running_softmax(
@@ -1536,6 +1598,7 @@ def blocked_bhqkv_attention_forward(
     paged_attention: bool = False,
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
+    preserve_attention_mask_on_export: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
     ctx_len: Optional[int] = None,
@@ -1549,7 +1612,7 @@ def blocked_bhqkv_attention_forward(
     if ctx_len is None:
         raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
     past_seen_tokens = ctx_len
-    if torch.onnx.is_in_onnx_export():
+    if torch.onnx.is_in_onnx_export() and not preserve_attention_mask_on_export:
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")

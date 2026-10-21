@@ -701,20 +701,20 @@ class QEFFBaseModel(ABC):
                 return tuple(layers)
             return None
 
-        def _resolve_pkv_names(layer_idx, layer_state):
+        def _resolve_pkv_names(layer_idx, layer_state, prefix=""):
             if hasattr(self.model, "get_onnx_past_key_value_names"):
                 names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
                 if names is not None:
-                    return list(names)
+                    return [prefix + name for name in names]
             state_len = len(layer_state)
             if state_len == 2:
-                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+                return [f"{prefix}past_key.{layer_idx}", f"{prefix}past_value.{layer_idx}"]
             if state_len == 4:
                 return [
-                    f"past_key_self.{layer_idx}",
-                    f"past_value_self.{layer_idx}",
-                    f"past_key_cross.{layer_idx}",
-                    f"past_value_cross.{layer_idx}",
+                    f"{prefix}past_key_self.{layer_idx}",
+                    f"{prefix}past_value_self.{layer_idx}",
+                    f"{prefix}past_key_cross.{layer_idx}",
+                    f"{prefix}past_value_cross.{layer_idx}",
                 ]
             raise ValueError(
                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
@@ -724,13 +724,14 @@ class QEFFBaseModel(ABC):
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
-                if param == "past_key_values":
-                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                if param.endswith("past_key_values"):
+                    pkv_layers = _resolve_pkv_layers(example_inputs[param])
                     if pkv_layers is None:
                         input_names.append(param)
                         continue
+                    prefix = param[: -len("past_key_values")]
                     for i in range(len(pkv_layers)):
-                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i]))
+                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i], prefix=prefix))
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
                         input_names.extend(
@@ -915,6 +916,12 @@ class QEFFBaseModel(ABC):
             **compiler_options,
         )
 
+        extras = {
+            "inputs": self.model.get_dummy_inputs(),
+            "output_names": self.model.get_output_names(),
+            "dynamic_axes": self.model.get_onnx_dynamic_axes(),
+        }
+        kwargs.update(extras)
         with export_from_compile():
             self.export(**kwargs)
         return self.onnx_path
@@ -1376,6 +1383,46 @@ class QEFFBaseModel(ABC):
             ]
             + [f"-m={onnx_path}"]
         )
+
+        # MDP partition config selection (highest priority first):
+        #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
+        #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
+        #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
+        #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
+        #        requires a prior -mdp-dump-partition-config run.
+        #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
+        mdp_ts_json = None
+
+        if mdp_ts_json_path:
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+        elif mdp_num_partitions > 1:
+            # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
+            num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            num_layers = getattr(self, "num_layers", None)
+            if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
+                num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
+            if num_layers is None:
+                raise AttributeError(
+                    "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
+                )
+            mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
+                onnx_path=onnx_path,
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=mdp_ts_num_devices,
+                mdp_num_partitions=mdp_num_partitions,
+                mdp_strategy=mdp_strategy,
+                mdp_compiler_dump_path=mdp_compiler_dump_path,
+                num_cores=num_cores,
+                num_layers=num_layers,
+            )
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+        elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
+            # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
+            # File write and command flag are deferred to after compile_dir is finalised (post-hash).
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")

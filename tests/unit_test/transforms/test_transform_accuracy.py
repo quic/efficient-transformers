@@ -25,12 +25,15 @@ import copy
 import inspect
 import logging
 import warnings
+from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+import onnx
 import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from onnx import TensorProto, helper
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -52,9 +55,29 @@ from transformers import (
     Qwen2Config,
     Qwen2ForCausalLM,
 )
+from transformers.models.diffusion_gemma.configuration_diffusion_gemma import DiffusionGemmaTextConfig
+from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    DiffusionGemmaEncoderTextModel,
+    DiffusionGemmaTextRotaryEmbedding,
+    apply_rotary_pos_emb,
+)
 
 import QEfficient.transformers.models.pytorch_transforms as pytorch_transforms
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
+from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    QEffDiffusionGemmaDecoderWrapper,
+    QEffDiffusionGemmaEncoderTextModel,
+    QEffDiffusionGemmaEncoderWrapper,
+    QEffDiffusionGemmaTextMoeBlock,
+    QEffDiffusionGemmaUnifiedWrapper,
+    _apply_rotary_pos_emb,
+    _top_k_self_conditioning_embeddings,
+    _write_unified_accum_npi,
+)
+from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
+    DiffusionGemmaSingleQPCGenerator,
+    _build_decoder_kv_inputs,
+)
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     ExternalOptimizedMoEMapperTransform,
@@ -2309,6 +2332,311 @@ class TestMoETransformReplacement:
         with torch.no_grad():
             out = transformed(**qeff_inputs)
         assert torch.isfinite(out.logits).all(), "Mixtral KVCacheTransform must produce finite logits"
+
+
+@pytest.mark.transforms
+class TestDiffusionGemmaMoEBlock:
+    def test_decode_bmm_matches_explicit_top_k_expert_execution(self):
+        class Router(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("top_k_index", torch.tensor([[0, 1], [2, 0], [1, 2], [0, 2]]))
+                self.register_buffer(
+                    "top_k_weights",
+                    torch.tensor([[0.7, 0.3], [0.6, 0.4], [0.55, 0.45], [0.8, 0.2]]),
+                )
+
+            def forward(self, hidden_states):
+                tokens = hidden_states.shape[0]
+                probabilities = hidden_states.new_zeros((tokens, 3))
+                return probabilities, self.top_k_weights[:tokens], self.top_k_index[:tokens]
+
+        class Experts(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate_up_proj = nn.Parameter(torch.randn(3, 8, 6))
+                self.down_proj = nn.Parameter(torch.randn(3, 6, 4))
+                self.act_fn = F.silu
+
+        torch.manual_seed(0)
+        router = Router()
+        experts = Experts()
+        gate_up_proj = experts.gate_up_proj.detach().clone()
+        down_proj = experts.down_proj.detach().clone()
+        hidden_states = torch.randn(1, 4, 6)
+
+        moe_block = QEffDiffusionGemmaTextMoeBlock(router, experts, nn.Identity(), nn.Identity())
+        moe_block.transform_weights()
+        actual = moe_block(hidden_states)
+
+        expected_outputs = []
+        for token, expert_indices, expert_weights in zip(
+            hidden_states.reshape(-1, hidden_states.shape[-1]),
+            router.top_k_index,
+            router.top_k_weights,
+        ):
+            token_output = torch.zeros(4)
+            for expert_index, expert_weight in zip(expert_indices, expert_weights):
+                gate, up = torch.mv(gate_up_proj[expert_index], token).chunk(2)
+                expert_output = torch.mv(down_proj[expert_index], F.silu(gate) * up)
+                token_output = token_output + expert_weight * expert_output
+            expected_outputs.append(token_output)
+        expected = torch.stack(expected_outputs).reshape_as(actual)
+
+        torch.testing.assert_close(actual, expected)
+        assert not hasattr(experts, "gate_up_proj")
+        assert not hasattr(experts, "down_proj")
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_text_rope_cache_matches_hf_above_previous_export_limit():
+    config = DiffusionGemmaTextConfig(
+        hidden_size=16,
+        intermediate_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        num_global_key_value_heads=1,
+        head_dim=8,
+        global_head_dim=8,
+        num_hidden_layers=2,
+        max_position_embeddings=4097,
+        layer_types=["sliding_attention", "full_attention"],
+        num_experts=2,
+        top_k_experts=1,
+        moe_intermediate_size=32,
+    )
+    language_model = DiffusionGemmaEncoderTextModel(config)
+    language_model, transformed = KVCacheTransform.apply(language_model)
+
+    assert transformed
+    assert isinstance(language_model, QEffDiffusionGemmaEncoderTextModel)
+
+    position_ids = torch.tensor([[0, 17, 4096]], dtype=torch.int64)
+    hidden_states = torch.zeros((1, position_ids.shape[1], config.hidden_size), dtype=torch.float32)
+    reference_rotary_emb = DiffusionGemmaTextRotaryEmbedding(config)
+
+    for layer_type in sorted(config.layer_types):
+        expected_cos, expected_sin = reference_rotary_emb(hidden_states, position_ids, layer_type)
+        cached_cos = getattr(language_model, f"{layer_type}_cos_cached")[position_ids].unsqueeze(2)
+        cached_sin = getattr(language_model, f"{layer_type}_sin_cached")[position_ids].unsqueeze(2)
+        rotary_states = torch.randn(1, position_ids.shape[1], config.num_attention_heads, config.head_dim)
+
+        assert isinstance(getattr(language_model, f"{layer_type}_cos_cached"), nn.Parameter)
+        assert isinstance(getattr(language_model, f"{layer_type}_sin_cached"), nn.Parameter)
+        assert cached_cos.shape == (1, position_ids.shape[1], 1, expected_cos.shape[-1])
+        assert cached_sin.shape == (1, position_ids.shape[1], 1, expected_sin.shape[-1])
+        torch.testing.assert_close(cached_cos, expected_cos.unsqueeze(2))
+        torch.testing.assert_close(cached_sin, expected_sin.unsqueeze(2))
+        torch.testing.assert_close(
+            _apply_rotary_pos_emb(rotary_states, cached_cos, cached_sin),
+            apply_rotary_pos_emb(rotary_states, expected_cos, expected_sin, unsqueeze_dim=2),
+        )
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_self_conditioning_uses_retained_probabilities():
+    embedding_weight = torch.randn(17, 5)
+    top_k_logits = torch.randn(1, 3, 4)
+    top_k_indices = torch.randint(0, embedding_weight.shape[0], (1, 3, 4))
+    top_k_probabilities = top_k_logits.softmax(dim=-1, dtype=torch.float32)
+
+    expected = torch.matmul(
+        top_k_probabilities.to(embedding_weight.dtype).unsqueeze(-2),
+        F.embedding(top_k_indices, embedding_weight),
+    ).squeeze(-2)
+    actual = _top_k_self_conditioning_embeddings(top_k_probabilities, top_k_indices, embedding_weight)
+
+    torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_unified_wrapper_retains_topk_state_and_returns_top1():
+    wrapper = object.__new__(QEffDiffusionGemmaUnifiedWrapper)
+    wrapper.text_config = SimpleNamespace(
+        num_hidden_layers=2,
+        layer_types=["full_attention", "sliding_attention"],
+    )
+
+    output_names = wrapper.get_output_names()
+    dynamic_axes = wrapper.get_onnx_dynamic_axes()
+
+    assert output_names[:6] == [
+        "self_conditioning_topk_probabilities_RetainedState",
+        "self_conditioning_topk_indices_RetainedState",
+        "newly_accepted_mask",
+        "mean_entropy",
+        "denoiser_canvas",
+        "top1_indices",
+    ]
+    assert "topk_logits" not in output_names
+    assert "topk_indices" not in output_names
+    assert "self_conditioning_topk_probabilities" in dynamic_axes
+    assert "self_conditioning_topk_indices" in dynamic_axes
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_runtime_seeds_retained_self_conditioning_state_once():
+    generator = object.__new__(DiffusionGemmaSingleQPCGenerator)
+    binding_dims = {
+        "self_conditioning_topk_probabilities": [1, 8, 128],
+        "self_conditioning_topk_indices": [1, 8, 128],
+    }
+    generator._binding_dims = binding_dims.get
+
+    state = generator._initial_self_conditioning_state()
+
+    assert state["self_conditioning_topk_probabilities"].shape == (1, 8, 128)
+    assert state["self_conditioning_topk_probabilities"].dtype == np.float32
+    assert state["self_conditioning_topk_indices"].shape == (1, 8, 128)
+    assert state["self_conditioning_topk_indices"].dtype == np.int64
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_runtime_allows_internal_retained_self_conditioning_state():
+    generator = object.__new__(DiffusionGemmaSingleQPCGenerator)
+    generator._binding_dims = lambda _: None
+
+    assert generator._initial_self_conditioning_state() == {}
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_split_wrappers_expose_cache_handoff_contract():
+    text_config = SimpleNamespace(
+        num_hidden_layers=2,
+        layer_types=["full_attention", "sliding_attention"],
+    )
+    encoder = object.__new__(QEffDiffusionGemmaEncoderWrapper)
+    encoder.text_config = text_config
+    decoder = object.__new__(QEffDiffusionGemmaDecoderWrapper)
+    decoder.text_config = text_config
+
+    encoder_outputs = encoder.get_output_names()
+    decoder_outputs = decoder.get_output_names()
+
+    assert "encoder_past_key.0" in encoder_outputs
+    assert "encoder_past_value.1" in encoder_outputs
+    assert "past_key.0_RetainedState" in encoder_outputs
+    assert "self_conditioning_topk_probabilities_RetainedState" in decoder_outputs
+    assert "past_key.0_RetainedState" in decoder_outputs
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_split_runtime_aligns_encoder_kv_for_decoder_import():
+    decoder_session = SimpleNamespace(
+        bindings=[
+            SimpleNamespace(name="initial_past_key.0", dims=[1, 2, 4, 3], type=1),
+            SimpleNamespace(name="initial_past_value.0", dims=[1, 2, 4, 3], type=1),
+        ],
+        aic_to_np_dtype_mapping={1: np.dtype(np.float16)},
+    )
+    encoder_outputs = {
+        "encoder_past_key.0": np.ones((1, 2, 2, 3), dtype=np.float32),
+        "encoder_past_value.0": np.full((1, 2, 5, 3), 2.0, dtype=np.float32),
+    }
+
+    decoder_inputs = _build_decoder_kv_inputs(encoder_outputs, decoder_session)
+
+    assert decoder_inputs["initial_past_key.0"].dtype == np.float16
+    assert decoder_inputs["initial_past_key.0"].shape == (1, 2, 4, 3)
+    assert np.all(decoder_inputs["initial_past_key.0"][:, :, :2] == 1)
+    assert np.all(decoder_inputs["initial_past_key.0"][:, :, 2:] == 0)
+    assert np.all(decoder_inputs["initial_past_value.0"] == 2)
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_npi_excludes_all_attention_nodes(tmp_path):
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 2])
+    sampler_outputs = [
+        helper.make_tensor_value_info("topk_logits", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("topk_indices", TensorProto.INT64, [1, 1]),
+        helper.make_tensor_value_info("newly_accepted_mask", TensorProto.BOOL, [1, 2]),
+        helper.make_tensor_value_info("mean_entropy", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("new_canvas", TensorProto.INT64, [1]),
+    ]
+    initializers = [
+        helper.make_tensor("temperature", TensorProto.FLOAT, [1], [1.0]),
+        helper.make_tensor("topk", TensorProto.INT64, [1], [1]),
+        helper.make_tensor("axis", TensorProto.INT64, [1], [-1]),
+    ]
+    nodes = [
+        helper.make_node("Mul", ["input", "input"], ["attention_mul"], name="/layers.0/self_attn/Mul"),
+        helper.make_node("Add", ["attention_mul", "input"], ["attention_add"], name="/layers.0/self_attn/Add"),
+        helper.make_node("Mul", ["attention_add", "input"], ["mlp_mul"], name="/layers.0/mlp/Mul"),
+        helper.make_node("Div", ["mlp_mul", "temperature"], ["temperature_logits"], name="/sampler/Div"),
+        helper.make_node("LogSoftmax", ["temperature_logits"], ["log_probs"], name="/sampler/LogSoftmax"),
+        helper.make_node("Exp", ["log_probs"], ["probabilities"], name="/sampler/Exp"),
+        helper.make_node("Mul", ["probabilities", "log_probs"], ["entropy_terms"], name="/sampler/Mul"),
+        helper.make_node("ReduceSum", ["entropy_terms", "axis"], ["token_entropy"], name="/sampler/ReduceSum"),
+        helper.make_node("ReduceMean", ["token_entropy"], ["mean_entropy"], name="/sampler/ReduceMean"),
+        helper.make_node("TopK", ["temperature_logits", "topk"], ["topk_logits", "topk_indices"], name="/decoder/TopK"),
+        helper.make_node("CumSum", ["probabilities", "axis"], ["cumulative_probabilities"], name="/sampler/CumSum"),
+        helper.make_node(
+            "GreaterOrEqual",
+            ["cumulative_probabilities", "temperature"],
+            ["newly_accepted_mask"],
+            name="/sampler/GreaterOrEqual",
+        ),
+        helper.make_node("ArgMax", ["cumulative_probabilities"], ["new_canvas"], name="/sampler/ArgMax"),
+    ]
+    graph = helper.make_graph(
+        nodes, "diffusion-gemma-attention-npi-test", [input_info], sampler_outputs, initializer=initializers
+    )
+    onnx_path = tmp_path / "unified.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    npi_contents = Path(_write_unified_accum_npi(onnx_path)).read_text(encoding="utf-8")
+
+    assert "attention_mul" not in npi_contents
+    assert "attention_add" not in npi_contents
+    assert "mlp_mul" not in npi_contents
+    assert "temperature_logits" not in npi_contents
+    assert "topk_logits" in npi_contents
+    assert "topk_indices" not in npi_contents
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_npi_includes_prefixed_self_conditioning_nodes(tmp_path):
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 2])
+    sampler_outputs = [
+        helper.make_tensor_value_info("mean_entropy", TensorProto.FLOAT, [1, 1]),
+        helper.make_tensor_value_info("denoiser_canvas", TensorProto.INT64, [1, 2]),
+        helper.make_tensor_value_info("top1_indices", TensorProto.INT64, [1, 2]),
+    ]
+    initializers = [helper.make_tensor("topk", TensorProto.INT64, [1], [1])]
+    nodes = [
+        helper.make_node(
+            "Add",
+            ["input", "input"],
+            ["/unified/self_conditioning/Add_output_0"],
+            name="/unified/self_conditioning/Add",
+        ),
+        helper.make_node(
+            "Mul",
+            ["/unified/self_conditioning/Add_output_0", "input"],
+            ["/unified/self_conditioning/Mul_output_0"],
+            name="/unified/self_conditioning/Mul",
+        ),
+        helper.make_node(
+            "TopK",
+            ["input", "topk"],
+            ["/unified/TopK_output_0", "/unified/TopK_output_1"],
+            name="/unified/TopK",
+        ),
+        helper.make_node("ReduceMean", ["input"], ["mean_entropy"], name="/unified/ReduceMean"),
+        helper.make_node("ArgMax", ["input"], ["denoiser_canvas"], name="/unified/ArgMax"),
+        helper.make_node("ArgMax", ["input"], ["top1_indices"], name="/unified/ArgMax_1"),
+    ]
+    graph = helper.make_graph(
+        nodes, "diffusion-gemma-prefixed-self-conditioning-npi-test", [input_info], sampler_outputs, initializer=initializers
+    )
+    onnx_path = tmp_path / "decoder.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    npi_contents = Path(_write_unified_accum_npi(onnx_path)).read_text(encoding="utf-8")
+
+    assert "/unified/self_conditioning/Add_output_0" in npi_contents
+    assert "/unified/self_conditioning/Mul_output_0" in npi_contents
+    assert "'/self_conditioning/Add_output_0'" not in npi_contents
 
 
 # ---------------------------------------------------------------------------

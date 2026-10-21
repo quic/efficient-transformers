@@ -28,6 +28,7 @@ import torch.nn as nn
 
 from QEfficient.blocking import attention_blocking
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
+from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 
 VOCAB_SIZE = 500
 CTX_LEN = 32
@@ -538,3 +539,85 @@ class TestBlockingWrapperFallbackAndParity:
             f"Logits diverged beyond tolerance for blocking_cfg.mode={blocking_cfg.mode} "
             f"(max abs diff={(original_logits - transformed_logits).abs().max().item()})"
         )
+
+
+@pytest.mark.transforms
+@pytest.mark.parametrize(
+    ("preserve_attention_mask_on_export", "expected_value"),
+    [(False, 51.0), (True, 2.0)],
+)
+def test_kv_blocking_can_preserve_additive_mask_during_onnx_export(
+    monkeypatch,
+    preserve_attention_mask_on_export,
+    expected_value,
+):
+    class _Cache:
+        def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
+            del start_index, end_index, layer_idx, cache_kwargs
+            key = torch.zeros((1, 1, 2, 1))
+            value = torch.tensor([[[[2.0], [100.0]]]])
+            return key, value
+
+    module = nn.Module()
+    module.config = type("Cfg", (), {"torch_dtype": torch.float32})()
+    module.num_key_value_groups = 1
+    monkeypatch.setattr(torch.onnx, "is_in_onnx_export", lambda: True)
+
+    output, _ = blocked_kv_attention_forward(
+        module=module,
+        query=torch.ones((1, 1, 1, 1)),
+        key=torch.zeros((1, 1, 1, 1)),
+        value=torch.zeros((1, 1, 1, 1)),
+        attention_mask=torch.tensor([[[[False, True]]]]),
+        scaling=1.0,
+        num_kv_blocks=1,
+        cache_kwargs={"past_seen_tokens": 2, "position_ids": torch.tensor([[1]])},
+        layer_idx=0,
+        past_key_value=_Cache(),
+        preserve_attention_mask_on_export=preserve_attention_mask_on_export,
+    )
+
+    assert torch.equal(output, torch.tensor([[[[expected_value]]]]))
+
+
+@pytest.mark.transforms
+def test_diffusion_gemma_ephemeral_kv_uses_safe_cache_write(monkeypatch):
+    class Cache:
+        def __init__(self):
+            self.safe_write_calls = []
+            self.write_only_calls = []
+
+        def write_only_diffusion_gemma(self, key, value, layer_idx, cache_kwargs):
+            self.safe_write_calls.append((key, value, layer_idx, cache_kwargs))
+
+        def write_only(self, key, value, layer_idx, cache_kwargs):
+            self.write_only_calls.append((key, value, layer_idx, cache_kwargs))
+
+    cache = Cache()
+    query = torch.ones(1, 1, 1, 1)
+    key = torch.ones(1, 1, 1, 1)
+    value = torch.ones(1, 1, 1, 1)
+    strategy_calls = []
+
+    def qkv_strategy(**kwargs):
+        strategy_calls.append(kwargs)
+        return kwargs["query"], None
+
+    monkeypatch.setitem(attention_blocking._STRATEGIES, BlockingMode.QKV, qkv_strategy)
+
+    output, weights = attention_blocking.generic_blocked_attention_interface(
+        module=type("Attention", (), {"layer_idx": 0})(),
+        query=query,
+        key=key,
+        value=value,
+        past_key_value=cache,
+        blocking_config=AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=1, num_q_blocks=1),
+        diffusion_gemma_ephemeral_kv=True,
+    )
+
+    assert torch.equal(output, query)
+    assert weights is None
+    assert len(cache.safe_write_calls) == 1
+    assert not cache.write_only_calls
+    assert strategy_calls[0]["ephemeral_key"] is key
+    assert strategy_calls[0]["ephemeral_value"] is value

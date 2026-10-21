@@ -357,9 +357,11 @@ def generic_blocked_attention_interface(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    cache_position_ids: Optional[torch.LongTensor] = None,
     block_table: Optional[torch.LongTensor] = None,
     slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
+    preserve_attention_mask_on_export: bool = False,
     non_blocked_forward: Optional[Callable] = None,
     score_mod: Optional[Callable] = None,
     position_bias: Optional[torch.Tensor] = None,
@@ -368,6 +370,7 @@ def generic_blocked_attention_interface(
     mla_kwargs: Optional[Dict[str, Any]] = None,
     is_mla: bool = False,
     prefill_only: bool = False,
+    diffusion_gemma_ephemeral_kv: bool = False,
     **kwargs,
 ):
     blocking_mode = BlockingMode.resolve(blocking_config.mode)
@@ -398,12 +401,22 @@ def generic_blocked_attention_interface(
             position_ids = position_ids + layer_local_zero
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+    if cache_position_ids is not None:
+        cache_kwargs["cache_position_ids"] = cache_position_ids
 
     use_paged_kv_blocked = (
         blocking_config is not None
         and blocking_config.paged_attention
         and supports_paged_attention_blocked_kv(past_key_value)
     )
+
+    ephemeral_key = None
+    ephemeral_value = None
+    if diffusion_gemma_ephemeral_kv and blocking_mode not in {
+        BlockingMode.QKV,
+        BlockingMode.HQKV,
+    }:
+        raise ValueError("DiffusionGemma ephemeral KV is supported only with QKV or HQKV blocking.")
 
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
@@ -430,7 +443,11 @@ def generic_blocked_attention_interface(
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
-            if blocking_mode == BlockingMode.KV_BATCH_FOLD:
+            if diffusion_gemma_ephemeral_kv:
+                past_key_value.write_only_diffusion_gemma(key, value, module.layer_idx, cache_kwargs)
+                ephemeral_key = key
+                ephemeral_value = value
+            elif blocking_mode == BlockingMode.KV_BATCH_FOLD:
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
@@ -462,6 +479,8 @@ def generic_blocked_attention_interface(
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
+        ephemeral_key=ephemeral_key,
+        ephemeral_value=ephemeral_value,
         # standard (decode / prefill) inputs
         key=key,
         value=value,
@@ -477,6 +496,7 @@ def generic_blocked_attention_interface(
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
         paged_attention=blocking_config.paged_attention,
+        preserve_attention_mask_on_export=preserve_attention_mask_on_export,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
         num_cores_per_device=blocking_config.num_cores_per_device,

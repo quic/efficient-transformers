@@ -14,6 +14,7 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
   - Or directly: `ruff check --fix .` then `ruff format .`
 - Run tests: `pytest -n auto <path-or-expr>`
   - Narrow first with `-k '<expr>'`, then widen once green.
+  - Do not delete, clear, prune, or overwrite cache contents (including `~/.cache/`) without the user's explicit approval. Cache inspection is allowed.
   - Always run the appropriate tests after refactoring code, adding features,
     onboarding models, or making comparable behavioral changes.
   - If no suitable tests exist for newly added code, add focused tests in the

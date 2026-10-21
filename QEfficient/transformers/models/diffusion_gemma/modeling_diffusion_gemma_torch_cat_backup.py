@@ -1,0 +1,1413 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+import os
+from functools import partial
+from pathlib import Path
+from typing import List, Optional, Type, Union
+
+import onnx
+import torch
+import torch.nn as nn
+from transformers.cache_utils import Cache
+from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    DiffusionGemmaEncoderTextAttention,
+    DiffusionGemmaEncoderTextLayer,
+    DiffusionGemmaEncoderTextModel,
+    DiffusionGemmaForBlockDiffusion,
+    DiffusionGemmaRMSNorm,
+    DiffusionGemmaTextRotaryEmbedding,
+    DiffusionGemmaTextRouter,
+    rotate_half,
+)
+
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+)
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
+from QEfficient.utils import constants
+
+_FP16_CLAMP_MIN = -65504.0
+_FP16_CLAMP_MAX = 65504.0
+
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+SELF_CONDITIONING_TOP_K = 128
+DEVICE_ENTROPY_BOUND = 0.1
+
+_NPI_FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
+_NPI_MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
+_NPI_SAMPLER_OUTPUTS = {
+    "self_conditioning_topk_probabilities_RetainedState",
+    "self_conditioning_topk_indices_RetainedState",
+    "top1_indices",
+    "newly_accepted_mask",
+    "mean_entropy",
+    "denoiser_canvas",
+    "new_canvas",
+}
+_NPI_DISCRETE_SAMPLER_OUTPUTS = {
+    "self_conditioning_topk_indices_RetainedState",
+    "top1_indices",
+    "newly_accepted_mask",
+    "denoiser_canvas",
+    "new_canvas",
+}
+_NPI_DISCRETE_SAMPLER_OPS = {
+    "ArgMax",
+    "GreaterOrEqual",
+    "LessOrEqual",
+    "ScatterElements",
+    "ScatterND",
+    "Shape",
+}
+_NPI_EXCLUDED_OUTPUTS = {
+    "/Cast_9_output_0",
+    "/Div_1_output_0",
+    "/Reshape_2_output_0",
+    "/Reshape_6_output_0",
+}
+_NPI_FLOATING_POINT_TENSOR_TYPES = {
+    onnx.TensorProto.BFLOAT16,
+    onnx.TensorProto.DOUBLE,
+    onnx.TensorProto.FLOAT,
+    onnx.TensorProto.FLOAT16,
+}
+
+
+def _write_unified_accum_npi(onnx_path: Union[str, Path]) -> str:
+    onnx_path = Path(onnx_path)
+    model = onnx.load(onnx_path, load_external_data=False)
+    model = onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False)
+    graph = model.graph
+    producers = {output_name: node for node in graph.node for output_name in node.output}
+    tensor_dtypes = {
+        value_info.name: value_info.type.tensor_type.elem_type
+        for value_info in list(graph.input) + list(graph.output) + list(graph.value_info)
+        if value_info.type.HasField("tensor_type") and value_info.type.tensor_type.HasField("elem_type")
+    }
+    keep_nodes = []
+
+    def normalized_name(name):
+        return name.removeprefix("/unified")
+
+    def normalized_output_name(name):
+        return name.removeprefix("/unified")
+
+    def is_moe_node(node):
+        node_name = normalized_name(node.name).lower()
+        return any(part in node_name for part in _NPI_MOE_NODE_NAME_PARTS)
+
+    def is_excluded_npi_node(node):
+        node_name = normalized_name(node.name)
+        return "/self_attn/Softmax" in node_name or "/lm_head/MatMul" in node_name
+
+    def is_model_body_node(node):
+        return normalized_name(node.name).startswith(("/layers.", "/norm/", "/self_conditioning/", "/decoder/"))
+
+    sampler_outputs = [
+        output.name for output in graph.output if output.name.rsplit("/", maxsplit=1)[-1] in _NPI_SAMPLER_OUTPUTS
+    ]
+    is_sampler_graph = bool(sampler_outputs)
+
+    for node in graph.node:
+        if is_moe_node(node) or is_excluded_npi_node(node):
+            continue
+        if is_sampler_graph:
+            if normalized_name(node.name).startswith("/self_conditioning/") and node.op_type != "CustomRMSNorm":
+                keep_nodes.append(node)
+            continue
+        if node.op_type in _NPI_FP32_ACCUM_OPS:
+            keep_nodes.append(node)
+        node_name = normalized_name(node.name)
+        if "/decoder/self_conditioning/" in node_name or node_name.endswith("/decoder/norm/CustomRMSNorm"):
+            keep_nodes.append(node)
+
+    seen_names = set()
+
+    def backtrace(tensor_name, depth=0):
+        if tensor_name in seen_names or depth > 8:
+            return
+        seen_names.add(tensor_name)
+        node = producers.get(tensor_name)
+        if node is None or is_moe_node(node) or is_excluded_npi_node(node):
+            return
+        if is_sampler_graph and is_model_body_node(node):
+            return
+        keep_nodes.append(node)
+        for input_name in node.input:
+            if input_name in producers:
+                backtrace(input_name, depth + 1)
+
+    if sampler_outputs:
+        output_names = [
+            node.output[0]
+            for node in graph.node
+            if (
+                node.op_type == "TopK"
+                and node.output
+                and node.output[0]
+                and not is_moe_node(node)
+                and not is_excluded_npi_node(node)
+                and not is_model_body_node(node)
+            )
+        ]
+    elif graph.output:
+        output_names = [graph.output[0].name]
+    else:
+        output_names = []
+    for output_name in output_names:
+        backtrace(output_name)
+
+    initializer_names = {initializer.name for initializer in graph.initializer}
+
+    def depends_on_initializer(tensor_name, depth=0):
+        if tensor_name in initializer_names:
+            return True
+        if depth > 4:
+            return False
+        producer = producers.get(tensor_name)
+        if producer is None:
+            return False
+        return any(depends_on_initializer(input_name, depth + 1) for input_name in producer.input)
+
+    excluded_outputs = {"/decoder/MatMul_output_0", "/lm_head/MatMul_output_0"}
+    tensors = []
+    seen_tensors = set()
+    for node in keep_nodes:
+        if is_moe_node(node) or is_excluded_npi_node(node) or node.op_type in {"ReduceSum"}:
+            continue
+        for output_index, output_name in enumerate(node.output):
+            normalized_output_name_value = normalized_output_name(output_name)
+            if (
+                not output_name
+                or output_name in seen_tensors
+                or output_name in excluded_outputs
+                or normalized_output_name_value in _NPI_EXCLUDED_OUTPUTS
+            ):
+                continue
+            output_basename = output_name.rsplit("/", maxsplit=1)[-1]
+            if is_sampler_graph and (
+                output_basename in _NPI_DISCRETE_SAMPLER_OUTPUTS
+                or node.op_type in _NPI_DISCRETE_SAMPLER_OPS
+                or (node.op_type == "TopK" and output_index == 1)
+                or (output_name in tensor_dtypes and tensor_dtypes[output_name] not in _NPI_FLOATING_POINT_TENSOR_TYPES)
+            ):
+                continue
+            if node.op_type == "MatMul" and any(depends_on_initializer(name) for name in node.input):
+                continue
+            if node.op_type in {
+                "Cast",
+                "Transpose",
+                "Reshape",
+                "DequantizeLinear",
+                "QuantizeLinear",
+            } and depends_on_initializer(output_name):
+                continue
+            seen_tensors.add(output_name)
+            tensors.append(output_name)
+
+    npi_path = onnx_path.with_name("npi_fp32_unified_accum.yaml")
+    with open(npi_path, "w", encoding="utf-8") as handle:
+        handle.write("FP32NodeInstanceNames: [")
+        handle.write(", ".join(f"'{name}'" for name in sorted(tensors)))
+        handle.write("]\n")
+    print(f"  unified fp32 accumulation island: {len(tensors)} tensors -> {npi_path}")
+    return str(npi_path)
+
+
+def _top_k_self_conditioning_embeddings(
+    top_k_probabilities: torch.Tensor,
+    top_k_indices: torch.Tensor,
+    embedding_weight: torch.Tensor,
+) -> torch.Tensor:
+    top_k_probabilities = top_k_probabilities.to(embedding_weight.dtype)
+    top_k_embeddings = torch.nn.functional.embedding(top_k_indices, embedding_weight)
+    return torch.matmul(top_k_probabilities.unsqueeze(-2), top_k_embeddings).squeeze(-2)
+
+
+def _is_onnx_export() -> bool:
+    return torch.onnx.is_in_onnx_export()
+
+
+def _repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """Dynamic-shape-safe repeat_kv: uses -1 in reshape to avoid baking seq_len."""
+    if n_rep == 1:
+        return hidden_states
+    batch, num_kv_heads, _, head_dim = hidden_states.shape
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_kv_heads, n_rep, -1, head_dim)
+    return hidden_states.reshape(batch, num_kv_heads * n_rep, -1, head_dim)
+
+
+def _clamp_to_fp16_range(t: torch.Tensor) -> torch.Tensor:
+    if not _is_onnx_export():
+        return t
+    return t.clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX)
+
+
+def _saturating_residual_add(residual: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+    """Mirrors gemma4's helper — fp32 sum then clamp back to fp16 range.
+
+    Required for the canvas-decode path: without this clamp the decoder's residual
+    stream can exceed fp16 ±65504 on hardware, producing inf in subsequent attn
+    matmuls and NaN softmax rows. The encoder's layer-entry clamp kept its residual
+    bounded; the decoder has no such guard.
+    """
+    if not _is_onnx_export():
+        return residual + hidden_states
+    return (residual.float() + hidden_states.float()).clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX).to(hidden_states.dtype)
+
+
+def _apply_rotary_pos_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    return ((hidden_states * cos) + (rotate_half(hidden_states) * sin)).to(hidden_states.dtype)
+
+
+class QEffDiffusionGemmaTextRotaryEmbedding(DiffusionGemmaTextRotaryEmbedding):
+    """DiffusionGemma rotary embeddings with static caches for each text attention type."""
+
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+
+        for layer_type in sorted(self.layer_types):
+            inv_freq = getattr(self, f"{layer_type}_inv_freq")
+            positions = torch.arange(self.original_max_seq_len, device=inv_freq.device, dtype=torch.int64).type_as(
+                inv_freq
+            )
+            frequencies = torch.outer(positions, inv_freq)
+            embeddings = torch.cat((frequencies, frequencies), dim=-1)
+
+            self.register_buffer(f"{layer_type}_cos_cached", embeddings.cos().to(config.dtype), persistent=False)
+            self.register_buffer(f"{layer_type}_sin_cached", embeddings.sin().to(config.dtype), persistent=False)
+
+
+class QEffDiffusionGemmaRMSNorm(DiffusionGemmaRMSNorm):
+    """Export-safe RMSNorm.
+
+    For ``with_scale=True`` modules, exports as the AIC ``CustomRMSNorm`` op
+    (the proven compiler path). For ``with_scale=False`` modules (v_norm,
+    self_conditioning.post_norm, router.norm with no parent-registered unit
+    buffer), use the HF parent forward directly — it produces basic
+    ``Pow/ReduceMean/Sqrt/Mul`` ONNX ops that the compiler handles correctly.
+
+    The alternative (``CustomRMSNormFunc.apply(x, new_ones(dim), eps)``) exports a
+    runtime ``Shape→Gather→Concat→ConstantOfShape`` chain feeding the CustomRMSNorm
+    weight input, which computes the wrong norm on hardware. Bypassing the custom
+    op when ``with_scale=False`` matches the eager forward exactly.
+    """
+
+    def __qeff_init__(self):
+        if not getattr(self, "with_scale", True) and hasattr(self, "weight") and not hasattr(self, "_qeff_unit_weight"):
+            self.register_buffer("_qeff_unit_weight", torch.ones_like(self.weight))
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if not _is_onnx_export():
+            return super().forward(hidden_states)
+        if getattr(self, "with_scale", True):
+            return CustomRMSNormFunc.apply(hidden_states, self.weight, self.eps)
+        weight = getattr(self, "_qeff_unit_weight", None)
+        if weight is not None and weight.shape[-1] != 1:
+            return CustomRMSNormFunc.apply(hidden_states, weight, self.eps)
+        return super().forward(hidden_states)
+
+
+# ---------------------------------------------------------------------------
+# Router — same as gemma4 (drop router_probabilities return, compile-safe topk)
+# ---------------------------------------------------------------------------
+
+
+class QEffDiffusionGemmaTextRouter(DiffusionGemmaTextRouter):
+    def __qeff_init__(self):
+        if (
+            hasattr(self, "norm")
+            and not getattr(self.norm, "with_scale", True)
+            and not hasattr(self.norm, "_qeff_unit_weight")
+        ):
+            self.norm.register_buffer("_qeff_unit_weight", torch.ones(self.hidden_size))
+
+    def forward(self, hidden_states: torch.Tensor):
+        hidden_states = self.norm(hidden_states)
+        hidden_states = hidden_states * self.scale * self.scalar_root_size
+
+        router_probabilities = nn.functional.softmax(self.proj(hidden_states), dim=-1)
+        top_k_weights, top_k_index = torch.topk(
+            router_probabilities,
+            k=self.config.top_k_experts,
+            dim=-1,
+        )
+        top_k_weights = top_k_weights / torch.einsum("bk->b", top_k_weights).unsqueeze(-1)
+        top_k_weights = top_k_weights * self.per_expert_scale[top_k_index]
+        return router_probabilities, top_k_weights, top_k_index
+
+
+class QEffDiffusionGemmaTextMoeBlock(QEffMoEBlockMixin, nn.Module):
+    """QEff MoE execution wrapper for DiffusionGemma encoder layers."""
+
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
+    supports_moe_decode_bmm = True
+
+    def __init__(
+        self,
+        router: nn.Module,
+        experts: nn.Module,
+        pre_feedforward_layernorm: nn.Module,
+        post_feedforward_layernorm: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.router = router
+        self.experts = experts
+        self.pre_feedforward_layernorm = pre_feedforward_layernorm
+        self.post_feedforward_layernorm = post_feedforward_layernorm
+
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
+        )
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_probabilities, top_k_weights, top_k_index = self.router(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_probabilities
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_size = hidden_states.shape
+        x = hidden_states.reshape(batch_size * sequence_length, hidden_size)
+        routing, _ = self.route(x)
+        x = self.pre_feedforward_layernorm(x)
+        out = self.execute_moe_flavour(x, routing)
+        out = out.reshape(batch_size, sequence_length, hidden_size)
+        return self.post_feedforward_layernorm(out)
+
+
+class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention):
+    """Shared encoder/decoder attention over physical retained KV buffers."""
+
+    def __qeff_init__(self):
+        if hasattr(self, "v_norm") and not getattr(self.v_norm, "with_scale", True):
+            if not hasattr(self.v_norm, "_qeff_unit_weight"):
+                self.v_norm.register_buffer(
+                    "_qeff_unit_weight",
+                    torch.ones(self.head_dim, dtype=torch.float32),
+                )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[Cache] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        cache_position_ids: Optional[torch.LongTensor] = None,
+        use_physical_kv: bool = False,
+        **kwargs,
+    ):
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        cos, sin = position_embeddings
+        query_states = self.q_proj(hidden_states).view(hidden_shape)
+        query_states = self.q_norm(query_states)
+        query_states = _apply_rotary_pos_emb(query_states, cos, sin)
+        query_states = query_states.transpose(1, 2)
+
+        key_states = self.k_proj(hidden_states).view(hidden_shape)
+        value_states = self.v_proj(hidden_states).view(hidden_shape) if self.v_proj is not None else key_states
+
+        key_states = self.k_norm(key_states)
+        key_states = _apply_rotary_pos_emb(key_states, cos, sin)
+        key_states = key_states.transpose(1, 2)
+
+        value_states = self.v_norm(value_states)
+        value_states = value_states.transpose(1, 2)
+
+        cache_position_ids = cache_position_ids if cache_position_ids is not None else position_ids
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and blocking_config.mode != BlockingMode.NONE
+        kv_blocking_modes = {
+            BlockingMode.KV,
+            BlockingMode.QKV,
+            BlockingMode.HQ,
+            BlockingMode.HKV,
+            BlockingMode.HQKV,
+            BlockingMode.BHQKV,
+        }
+        use_kv_blocking = use_blocking and blocking_config.mode in kv_blocking_modes
+        past_seen_tokens = None
+        if past_key_values is not None:
+            if use_physical_kv:
+                if use_kv_blocking:
+                    past_seen_tokens = past_key_values.layers[self.layer_idx].keys.shape[-2]
+                else:
+                    past_key_values.update(
+                        key_states,
+                        value_states,
+                        self.layer_idx,
+                        {"position_ids": cache_position_ids},
+                    )
+                    layer = past_key_values.layers[self.layer_idx]
+                    key_states = torch.cat([layer.keys, key_states], dim=2)
+                    value_states = torch.cat([layer.values, value_states], dim=2)
+            else:
+                key_states, value_states = past_key_values.update(
+                    key_states,
+                    value_states,
+                    self.layer_idx,
+                    {"position_ids": cache_position_ids},
+                )
+
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask < 0 if attention_mask is not None else None,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values if use_kv_blocking else None,
+                blocking_config=blocking_config,
+                position_ids=cache_position_ids,
+                past_seen_tokens=past_seen_tokens,
+                preserve_attention_mask_on_export=True,
+            )
+        else:
+            key_states_for_attn = _repeat_kv(key_states, self.num_key_value_groups)
+            value_states_for_attn = _repeat_kv(value_states, self.num_key_value_groups)
+            attn_weights = torch.matmul(query_states, key_states_for_attn.transpose(2, 3)) * self.scaling
+            if attention_mask is not None:
+                attn_weights = attn_weights + attention_mask
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights, value_states_for_attn)
+            attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(*input_shape, -1)
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
+class QEffDiffusionGemmaEncoderTextLayer(DiffusionGemmaEncoderTextLayer):
+    def __qeff_init__(self):
+        if hasattr(self, "moe_block"):
+            return
+        router = self._modules.pop("router")
+        experts = self._modules.pop("experts")
+        pre_norm = self._modules.pop("pre_feedforward_layernorm_2")
+        post_norm = self._modules.pop("post_feedforward_layernorm_2")
+        self.moe_block = QEffDiffusionGemmaTextMoeBlock(router, experts, pre_norm, post_norm)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: torch.Tensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        cache_position_ids: Optional[torch.LongTensor] = None,
+        decoder_layer_scalar: Optional[torch.Tensor] = None,
+        is_encode: Optional[torch.LongTensor] = None,
+        use_physical_kv: bool = False,
+        **kwargs,
+    ) -> torch.Tensor:
+        hidden_states = _clamp_to_fp16_range(hidden_states)
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states, _ = self.self_attn(
+            hidden_states=hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            cache_position_ids=cache_position_ids,
+            use_physical_kv=use_physical_kv,
+            **kwargs,
+        )
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = _saturating_residual_add(residual, hidden_states)
+
+        residual = hidden_states
+        hidden_states = self.pre_feedforward_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
+
+        hidden_states_2 = self.moe_block(residual)
+
+        hidden_states = _saturating_residual_add(hidden_states_1, hidden_states_2)
+        hidden_states = self.post_feedforward_layernorm(hidden_states)
+        hidden_states = _saturating_residual_add(residual, hidden_states)
+        if decoder_layer_scalar is not None and is_encode is not None:
+            layer_scalar = torch.where(is_encode.bool(), self.layer_scalar, decoder_layer_scalar)
+        else:
+            layer_scalar = self.layer_scalar
+        hidden_states *= layer_scalar
+        return hidden_states
+
+
+class QEffDiffusionGemmaEncoderTextModel(DiffusionGemmaEncoderTextModel):
+    """
+    QEff-patched encoder text model.
+
+    Replaces HF's dynamic mask creation with static QEff-friendly masks;
+    uses QEffGemma4DynamicCache for the encoder KV cache.
+    """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffDiffusionGemmaTextRotaryEmbedding(config=self.config)
+        for layer_type in sorted(self.rotary_emb.layer_types):
+            attention_scaling = getattr(self.rotary_emb, f"{layer_type}_attention_scaling")
+            sin_cached = getattr(self.rotary_emb, f"{layer_type}_sin_cached") * attention_scaling
+            cos_cached = getattr(self.rotary_emb, f"{layer_type}_cos_cached") * attention_scaling
+            setattr(self, f"{layer_type}_sin_cached", nn.Parameter(sin_cached))
+            setattr(self, f"{layer_type}_cos_cached", nn.Parameter(cos_cached))
+
+
+class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
+    """Single-QPC shared DiffusionGemma transformer path.
+
+    The host supplies the active token block, absolute RoPE positions, cache write
+    positions, and additive masks for full/sliding layers. ``is_encode`` remains a
+    scalar mode input only for the distinct layer-scale and self-conditioning
+    computations; it never selects logits, image indices, or retained KV tensors.
+    """
+
+    supports_autoregressive_generate = False
+
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+        super().__init__()
+        self.model = model
+        self.config = model.config
+        self.text_config = model.config.text_config
+
+    def get_submodules_for_export(self):
+        return {QEffDiffusionGemmaEncoderTextLayer}
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        vision_embeds: Optional[torch.Tensor] = None,
+        image_idx: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        self_conditioning_topk_probabilities: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_indices: Optional[torch.LongTensor] = None,
+        sampling_uniforms: Optional[torch.FloatTensor] = None,
+        temperature: Optional[torch.FloatTensor] = None,
+        is_encode: Optional[torch.LongTensor] = None,
+        use_self_conditioning: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ):
+        del batch_index, kwargs
+
+        if past_key_values is not None and not isinstance(past_key_values, QEffGemma4DynamicCache):
+            past_key_values = QEffGemma4DynamicCache.from_legacy_cache(self.text_config, past_key_values)
+        if past_key_values is None:
+            past_key_values = QEffGemma4DynamicCache(config=self.text_config)
+
+        if is_encode is None:
+            is_encode = torch.ones(1, dtype=torch.int64, device=input_ids.device)
+        if use_self_conditioning is None:
+            use_self_conditioning = torch.zeros(1, dtype=torch.int64, device=input_ids.device)
+        if temperature is None:
+            temperature = torch.ones((input_ids.shape[0], 1), dtype=torch.float32, device=input_ids.device)
+
+        inputs_embeds, next_image_idx = self.model._inject_vision_embeds(input_ids, vision_embeds, image_idx)
+        decoder = self.model.model.decoder
+        if self_conditioning_topk_probabilities is None or self_conditioning_topk_indices is None:
+            soft_embeddings = torch.zeros_like(inputs_embeds)
+        else:
+            soft_embeddings = _top_k_self_conditioning_embeddings(
+                self_conditioning_topk_probabilities,
+                self_conditioning_topk_indices,
+                decoder.embed_tokens.weight,
+            ) * decoder.embed_tokens.embed_scale.to(inputs_embeds.dtype)
+        use_sc = use_self_conditioning.bool().view(1, 1, 1)
+        soft_embeddings = torch.where(use_sc, soft_embeddings, torch.zeros_like(soft_embeddings))
+        conditioned_embeds = decoder.self_conditioning(inputs_embeds, soft_embeddings)
+        hidden_states = torch.where(is_encode.bool().view(1, 1, 1), inputs_embeds, conditioned_embeds)
+
+        language_model = self.model.model.encoder.language_model
+        position_embeddings = {}
+        for layer_type in sorted(language_model.unique_layer_types):
+            cos = getattr(language_model, f"{layer_type}_cos_cached")[position_ids].unsqueeze(2)
+            sin = getattr(language_model, f"{layer_type}_sin_cached")[position_ids].unsqueeze(2)
+            position_embeddings[layer_type] = (cos, sin)
+
+        for layer_index, encoder_layer in enumerate(language_model.layers[: self.text_config.num_hidden_layers]):
+            layer_type = self.text_config.layer_types[layer_index]
+            attention_mask = sliding_attention_mask if layer_type == "sliding_attention" else full_attention_mask
+            decoder_layer_scalar = decoder.layers[layer_index].layer_scalar
+            hidden_states = encoder_layer(
+                hidden_states,
+                position_embeddings=position_embeddings[layer_type],
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                cache_position_ids=cache_position_ids,
+                past_key_values=past_key_values,
+                decoder_layer_scalar=decoder_layer_scalar,
+                is_encode=is_encode,
+                use_physical_kv=True,
+                mm_token_type_ids=mm_token_type_ids,
+            )
+        hidden_states = language_model.norm(_clamp_to_fp16_range(hidden_states))
+        temperature_logits = self.model._apply_logit_softcapping(self.model.lm_head(hidden_states).float())
+        temperature_logits = temperature_logits / temperature.clamp_min(1e-6).view(-1, 1, 1)
+        log_probs = torch.nn.functional.log_softmax(temperature_logits, dim=-1, dtype=torch.float32)
+        token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
+        sorted_entropy, sorted_indices = torch.topk(
+            token_entropy,
+            k=token_entropy.shape[-1],
+            dim=-1,
+            largest=False,
+            sorted=True,
+        )
+        sorted_selection_mask = (torch.cumsum(sorted_entropy, dim=1) - sorted_entropy) <= DEVICE_ENTROPY_BOUND
+        newly_accepted_mask = torch.zeros_like(sorted_selection_mask, dtype=torch.int32).scatter(
+            dim=-1,
+            index=sorted_indices,
+            src=sorted_selection_mask.to(torch.int32),
+        )
+        topk_logits, topk_indices = torch.topk(
+            temperature_logits,
+            k=SELF_CONDITIONING_TOP_K,
+            dim=-1,
+        )
+        topk_probabilities = topk_logits.softmax(dim=-1, dtype=torch.float32)
+        if sampling_uniforms is None:
+            sampling_uniforms = torch.zeros(
+                (*input_ids.shape, 1),
+                dtype=temperature_logits.dtype,
+                device=input_ids.device,
+            )
+        is_encode_mask = is_encode.bool().view(1, 1, 1)
+        is_encode_mask_2d = is_encode_mask.squeeze(-1)
+        cumulative_probabilities = log_probs.exp().cumsum(dim=2)
+        denoiser_canvas = torch.where(
+            is_encode_mask_2d,
+            input_ids,
+            (cumulative_probabilities >= sampling_uniforms).to(torch.int64).argmax(dim=-1),
+        )
+        topk_probabilities = torch.where(
+            is_encode_mask,
+            torch.zeros_like(topk_probabilities),
+            topk_probabilities,
+        )
+        topk_indices = torch.where(is_encode_mask, torch.zeros_like(topk_indices), topk_indices)
+        top1_indices = topk_indices[..., 0]
+        newly_accepted_mask = torch.where(
+            is_encode_mask_2d,
+            torch.zeros_like(newly_accepted_mask),
+            newly_accepted_mask,
+        )
+        mean_entropy = token_entropy.mean(dim=-1, keepdim=True)
+        mean_entropy = torch.where(is_encode_mask_2d, torch.zeros_like(mean_entropy), mean_entropy)
+        pkv = [
+            (past_key_values.layers[layer_index].keys, past_key_values.layers[layer_index].values)
+            for layer_index in range(self.text_config.num_hidden_layers)
+        ]
+        return (
+            topk_probabilities,
+            topk_indices,
+            newly_accepted_mask,
+            mean_entropy,
+            denoiser_canvas,
+            top1_indices,
+            next_image_idx,
+            pkv,
+        )
+
+    def get_dummy_inputs(self, **kwargs):
+        batch_size = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        block_length = 32
+        text_config = self.text_config
+        mm_tokens_per_image = self.model._get_mm_tokens_per_image()
+        input_ids = torch.zeros((batch_size, block_length), dtype=torch.int64)
+        mm_token_type_ids = torch.zeros((batch_size, block_length), dtype=torch.int64)
+        image_start = min(5, block_length)
+        image_end = min(image_start + mm_tokens_per_image, block_length)
+        input_ids[:, image_start:image_end] = self.config.image_token_id
+        mm_token_type_ids[:, image_start:image_end] = 1
+        position_ids = torch.arange(block_length, dtype=torch.int64).view(1, block_length).repeat(batch_size, 1)
+        past_key_values = self.model.get_dummy_pkv_cache(
+            config=text_config,
+            batch_size=batch_size,
+            seq_len=block_length,
+        )
+        full_kv_length = past_key_values[
+            next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "full_attention")
+        ][0].shape[-2]
+        sliding_kv_length = past_key_values[
+            next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "sliding_attention")
+        ][0].shape[-2]
+        return {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "cache_position_ids": position_ids.clone(),
+            "vision_embeds": torch.zeros(
+                (batch_size, mm_tokens_per_image, text_config.hidden_size), dtype=torch.float32
+            ),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "mm_token_type_ids": mm_token_type_ids,
+            "past_key_values": past_key_values,
+            "full_attention_mask": torch.zeros(
+                (batch_size, 1, block_length, full_kv_length + block_length), dtype=torch.float32
+            ),
+            "sliding_attention_mask": torch.zeros(
+                (batch_size, 1, block_length, sliding_kv_length + block_length), dtype=torch.float32
+            ),
+            "self_conditioning_topk_probabilities": torch.zeros(
+                (batch_size, block_length, SELF_CONDITIONING_TOP_K), dtype=torch.float32
+            ),
+            "self_conditioning_topk_indices": torch.zeros(
+                (batch_size, block_length, SELF_CONDITIONING_TOP_K), dtype=torch.int64
+            ),
+            "sampling_uniforms": torch.zeros((batch_size, block_length, 1), dtype=torch.float32),
+            "temperature": torch.ones((batch_size, 1), dtype=torch.float32),
+            "is_encode": torch.ones(1, dtype=torch.int64),
+            "use_self_conditioning": torch.zeros(1, dtype=torch.int64),
+        }
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        canvas_length: Optional[int] = None,
+        **compiler_options,
+    ):
+        prefill_seq_len = prefill_seq_len or 32
+        canvas_length = canvas_length or getattr(self.config, "canvas_length", prefill_seq_len)
+        if canvas_length != prefill_seq_len:
+            raise ValueError("The shared unified QPC requires matching prefill and canvas lengths.")
+        ctx_len = ctx_len or constants.INTERN_CTX_LEN
+        return [
+            {
+                "_graph_name": "Unified",
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": self.text_config.sliding_window,
+                "full_kv_plus_seq_len": ctx_len + prefill_seq_len,
+                "sliding_kv_plus_seq_len": self.text_config.sliding_window + prefill_seq_len,
+                "vision_batch_size": batch_size,
+                "vision_tokens": self.model._get_mm_tokens_per_image(),
+            }
+        ], compiler_options
+
+    def get_onnx_dynamic_axes(self, **kwargs):
+        axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "cache_position_ids": {0: "batch_size", 1: "seq_len"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
+            "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
+            "full_attention_mask": {0: "batch_size", 2: "seq_len", 3: "full_kv_plus_seq_len"},
+            "sliding_attention_mask": {0: "batch_size", 2: "seq_len", 3: "sliding_kv_plus_seq_len"},
+            "self_conditioning_topk_probabilities": {0: "batch_size", 1: "seq_len"},
+            "self_conditioning_topk_indices": {0: "batch_size", 1: "seq_len"},
+            "sampling_uniforms": {0: "batch_size", 1: "seq_len"},
+            "temperature": {0: "batch_size"},
+        }
+        for layer_index, layer_type in enumerate(self.text_config.layer_types):
+            ctx_axis = {0: "batch_size", 2: "sliding_window" if layer_type == "sliding_attention" else "ctx_len"}
+            for kv_name in ("key", "value"):
+                axes[f"past_{kv_name}.{layer_index}"] = ctx_axis
+        return axes
+
+    def get_output_names(self, **kwargs):
+        names = [
+            "self_conditioning_topk_probabilities_RetainedState",
+            "self_conditioning_topk_indices_RetainedState",
+            "newly_accepted_mask",
+            "mean_entropy",
+            "denoiser_canvas",
+            "top1_indices",
+            "image_idx_output",
+        ]
+        for layer_index in range(self.text_config.num_hidden_layers):
+            for kv_name in ("key", "value"):
+                names.append(f"past_{kv_name}.{layer_index}_RetainedState")
+        return names
+
+
+class QEffDiffusionGemmaEncoderWrapper(nn.Module):
+    """Prefill-only QPC wrapper that exposes retained KV for DMA split handoff."""
+
+    supports_autoregressive_generate = False
+
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion", include_image_idx: bool = True):
+        super().__init__()
+        self.model = model
+        self.unified = model.get_qeff_unified_wrapper()
+        self.config = model.config
+        self.text_config = model.config.text_config
+        self.include_image_idx = include_image_idx
+
+    def get_submodules_for_export(self):
+        return self.unified.get_submodules_for_export()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        vision_embeds: Optional[torch.Tensor] = None,
+        image_idx: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Cache] = None,
+    ):
+        outputs = self.unified(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            cache_position_ids=cache_position_ids,
+            full_attention_mask=full_attention_mask,
+            sliding_attention_mask=sliding_attention_mask,
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            mm_token_type_ids=mm_token_type_ids,
+            past_key_values=past_key_values,
+        )
+        next_image_idx = outputs[6]
+        pkv = outputs[7]
+        if self.include_image_idx:
+            return next_image_idx, pkv
+        return pkv
+
+    def get_dummy_inputs(self, **kwargs):
+        inputs = self.unified.get_dummy_inputs(**kwargs)
+        return {
+            name: value
+            for name, value in inputs.items()
+            if name
+            not in {
+                "self_conditioning_topk_probabilities",
+                "self_conditioning_topk_indices",
+                "sampling_uniforms",
+                "temperature",
+                "is_encode",
+                "use_self_conditioning",
+            }
+        }
+
+    def get_onnx_dynamic_axes(self, **kwargs):
+        axes = self.unified.get_onnx_dynamic_axes(**kwargs)
+        for name in (
+            "self_conditioning_topk_probabilities",
+            "self_conditioning_topk_indices",
+            "sampling_uniforms",
+            "temperature",
+        ):
+            axes.pop(name, None)
+        return axes
+
+    def get_specializations(self, batch_size: int, prefill_seq_len: int, ctx_len: int, **compiler_options):
+        return [
+            {
+                "_graph_name": "Encoder",
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": self.text_config.sliding_window,
+                "full_kv_plus_seq_len": ctx_len + prefill_seq_len,
+                "sliding_kv_plus_seq_len": self.text_config.sliding_window + prefill_seq_len,
+                "vision_batch_size": batch_size,
+                "vision_tokens": self.model._get_mm_tokens_per_image(),
+            }
+        ], compiler_options
+
+    def get_output_names(self, **kwargs):
+        names = ["image_idx_output"] if self.include_image_idx else []
+        for layer_index in range(self.text_config.num_hidden_layers):
+            for kv_name in ("key", "value"):
+                names.append(f"past_{kv_name}.{layer_index}_RetainedState")
+        return names
+
+
+class QEffDiffusionGemmaDecoderWrapper(nn.Module):
+    """Decoder QPC wrapper with retained KV supplied by the split DMA handoff."""
+
+    supports_autoregressive_generate = False
+
+    def __init__(self, model: "QEffDiffusionGemmaForBlockDiffusion"):
+        super().__init__()
+        self.model = model
+        self.unified = model.get_qeff_unified_wrapper()
+        self.config = model.config
+        self.text_config = model.config.text_config
+
+    def get_submodules_for_export(self):
+        return self.unified.get_submodules_for_export()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        self_conditioning_topk_probabilities: Optional[torch.FloatTensor] = None,
+        self_conditioning_topk_indices: Optional[torch.LongTensor] = None,
+        sampling_uniforms: Optional[torch.FloatTensor] = None,
+        temperature: Optional[torch.FloatTensor] = None,
+        is_encode: Optional[torch.LongTensor] = None,
+        use_self_conditioning: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+    ):
+        if past_key_values is None:
+            past_key_values = self.model.get_dummy_pkv_cache(
+                self.text_config,
+                batch_size=input_ids.shape[0],
+                seq_len=input_ids.shape[1],
+            )
+        retained_cache = QEffGemma4DynamicCache.from_legacy_cache(self.text_config, past_key_values)
+
+        outputs = self.unified(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            cache_position_ids=cache_position_ids,
+            full_attention_mask=full_attention_mask,
+            sliding_attention_mask=sliding_attention_mask,
+            mm_token_type_ids=mm_token_type_ids,
+            self_conditioning_topk_probabilities=self_conditioning_topk_probabilities,
+            self_conditioning_topk_indices=self_conditioning_topk_indices,
+            sampling_uniforms=sampling_uniforms,
+            temperature=temperature,
+            is_encode=is_encode,
+            use_self_conditioning=use_self_conditioning,
+            past_key_values=retained_cache,
+        )
+        return (*outputs[:6], outputs[7])
+
+    def get_dummy_inputs(self, **kwargs):
+        for layer in self.model.model.encoder.language_model.layers:
+            if hasattr(layer.self_attn, "attn_blocking_config"):
+                delattr(layer.self_attn, "attn_blocking_config")
+        inputs = self.unified.get_dummy_inputs(**kwargs)
+        inputs.pop("vision_embeds")
+        inputs.pop("image_idx")
+        return inputs
+
+    def get_onnx_dynamic_axes(self, **kwargs):
+        axes = self.unified.get_onnx_dynamic_axes(**kwargs)
+        axes.pop("vision_embeds")
+        return axes
+
+    def get_specializations(self, batch_size: int, canvas_length: int, ctx_len: int, **compiler_options):
+        return [
+            {
+                "_graph_name": "Decoder",
+                "batch_size": batch_size,
+                "seq_len": canvas_length,
+                "ctx_len": ctx_len,
+                "sliding_window": self.text_config.sliding_window,
+                "full_kv_plus_seq_len": ctx_len + canvas_length,
+                "sliding_kv_plus_seq_len": self.text_config.sliding_window + canvas_length,
+            }
+        ], compiler_options
+
+    def get_output_names(self, **kwargs):
+        names = [
+            "self_conditioning_topk_probabilities_RetainedState",
+            "self_conditioning_topk_indices_RetainedState",
+            "newly_accepted_mask",
+            "mean_entropy",
+            "denoiser_canvas",
+            "top1_indices",
+        ]
+        for layer_index in range(self.text_config.num_hidden_layers):
+            for kv_name in ("key", "value"):
+                names.append(f"past_{kv_name}.{layer_index}_RetainedState")
+        return names
+
+
+# ---------------------------------------------------------------------------
+# Top-level model class — registered to AutoModelForImageTextToText
+# ---------------------------------------------------------------------------
+
+
+class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
+    """
+    QEff-patched DiffusionGemmaForBlockDiffusion.
+
+    Registered to AutoModelForImageTextToText.
+
+    Supports a single QPC containing encoder prefill and decoder canvas denoising.
+    """
+
+    def get_qeff_unified_wrapper(self) -> QEffDiffusionGemmaUnifiedWrapper:
+        """Single-QPC unified wrapper (encoder-prefill + canvas-decode in one QPC)."""
+        return QEffDiffusionGemmaUnifiedWrapper(self)
+
+    def get_qeff_diffusion_encoder(self, include_image_idx: bool = True) -> QEffDiffusionGemmaEncoderWrapper:
+        return QEffDiffusionGemmaEncoderWrapper(self, include_image_idx=include_image_idx)
+
+    def get_qeff_diffusion_decoder(self) -> QEffDiffusionGemmaDecoderWrapper:
+        return QEffDiffusionGemmaDecoderWrapper(self)
+
+    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+        del model_name
+        onnx_path = onnx_path or self.onnx_path
+        if onnx_path is None:
+            raise ValueError("ONNX path is required to generate DiffusionGemma NPI file.")
+        return _write_unified_accum_npi(onnx_path)
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        return {QEffDiffusionGemmaEncoderTextLayer}
+
+    def _get_mm_tokens_per_image(self) -> int:
+        return getattr(
+            self.config.vision_config,
+            "default_output_length",
+            getattr(self.config, "mm_tokens_per_image", 256),
+        )
+
+    def _get_vision_max_patches(self) -> int:
+        pooling_kernel_size = getattr(self.config.vision_config, "pooling_kernel_size", 3)
+        default_output_length = getattr(self.config.vision_config, "default_output_length", 280)
+        return default_output_length * pooling_kernel_size * pooling_kernel_size
+
+    def get_dummy_pkv_cache(self, config, batch_size: int, seq_len: int):
+        past_key_values = []
+        for layer_type in config.layer_types:
+            if layer_type == "sliding_attention":
+                n_heads = config.num_key_value_heads
+                d_head = config.head_dim
+                layer_seq_len = min(config.sliding_window, seq_len)
+            else:
+                n_heads = config.num_global_key_value_heads or config.num_key_value_heads
+                d_head = getattr(config, "global_head_dim", None) or config.head_dim
+                layer_seq_len = seq_len
+            cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
+            past_key_values.append(
+                (torch.zeros(cache_shape, dtype=torch.float32), torch.zeros(cache_shape, dtype=torch.float32))
+            )
+        return past_key_values
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        canvas_length: Optional[int] = None,
+        img_size: Optional[int] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        **compiler_options,
+    ):
+        prefill_seq_len = prefill_seq_len or 32
+        ctx_len = ctx_len or constants.INTERN_CTX_LEN
+        canvas_length = canvas_length or getattr(self.config, "canvas_length", 256)
+        mm_tokens_per_image = self._get_mm_tokens_per_image()
+        max_patches = self._get_vision_max_patches()
+        text_cfg = self.config.text_config
+
+        vision = [{"batch_size": batch_size, "max_patches": max_patches}]
+
+        def build_encoder_prefill_spec(comp_ctx_lengths=None):
+            spec = {
+                "_graph_name": "Prefill",
+                "batch_size": 1 if continuous_batching else batch_size,
+                # seq_len=prefill_seq_len uniquely identifies the encoder specialization
+                "seq_len": prefill_seq_len,
+                "canvas_len": canvas_length,
+                "ctx_len": ctx_len,
+                "sliding_window": text_cfg.sliding_window,
+                "vision_batch_size": batch_size,
+                "vision_tokens": mm_tokens_per_image,
+                "is_encode": 1,
+            }
+            if comp_ctx_lengths is not None:
+                spec["comp_ctx_lengths"] = comp_ctx_lengths
+            if continuous_batching:
+                spec["full_batch_size"] = kv_cache_batch_size or batch_size
+            else:
+                spec["batch_size"] = kv_cache_batch_size or batch_size
+            return spec
+
+        def build_decoder_canvas_spec(comp_ctx_lengths=None):
+            # seq_len=1 for decoder: the compiler uses this shape change to dispatch
+            # (seq_len differs from encoder's prefill_seq_len, uniquely identifying this spec)
+            spec = {
+                "_graph_name": "Decode",
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "canvas_len": canvas_length,
+                "ctx_len": ctx_len,
+                "sliding_window": text_cfg.sliding_window,
+                "vision_batch_size": batch_size,
+                "vision_tokens": mm_tokens_per_image,
+                "is_encode": 0,
+            }
+            if comp_ctx_lengths is not None:
+                spec["comp_ctx_lengths"] = comp_ctx_lengths
+            if continuous_batching:
+                spec["full_batch_size"] = kv_cache_batch_size or batch_size
+            else:
+                spec["batch_size"] = kv_cache_batch_size or batch_size
+            return spec
+
+        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
+            lang = [build_encoder_prefill_spec(ccl) for ccl in comp_ctx_lengths_prefill]
+            lang.extend(build_decoder_canvas_spec(ccl) for ccl in comp_ctx_lengths_decode)
+        else:
+            lang = [build_encoder_prefill_spec(), build_decoder_canvas_spec()]
+
+        if kv_offload:
+            return {"vision": vision, "lang": lang}, compiler_options
+        return lang, compiler_options
+
+    def get_onnx_dynamic_axes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
+        text_cfg = self.config.text_config
+
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 1: "max_patches"},
+            "image_position_ids": {0: "batch_size", 1: "max_patches"},
+        }
+        lang_dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "decoder_input_ids": {0: "batch_size", 1: "canvas_len"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
+            "decoder_position_ids": {0: "batch_size", 1: "canvas_len"},
+            "self_conditioning_logits": {0: "batch_size", 1: "canvas_len"},
+        }
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        for i, layer_type in enumerate(text_cfg.layer_types):
+            if layer_type == "sliding_attention":
+                ctx_axis = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "sliding_window",
+                }
+            else:
+                ctx_axis = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+            for kv in ("key", "value"):
+                lang_dynamic_axes[f"past_{kv}.{i}"] = ctx_axis
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
+
+        if kv_offload:
+            return {"vision": vision_dynamic_axes, "lang": lang_dynamic_axes}
+        return {**vision_dynamic_axes, **lang_dynamic_axes}
+
+    def get_output_names(self, kv_offload: bool = False):
+        text_cfg = self.config.text_config
+        vision_output_names = ["vision_embeds"]
+        # Unified output names for both encoder (canvas_len=1) and decoder (canvas_len=canvas_length).
+        # Encoder: canvas_logits[bs,1,vocab] holds the first-token logit (TTFT).
+        # Decoder: canvas_logits[bs,canvas_length,vocab] holds the denoised token logits.
+        lang_output_names = [
+            "canvas_logits",
+            "vision_embeds_RetainedState",
+            "image_idx_output",
+        ]
+        for i in range(text_cfg.num_hidden_layers):
+            for kv in ("key", "value"):
+                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        if kv_offload:
+            return {"vision": vision_output_names, "lang": lang_output_names}
+        return lang_output_names
+
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        mm_tokens_per_image = self._get_mm_tokens_per_image()
+        max_patches = self._get_vision_max_patches()
+        canvas_length = getattr(self.config, "canvas_length", 256)
+        text_cfg = self.config.text_config
+        seq_len = max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
+        patch_dim = getattr(self.config.vision_config, "patch_size", 16) ** 2 * 3
+
+        # Build image_position_ids
+        image_position_ids = torch.full((bs, max_patches, 2), -1, dtype=torch.int64)
+        pooled_side = int(mm_tokens_per_image**0.5)
+        patch_side = pooled_side * getattr(self.config.vision_config, "pooling_kernel_size", 3)
+        xs = torch.arange(patch_side, dtype=torch.int64).view(1, -1).expand(patch_side, -1).reshape(-1)
+        ys = torch.arange(patch_side, dtype=torch.int64).view(-1, 1).expand(-1, patch_side).reshape(-1)
+        valid_positions = torch.stack((xs, ys), dim=-1)
+        image_position_ids[:, : valid_positions.shape[0], :] = valid_positions.unsqueeze(0)
+
+        input_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
+        mm_token_type_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
+        text_prefix_len = min(5, seq_len)
+        image_start = text_prefix_len
+        image_end = min(image_start + mm_tokens_per_image, seq_len)
+        input_ids[:, image_start:image_end] = self.config.image_token_id
+        mm_token_type_ids[:, image_start:image_end] = 1
+
+        vision_inputs = {
+            "pixel_values": torch.zeros((bs, max_patches, patch_dim), dtype=torch.float32),
+            "image_position_ids": image_position_ids,
+        }
+        # is_encode=1 (encoder sentinel) for the export trace.
+        # Both encoder AND decoder paths are executed during torch.onnx.export because
+        # is_encode flows through the graph as a real tensor input (not a Python bool).
+        # The compiler constant-folds is_encode=1/0 per specialization.
+        lang_inputs = {
+            "input_ids": input_ids,
+            "vision_embeds": torch.zeros((bs, mm_tokens_per_image, text_cfg.hidden_size), dtype=torch.float32),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "mm_token_type_ids": mm_token_type_ids,
+            "decoder_input_ids": torch.zeros((bs, canvas_length), dtype=torch.int64),
+            "decoder_position_ids": torch.arange(canvas_length, dtype=torch.int64).view(1, canvas_length).repeat(bs, 1),
+            "self_conditioning_logits": torch.zeros((bs, canvas_length, text_cfg.vocab_size), dtype=torch.float32),
+            "is_encode": torch.ones(1, dtype=torch.int64),
+            "use_self_conditioning": torch.ones(1, dtype=torch.int64),
+            "past_key_values": self.get_dummy_pkv_cache(
+                config=text_cfg,
+                batch_size=fbs if continuous_batching else bs,
+                seq_len=seq_len,
+            ),
+        }
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+        if kv_offload:
+            return {"vision": vision_inputs, "lang": lang_inputs}
+        return {**vision_inputs, **lang_inputs}
+
+    def _apply_logit_softcapping(self, logits: torch.Tensor) -> torch.Tensor:
+        if self.final_logit_softcapping is not None:
+            logits = logits / self.final_logit_softcapping
+            logits = torch.tanh(logits)
+            logits = logits * self.final_logit_softcapping
+        return logits
+
+    def _inject_vision_embeds(
+        self,
+        input_ids: torch.LongTensor,
+        vision_embeds: Optional[torch.Tensor],
+        image_idx: Optional[torch.Tensor],
+    ):
+        """Inject vision features into the text embeddings at image-token positions.
+
+        Shared by all three export paths (single-QPC forward, dual-QPC LangWrapper,
+        disaggregated encoder-prefill). Uses torch.where instead of masked_scatter and
+        clamps the gather index to avoid -1, both for export safety.
+        """
+        encoder_model = self.model.encoder
+        lang_model = encoder_model.language_model
+        text_cfg = self.config.text_config
+
+        special_image_mask = input_ids == self.config.image_token_id
+        llm_input_ids = input_ids.clone()
+        llm_input_ids[special_image_mask] = text_cfg.pad_token_id
+        inputs_embeds = lang_model.embed_tokens(llm_input_ids)
+
+        next_image_idx = image_idx
+        if input_ids.shape[1] != 1 and special_image_mask.any() and vision_embeds is not None:
+            if vision_embeds.dim() == 2:
+                vision_embeds = vision_embeds.unsqueeze(0)
+            if next_image_idx is None:
+                next_image_idx = torch.zeros((1, 1), dtype=torch.int64, device=inputs_embeds.device)
+
+            indices1 = special_image_mask.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(
+                indices1 >= 0,
+                indices1 + next_image_idx.to(indices1.device),
+                indices1,
+            )
+            indices0 = torch.arange(special_image_mask.shape[0], device=inputs_embeds.device).view(-1, 1)
+            safe_indices1 = indices1.clamp(min=0)
+            gathered_vision_embeds = vision_embeds[indices0, safe_indices1]
+            inputs_embeds = torch.where(special_image_mask.unsqueeze(-1), gathered_vision_embeds, inputs_embeds)
+            next_image_idx = (indices1.max() + 1).reshape(1, 1)
+
+        if next_image_idx is None:
+            next_image_idx = torch.zeros((1, 1), dtype=torch.int64, device=inputs_embeds.device)
+
+        return inputs_embeds, next_image_idx
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        cache_position_ids: torch.LongTensor,
+        full_attention_mask: torch.Tensor,
+        sliding_attention_mask: torch.Tensor,
+        past_key_values: Optional[Cache] = None,
+        vision_embeds: Optional[torch.Tensor] = None,
+        image_idx: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
+        self_conditioning_logits: Optional[torch.FloatTensor] = None,
+        is_encode: Optional[torch.LongTensor] = None,
+        use_self_conditioning: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ):
+        """Compatibility entry point for the shared unified-QPC contract."""
+        canvas_logits, next_image_idx, past_key_values = self.get_qeff_unified_wrapper()(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            cache_position_ids=cache_position_ids,
+            full_attention_mask=full_attention_mask,
+            sliding_attention_mask=sliding_attention_mask,
+            past_key_values=past_key_values,
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            mm_token_type_ids=mm_token_type_ids,
+            self_conditioning_logits=self_conditioning_logits,
+            is_encode=is_encode,
+            use_self_conditioning=use_self_conditioning,
+            batch_index=batch_index,
+            **kwargs,
+        )
+        return canvas_logits, vision_embeds, next_image_idx, past_key_values

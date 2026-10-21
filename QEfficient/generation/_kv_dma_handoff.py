@@ -1,10 +1,3 @@
-# -----------------------------------------------------------------------------
-#
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# -----------------------------------------------------------------------------
-
 import json
 from queue import Queue
 from typing import Dict, List, Optional, Tuple
