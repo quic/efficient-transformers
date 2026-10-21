@@ -1763,7 +1763,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
             bs = max(2, bs)
         ###########################################
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         gdn_export_kwargs = _get_gdn_full_state_update_kwargs(
             self.model,

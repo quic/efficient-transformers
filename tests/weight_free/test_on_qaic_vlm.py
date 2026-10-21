@@ -248,6 +248,13 @@ def _assert_vlm_weight_free_graph(model_type: str, language_onnx: Path) -> None:
         assert any(name.startswith("past_value.") for name in retained_outputs)
 
 
+def _assert_prefill_trace_length(language_onnx: Path, expected_seq_len: int) -> None:
+    graph = onnx.load(str(language_onnx), load_external_data=False)
+    input_ids = next(value for value in graph.graph.input if value.name == "input_ids")
+    seq_len = input_ids.type.tensor_type.shape.dim[1].dim_value
+    assert seq_len == expected_seq_len, f"Expected prefill trace length {expected_seq_len}, got {seq_len}"
+
+
 def _assert_weight_spec(onnx_path: Path) -> None:
     weight_spec = onnx_path.with_name("weight_spec.json")
     assert weight_spec.is_file(), f"Missing weight-free spec next to {onnx_path}"
@@ -428,6 +435,8 @@ def test_weight_free_vlm_dummy_cpu_export_and_multispec_structure(model_type, tm
     assert language_onnx.is_file()
     _assert_weight_spec(language_onnx)
     _assert_vlm_weight_free_graph(model_type, language_onnx)
+    if model_type in {"qwen3_5", "qwen3_5_moe"}:
+        _assert_prefill_trace_length(language_onnx, model_config["prompt_len"])
     if skip_vision:
         return
 
