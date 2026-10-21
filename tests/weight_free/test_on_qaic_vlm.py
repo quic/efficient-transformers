@@ -1,4 +1,4 @@
-# -----------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
@@ -33,6 +33,7 @@ from transformers import (
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 from QEfficient.utils.test_utils import load_vlm_model_from_config
 
 from ._helpers import (
@@ -248,11 +249,11 @@ def _assert_vlm_weight_free_graph(model_type: str, language_onnx: Path) -> None:
         assert any(name.startswith("past_value.") for name in retained_outputs)
 
 
-def _assert_prefill_trace_length(language_onnx: Path, expected_seq_len: int) -> None:
+def _assert_input_trace_length(language_onnx: Path, expected_seq_len: int) -> None:
     graph = onnx.load(str(language_onnx), load_external_data=False)
     input_ids = next(value for value in graph.graph.input if value.name == "input_ids")
     seq_len = input_ids.type.tensor_type.shape.dim[1].dim_value
-    assert seq_len == expected_seq_len, f"Expected prefill trace length {expected_seq_len}, got {seq_len}"
+    assert seq_len == expected_seq_len, f"Expected input trace length {expected_seq_len}, got {seq_len}"
 
 
 def _assert_weight_spec(onnx_path: Path) -> None:
@@ -436,7 +437,7 @@ def test_weight_free_vlm_dummy_cpu_export_and_multispec_structure(model_type, tm
     _assert_weight_spec(language_onnx)
     _assert_vlm_weight_free_graph(model_type, language_onnx)
     if model_type in {"qwen3_5", "qwen3_5_moe"}:
-        _assert_prefill_trace_length(language_onnx, model_config["prompt_len"])
+        _assert_input_trace_length(language_onnx, model_config["prompt_len"])
     if skip_vision:
         return
 
@@ -460,6 +461,39 @@ def test_weight_free_vlm_dummy_cpu_export_and_multispec_structure(model_type, tm
     )
     expected_vision_specs = 2 if "height" in specialization_kwargs else 1
     _assert_vlm_specialization_structure(specializations, expected_vision_specs)
+
+
+@pytest.mark.weight_free
+@pytest.mark.weight_free_export
+def test_weight_free_gemma4_decode_dummy_trace_length(tmp_export_dir):
+    """Trace Gemma4 decode with a non-degenerate dummy KV cache."""
+    model_config = _VLM_MODEL_CONFIGS["gemma4"]
+    checkpoint_dir = tmp_export_dir / "gemma4_decode_cpu_checkpoint"
+    _build_vlm_test_checkpoint("gemma4", checkpoint_dir)
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        str(checkpoint_dir),
+        kv_offload=True,
+        weight_free=True,
+        dtype=torch.float32,
+    )
+    dummy_inputs = qeff_model.model.get_dummy_inputs(
+        kv_offload=True,
+        prefill_seq_len=1,
+        batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+    )
+    assert dummy_inputs["lang"]["input_ids"].shape[1] == constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+    assert dummy_inputs["lang"]["past_key_values"][0][0].shape[2] == constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+    export_paths = qeff_model.export(
+        tmp_export_dir / "gemma4_decode_cpu_export",
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+        prefill_seq_len=1,
+        ctx_len=model_config["ctx_len"],
+        skip_vision=True,
+    )
+    language_onnx = Path(export_paths[-1])
+    assert language_onnx.is_file()
 
 
 def _prepare_vlm_inputs(

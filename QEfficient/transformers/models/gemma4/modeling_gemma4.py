@@ -1572,6 +1572,10 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         if seq_len is None:
             seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         seq_len = int(seq_len)
+        if seq_len == 1:
+            # A one-token dummy cache constrains the dynamically annotated
+            # KV-cache lengths to 1 during torch.export.
+            seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         if bs is None:
             bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         bs = int(bs)
