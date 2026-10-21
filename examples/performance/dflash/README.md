@@ -12,9 +12,9 @@ single prompt in-process via `QEfficient.generation.dflash_generation`. The thre
 
 ---
 
-## Text (dense language models)
+## Text models
 
-**Supported models:** Llama-3.1-8B-Instruct, Qwen3-4B, Qwen3-8B (see `--help` for the full list).
+**Supported models:** Llama-3.1-8B-Instruct, Qwen3-4B, Qwen3-8B, GPT-OSS-20B, GPT-OSS-120B (see `--help` for the full list).
 
 ### Single prompt
 
@@ -25,6 +25,43 @@ python basic_inference_text.py --model_name Qwen3-4B \
 
 ---
 
+### GPT-OSS
+
+GPT-OSS uses the existing expert-parallel implementation with chunked, full-context
+KV caches. Prefill returns one prediction, while verification returns the draft
+block's predictions (8 tokens for GPT-OSS-20B, 10 for GPT-OSS-120B).
+
+```bash
+python basic_inference_text.py --model_name gpt-oss-20b \
+    --tlm_devices 0,1,2,3 --dlm_devices 4,5,6,7 \
+    --ctx_len 4096 --prefill_seq_len 128 --generation_len 256 \
+    --prompt "Explain why the sky appears blue in three sentences."
+```
+
+Standalone QEfficient target QPCs return token IDs; vLLM target QPCs return
+vocabulary logits. Use QPCs compiled for the appropriate runtime.
+
+### Separate MoE TLM QPCs
+
+For GPT-OSS and Qwen3.5-MoE, `--disagg-tlm` is enabled by default in the
+single-prompt examples. The TLM has separate prefill and verification QPCs,
+each with one specialization. Prefill uses `--prefill_seq_len` and keeps one
+prediction; verification uses the draft block size and keeps every prediction.
+Both retain the existing expert-parallel computation. The DLM is unchanged.
+
+Use `--no-disagg-tlm` to compile or run the previous combined TLM QPC.
+Dense models keep the combined-QPC default. Split TLM currently supports BS=1.
+After the last prefill chunk, KV state (plus convolution and recurrent state
+for Qwen3.5-MoE) is transferred through host buffers to the verification QPC
+on its first call. Later verification/replay calls keep state on-device.
+
+To reuse a split pair, pass `--tlm-prefill-qpc /path/to/prefill/qpc` and
+`--tlm_qpc /path/to/verification/qpc`. Prefill uses `--tlm_devices` unless
+`--tlm-prefill-devices` is supplied; both groups must have the same device count.
+When they share devices, both TLM QPCs are resident, so their combined core
+and memory requirements must fit. For example, two 8-core QPCs use all 16 cores
+per TLM device. Existing combined QPCs remain usable with `--no-disagg-tlm`.
+
 ## Vision-language models (VLM, multimodal)
 
 **Supported models:** `gemma-4-31B-it`, `Qwen3-VL-32B-Instruct` (more VLMs are added to
@@ -33,9 +70,10 @@ qwen3-vl) is auto-detected from the TLM's `config.model_type`, so `basic_inferen
 works for either — gemma4 entries have no default TLM HF path (pass `--tlm_hf_path`);
 `Qwen3-VL-32B-Instruct` does, so `--tlm_hf_path` is optional for it.
 
-The vision path compiles **three** QPCs: the language decoder (TLM), the **vision
+The combined-TLM vision path compiles **three** QPCs: the language decoder (TLM), the **vision
 encoder** (`pixel_values -> vision_embeds`), and the DFlash draft (DLM). Because the
 TLM and DLM fill their own cards, the vision encoder usually needs its **own** devices.
+Qwen3.5-MoE's default split TLM adds a fourth QPC for language prefill.
 
 > Set `QEFF_HOME` to a filesystem with free space before compiling — the VLM TLM QPC
 > is large (tens of GB):
@@ -76,6 +114,20 @@ python basic_inference_vision.py --model_name Qwen3-VL-32B-Instruct \
 `--height`/`--width` (qwen3-vl only) set the vision encoder's compiled input resolution;
 they default to `354`/`536` when omitted.
 
+### Qwen3.5-4B
+
+Qwen3.5 uses the VLM entry point with its DFlash target and draft checkpoints:
+
+```bash
+python basic_inference_vision.py --model_name Qwen3.5-4B \
+    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
+    --ctx_len 4096 --prefill_seq_len 128 \
+    --image --image_prompt "Describe this image in detail."
+```
+
+Use `--prompt "..."` instead of `--image --image_prompt ...` for text-only input.
+Prefill length can be any positive multiple of the draft block size; verification and replay remain block-sized.
+
 ---
 
 ## `--model_name`
@@ -108,14 +160,21 @@ python basic_inference_vision.py --model_name gemma-4-31B-it \
 
 ## Common flags
 
+DFlash targets use the existing SpD `num_logits_to_keep` input to project only
+the last valid position during prompt prefill. Verification still predicts every
+block position, and all hidden states needed by the DLM are preserved. This
+applies automatically to Qwen3, Llama, Gemma4, Qwen3-VL, Qwen3.5, and Qwen3.5-MoE.
+Existing TLM QPCs remain usable but need re-export/compilation for this change;
+DLM and vision QPCs are unchanged.
+
 | Flag | Default | Notes |
 |---|---|---|
 | `--tlm_devices` | `0,1,2,3` | TLM device IDs |
 | `--dlm_devices` | `0,1,2,3` | DLM device IDs |
 | `--tlm_cores` / `--dlm_cores` | `8` | per-side core count |
-| `--ctx_len` | `4096` (text) / `2048` (vision) | |
+| `--ctx_len` | `4096` | both scripts |
 | `--prefill_seq_len` | `128` | |
-| `--generation_len` | `256` | |
+| `--generation_len` | `256` (text script) / `1800` (vision script) | |
 | `--iteration` | `300` | max SPD iterations |
 | `--hf_token` | `$HF_TOKEN` | required for gated repos |
 | `--tlm_hf_path` | from `MODEL_MAP` | required when the map entry has `None` (VLM entries) |
