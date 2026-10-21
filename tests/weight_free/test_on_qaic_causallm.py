@@ -20,7 +20,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import onnx
 import pytest
 import torch
 from transformers import (
@@ -40,31 +39,13 @@ from ._helpers import (
     PROMPT_LEN,
     WEIGHT_FREE_EMBEDDING_MODEL_PARAMS,
     WEIGHT_FREE_QAIC_MODEL_PARAMS,
+    assert_retained_fp8_onnx,
+    build_fp8_test_checkpoint,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
     skip_on_model_fetch_error,
 )
-
-
-def _assert_retained_fp8_onnx(onnx_path: Path) -> None:
-    model = onnx.load(str(onnx_path), load_external_data=False)
-    fp8_names = {
-        initializer.name
-        for initializer in model.graph.initializer
-        if initializer.data_type == onnx.TensorProto.FLOAT8E4M3FN
-    }
-    fp8_names.update(
-        value_info.name
-        for value_info in model.graph.input
-        if value_info.type.tensor_type.elem_type == onnx.TensorProto.FLOAT8E4M3FN
-    )
-    assert fp8_names, f"Expected retained FP8 weights in {onnx_path}"
-
-    nodes = list(model.graph.node)
-    nodes.extend(node for function in model.functions for node in function.node)
-    fp8_casts = [node for node in nodes if node.op_type == "Cast" and fp8_names.intersection(node.input)]
-    assert not fp8_casts, f"Retained FP8 weights are directly typecast: {[node.name for node in fp8_casts]}"
 
 
 @pytest.mark.weight_free
@@ -159,27 +140,20 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
 @pytest.mark.weight_free
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_type,model_id", FP8_RETAINED_QAIC_MODEL_PARAMS)
-def test_weight_free_fp8_retained_export_compile(model_type, model_id, tmp_export_dir):
+@pytest.mark.parametrize("model_config", FP8_RETAINED_QAIC_MODEL_PARAMS)
+def test_weight_free_fp8_retained_export_compile(model_config, tmp_export_dir):
     """Export retained FP8 weights and compile the resulting ONNX on QAIC."""
-    try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        config.num_hidden_layers = 2
-        quantization_config = getattr(config, "quantization_config", None)
-        if isinstance(quantization_config, dict):
-            quantization_config["scale_dtype"] = torch.float16
-        elif quantization_config is not None:
-            quantization_config.scale_dtype = torch.float16
-
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-            model_id,
-            config=config,
-            torch_dtype=torch.float16,
-            fp8_retain_weights=True,
-            weight_free=True,
-        )
-    except Exception as exc:
-        skip_on_model_fetch_error(exc, model_id)
+    model_type = model_config["quantization_type"]
+    checkpoint_dir = build_fp8_test_checkpoint(model_config, tmp_export_dir / f"fp8_{model_type}_checkpoint")
+    config = AutoConfig.from_pretrained(checkpoint_dir)
+    config.quantization_config["scale_dtype"] = torch.float16
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        str(checkpoint_dir),
+        config=config,
+        torch_dtype=torch.float16,
+        fp8_retain_weights=True,
+        weight_free=True,
+    )
 
     onnx_path = exported_onnx_path(
         qeff_model.export(
@@ -189,11 +163,11 @@ def test_weight_free_fp8_retained_export_compile(model_type, model_id, tmp_expor
             offload_pt_weights=False,
         )
     )
-    _assert_retained_fp8_onnx(onnx_path)
+    assert_retained_fp8_onnx(onnx_path)
 
     qpc_path = qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=tmp_export_dir / f"fp8_{model_type}_compile",
+        compile_dir=str(tmp_export_dir / f"fp8_{model_type}_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
