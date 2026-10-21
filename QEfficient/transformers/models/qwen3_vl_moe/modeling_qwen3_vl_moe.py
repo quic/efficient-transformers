@@ -185,7 +185,10 @@ class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         merge_size = self.spatial_merge_size
         max_hw = max(grid_thw.shape)
-        freq_table = self.rotary_pos_emb(torch.arange(max_hw, device=grid_thw.device))  # (max_hw, dim // 2)
+        position_ids = torch.arange(max_hw, device=grid_thw.device, dtype=torch.int64).type_as(
+            self.rotary_pos_emb.inv_freq
+        )
+        freq_table = torch.outer(position_ids, self.rotary_pos_emb.inv_freq.to(device=grid_thw.device))
         device = freq_table.device
         bs, num_frames, height, width = grid_thw.shape
         grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
