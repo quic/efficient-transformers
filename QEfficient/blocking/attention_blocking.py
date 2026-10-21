@@ -391,8 +391,11 @@ def generic_blocked_attention_interface(
 
     ephemeral_key = None
     ephemeral_value = None
-    if diffusion_gemma_ephemeral_kv and blocking_mode != BlockingMode.QKV:
-        raise ValueError("DiffusionGemma ephemeral KV is supported only with QKV blocking.")
+    if diffusion_gemma_ephemeral_kv and blocking_mode not in {
+        BlockingMode.QKV,
+        BlockingMode.HQKV,
+    }:
+        raise ValueError("DiffusionGemma ephemeral KV is supported only with QKV or HQKV blocking.")
 
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens

@@ -9,6 +9,7 @@
 
 import argparse
 
+import torch
 from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
@@ -35,8 +36,27 @@ TEXT_PROMPT = "Can you summarize Romeo and Juliet and Macbeth by William Shakesp
 # TEXT_PROMPT = "What is diffusion based generative learning?"
 # TEXT_PROMPT = "How to make pizza?"
 # TEXT_PROMPT = "What is diffusion based generative learning? Answer in one sentence."
-
-TEXT_PROMPT = """
+TEXT_PROMPT = """Write exactly 75 entries, numbered Entry 001 through Entry 75. Write 160-180 words per entry in total, including the question, explanation, and example. Keep this length consistent from the first entry to the last. Each entry must contain:                                                                   
+  Question: a specific technical question.                                                                                                                                                                                                                                                                            
+  Explanation: two substantial paragraphs that explain the mechanism, why it works, and a limitation or common mistake.                                                                                                                                                                                               
+  Worked example: concrete inputs, intermediate steps, and the final result. Use calculations, pseudocode, or a small trace where useful.                                                                                                                                                                             
+  Use this topic schedule:                                                                                                                                                                                                                                                                                            
+  001-016: algorithms                                                                                                                                                                                                                                                                                                 
+  017-032: data structures                                                                                                                                                                                                                                                                                            
+  033-044: operating systems
+  045-056: databases
+  057-068: networking
+  069-080: distributed systems
+  081-092: compilers
+  093-104: numerical computing
+  105-116: machine learning
+  117-128: software testing
+ 
+  Begin with Entry 001 and write every entry in order. After each worked example, immediately start the next entry, including after 010 and 020. All 75 entries are requested now; proceed through Entry 75 in this response. Maintain useful explanations and worked examples throughout.
+ 
+  Output only the workbook. Do not ask me whether to continue, offer another installment, wait for permission, or insert commentary about the task or response length. Do not substitute an outline, placeholders, or summaries for entries. Questions belong only in the Question field of each entry. Finish after
+  the worked example for Entry 75."""
+TEXT_PROMPT_ = """
 You are an expert researcher specializing in large language models, probabilistic generative modeling,
 diffusion processes, scalable Transformer architectures, and long-context evaluation methodologies.
 
@@ -1158,7 +1178,7 @@ Questions:
 5. Based on the document, discuss the trade-offs between flexibility and efficiency in diffusion versus autoregressive models.
 
 """
-TEXT_PROMPT_ = """
+TEXT_PROMPT = """
 What is diffusion based generative learning?
  
 Provide the most exhaustive and detailed explanation possible. Do not summarize. Expand every concept thoroughly. Cover:
@@ -1231,7 +1251,144 @@ def _apply_reduced_layer_config(config, num_lang_layers: int):
     return config
 
 
-def load_model_and_processor(model_id: str, canvas_length: int, num_lang_layers: int = None):
+def _duplicate_linear_weights(
+    layer: torch.nn.Linear,
+    orig_kv_heads: int,
+    repeat: int,
+    head_dim: int,
+    hidden_size: int,
+):
+    new_kv_heads = orig_kv_heads * repeat
+    layer.weight.data = torch.repeat_interleave(
+        layer.weight.data.view(orig_kv_heads, head_dim, hidden_size),
+        repeat,
+        dim=0,
+    ).view(new_kv_heads * head_dim, hidden_size)
+    if layer.bias is not None:
+        layer.bias.data = torch.repeat_interleave(
+            layer.bias.data.view(orig_kv_heads, head_dim),
+            repeat,
+            dim=0,
+        ).view(new_kv_heads * head_dim)
+    layer.out_features = new_kv_heads * head_dim
+
+
+def _validate_projection(
+    layer: torch.nn.Linear,
+    *,
+    layer_index: int,
+    projection_name: str,
+    orig_kv_heads: int,
+    head_dim: int,
+    hidden_size: int,
+):
+    expected_weight_shape = (orig_kv_heads * head_dim, hidden_size)
+    if tuple(layer.weight.shape) != expected_weight_shape:
+        raise ValueError(
+            f"Layer {layer_index} {projection_name} shape {tuple(layer.weight.shape)} does not match "
+            f"expected {expected_weight_shape}."
+        )
+    if layer.bias is not None and tuple(layer.bias.shape) != (orig_kv_heads * head_dim,):
+        raise ValueError(
+            f"Layer {layer_index} {projection_name} bias shape {tuple(layer.bias.shape)} does not match "
+            f"expected {(orig_kv_heads * head_dim,)}."
+        )
+
+
+def _validate_replication_factor(
+    *,
+    layer_index: int,
+    layer_type: str,
+    num_attention_heads: int,
+    original_kv_heads: int,
+    repeat: int,
+):
+    if not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 1:
+        raise ValueError(f"{layer_type} KV repeat must be a positive integer; received {repeat!r}.")
+    new_kv_heads = original_kv_heads * repeat
+    if new_kv_heads > num_attention_heads or num_attention_heads % new_kv_heads:
+        raise ValueError(
+            f"Layer {layer_index} {layer_type} replication produces invalid GQA geometry: "
+            f"num_attention_heads={num_attention_heads}, num_key_value_heads={new_kv_heads}."
+        )
+
+
+def replicate_kv_heads_diffusion_gemma(model, sliding_repeat: int = 1, full_repeat: int = 1):
+    """Replicate DiffusionGemma K/V heads before unified or split QPC export."""
+    text_config = model.config.text_config
+    num_attention_heads = text_config.num_attention_heads
+    hidden_size = text_config.hidden_size
+    orig_sliding_kv_heads = text_config.num_key_value_heads
+    orig_full_kv_heads = getattr(text_config, "num_global_key_value_heads", None) or orig_sliding_kv_heads
+    sliding_head_dim = text_config.head_dim
+    full_head_dim = getattr(text_config, "global_head_dim", None) or sliding_head_dim
+    layer_types = text_config.layer_types[: text_config.num_hidden_layers]
+    encoder_layers = model.model.encoder.language_model.layers[: len(layer_types)]
+
+    if len(encoder_layers) != len(layer_types):
+        raise ValueError("Active language-layer count does not match `text_config.layer_types`.")
+
+    for layer_index, layer_type in enumerate(layer_types):
+        if layer_type == "sliding_attention":
+            original_kv_heads, repeat, head_dim = orig_sliding_kv_heads, sliding_repeat, sliding_head_dim
+        elif layer_type == "full_attention":
+            original_kv_heads, repeat, head_dim = orig_full_kv_heads, full_repeat, full_head_dim
+        else:
+            raise ValueError(f"Unsupported DiffusionGemma layer type {layer_type!r} at layer {layer_index}.")
+
+        _validate_replication_factor(
+            layer_index=layer_index,
+            layer_type=layer_type,
+            num_attention_heads=num_attention_heads,
+            original_kv_heads=original_kv_heads,
+            repeat=repeat,
+        )
+        attention = encoder_layers[layer_index].self_attn
+        _validate_projection(
+            attention.k_proj,
+            layer_index=layer_index,
+            projection_name="k_proj",
+            orig_kv_heads=original_kv_heads,
+            head_dim=head_dim,
+            hidden_size=hidden_size,
+        )
+        if attention.v_proj is not None:
+            _validate_projection(
+                attention.v_proj,
+                layer_index=layer_index,
+                projection_name="v_proj",
+                orig_kv_heads=original_kv_heads,
+                head_dim=head_dim,
+                hidden_size=hidden_size,
+            )
+
+    if sliding_repeat == 1 and full_repeat == 1:
+        return
+
+    for layer_index, layer_type in enumerate(layer_types):
+        attention = encoder_layers[layer_index].self_attn
+        if layer_type == "sliding_attention":
+            original_kv_heads, repeat, head_dim = orig_sliding_kv_heads, sliding_repeat, sliding_head_dim
+        else:
+            original_kv_heads, repeat, head_dim = orig_full_kv_heads, full_repeat, full_head_dim
+        new_kv_heads = original_kv_heads * repeat
+        _duplicate_linear_weights(attention.k_proj, original_kv_heads, repeat, head_dim, hidden_size)
+        if attention.v_proj is not None:
+            _duplicate_linear_weights(attention.v_proj, original_kv_heads, repeat, head_dim, hidden_size)
+        attention.num_key_value_heads = new_kv_heads
+        attention.num_key_value_groups = num_attention_heads // new_kv_heads
+
+    text_config.num_key_value_heads = orig_sliding_kv_heads * sliding_repeat
+    text_config.num_global_key_value_heads = orig_full_kv_heads * full_repeat
+
+
+def load_model_and_processor(
+    model_id: str,
+    canvas_length: int,
+    num_lang_layers: int = None,
+    sliding_repeat: int = 1,
+    full_repeat: int = 1,
+):
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     if num_lang_layers is not None:
         config = _apply_reduced_layer_config(config, num_lang_layers=num_lang_layers)
@@ -1246,6 +1403,11 @@ def load_model_and_processor(model_id: str, canvas_length: int, num_lang_layers:
         ignore_mismatched_sizes=num_lang_layers is not None,
     )
     qeff_model.model.config.canvas_length = canvas_length
+    replicate_kv_heads_diffusion_gemma(
+        qeff_model.model,
+        sliding_repeat=sliding_repeat,
+        full_repeat=full_repeat,
+    )
     return processor, qeff_model
 
 
@@ -1271,7 +1433,7 @@ def parse_args():
     parser.add_argument(
         "--enable-decoder-blocking",
         action="store_true",
-        help="Enable QKV attention blocking for the split decoder canvas path.",
+        help="Enable QKV or HQKV attention blocking for the split decoder canvas path.",
     )
     parser.add_argument(
         "--blocking-mode",
@@ -1290,6 +1452,18 @@ def parse_args():
         type=int,
         default=None,
         help="Use a reduced number of language layers; defaults to the full model.",
+    )
+    parser.add_argument(
+        "--sliding-kv-repeat",
+        type=int,
+        default=1,
+        help="Replication factor for sliding-attention KV heads (default: 1 = no change).",
+    )
+    parser.add_argument(
+        "--full-kv-repeat",
+        type=int,
+        default=1,
+        help="Replication factor for full-attention KV heads (default: 1 = no change).",
     )
     parser.add_argument(
         "--sampler",
@@ -1311,18 +1485,31 @@ def main():
         raise ValueError("Prefill stages must be positive.")
     if args.num_layers is not None and args.num_layers <= 0:
         raise ValueError("Number of layers must be positive.")
+    if args.sliding_kv_repeat < 1 or args.full_kv_repeat < 1:
+        raise ValueError("KV repeat factors must be positive.")
     if args.enable_blocking and args.runtime_mode == "unified":
         raise ValueError("Blocking is supported only for split encoder prefill.")
     if args.enable_decoder_blocking and args.runtime_mode != "split":
         raise ValueError("Decoder blocking is supported only for split runtime mode.")
-    if args.enable_decoder_blocking and args.blocking_mode != "qkv":
-        raise ValueError("Decoder blocking requires --blocking-mode qkv.")
+    if args.enable_decoder_blocking and args.blocking_mode not in {"qkv", "hqkv"}:
+        raise ValueError("Decoder blocking requires --blocking-mode qkv or hqkv.")
     blocking_option_values = {
         "num_kv_blocks": args.num_kv_blocks,
         "num_q_blocks": args.num_q_blocks,
         "head_block_size": args.head_block_size,
         "num_batch_blocks": args.num_batch_blocks,
     }
+    if args.enable_decoder_blocking and args.blocking_mode == "hqkv":
+        missing_hqkv_options = [
+            option_name
+            for option_name in _BLOCKING_MODE_ARGS["hqkv"]
+            if blocking_option_values[option_name] is None
+        ]
+        if missing_hqkv_options:
+            raise ValueError(
+                "Decoder HQKV blocking requires explicit "
+                f"{', '.join(sorted(missing_hqkv_options))}."
+            )
     for option_name, option_value in blocking_option_values.items():
         if option_value is not None and option_value <= 0:
             raise ValueError(f"{option_name} must be positive when provided.")
@@ -1351,8 +1538,15 @@ def main():
         MODEL_ID,
         args.canvas_length,
         num_lang_layers=args.num_layers,
+        sliding_repeat=args.sliding_kv_repeat,
+        full_repeat=args.full_kv_repeat,
     )
-    print(f"Compiling a {qeff_model.model.config.text_config.num_hidden_layers}-layer DiffusionGemma model.")
+    text_config = qeff_model.model.config.text_config
+    print(
+        f"Compiling a {text_config.num_hidden_layers}-layer DiffusionGemma model | "
+        f"sliding KV heads={text_config.num_key_value_heads} | "
+        f"full KV heads={text_config.num_global_key_value_heads}."
+    )
     if args.runtime_mode == "unified":
         qpc_path = compile_unified_qpc(
             qeff_model.model,

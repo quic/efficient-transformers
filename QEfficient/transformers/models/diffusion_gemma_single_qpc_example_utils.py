@@ -987,8 +987,10 @@ def compile_split_qpcs(
     print(f"Compiling split DiffusionGemma QPCs ({num_devices} devices, {num_cores} cores)...")
     start = time.time()
     encoder = DiffusionGemmaEncoderQPC(qeff_model, include_image_idx=not text_only)
-    if decoder_blocking_config and decoder_blocking_config.get("blocking_mode") != "qkv":
-        raise ValueError("Split DiffusionGemma decoder blocking requires `blocking_mode='qkv'`.")
+    if decoder_blocking_config and decoder_blocking_config.get("blocking_mode") not in {"qkv", "hqkv"}:
+        raise ValueError(
+            "Split DiffusionGemma decoder blocking requires `blocking_mode='qkv'` or `blocking_mode='hqkv'`."
+        )
     decoder = DiffusionGemmaDecoderQPC(
         qeff_model,
         enable_diffusion_decoder_blocking=bool(decoder_blocking_config),
