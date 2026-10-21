@@ -206,7 +206,6 @@ class QEffGemma3Attention(Gemma3Attention):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        ccl_length: Optional[int] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -246,8 +245,24 @@ class QEffGemma3Attention(Gemma3Attention):
                 "sliding_window": getattr(past_key_values, "sliding_window_len", self.config.sliding_window),
             }
             if comp_ctx_lengths is not None:
-                cache_kwargs["CCL"] = ccl_length if ccl_length is not None else attention_mask.shape[-1]
+                ccl_width_tensor = torch._shape_as_tensor(comp_ctx_lengths)[-1]
+                cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+            if comp_ctx_lengths is not None:
+                # QAIC does not support a dynamic Slice end. Keep the mask
+                # shape aligned with the updated cache and mask the CCL tail.
+                attention_mask = attention_mask[..., : key_states.shape[-2]]
+                context_indices = torch.arange(
+                    attention_mask.shape[-1], dtype=comp_ctx_lengths.dtype, device=attention_mask.device
+                )
+                valid_context = (context_indices < ccl_width_tensor).view(1, 1, 1, -1)
+                invalid_context = (
+                    torch.ones_like(attention_mask)
+                    if attention_mask.dtype == torch.bool
+                    else torch.full_like(attention_mask, torch.finfo(attention_mask.dtype).min)
+                )
+                attention_mask = torch.where(valid_context, attention_mask, invalid_context)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -292,7 +307,6 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
-        ccl_length: Optional[int] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -315,7 +329,6 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             position_ids=position_ids,
             past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
-            ccl_length=ccl_length,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
