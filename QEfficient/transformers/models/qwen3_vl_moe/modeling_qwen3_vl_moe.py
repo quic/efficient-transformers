@@ -184,20 +184,8 @@ class QEffQwen3VLMoeTextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
 class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         merge_size = self.spatial_merge_size
-        max_hw = max(grid_thw.shape)
-        position_ids = torch.arange(max_hw, device=grid_thw.device, dtype=torch.int64).type_as(
-            self.rotary_pos_emb.inv_freq
-        )
-        freq_table = torch.outer(position_ids, self.rotary_pos_emb.inv_freq.to(device=grid_thw.device))
-        device = freq_table.device
         bs, num_frames, height, width = grid_thw.shape
-        grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
-
-        # total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        # pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
-
-        bs, num_frames, height, width = grid_thw.shape
-        inv_freq = self.rotary_pos_emb.inv_freq
+        inv_freq = self.rotary_pos_emb.inv_freq.to(device=grid_thw.device)
         device = inv_freq.device
 
         merged_h, merged_w = height // merge_size, width // merge_size
