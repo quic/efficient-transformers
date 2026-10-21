@@ -245,24 +245,8 @@ class QEffGemma3Attention(Gemma3Attention):
                 "sliding_window": getattr(past_key_values, "sliding_window_len", self.config.sliding_window),
             }
             if comp_ctx_lengths is not None:
-                ccl_width_tensor = torch._shape_as_tensor(comp_ctx_lengths)[-1]
-                cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
-            if comp_ctx_lengths is not None:
-                # QAIC does not support a dynamic Slice end. Keep the mask
-                # shape aligned with the updated cache and mask the CCL tail.
-                attention_mask = attention_mask[..., : key_states.shape[-2]]
-                context_indices = torch.arange(
-                    attention_mask.shape[-1], dtype=comp_ctx_lengths.dtype, device=attention_mask.device
-                )
-                valid_context = (context_indices < ccl_width_tensor).view(1, 1, 1, -1)
-                invalid_context = (
-                    torch.ones_like(attention_mask)
-                    if attention_mask.dtype == torch.bool
-                    else torch.full_like(attention_mask, torch.finfo(attention_mask.dtype).min)
-                )
-                attention_mask = torch.where(valid_context, attention_mask, invalid_context)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -471,8 +455,13 @@ class QEffGemma3TextModel(Gemma3TextModel):
                     target_length=full_ctx_len,
                 ),
             }
-
-        # decoder layers
+        if comp_ctx_lengths is not None:
+            # Trim while comp_ctx_lengths is still the original CCL vector.
+            # Later decoder subfunctions receive the derived width, so applying
+            # .shape[-1] there would create a dynamic Slice.ends input.
+            ccl_width = comp_ctx_lengths.shape[-1]
+            _causal_mask_mapping["sliding_attention"] = _causal_mask_mapping["sliding_attention"][:, :, :, :ccl_width]
+            _causal_mask_mapping["full_attention"] = _causal_mask_mapping["full_attention"][:, :, :, :ccl_width]
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
