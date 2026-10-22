@@ -92,6 +92,7 @@ def _make_mock_session(
     session.input_names = [b.name for b in bindings if b.dir == "input"]
     session.output_names = [b.name for b in bindings if b.dir == "output"]
     session.is_active = True
+    session.binding_is_bfloat16.return_value = False
 
     # run() returns logits with argmax-able values
     def _run(inputs):
@@ -984,6 +985,132 @@ class TestFetchNextTokenId:
         outputs = {"logits": logits}
         token = obj._fetch_next_token_id(outputs)
         assert token[0, 0] == 55
+
+
+class TestBfloat16GenerationRegression:
+    """CPU-only regression coverage for BF16 transport buffers and logits."""
+
+    @staticmethod
+    def _make_cloud_session(output_names):
+        session = SimpleNamespace()
+        session.output_names = output_names
+        session.binding_index_map = {name: index for index, name in enumerate(output_names)}
+        session.bindings = [SimpleNamespace(type=11) for _ in output_names]
+        session.aic_to_np_dtype_mapping = {11: np.dtype(np.float16)}
+        session.binding_is_bfloat16 = lambda name: True
+        return session
+
+    def test_bfloat16_to_float32_decodes_raw_patterns(self):
+        from QEfficient.generation.cloud_infer import _bfloat16_to_float32
+
+        raw = np.array([0x3F80, 0xC020, 0x4049], dtype=np.uint16).view(np.float16)
+        decoded = _bfloat16_to_float32(raw)
+
+        assert decoded.dtype == np.float32
+        np.testing.assert_allclose(decoded, [1.0, -2.5, 3.140625])
+
+    @pytest.mark.parametrize("output_name", ["logits", "language_model/logits"])
+    def test_build_outputs_decodes_plain_and_prefixed_bfloat16_logits(self, output_name):
+        from QEfficient.generation import cloud_infer
+
+        raw_logits = np.array([0x3F00, 0x3F80, 0x4000, 0xBF80, 0x4040, 0x4080, 0x3E80, 0x0000], dtype=np.uint16).view(
+            np.float16
+        )
+        raw_logits = raw_logits.reshape(1, 2, 4)
+        raw_vision = np.array([0x3F80, 0xC020], dtype=np.uint16).view(np.float16)
+        raw_kv = np.array([0x3F00, 0x4000], dtype=np.uint16).view(np.float16)
+        session = self._make_cloud_session([output_name, "vision_embeds", "past_key.0_RetainedState"])
+        qbuffers = [raw_logits, raw_vision, raw_kv]
+        output_qbuffers = [raw_logits, raw_vision, raw_kv]
+
+        outputs = cloud_infer.QAICInferenceSession._build_outputs(
+            session,
+            output_qbuffers,
+            qbuffers,
+            [(2, [1, 2, 4]), (2, [2]), (2, [2])],
+        )
+
+        logits = outputs[output_name]
+        assert logits.dtype == np.float32
+        assert logits.shape == (1, 2, 4)
+        np.testing.assert_array_equal(logits.argmax(2), [[2, 1]])
+        assert outputs["logits"] is logits
+        np.testing.assert_array_equal(outputs["vision_embeds"].view(np.uint16), raw_vision.view(np.uint16))
+        np.testing.assert_array_equal(outputs["past_key.0_RetainedState"].view(np.uint16), raw_kv.view(np.uint16))
+
+    def test_set_output_buffers_allocates_bfloat16_prefill_and_cb_buffers(self):
+        obj, _, session = _make_base_instance()
+        session.binding_is_bfloat16.return_value = True
+
+        obj._set_output_buffers(batch_size=2, sequence_length=4)
+
+        logits = session.set_buffers.call_args[0][0]["logits"]
+        assert logits.shape == (2, 4, VOCAB_SIZE)
+        assert logits.dtype == np.float16
+        assert logits.itemsize == 2
+
+    def test_set_output_buffers_allocates_bfloat16_continuous_batch_buffer(self):
+        obj, _, session = TestContinuousBatching()._make_cb_instance(full_batch_size=2)
+        session.binding_is_bfloat16.return_value = True
+
+        obj._set_output_buffers(batch_size=2, sequence_length=1)
+
+        logits = session.set_buffers.call_args[0][0]["logits"]
+        assert logits.shape == (2, 1, VOCAB_SIZE)
+        assert logits.dtype == np.float16
+        assert logits.itemsize == 2
+
+    def test_tlm_decode_allocates_bfloat16_buffer(self):
+        obj, _, session = _make_base_instance()
+        obj.is_tlm = True
+        obj.batch_size = 1
+        obj._decode_seq_len = 1
+        obj._vocab_size = VOCAB_SIZE
+        session.binding_is_bfloat16.return_value = True
+
+        obj.run_decode(
+            {"input_ids": np.zeros((1, 1), dtype=np.int64), "position_ids": np.zeros((1, 1), dtype=np.int64)},
+            generation_len=1,
+            automation=False,
+        )
+
+        logits = session.set_buffers.call_args[0][0]["logits"]
+        assert logits.shape == (1, 1, VOCAB_SIZE)
+        assert logits.dtype == np.float16
+        assert logits.itemsize == 2
+
+    @pytest.mark.parametrize("output_name", ["logits", "language_model/logits"])
+    def test_kv_dma_decodes_plain_and_prefixed_logits(self, output_name):
+        from QEfficient.generation._kv_dma_handoff import KvDmaHandoff
+
+        output_names = [output_name, "vision_embeds"]
+        session = SimpleNamespace(
+            cluster_id="decode",
+            stages=1,
+            input_names=[],
+            output_names=output_names,
+            binding_index_map={name: index for index, name in enumerate(output_names)},
+            bindings=[
+                SimpleNamespace(name=output_name, dims=[1, 1, 4], type=11),
+                SimpleNamespace(name="vision_embeds", dims=[2], type=11),
+            ],
+            aic_to_np_dtype_mapping={11: np.dtype(np.float16)},
+            binding_is_bfloat16=lambda name: True,
+        )
+        handoff = KvDmaHandoff(session)
+        handoff.init_buffer_maps()
+        raw_logits = np.array([0x3F00, 0x3F80, 0x4000, 0xBF80], dtype=np.uint16).view(np.float16).reshape(1, 1, 4)
+        raw_vision = np.array([0x3F80, 0xC020], dtype=np.uint16).view(np.float16)
+        handoff.output_buffers[0][output_name][:] = raw_logits
+        handoff.output_buffers[0]["vision_embeds"][:] = raw_vision
+
+        outputs = handoff.get_outputs(0)
+
+        assert outputs[output_name].dtype == np.float32
+        assert outputs[output_name].shape == (1, 1, 4)
+        assert outputs[output_name].argmax(2).item() == 2
+        assert outputs["logits"] is outputs[output_name]
+        np.testing.assert_array_equal(outputs["vision_embeds"].view(np.uint16), raw_vision.view(np.uint16))
 
 
 # ---------------------------------------------------------------------------
