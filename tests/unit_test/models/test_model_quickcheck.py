@@ -3010,16 +3010,6 @@ def test_qwen3_5_moe_full_state_update_matches_singleton_routed_state():
         kv_offload=True,
         continuous_batching=True,
     )
-    inputs = full_state_model.model.get_dummy_inputs(
-        kv_offload=True,
-        continuous_batching=True,
-        gdn_full_state_update=True,
-        batch_size=1,
-        prefill_seq_len=4,
-    )["lang"]
-    inputs["input_ids"].fill_(1)
-    assert inputs["batch_index"].tolist() == [[0]]
-
     routed_model.transform(ctx_len=8, seq_len=4, bs=1, prefill_only=True, prefill_seq_len=4)
     full_state_model.transform(
         ctx_len=8,
@@ -3030,6 +3020,16 @@ def test_qwen3_5_moe_full_state_update_matches_singleton_routed_state():
         qaic_config={"gdn_full_state_update": True},
     )
     assert full_state_model.lang_model.hash_params["gated_delta_kwargs"] == {"full_state_update": True}
+
+    inputs = full_state_model.model.get_dummy_inputs(
+        kv_offload=True,
+        continuous_batching=True,
+        gdn_full_state_update=True,
+        batch_size=1,
+        prefill_seq_len=4,
+    )["lang"]
+    inputs["input_ids"].fill_(1)
+    assert inputs["batch_index"].tolist() == [[0]]
 
     routed_gdn_modules = [
         module for module in routed_model.lang_model.model.modules() if hasattr(module, "gdn_full_state_update")

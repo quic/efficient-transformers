@@ -1462,7 +1462,19 @@ class QEFFBaseModel(ABC):
             self.hash_params["blocking_kwargs"] = blocking_config
         else:
             self.hash_params.pop("blocking_kwargs", None)
-        gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
+        gated_delta_qaic_config = qaic_config
+        if (
+            gated_delta_qaic_config
+            and gated_delta_qaic_config.get("gdn_full_state_update") is True
+            and compiler_options.get("prefill_only") is not True
+        ):
+            gated_delta_qaic_config = copy.deepcopy(gated_delta_qaic_config)
+            gated_delta_qaic_config.pop("gdn_full_state_update", None)
+
+        gated_delta_config = build_gated_delta_config_for_transform(
+            seq_len=seq_len,
+            qaic_config=gated_delta_qaic_config,
+        )
         self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
             self.model, gated_delta_config=gated_delta_config
         )
