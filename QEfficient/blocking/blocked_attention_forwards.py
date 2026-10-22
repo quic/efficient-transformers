@@ -235,14 +235,15 @@ def blocked_kv_attention_forward(
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
-    if ctx_len is None:
-        raise ValueError("`ctx_len` is required for blocked KV attention.")
     num_kv_blocks = max(1, num_kv_blocks)
     block_table = None
     if paged_attention:
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = kv_block_size * num_kv_blocks
     else:
+        if ctx_len is None:
+            raise ValueError("`ctx_len` is required for blocked KV attention.")
         kv_block_size = -(-ctx_len // num_kv_blocks)
 
     if hasattr(module, "config"):
@@ -258,7 +259,7 @@ def blocked_kv_attention_forward(
     for kv_block_idx in range(num_kv_blocks):
         start_index = kv_block_idx * kv_block_size
         if kv_block_idx == num_kv_blocks - 1:
-            kv_len_block = ctx_len - start_index
+            kv_len_block = past_seen_tokens - start_index
         else:
             kv_len_block = kv_block_size
         end_index = start_index + kv_len_block
@@ -297,8 +298,8 @@ def blocked_kv_attention_forward(
 
         if use_causal_mask or mask_block is None:
             target_length = torch.where(
-                torch.tensor(ctx_len, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                ctx_len,
+                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                past_seen_tokens,
                 end_index,
             )
             causal_mask_block = _create_causal_mask(
@@ -1198,10 +1199,6 @@ def blocked_qkv_attention_forward(
     """
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
-
-    if ctx_len is None:
-        raise ValueError("`ctx_len` is required for blocked QKV attention.")
-    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
@@ -1217,7 +1214,10 @@ def blocked_qkv_attention_forward(
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
         past_seen_tokens = kv_block_size * num_kv_blocks
     else:
-        kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+        if ctx_len is None:
+            raise ValueError("`ctx_len` is required for blocked QKV attention.")
+        past_seen_tokens = ctx_len
+        kv_block_size = -(-ctx_len // num_kv_blocks)
 
     q_output_blocks = []
     q_attn_blocks = []
@@ -1363,9 +1363,6 @@ def blocked_hqkv_attention_forward(
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 
-    if ctx_len is None:
-        raise ValueError("`ctx_len` is required for blocked HQKV attention.")
-    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
@@ -1382,6 +1379,9 @@ def blocked_hqkv_attention_forward(
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
         past_seen_tokens = kv_block_size * num_kv_blocks
     else:
+        if ctx_len is None:
+            raise ValueError("`ctx_len` is required for blocked HQKV attention.")
+        past_seen_tokens = ctx_len
         kv_block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks else 1
 
     h_output_blocks = []
@@ -1546,9 +1546,6 @@ def blocked_bhqkv_attention_forward(
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 
-    if ctx_len is None:
-        raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
-    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
@@ -1566,6 +1563,9 @@ def blocked_bhqkv_attention_forward(
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
         past_seen_tokens = kv_block_size * num_kv_blocks
     else:
+        if ctx_len is None:
+            raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
+        past_seen_tokens = ctx_len
         kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []

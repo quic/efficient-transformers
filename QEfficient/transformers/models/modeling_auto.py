@@ -4233,9 +4233,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
             supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
 
-            seq_len = kv_block_size = (
-                -(-blocking_kwargs.ctx_len // num_kv_blocks) if supports_paged_attention else seq_len
-            )
+            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if supports_paged_attention else seq_len
 
         # TODO: Remove this hack ##################
         if dynamo:
@@ -4294,10 +4292,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = (for_loop_number_forced_by_expert_parallel * seq_len) // math.gcd(
                 for_loop_number_forced_by_expert_parallel, seq_len
             )
-        if blocking_enabled:
-            seq_len = (for_loop_number_forced_by_blocking * seq_len) // math.gcd(
-                for_loop_number_forced_by_blocking, seq_len
-            )
+
         ##################################
 
         example_inputs = {
@@ -4351,7 +4346,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 bs, num_kv_blocks
             )
             example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
-            dynamic_axes["block_table"] = {0: "batch_size"}
+            dynamic_axes["block_table"] = {0: "batch_size", 1: "num_kv_blocks"}
             dynamic_axes["slot_id"] = {0: "batch_size"}
             # Assuming 4d pkv, might have to recheck for GPTBigCode with 3d pkv
             pkv_dynamic_axes = {
