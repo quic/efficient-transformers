@@ -456,6 +456,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
         kv_rename_map: Dict[str, str] = {}
+        dropped_retained_outputs: set[str] = set()
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
@@ -491,10 +492,15 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
                     function_input = fn.input[input_index]
                     scatter_output = cls._resolve_retained_state_output(fn, function_input, allow_unchanged=True)
-                    retained_state_values[retained_output] = scatter_output
 
                     plain_input = re.sub(r"_(?:Internal)?RetainedState$", "", retained_output)
                     kv_rename_map[retained_output] = plain_input
+                    if scatter_output == function_input:
+                        dropped_retained_outputs.add(retained_output)
+                        changed = True
+                        continue
+
+                    retained_state_values[retained_output] = scatter_output
                     if retained_output not in node.output:
                         node.output.append(retained_output)
                         changed = True
@@ -559,6 +565,10 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         if kv_rename_map:
             changed |= cls._rename_graph_inputs_bulk(graph, kv_rename_map)
+        if dropped_retained_outputs:
+            retained_outputs = [output for output in graph.output if output.name not in dropped_retained_outputs]
+            del graph.output[:]
+            graph.output.extend(retained_outputs)
         return changed
 
     @staticmethod
