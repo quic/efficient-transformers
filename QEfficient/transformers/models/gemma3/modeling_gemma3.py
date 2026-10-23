@@ -245,7 +245,10 @@ class QEffGemma3Attention(Gemma3Attention):
                 "sliding_window": getattr(past_key_values, "sliding_window_len", self.config.sliding_window),
             }
             if comp_ctx_lengths is not None:
-                cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
+                if attention_mask is not None:
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                elif not self.is_sliding:
+                    cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
