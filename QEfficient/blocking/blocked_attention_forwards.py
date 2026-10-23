@@ -98,6 +98,8 @@ def update_running_softmax_prefill(
     skip_future: Optional[torch.Tensor] = None,
 ):
     prev_max = current_max
+    attn_weights_block = attn_weights_block.to(current_max.dtype)
+    v_block = v_block.to(output.dtype)
     current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
     delta_max = prev_max - current_max_updated
     current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
@@ -877,10 +879,10 @@ def blocked_qkv_attention_forward_prefill_online(
                         (B, num_cores, rc * tc),
                         float(MIN_MASKED_ATTENTION_VALUE),
                         device=query.device,
-                        dtype=query.dtype,
+                        dtype=torch.float32,
                     ),
-                    "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=query.dtype),
-                    "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=query.dtype),
+                    "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=torch.float32),
+                    "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=torch.float32),
                 }
             )
 
@@ -923,7 +925,7 @@ def blocked_qkv_attention_forward_prefill_online(
         r_chunks = []
         for acc in accs:
             rc = acc["rc"]
-            out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
+            out = (acc["o_acc"] / acc["s_acc"].unsqueeze(-1)).to(query.dtype)
             r_chunks.append(out.view(B, num_cores, rc, tc, D))
         t_chunks.append(torch.cat(r_chunks, dim=2))
 
