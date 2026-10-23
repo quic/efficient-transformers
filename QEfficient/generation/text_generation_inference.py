@@ -717,6 +717,48 @@ class QEffTextGenerationBase:
         self.generation_len[decode_batch] = generation_len
         return next_token_id
 
+    def _runtime_schedule_position_batch_axis(
+        self, position_ids: np.ndarray, decode_inputs: Dict[str, np.ndarray]
+    ) -> int:
+        input_ids = np.asarray(decode_inputs.get("input_ids", []))
+        if input_ids.ndim and position_ids.ndim >= input_ids.ndim:
+            input_shape = tuple(input_ids.shape)
+            if tuple(position_ids.shape[-input_ids.ndim :]) == input_shape:
+                return position_ids.ndim - input_ids.ndim
+
+        matching_axes = [axis for axis, axis_size in enumerate(position_ids.shape) if axis_size == self.full_batch_size]
+        if len(matching_axes) == 1:
+            return matching_axes[0]
+        if position_ids.ndim and position_ids.shape[0] == self.full_batch_size:
+            return 0
+        if matching_axes:
+            return matching_axes[0]
+        return 0
+
+    def _runtime_schedule_position_ids(self, decode_inputs: Dict[str, np.ndarray]) -> List[Any]:
+        position_ids = np.asarray(decode_inputs["position_ids"])
+        if position_ids.ndim == 0:
+            return [position_ids.item()] * self.full_batch_size
+
+        batch_axis = self._runtime_schedule_position_batch_axis(position_ids, decode_inputs)
+        slot_major_position_ids = np.moveaxis(position_ids, batch_axis, 0)
+        schedule_position_ids = []
+        for slot_position_ids in slot_major_position_ids[: self.full_batch_size]:
+            slot_position_ids = np.asarray(slot_position_ids)
+            if slot_position_ids.ndim:
+                slot_position_ids = slot_position_ids[..., -1]
+            if slot_position_ids.ndim == 0:
+                schedule_position_ids.append(slot_position_ids.item())
+            else:
+                schedule_position_ids.append(slot_position_ids.tolist())
+        return schedule_position_ids
+
+    def _runtime_schedule_position_id_for_slot(self, decode_inputs: Dict[str, np.ndarray], decode_batch_id: int) -> Any:
+        position_ids = self._runtime_schedule_position_ids(decode_inputs)
+        if decode_batch_id >= len(position_ids):
+            return None
+        return position_ids[decode_batch_id]
+
     def _record_runtime_schedule_event(self, event: Dict[str, Any]) -> None:
         input_dumper = getattr(self._session, "input_dumper", None)
         if input_dumper is not None:
@@ -951,9 +993,7 @@ class QEffTextGenerationBase:
                     "queue_depth_before": len(prompt_queue),
                     "slot_to_logical_prompt": {int(slot): int(prompt_id) for slot, prompt_id in batch_id_map.items()},
                     "decode_input_ids": np.asarray(decode_inputs["input_ids"]).reshape(self.full_batch_size, -1)[:, -1],
-                    "decode_position_ids": np.asarray(decode_inputs["position_ids"]).reshape(self.full_batch_size, -1)[
-                        :, -1
-                    ],
+                    "decode_position_ids": self._runtime_schedule_position_ids(decode_inputs),
                 }
             )
             outputs = self._session_run_with_context(
@@ -1089,7 +1129,9 @@ class QEffTextGenerationBase:
                             "logical_prompt_index": int(batch_id_map[decode_batch_id]),
                             "token": slot_token_id,
                             "generation_index": generation_index,
-                            "next_position_id": int(decode_inputs["position_ids"][decode_batch_id][..., -1]),
+                            "next_position_id": self._runtime_schedule_position_id_for_slot(
+                                decode_inputs, decode_batch_id
+                            ),
                         }
                     )
 

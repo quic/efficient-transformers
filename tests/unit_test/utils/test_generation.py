@@ -1047,6 +1047,52 @@ class TestContinuousBatching:
         assert replacement_event["queue_depth_before_pop"] == 1
         assert replacement_event["queue_depth_after_pop"] == 0
 
+    def test_runtime_schedule_position_ids_do_not_assume_batch_major(self):
+        obj, _, _ = self._make_cb_instance(full_batch_size=2)
+        decode_inputs = {
+            "input_ids": np.array([[11], [12]], dtype=np.int64),
+            "position_ids": np.array(
+                [
+                    [[10], [20]],
+                    [[110], [120]],
+                    [[210], [220]],
+                    [[310], [320]],
+                ],
+                dtype=np.int64,
+            ),
+        }
+
+        position_ids = obj._runtime_schedule_position_ids(decode_inputs)
+
+        assert position_ids == [[10, 110, 210, 310], [20, 120, 220, 320]]
+        assert obj._runtime_schedule_position_id_for_slot(decode_inputs, 1) == [20, 120, 220, 320]
+
+    def test_continuous_batching_logs_non_batch_major_position_ids(self):
+        obj, _, mock_session = self._make_cb_instance(full_batch_size=2)
+        schedule_events = []
+        mock_session.input_dumper = SimpleNamespace(record_schedule_event=schedule_events.append)
+        obj.initialize_decode_inputs(2, 2, CTX_LEN)
+        obj.decode_input_ids[:] = np.array([[11], [12]], dtype=np.int64)
+        obj.decode_pos_ids = np.array(
+            [
+                [[10], [20]],
+                [[110], [120]],
+                [[210], [220]],
+                [[310], [320]],
+            ],
+            dtype=np.int64,
+        )
+        obj.generation_len[:] = 2
+        obj.generated_ids[:, 0] = obj.decode_input_ids[:, 0]
+        obj.batch_index = np.arange(2).reshape(-1, 1)
+
+        obj.run_continuous_batching_decode(deque(), generation_len=2)
+
+        decode_invocation = next(event for event in schedule_events if event["type"] == "decode_invocation")
+        slot_advanced = [event for event in schedule_events if event["type"] == "slot_advanced"]
+        assert decode_invocation["decode_position_ids"] == [[10, 110, 210, 310], [20, 120, 220, 320]]
+        assert slot_advanced[0]["next_position_id"] == [11, 110, 210, 310]
+
 
 # ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id
