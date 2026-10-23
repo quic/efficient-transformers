@@ -257,6 +257,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         wpos_ids = wpos_ids.permute(0, 2, 1, 3)
         wpos_ids = wpos_ids.flatten()
 
+        pos_ids = []
         pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
 

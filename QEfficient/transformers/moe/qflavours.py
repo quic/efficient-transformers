@@ -18,7 +18,6 @@ from QEfficient.customop import (
     ctx_scatter_3d_int,
 )
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
-from QEfficient.transformers.moe.flavours import build_matched_idx_from_cumsum
 
 
 @dataclass(frozen=True)
@@ -58,6 +57,18 @@ class QuantizedMoEWeights:
     @property
     def hidden_size(self) -> int:
         return self.gate_qweight.shape[-1] * 2
+
+
+def _build_matched_idx_from_cumsum(token_to_expert: torch.Tensor) -> torch.Tensor:
+    """Build packed-to-original token indices for cumsum expert dispatch."""
+    batch_size, seq_len = token_to_expert.shape
+    int32_max = torch.iinfo(torch.int32).max
+    invalid_index = torch.tensor(int32_max, dtype=torch.int32, device=token_to_expert.device)
+    token_indices = torch.arange(seq_len, dtype=torch.int32, device=token_to_expert.device).expand(batch_size, -1)
+    packed_indices = torch.cumsum(token_to_expert.to(torch.int32), dim=1) - 1
+    scatter_indices = torch.where(token_to_expert, packed_indices, invalid_index)
+    matched_indices = torch.full_like(token_indices, int32_max)
+    return ctx_scatter_3d_int(matched_indices.unsqueeze(-1), scatter_indices, token_indices.unsqueeze(-1)).squeeze(-1)
 
 
 def _dequantize_projection(qweight: torch.Tensor, scales: torch.Tensor, qzeros: torch.Tensor, group_size: int):

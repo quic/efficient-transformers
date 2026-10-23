@@ -3140,7 +3140,7 @@ def _assert_qwen3_5_moe_outputs_and_states_close(routed_outputs, full_state_outp
     ],
     ids=["decode-bsz2", "decode-bsz4"],
 )
-def test_qwen3_5_moe_full_state_update_matches_routed_state(
+def test_qwen3_5_moe_linear_attention_full_state_update_matches_routed_state(
     seq_len,
     prefill_only,
     batch_size,
@@ -3194,7 +3194,7 @@ def test_qwen3_5_moe_full_state_update_matches_routed_state(
 
 
 @pytest.mark.llm_model
-def test_qwen3_5_moe_partial_batch_state_update_preserves_inactive_rows():
+def test_qwen3_5_moe_tiny_partial_batch_state_update_preserves_inactive_rows():
     config = _qwen3_5_moe_linear_attention_config()
     torch.manual_seed(0)
     hf_model = AutoModelForImageTextToText.from_config(config).eval()
@@ -3358,7 +3358,7 @@ def test_qwen3_5_moe_partial_batch_state_update_preserves_inactive_rows():
 
 @pytest.mark.llm_model
 @pytest.mark.parametrize(("prefill_only", "seq_len"), [(True, 4), (False, 1)], ids=["prefill", "decode"])
-def test_qwen3_5_moe_full_state_export_has_no_retained_state_scatter(tmp_path, prefill_only, seq_len):
+def test_qwen3_5_moe_tiny_full_state_export_has_no_retained_state_scatter(tmp_path, prefill_only, seq_len):
     config = _tiny_qwen3_5_moe_config()
     config.text_config.layer_types = ["linear_attention"] * config.text_config.num_hidden_layers
     hf_model = AutoModelForImageTextToText.from_config(config).eval()
