@@ -22,16 +22,32 @@ buffers. 64K is the compiled configuration used by the commands below.
 
 ## Environment and local snapshot
 
-Use the Qwen3.8 virtual environment:
+Use the Qwen3.8 virtual environment. When `--checkpoint` is omitted, the
+example passes `Qwen/Qwen3.8-Flash-Next` to QEfficient's `from_pretrained`,
+which downloads or reuses the checkpoint through the configured Hugging Face
+cache:
 
 ```bash
 VENV=/home/ochougul/envs/qwen38f
 SNAPSHOT=/home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/de4b8e4d43b917e7706784d8bb445c9af86a3540
+export HF_HUB_CACHE=/home/huggingface_hub
+export HF_HUB_ENABLE_HF_TRANSFER=1
 ```
 
-These commands expect a completed local snapshot. They do not download model
-weights. If the snapshot is not already available, configure the approved
-`HF_HUB_CACHE` before obtaining it.
+The full model run can omit `--checkpoint`, but must provide the model source:
+
+```bash
+HF_HUB_CACHE=/home/huggingface_hub "$VENV/bin/python" \
+  examples/text_generation/qwen4_exp_dp16_decode_qpc.py \
+  --model-name-or-path Qwen/Qwen3.8-Flash-Next \
+  --layers 48
+```
+
+If `--prompt` is used, also pass `--model-name-or-path` as the local cached snapshot so
+the host-side n-gram lookup can read its safetensors shards.
+
+The four-layer workflow below continues to use an explicit local snapshot and
+the prepared four-layer checkpoint.
 
 ## Step 1: create the four-layer checkpoint
 
@@ -56,7 +72,7 @@ To export and compile a fresh QPC with the configuration above, run:
 
 ```bash
 sg qaic -c '/home/ochougul/envs/qwen38f/bin/python examples/text_generation/qwen4_exp_dp16_decode_qpc.py \
-  --snapshot /home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/de4b8e4d43b917e7706784d8bb445c9af86a3540 \
+  --model-name-or-path /home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/de4b8e4d43b917e7706784d8bb445c9af86a3540 \
   --checkpoint qwen3.8_flash_experiment/example_repro_20261013/qwen38_flash_4layer_checkpoint_v2 \
   --compile-dir qwen3.8_flash_experiment/wf_export_debug_boundary_v3'
 ```
@@ -103,7 +119,7 @@ the runtime selects devices instead of hardcoding a device list:
 ```bash
 sg qaic -c '/home/ochougul/envs/qwen38f/bin/python \
   examples/text_generation/qwen4_exp_dp16_decode_qpc.py \
-  --snapshot /home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/de4b8e4d43b917e7706784d8bb445c9af86a3540 \
+  --model-name-or-path /home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/de4b8e4d43b917e7706784d8bb445c9af86a3540 \
   --qpc qwen3.8_flash_experiment/wf_export_debug_boundary_v3/qpc-ea581d119d396fd2/qpc'
 ```
 

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Build and run a decode-only Qwen3.8-Flash-Next model.
 
-This is a decode-only DP16/CP1 flow.  By default it uses the four-layer
-experimental checkpoint; ``--layers 48`` runs the full text model from the
-complete local snapshot with the same export and runtime path.
+This is a decode-only DP16/CP1 flow.  With no ``--checkpoint``, it loads the
+model ID through QEfficient's Hugging Face loader; ``--layers 48`` runs the
+full text model with the same export and runtime path.
 
 Example::
 
+    HF_HUB_CACHE=/home/huggingface_hub \
     /home/ochougul/envs/qwen38f/bin/python \
         examples/text_generation/qwen4_exp_dp16_decode_qpc.py \
-        --snapshot /home/huggingface_hub/models--Qwen--Qwen3.8-Flash-Next/snapshots/<revision> \
+        --model-name-or-path Qwen/Qwen3.8-Flash-Next \
+        --layers 48 \
 
-Use ``--checkpoint`` to reuse an existing four-layer checkpoint, or
-``--qpc`` to skip export/compile and replay an existing QPC.
+Use ``--checkpoint`` to reuse an existing local checkpoint, or ``--qpc`` to
+skip export/compile and replay an existing QPC.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.transformers.models.qwen4_exp.host_ngram import HostNGramHistory, ShardedNGramLookup
 
@@ -35,13 +37,30 @@ DEFAULT_LAYERS = 4
 CONTEXT_LENGTH = 65_536
 
 
-def build_model(snapshot: Path, checkpoint: Path, layers: int, num_devices: int):
+def _window_config_from_source(model_name_or_path: str | Path, layers: int):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from qwen4_exp_decode_parity import (
-        _prune_weight_free_checkpoint,
         _window_config,
     )
 
+    model_path = Path(model_name_or_path)
+    if model_path.is_dir():
+        return _window_config(model_path, layers, CONTEXT_LENGTH, dtype="bfloat16")
+
+    config = AutoConfig.from_pretrained(str(model_name_or_path))
+    raw = config.text_config.to_dict()
+    raw["dtype"] = "bfloat16"
+    raw["num_hidden_layers"] = layers
+    raw["layer_types"] = raw["layer_types"][:layers]
+    raw["ple_layer_ids"] = [layer_id for layer_id in raw["ple_layer_ids"] if layer_id <= layers]
+    raw["max_position_embeddings"] = CONTEXT_LENGTH
+
+    from transformers.models.qwen4_exp.configuration_qwen4_exp import Qwen4ExpTextConfig
+
+    return Qwen4ExpTextConfig(**raw)
+
+
+def build_model(model_name_or_path: str | Path, checkpoint: Path | None, layers: int, num_devices: int):
     qaic_config = {
         "indexer_dp": num_devices,
         "indexer_cp": 1,
@@ -57,11 +76,12 @@ def build_model(snapshot: Path, checkpoint: Path, layers: int, num_devices: int)
         "ffn_blocking_mode": "token",
         "ffn_token_block_size": 4,
     }
-    config = _window_config(snapshot, layers, CONTEXT_LENGTH, dtype="bfloat16")
+    config = _window_config_from_source(model_name_or_path, layers)
     from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
+    model_source = str(checkpoint) if checkpoint is not None else str(model_name_or_path)
     model = QEFFAutoModelForCausalLM.from_pretrained(
-        str(checkpoint),
+        model_source,
         config=config,
         qaic_config=qaic_config,
         weight_free=True,
@@ -250,16 +270,14 @@ def run_decode_generation(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--snapshot",
-        type=Path,
+        "--model-name-or-path",
         required=True,
-        help="local Qwen3.8-Flash-Next snapshot directory",
+        help="local checkpoint directory or Hugging Face model ID",
     )
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("qwen3.8_flash_experiment/example_repro_20261013/qwen38_flash_4layer_checkpoint_v2"),
-        help="local checkpoint or complete model snapshot",
+        help="optional local checkpoint; omitted uses --model-name-or-path through QEfficient.from_pretrained",
     )
     parser.add_argument(
         "--layers",
@@ -278,16 +296,17 @@ def main() -> None:
     parser.add_argument("--prompt", help="optional prompt to run through the QEfficient generate API")
     parser.add_argument("--generation-len", type=int, default=8, help="maximum tokens for --prompt generation")
     args = parser.parse_args()
-    args.snapshot = args.snapshot.resolve()
-    args.checkpoint = args.checkpoint.resolve()
+    args.model_name_or_path = str(args.model_name_or_path)
+    if args.checkpoint is not None:
+        args.checkpoint = args.checkpoint.resolve()
     args.compile_dir = args.compile_dir.resolve()
 
     qeff_model = None
     if args.qpc is None:
         os.environ.setdefault("QEFF_HOME", str(args.compile_dir))
-        if not args.checkpoint.is_dir():
+        if args.checkpoint is not None and not args.checkpoint.is_dir():
             raise FileNotFoundError(f"Four-layer checkpoint directory not found: {args.checkpoint}")
-        qeff_model = build_model(args.snapshot, args.checkpoint, args.layers, args.num_devices)
+        qeff_model = build_model(args.model_name_or_path, args.checkpoint, args.layers, args.num_devices)
         qeff_model.model.eval()
         qpc_path = Path(
             qeff_model.compile(
@@ -315,15 +334,22 @@ def main() -> None:
     run_one_decode_step(qpc_path)
 
     if args.prompt is not None:
-        tokenizer = AutoTokenizer.from_pretrained(str(args.snapshot))
+        snapshot = Path(args.model_name_or_path)
+        if not snapshot.is_dir():
+            raise ValueError(
+                "--prompt requires --model-name-or-path to be a local checkpoint directory because "
+                "the host n-gram lookup reads its safetensors shards directly"
+            )
+        snapshot = snapshot.resolve()
+        tokenizer = AutoTokenizer.from_pretrained(str(snapshot))
         prompt_input_ids = tokenizer(
             args.prompt,
             return_tensors="np",
             add_special_tokens=True,
         )["input_ids"]
         qpc_runner = Qwen4ExpQAICDecodeRunner(qpc_path)
-        config = _load_window_config(args.snapshot, args.layers)
-        lookup = ShardedNGramLookup(config, args.snapshot)
+        config = _load_window_config(snapshot, args.layers)
+        lookup = ShardedNGramLookup(config, snapshot)
         run_decode_generation(
             qpc_runner=qpc_runner,
             lookup=lookup,
