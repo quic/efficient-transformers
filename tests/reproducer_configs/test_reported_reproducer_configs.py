@@ -98,7 +98,7 @@ OFFICIAL_MODEL_ENV = "QEFF_REPRODUCER_USE_OFFICIAL_MODELS"
 REPORT_PATH_ENV = "QEFF_REPRODUCER_REPORT_MD"
 SCENARIO_FILTER_ENV = "QEFF_REPRODUCER_SCENARIO"
 DEFAULT_REPORT_PATH = Path("tests/reproducer_configs/reproducer_config_results.md")
-EXPECTED_SCENARIO_COUNT = 54
+EXPECTED_SCENARIO_COUNT = 55
 EXTRA_QEFF_COMPILE_OPTIONS = frozenset(
     {
         "retain_full_kv",
@@ -965,6 +965,43 @@ SCENARIOS: tuple[RegressionScenario, ...] = (
         },
     ),
     RegressionScenario(
+        name="qwen35-moe-dual-alias-mdp-intersection",
+        stage="compile",
+        source_model_card="Qwen/Qwen3.5-35B-A3B",
+        tiny_model_id=None,
+        official_model_id="Qwen/Qwen3.5-35B-A3B",
+        summary="intersection MDP must retain scoped and unscoped compiler aliases",
+        model_api="image_text_to_text",
+        config={"compile_components": ("prefill",)},
+        load_kwargs={"dtype": torch.float16, "kv_offload": True, "layerwise": False},
+        export_kwargs={"offload_pt_weights": True},
+        compile_kwargs={
+            "prefill_seq_len": 64,
+            "ctx_len": 32768,
+            "height": 354,
+            "width": 536,
+            "batch_size": 1,
+            "num_devices": 2,
+            "num_cores": 16,
+            "mos": 1,
+            "mxfp6_matmul": True,
+            "mxint8_kv_cache": True,
+            "allow_mxint8_mdp_io": True,
+            "retain_full_kv": True,
+            "split_model_io": True,
+            "aic_enable_depth_first": True,
+            "prefill_only": True,
+            "enable_chunking": True,
+            "skip_vision": True,
+            "use_onnx_subfunctions": True,
+            "comp_ctx_lengths_prefill": [8192, 16384, 32736],
+            "kv_cache_prefix": "vllmKvCache",
+            "mdp_num_partitions": 2,
+            "mdp_strategy": "intersection",
+            "_mdp_intersection": True,
+        },
+    ),
+    RegressionScenario(
         name="gptoss-gemma3-prefill-reducesum",
         stage="compile",
         source_model_card="openai/gpt-oss-20b and Gemma3",
@@ -1533,7 +1570,7 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     export_kwargs = dict(scenario.export_kwargs)
     export_kwargs.setdefault("offload_pt_weights", False)
     compile_components = tuple(scenario.config.get("compile_components", ("vision", "prefill", "decode")))
-    assert compile_components in {("vision", "prefill", "decode"), ("decode",)}, (
+    assert compile_components in {("vision", "prefill", "decode"), ("prefill",), ("decode",)}, (
         f"{scenario.name}: unsupported VLM compile component sequence {compile_components}"
     )
     # Export must use the same component selection as compile.  In particular,
@@ -1622,6 +1659,11 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
         skip_vision=True,
         **prefill_kwargs,
     )
+    if compile_components == ("prefill",):
+        for qpc_path in prefill_qpcs.values():
+            _qpc_succeeded(qpc_path)
+        _record_result(scenario, "PASSED", f"VLM prefill QPCs: {prefill_qpcs}")
+        return
     decode_kwargs = {**common_kwargs, "prefill_seq_len": 1}
     for prefill_only_key in ("prefill_only", "enable_chunking", "mdp_num_partitions", "mdp_strategy"):
         decode_kwargs.pop(prefill_only_key, None)
