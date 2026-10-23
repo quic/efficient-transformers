@@ -43,6 +43,7 @@ from utils import (
     compile_dlm_qpc,
     compile_tlm_qpc,
     format_prompt,
+    get_dflash_block_size,
     get_spd_prompt_chunk_size,
     load_spd_session,
     load_spd_sessions,
@@ -211,6 +212,7 @@ def main():
     prompt_text = format_prompt(args.prompt, args.category) if args.format_prompt else args.prompt
     tokenizer = AutoTokenizer.from_pretrained(tlm_repo, token=args.hf_token, trust_remote_code=True)
     config = AutoConfig.from_pretrained(dlm_repo, token=args.hf_token, trust_remote_code=True)
+    block_size = get_dflash_block_size(config)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -221,7 +223,7 @@ def main():
         else None
     )
     prompt_chunk_size = get_spd_prompt_chunk_size(tlm_prefill_session or tlm_session)
-    validate_spd_decode_specialization(tlm_session, config.block_size)
+    validate_spd_decode_specialization(tlm_session, block_size)
 
     dflash_config = getattr(config, "dflash_config", None) or config.to_dict().get("dflash_config", {})
     mask_token_id = dflash_config["mask_token_id"] if isinstance(dflash_config, dict) else dflash_config.mask_token_id
@@ -238,7 +240,7 @@ def main():
         vocab_size=config.vocab_size,
         prompt_chunk_size=prompt_chunk_size,
         ctx_len=args.ctx_len,
-        block_size=config.block_size,
+        block_size=block_size,
         max_iterations=args.iteration,
         hidden_size=config.hidden_size,
         generation_len=args.generation_len,

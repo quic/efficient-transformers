@@ -128,6 +128,11 @@ python basic_inference_vision.py --model_name Qwen3.5-4B \
 Use `--prompt "..."` instead of `--image --image_prompt ...` for text-only input.
 Prefill length can be any positive multiple of the draft block size; verification and replay remain block-sized.
 
+**Recompilation required:** Qwen3.5 DFlash TLM ONNX/QPC artifacts created before
+the variable-length prefill and block-sized verification/replay update are incompatible.
+Re-export and recompile the TLM; do not reuse those old paths with `--tlm_qpc`.
+To let this example rebuild the VLM artifacts, omit both `--tlm_qpc` and `--vision_qpc`.
+
 ---
 
 ## `--model_name`
@@ -164,8 +169,9 @@ DFlash targets use the existing SpD `num_logits_to_keep` input to project only
 the last valid position during prompt prefill. Verification still predicts every
 block position, and all hidden states needed by the DLM are preserved. This
 applies automatically to Qwen3, Llama, Gemma4, Qwen3-VL, Qwen3.5, and Qwen3.5-MoE.
-Existing TLM QPCs remain usable but need re-export/compilation for this change;
-DLM and vision QPCs are unchanged.
+Apart from the incompatible Qwen3.5 artifacts noted above, existing TLM QPCs remain
+usable; re-export/recompile to benefit from this optimization. DLM and vision QPCs
+are unchanged.
 
 | Flag | Default | Notes |
 |---|---|---|
