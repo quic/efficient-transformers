@@ -242,7 +242,7 @@ class QEffGemma3Attention(Gemma3Attention):
                 "sliding_window": getattr(past_key_values, "sliding_window_len", self.config.sliding_window),
             }
             if comp_ctx_lengths is not None:
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
+                cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -441,6 +441,8 @@ class QEffGemma3TextModel(Gemma3TextModel):
             # torch.arange inside _create_causal_mask stays outside any subfunction.
             sliding_window_len = past_key_values.sliding_window_len
             full_ctx_len = past_key_values.key_cache[self.config._sliding_window_pattern - 1].shape[-2]
+            if comp_ctx_lengths is not None:
+                full_ctx_len = comp_ctx_lengths.shape[-1]
             _causal_mask_mapping = {
                 "sliding_attention": _create_causal_mask(
                     position_ids=position_ids,
@@ -1044,7 +1046,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         )
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, prefill_seq_len, (prefill_seq_len,), dtype=torch.int64)
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
