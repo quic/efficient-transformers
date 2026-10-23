@@ -88,6 +88,12 @@ def update_running_softmax(
     return current_max, current_denominator, output
 
 
+def _safe_running_max(running_max: torch.Tensor) -> torch.Tensor:
+    """Exp reference for the running max; rows that have seen no unmasked key (-inf) use 0 so
+    that ``-inf - (-inf)`` never produces NaN."""
+    return torch.where(running_max == float("-inf"), torch.zeros_like(running_max), running_max)
+
+
 def update_running_softmax_prefill(
     current_max: torch.Tensor,
     attn_weights_block: torch.Tensor,
@@ -97,15 +103,26 @@ def update_running_softmax_prefill(
     skip_kv: bool = False,
     skip_future: Optional[torch.Tensor] = None,
 ):
+    """Online-softmax update with FP32 statistics and an already-normalised output.
+
+    ``current_max`` / ``current_denominator`` are FP32. ``output`` is kept normalised
+    (sum(p * V) / denominator) after every KV step so that it stays bounded by |V| and cannot
+    overflow in FP16.
+    """
+    scores = attn_weights_block.float()
     prev_max = current_max
-    current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
-    delta_max = prev_max - current_max_updated
-    current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
     prev_denominator = current_denominator
-    curr_exp_sum = current_exp.sum(dim=-1)
-    current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
+    current_max_updated = torch.max(prev_max, scores.max(dim=-1).values)
+    ref = _safe_running_max(current_max_updated)
+    rescale = torch.exp(prev_max - ref)
+    current_exp = torch.exp(scores - ref.unsqueeze(-1))
+    current_denominator_updated = prev_denominator * rescale + current_exp.sum(dim=-1)
+    # Rows with any visible key have a max term exp(0) = 1, so clamping only affects fully-masked rows.
+    safe_denominator = current_denominator_updated.clamp(min=1.0)
     prev_output = output
-    output_updated = prev_output * torch.exp(delta_max.unsqueeze(-1)) + torch.matmul(current_exp, v_block)
+    output_scale = (prev_denominator * rescale / safe_denominator).unsqueeze(-1)
+    prob = (current_exp / safe_denominator.unsqueeze(-1)).to(v_block.dtype)
+    output_updated = (output_scale * prev_output.float() + torch.matmul(prob, v_block).float()).to(prev_output.dtype)
     if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
         assert skip_future is not None
         current_max = torch.where(skip_future, prev_max, current_max_updated)
@@ -719,10 +736,10 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
                         (batch_size, num_kv_heads * split, rc * tc),
                         float(MIN_MASKED_ATTENTION_VALUE),
                         device=query.device,
-                        dtype=query.dtype,
+                        dtype=torch.float32,
                     ),
                     "s_acc": torch.zeros(
-                        batch_size, num_kv_heads * split, rc * tc, device=query.device, dtype=query.dtype
+                        batch_size, num_kv_heads * split, rc * tc, device=query.device, dtype=torch.float32
                     ),
                     "o_acc": torch.zeros(
                         batch_size, num_kv_heads * split, rc * tc, head_dim, device=query.device, dtype=query.dtype
@@ -773,7 +790,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
                 causal_rc = causal_mask_block.repeat(1, 1, rc, 1) if rc > 1 else causal_mask_block
                 attn_weights_block = torch.matmul(acc["query"], K_4d.transpose(-1, -2)) * scaling
                 attn_weights_block = torch.where(causal_rc, masked_tensor, attn_weights_block)
-                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
+                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax_prefill(
                     acc["m_acc"],
                     attn_weights_block,
                     acc["s_acc"],
@@ -789,11 +806,13 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             m = acc["m_acc"].view(batch_size, num_kv_heads, split, rc * tc)
             s = acc["s_acc"].view(batch_size, num_kv_heads, split, rc * tc)
             o = acc["o_acc"].view(batch_size, num_kv_heads, split, rc * tc, head_dim)
-            split_max = m.max(dim=2).values
+            # Merge the per-split (max, denominator, normalised output) triples in FP32.
+            split_max = _safe_running_max(m.max(dim=2).values)
             split_weight = torch.exp(m - split_max.unsqueeze(2))
             split_sum = (split_weight * s).sum(dim=2)
-            split_out = (split_weight.unsqueeze(-1) * s.unsqueeze(-1) * o).sum(dim=2)
-            r_chunks.append((split_out / split_sum.unsqueeze(-1)).view(batch_size, num_kv_heads, rc, tc, head_dim))
+            split_out = (split_weight.unsqueeze(-1) * s.unsqueeze(-1) * o.float()).sum(dim=2)
+            merged = split_out / split_sum.clamp(min=1.0).unsqueeze(-1)
+            r_chunks.append(merged.to(query.dtype).view(batch_size, num_kv_heads, rc, tc, head_dim))
 
         t_chunks.append(torch.cat(r_chunks, dim=2))
 
@@ -877,9 +896,9 @@ def blocked_qkv_attention_forward_prefill_online(
                         (B, num_cores, rc * tc),
                         float(MIN_MASKED_ATTENTION_VALUE),
                         device=query.device,
-                        dtype=query.dtype,
+                        dtype=torch.float32,
                     ),
-                    "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=query.dtype),
+                    "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=torch.float32),
                     "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=query.dtype),
                 }
             )
@@ -923,11 +942,12 @@ def blocked_qkv_attention_forward_prefill_online(
         r_chunks = []
         for acc in accs:
             rc = acc["rc"]
-            out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
-            r_chunks.append(out.view(B, num_cores, rc, tc, D))
+            r_chunks.append(acc["o_acc"].view(B, num_cores, rc, tc, D))
         t_chunks.append(torch.cat(r_chunks, dim=2))
 
     attn_output = torch.cat(t_chunks, dim=3).reshape(B, NQH, QL, D)
+    # Padded rows (position_ids < 0) see no key; zero them instead of returning arbitrary values.
+    attn_output = attn_output * (position_ids >= 0).to(attn_output.dtype)[:, None, :, None]
     return attn_output.transpose(1, 2).contiguous(), None
 
 

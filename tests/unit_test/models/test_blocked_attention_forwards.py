@@ -460,3 +460,62 @@ class TestSkipKvBreakPreserved:
             "Hoisted-gather hqkv output with skip_kv=True diverged from manual causal attention "
             f"(max abs diff={(attn_output - expected).abs().max().item()})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: prefill_online stays finite and accurate in FP16 (padded rows, partial
+# chunks, large |V|)
+# ---------------------------------------------------------------------------
+
+
+class _SliceCache:
+    """Cache double exposing contiguous K/V slices, as `read_only_blocked_K/V` do."""
+
+    def __init__(self, keys, values):
+        self.keys, self.values = keys, values
+
+    def read_only_blocked_K(self, start, end, layer_idx, cache_kwargs):
+        return self.keys[:, :, start:end]
+
+    def read_only_blocked_V(self, start, end, layer_idx, cache_kwargs):
+        return self.values[:, :, start:end]
+
+
+@pytest.mark.cache
+@pytest.mark.parametrize("num_q_blocks,num_kv_blocks", [(8, 4), (1, 32)])
+@pytest.mark.parametrize("real_len,start_pos", [(128, 0), (96, 128), (40, 0)])
+def test_prefill_online_fp16_finite_and_accurate(num_q_blocks, num_kv_blocks, real_len, start_pos):
+    from QEfficient.blocking.blocked_attention_forwards import blocked_qkv_attention_forward_prefill_online
+
+    torch.manual_seed(0)
+    heads, q_len, ctx_len, head_dim = 4, 128, 512, 16
+    query = (torch.randn(1, heads, q_len, head_dim) * 0.3).half()
+    keys = (torch.randn(1, heads, ctx_len, head_dim) * 0.3).half()
+    values = (torch.randn(1, heads, ctx_len, head_dim) * 60).half()  # large |V| overflows an FP16 o_acc
+    position_ids = torch.arange(start_pos, start_pos + q_len).unsqueeze(0)
+    position_ids[:, real_len:] = -1
+
+    out, _ = blocked_qkv_attention_forward_prefill_online(
+        _DummyModule(),
+        query,
+        None,
+        None,
+        None,
+        SCALING,
+        num_q_blocks,
+        num_kv_blocks,
+        {"position_ids": position_ids},
+        0,
+        _SliceCache(keys, values),
+        ctx_len,
+        1,
+        skip_kv=True,
+    )
+
+    scores = torch.matmul(query.float(), keys.float().transpose(2, 3)) * SCALING
+    future = torch.arange(ctx_len).view(1, 1, 1, -1) > position_ids.view(1, 1, q_len, 1)
+    probs = torch.softmax(scores.masked_fill(future, float("-inf")), dim=-1).nan_to_num()
+    expected = torch.matmul(probs, values.float()) * (position_ids >= 0).view(1, 1, q_len, 1)
+
+    assert torch.isfinite(out).all()
+    assert torch.allclose(out.float(), expected.transpose(1, 2), atol=0.5, rtol=1e-2)
