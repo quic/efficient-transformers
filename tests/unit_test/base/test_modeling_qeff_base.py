@@ -951,6 +951,84 @@ class TestMdpCompileIntegration:
             "/Gather_10",
         ]
 
+    @pytest.mark.parametrize(
+        "protected_nodes, expected_removed, expected_node_lists",
+        [
+            (set(), 1, [[], ["/Producer"]]),
+            ({"/Consumer"}, 1, [["/Consumer"], []]),
+            ({"/Consumer", "/Producer"}, 0, [["/Consumer"], ["/Producer"]]),
+        ],
+        ids=("unprotected", "consumer-protected", "both-protected"),
+    )
+    def test_precheck_respects_protected_nodes(
+        self,
+        tmp_path: Path,
+        protected_nodes: set[str],
+        expected_removed: int,
+        expected_node_lists: list[list[str]],
+    ):
+        """Ordering cleanup removes only candidates that are not compiler-required."""
+        onnx_path = tmp_path / "ordering_violation.onnx"
+        model = helper.make_model(
+            helper.make_graph(
+                [
+                    helper.make_node("Identity", inputs=["input"], outputs=["middle"], name="/Producer"),
+                    helper.make_node("Identity", inputs=["middle"], outputs=["output"], name="/Consumer"),
+                ],
+                name="ordering_violation_graph",
+                inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, [1])],
+                outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [1])],
+            ),
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        onnx.save(model, onnx_path)
+        mdp_json = {
+            "partitions": [
+                {"name": "Partition0", "nodeList": ["/Consumer"]},
+                {"name": "Partition1", "nodeList": ["/Producer"]},
+            ]
+        }
+
+        removed = precheck_and_autofix_mdp_partition_order(
+            onnx_path=str(onnx_path),
+            mdp_json=mdp_json,
+            protected_nodes=protected_nodes,
+        )
+
+        assert removed == expected_removed
+        assert [partition["nodeList"] for partition in mdp_json["partitions"]] == expected_node_lists
+
+    def test_precheck_removes_unprotected_top_level_alias(self, tmp_path: Path):
+        """ONNX strategy keeps the existing cleanup for aliases not required by a compiler dump."""
+        onnx_path = tmp_path / "unprotected_alias.onnx"
+        model = helper.make_model(
+            helper.make_graph(
+                [
+                    helper.make_node(
+                        "Identity", inputs=["input"], outputs=["scoped_output"], name="/language_model/Gather_10"
+                    ),
+                    helper.make_node("Identity", inputs=["input"], outputs=["output"], name="/Gather_10"),
+                ],
+                name="unprotected_alias_graph",
+                inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, [1])],
+                outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [1])],
+            ),
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+        onnx.save(model, onnx_path)
+        mdp_json = {
+            "partitions": [
+                {"name": "Partition0", "nodeList": ["/language_model/Gather_10"]},
+                {"name": "Partition1", "nodeList": ["/Gather_10"]},
+            ]
+        }
+
+        removed = precheck_and_autofix_mdp_partition_order(onnx_path=str(onnx_path), mdp_json=mdp_json)
+
+        assert removed == 1
+        assert mdp_json["partitions"][0]["nodeList"] == ["/language_model/Gather_10"]
+        assert mdp_json["partitions"][1]["nodeList"] == []
+
     def test_intersection_skips_alias_move_that_follows_consumer(self, tmp_path: Path):
         """Intersection keeps a producer in place when relocation would reverse its dependency."""
         onnx_path = tmp_path / "scoped_alias_dependency.onnx"

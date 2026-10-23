@@ -1576,7 +1576,7 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     # Export must use the same component selection as compile.  In particular,
     # skip_vision prevents the tiny language-only reproducer from tracing the
     # unsupported vision rotary-input shape.
-    skip_vision = bool(scenario.compile_kwargs.get("skip_vision", False))
+    skip_vision = bool(scenario.compile_kwargs.get("skip_vision", False)) or "vision" not in compile_components
     skip_lang = bool(scenario.compile_kwargs.get("skip_lang", False))
     onnx_paths = qeff_model.export(
         export_dir=export_dir,
@@ -1620,7 +1620,7 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     vision_qpcs = {}
     # Do not call compile() for a component explicitly excluded by the
     # scenario: omitting its ONNX path would make QEff re-export that component.
-    if not skip_vision:
+    if "vision" in compile_components and not skip_vision:
         _assert_compile_kwargs_supported(qeff_model, scenario, {**vision_kwargs, "skip_lang": True})
         vision_qpcs = qeff_model.compile(
             compile_dir=compile_dir / "vision",
@@ -1821,3 +1821,71 @@ def test_active_scenarios_are_real_stage_verdicts() -> None:
             **scenario.inference_kwargs,
         }
         assert not _contains_external_path(combined)
+
+
+@pytest.mark.parametrize(
+    "compile_components, expected_skip_vision, expected_compile_calls",
+    [
+        (("prefill",), True, [{"skip_vision": True, "skip_lang": False}]),
+        (("decode",), True, [{"skip_vision": True, "skip_lang": False}]),
+        (
+            ("vision", "prefill", "decode"),
+            False,
+            [
+                {"skip_vision": False, "skip_lang": True},
+                {"skip_vision": True, "skip_lang": False},
+                {"skip_vision": True, "skip_lang": False},
+            ],
+        ),
+    ],
+    ids=("prefill", "decode", "all-components"),
+)
+def test_vlm_component_selection_controls_export_and_compile(
+    monkeypatch,
+    tmp_path: Path,
+    compile_components: tuple[str, ...],
+    expected_skip_vision: bool,
+    expected_compile_calls: list[dict[str, bool]],
+) -> None:
+    """VLM component selection must control both export and compilation."""
+    export_calls = []
+    compile_calls = []
+
+    class FakeQEffModel:
+        def export(self, export_dir, skip_vision=False, skip_lang=False, **kwargs):
+            export_calls.append({"skip_vision": skip_vision, "skip_lang": skip_lang})
+            return Path(export_dir) / "vision.onnx", Path(export_dir) / "language.onnx"
+
+        def compile(
+            self,
+            compile_dir,
+            *,
+            prefill_seq_len=None,
+            prefill_only=None,
+            skip_vision=False,
+            skip_lang=False,
+            **kwargs,
+        ):
+            compile_calls.append({"skip_vision": skip_vision, "skip_lang": skip_lang})
+            qpc_path = Path(compile_dir) / "qpc"
+            qpc_path.mkdir(parents=True)
+            (qpc_path / "programqpc.bin").touch()
+            return {"qpc": qpc_path}
+
+    scenario = RegressionScenario(
+        name="prefill-only-component-selection",
+        stage="compile",
+        source_model_card="synthetic VLM",
+        tiny_model_id="synthetic-vlm",
+        summary="prefill-only VLM compile excludes vision",
+        model_api="image_text_to_text",
+        config={"compile_components": compile_components},
+        compile_kwargs={"prefill_seq_len": 64},
+    )
+    monkeypatch.setattr(sys.modules[__name__], "_load_vlm_model", lambda unused_scenario: FakeQEffModel())
+    monkeypatch.setattr(sys.modules[__name__], "_record_result", lambda *args, **kwargs: None)
+
+    _run_vlm_compile_test(scenario, tmp_path)
+
+    assert export_calls == [{"skip_vision": expected_skip_vision, "skip_lang": False}]
+    assert compile_calls == expected_compile_calls
