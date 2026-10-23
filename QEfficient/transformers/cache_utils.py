@@ -1646,12 +1646,7 @@ class QEffSlidingWindowCache:
                 self.value_cache[layer_idx] = ctx_scatter(self.value_cache[layer_idx], kv_position_ids, value_states)
 
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
-
-            # Original Gather
-            if is_sliding_layer:
-                ctx_len = self.key_cache[layer_idx].shape[2]
-            else:
-                ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
+            ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
 
             ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype, device=position_ids.device)[None, None, ...]
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
@@ -1851,7 +1846,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         k_out, v_out = self.keys, self.values
 
         # Original Gather
-        ctx_len = cache_kwargs.get("CCL", self.keys.shape[2])
+        ctx_len = min(self.keys.shape[2], cache_kwargs.get("CCL", self.keys.shape[2]))
         ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
