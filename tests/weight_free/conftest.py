@@ -18,9 +18,14 @@ Run with: pytest tests/weight_free/ -m "not on_qaic" -n auto -v
 
 from __future__ import annotations
 
+import os
+import shutil
+from pathlib import Path
+
 import pytest
 import torch
 
+from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.device_utils import get_available_device_id
 
 
@@ -35,6 +40,7 @@ def _parse_torch_version() -> tuple:
 def pytest_configure(config):
     config.addinivalue_line("markers", "weight_free: mark a test as part of the weight-free export test suite")
     config.addinivalue_line("markers", "weight_free_export: CPU-only weight-free export smoke and parity tests")
+    config.addinivalue_line("markers", "weight_free_blocking: weight-free CausalLM blocking parity tests")
 
 
 _XFAIL_MODELS = {}
@@ -71,6 +77,14 @@ def set_cpu_threads():
 @pytest.fixture(autouse=True)
 def set_deterministic_seed():
     torch.manual_seed(42)
+
+
+@pytest.fixture(autouse=True)
+def clean_qeff_cache_after_test():
+    yield
+    cache_root = Path(os.environ.get("QEFF_HOME", QEFF_HOME))
+    shutil.rmtree(cache_root, ignore_errors=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture

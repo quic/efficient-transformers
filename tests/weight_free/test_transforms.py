@@ -65,7 +65,7 @@ from QEfficient.exporter.weight_free.ort_weight_injection import load_weight_fre
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.moe.weights import MoEWeights, pack_moe_weights_for_expert_parallel
-from QEfficient.utils import runtime_requirements
+from QEfficient.utils import resolve_retained_state_output, runtime_requirements
 from QEfficient.utils.checkpoint_utils import checkpoint_root
 from QEfficient.utils.export_utils import _generate_export_hash, convert_dynamic_axes_to_dynamic_shapes
 from QEfficient.utils.runtime_requirements import validate_runtime_requirements
@@ -312,6 +312,31 @@ class TestWeightFreeCheckpointTransforms:
         prepared = pipeline.apply(src, out, target_dtype=torch.float32)
 
         assert prepared == out
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
+    def test_checkpoint_pipeline_publishes_prepared_dir_after_execution(self, tmp_path, monkeypatch):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+
+        def fake_execute_checkpoint_plan(plan, src_path, work_out, target_dtype, **kwargs):
+            del plan, src_path, target_dtype, kwargs
+            assert work_out != out
+            assert not out.exists()
+            save_file({"weight": torch.ones(2, dtype=torch.float32)}, str(work_out / "base-0000.safetensors"))
+            return {"weight": "base-0000.safetensors"}
+
+        monkeypatch.setattr(
+            "QEfficient.base.checkpoint_transforms.execute_checkpoint_plan",
+            fake_execute_checkpoint_plan,
+        )
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        assert (out / CHECKPOINT_PREPARED_MANIFEST).is_file()
         torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
 
     def test_ort_weight_injection_resolves_cache_relative_spec_for_absolute_model_id(self, tmp_path):
@@ -1202,6 +1227,18 @@ class TestWeightFreeCheckpointTransforms:
         with pytest.raises(ValueError, match="Ambiguous checkpoint key"):
             find_checkpoint_key("base_model.model.embed_tokens.weight", checkpoint_index, backbone)
 
+    def test_resolver_accepts_language_model_prefix_alias(self):
+        checkpoint_index = {
+            "model.language_model.embed_tokens.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.embed_tokens.weight", checkpoint_index, backbone)
+            == "model.language_model.embed_tokens.weight"
+        )
+
     @pytest.mark.parametrize(
         "state_kind,state_name",
         [
@@ -1245,6 +1282,7 @@ class TestWeightFreeCheckpointTransforms:
             ("buffer", "rotary_emb.inv_freq"),
             ("buffer", "transformer.h.0.attn.embed_positions"),
             ("buffer", "model.embed_tokens.embed_scale"),
+            ("buffer", "model.layers.0.linear_attn._mask_causal"),
             ("parameter", "model.sin_cached"),
             ("parameter", "model.cos_cached"),
             ("buffer", "language_model.layers.0.self_attn.v_norm._qeff_unit_weight"),
@@ -1660,6 +1698,33 @@ class TestPreserveNestedCacheRetainedStateTransform:
         assert "moe_scatter_0" not in fn.output
         assert fn.output[-2:] == ["scatter_0_0", "scatter_0_1"]
         assert call_node.output[-2:] == ["past_key.0_RetainedState", "past_value.0_RetainedState"]
+
+
+class TestRetainedStateOutputResolver:
+    def test_resolves_prefixed_retained_state_stem(self):
+        outputs = {"past_key.3_vllmKvCache_RetainedState": object()}
+
+        target_name, value = resolve_retained_state_output(outputs, "past_key.3")
+
+        assert target_name == "past_key.3_vllmKvCache"
+        assert value is outputs["past_key.3_vllmKvCache_RetainedState"]
+
+    def test_resolves_internal_retained_state_suffix_and_basename(self):
+        outputs = {"decoder/past_value.1_InternalRetainedState": object()}
+
+        target_name, value = resolve_retained_state_output(outputs, "past_value.1")
+
+        assert target_name == "past_value.1"
+        assert value is outputs["decoder/past_value.1_InternalRetainedState"]
+
+    def test_raises_on_ambiguous_retained_state_outputs(self):
+        outputs = {
+            "conv_state.0_RetainedState": object(),
+            "conv_state.0_vllmKvCache_RetainedState": object(),
+        }
+
+        with pytest.raises(KeyError, match="Expected one retained-state output"):
+            resolve_retained_state_output(outputs, "conv_state.0")
 
 
 # ---------------------------------------------------------------------------
