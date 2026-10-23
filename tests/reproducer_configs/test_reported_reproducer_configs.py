@@ -1502,33 +1502,21 @@ def _assert_compile_kwargs_supported(
         assert path.is_file(), f"{scenario.name}: node_precision_info YAML does not exist: {path}"
 
 
-# MDP intersection reproducers generate their compiler dump locally.
+# MDP intersection reproducers use the production compile path's automatic dump.
 def _compile_with_optional_mdp(qeff_model, scenario: RegressionScenario, compile_dir: Path):
-    """Compile once or run the local two-pass MDP intersection flow.
+    """Compile once, enabling the production intersection flow when requested.
 
-    The helper replaces reporter-machine MDP JSON paths with artifacts generated
-    inside pytest's temp directory, following the Qwen3-VL MDP compile example.
+    ``QEFFBaseModel._compile`` generates and consumes the compiler dump internally
+    for ``mdp_strategy="intersection"``. Reproducer helpers must not add a second,
+    unused public compile pass.
     """
     compile_kwargs = dict(scenario.compile_kwargs)
     use_intersection = compile_kwargs.pop("_mdp_intersection", False)
-    if not use_intersection:
-        _assert_compile_kwargs_supported(qeff_model, scenario, compile_kwargs)
-        return qeff_model.compile(compile_dir=compile_dir, **compile_kwargs)
-
-    dump_path = compile_dir / "mdp_compiler_dump.json"
-    (compile_dir / "mdp_dump").mkdir(parents=True, exist_ok=True)
-    (compile_dir / "mdp_intersection").mkdir(parents=True, exist_ok=True)
-    dump_kwargs = dict(compile_kwargs)
-    dump_kwargs.pop("mdp_num_partitions", None)
-    dump_kwargs.pop("mdp_strategy", None)
-    _assert_compile_kwargs_supported(qeff_model, scenario, {**dump_kwargs, "mdp_dump_partition_config": str(dump_path)})
-    qeff_model.compile(compile_dir=compile_dir / "mdp_dump", mdp_dump_partition_config=str(dump_path), **dump_kwargs)
-
-    final_kwargs = dict(compile_kwargs)
-    final_kwargs["mdp_strategy"] = "intersection"
-    final_kwargs["mdp_compiler_dump_path"] = str(dump_path)
-    _assert_compile_kwargs_supported(qeff_model, scenario, final_kwargs)
-    return qeff_model.compile(compile_dir=compile_dir / "mdp_intersection", **final_kwargs)
+    if use_intersection:
+        compile_kwargs["mdp_strategy"] = "intersection"
+        compile_kwargs.pop("mdp_compiler_dump_path", None)
+    _assert_compile_kwargs_supported(qeff_model, scenario, compile_kwargs)
+    return qeff_model.compile(compile_dir=compile_dir, **compile_kwargs)
 
 
 # Compile reports use QEfficient's compile API and validate the produced QPC.
@@ -1632,25 +1620,8 @@ def _run_vlm_compile_test(scenario: RegressionScenario, tmp_path: Path) -> None:
     prefill_kwargs = dict(common_kwargs)
     prefill_kwargs["prefill_only"] = True
     if use_intersection:
-        dump_path = compile_dir / "lang_prefill_mdp_dump.json"
-        (compile_dir / "lang_prefill_mdp_dump").mkdir(parents=True, exist_ok=True)
-        (compile_dir / "lang_prefill").mkdir(parents=True, exist_ok=True)
-        dump_kwargs = dict(prefill_kwargs)
-        dump_kwargs.pop("mdp_num_partitions", None)
-        dump_kwargs.pop("mdp_strategy", None)
-        _assert_compile_kwargs_supported(
-            qeff_model, scenario, {**dump_kwargs, "skip_vision": True, "mdp_dump_partition_config": str(dump_path)}
-        )
-        qeff_model.compile(
-            compile_dir=compile_dir / "lang_prefill_mdp_dump",
-            vision_onnx_path=vision_onnx_path,
-            lang_onnx_path=lang_onnx_path,
-            skip_vision=True,
-            mdp_dump_partition_config=str(dump_path),
-            **dump_kwargs,
-        )
         prefill_kwargs["mdp_strategy"] = "intersection"
-        prefill_kwargs["mdp_compiler_dump_path"] = str(dump_path)
+        prefill_kwargs.pop("mdp_compiler_dump_path", None)
     _assert_compile_kwargs_supported(qeff_model, scenario, {**prefill_kwargs, "skip_vision": True})
     prefill_qpcs = qeff_model.compile(
         compile_dir=compile_dir / "lang_prefill",
@@ -1891,8 +1862,8 @@ def test_vlm_component_selection_controls_export_and_compile(
     assert compile_calls == expected_compile_calls
 
 
-def test_vlm_prefill_only_intersection_runs_two_language_compiles(monkeypatch, tmp_path: Path) -> None:
-    """Prefill-only intersection must run dump and final compiles without vision or decode."""
+def test_vlm_prefill_only_intersection_uses_production_auto_dump(monkeypatch, tmp_path: Path) -> None:
+    """Prefill-only intersection delegates one compile to the production auto-dump path."""
     export_calls = []
     compile_calls = []
 
@@ -1909,9 +1880,7 @@ def test_vlm_prefill_only_intersection_runs_two_language_compiles(monkeypatch, t
             prefill_only=None,
             skip_vision=False,
             skip_lang=False,
-            mdp_dump_partition_config=None,
             mdp_strategy=None,
-            mdp_compiler_dump_path=None,
             **kwargs,
         ):
             compile_calls.append(
@@ -1919,9 +1888,7 @@ def test_vlm_prefill_only_intersection_runs_two_language_compiles(monkeypatch, t
                     "skip_vision": skip_vision,
                     "skip_lang": skip_lang,
                     "prefill_only": prefill_only,
-                    "mdp_dump_partition_config": mdp_dump_partition_config,
                     "mdp_strategy": mdp_strategy,
-                    "mdp_compiler_dump_path": mdp_compiler_dump_path,
                 }
             )
             qpc_path = Path(compile_dir) / "qpc"
@@ -1949,23 +1916,63 @@ def test_vlm_prefill_only_intersection_runs_two_language_compiles(monkeypatch, t
 
     _run_vlm_compile_test(scenario, tmp_path)
 
-    dump_path = tmp_path / scenario.name / "compile" / "lang_prefill_mdp_dump.json"
     assert export_calls == [{"skip_vision": True, "skip_lang": False}]
     assert compile_calls == [
         {
             "skip_vision": True,
             "skip_lang": False,
             "prefill_only": True,
-            "mdp_dump_partition_config": str(dump_path),
-            "mdp_strategy": None,
-            "mdp_compiler_dump_path": None,
-        },
-        {
-            "skip_vision": True,
-            "skip_lang": False,
-            "prefill_only": True,
-            "mdp_dump_partition_config": None,
             "mdp_strategy": "intersection",
-            "mdp_compiler_dump_path": str(dump_path),
         },
+    ]
+
+
+def test_causal_intersection_uses_production_auto_dump(tmp_path: Path) -> None:
+    """Causal reproducers also delegate one compile to the production auto-dump path."""
+    compile_calls = []
+
+    class FakeQEffModel:
+        def compile(
+            self,
+            compile_dir,
+            *,
+            prefill_seq_len=None,
+            mdp_num_partitions=None,
+            mdp_strategy=None,
+            **kwargs,
+        ):
+            compile_calls.append(
+                {
+                    "compile_dir": compile_dir,
+                    "prefill_seq_len": prefill_seq_len,
+                    "mdp_num_partitions": mdp_num_partitions,
+                    "mdp_strategy": mdp_strategy,
+                    **kwargs,
+                }
+            )
+            return compile_dir / "qpc"
+
+    scenario = RegressionScenario(
+        name="causal-intersection-auto-dump",
+        stage="compile",
+        source_model_card="synthetic causal model",
+        tiny_model_id="synthetic-causal",
+        summary="intersection uses the production auto-dump flow",
+        compile_kwargs={
+            "prefill_seq_len": 64,
+            "mdp_num_partitions": 2,
+            "_mdp_intersection": True,
+        },
+    )
+
+    result = _compile_with_optional_mdp(FakeQEffModel(), scenario, tmp_path)
+
+    assert result == tmp_path / "qpc"
+    assert compile_calls == [
+        {
+            "compile_dir": tmp_path,
+            "prefill_seq_len": 64,
+            "mdp_num_partitions": 2,
+            "mdp_strategy": "intersection",
+        }
     ]
