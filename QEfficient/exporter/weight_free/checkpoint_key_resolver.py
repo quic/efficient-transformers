@@ -34,6 +34,8 @@ _MOE_WEIGHT_LEGACY_SUFFIXES = {
 _COMPUTED_INITIALIZER_NAMES = {
     "cos_cached",
     "sin_cached",
+    "pooled_cos_cached",
+    "pooled_sin_cached",
     "inv_freq",
     "original_inv_freq",
     "embed_positions",
@@ -127,6 +129,13 @@ def find_checkpoint_key(
 
     if prefix and stripped.startswith(f"{prefix}."):
         candidates.append(stripped[len(f"{prefix}.") :])
+
+    # Multimodal HF checkpoints can wrap the text backbone under
+    # ``model.language_model`` while the text-only export graph exposes the
+    # same parameters under ``model``.  Resolve that layout at weight-spec
+    # generation time so the source checkpoint remains untouched.
+    if stripped.startswith("model."):
+        candidates.append("model.language_model." + stripped[len("model.") :])
 
     if ".mlp." in stripped:
         candidates.append(stripped.replace(".mlp.", ".block_sparse_moe."))

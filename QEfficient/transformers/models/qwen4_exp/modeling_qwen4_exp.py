@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from functools import partial
+
 import torch
 import torch.nn.functional as F
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
@@ -26,8 +27,8 @@ from transformers.models.qwen4_exp.modeling_qwen4_exp import (
     apply_rotary_pos_emb,
 )
 
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop import ctx_gather_rows, ctx_paged_scatter
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffQwen4ExpDynamicCache
 from QEfficient.transformers.moe import (
     MoEFlavour,
@@ -80,7 +81,10 @@ class QEffQwen4ExpTextRotaryEmbedding(Qwen4ExpTextRotaryEmbedding):
 
     def __init__(self, config, device=None):
         super().__init__(config=config, device=device)
-        self._set_cos_sin_cache(self.original_max_seq_len, self.inv_freq.device, torch.get_default_dtype())
+        cache_dtype = getattr(config, "torch_dtype", torch.get_default_dtype())
+        if cache_dtype not in (torch.float16, torch.bfloat16, torch.float32):
+            cache_dtype = torch.get_default_dtype()
+        self._set_cos_sin_cache(self.original_max_seq_len, self.inv_freq.device, cache_dtype)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -103,9 +107,7 @@ def _qeff_recompose_mrope(frequencies, mrope_section, rotary_width):
     return torch.cat((recomposed, recomposed), dim=-1)
 
 
-def qeff_prepare_qwen4_exp_mrope(
-    cos_cached, sin_cached, position_ids, mrope_section, dtype=None, rotary_width=None
-):
+def qeff_prepare_qwen4_exp_mrope(cos_cached, sin_cached, position_ids, mrope_section, dtype=None, rotary_width=None):
     """Index model-owned RoPE caches and apply Qwen4-Exp's MRoPE recomposition."""
     # Avoid integer ``aten::clamp``/ONNX Clip, which QAIC does not accept for
     # int64 tensors. Exporting the equivalent Where keeps MRoPE indexing safe.
@@ -120,6 +122,23 @@ def qeff_prepare_qwen4_exp_mrope(
     if dtype is not None:
         cos, sin = cos.to(dtype=dtype), sin.to(dtype=dtype)
     return cos, sin
+
+
+def _build_qwen4_exp_pooled_mrope_cache(cos_cached, sin_cached, config, rotary_width):
+    """Build folded MRoPE tables for sequential text positions."""
+    context_length = int(config.max_position_embeddings)
+    ratio = int(config.indexer_compress_ratio)
+    positions = torch.arange(context_length, device=cos_cached.device, dtype=torch.long)
+    pooled_position_ids = torch.stack(((positions // ratio) * ratio, positions, positions))
+    mrope_section = config.rope_parameters.get("mrope_section", [11, 11, 10])
+    return qeff_prepare_qwen4_exp_mrope(
+        cos_cached,
+        sin_cached,
+        pooled_position_ids,
+        mrope_section,
+        dtype=cos_cached.dtype,
+        rotary_width=rotary_width,
+    )
 
 
 class QEffQwen4ExpTextRMSNormGated(Qwen4ExpTextRMSNormGated):
@@ -367,18 +386,17 @@ class QEffQwen4ExpTextAttention(Qwen4ExpTextAttention):
         complete = torch.div(positions + 1, ratio, rounding_mode="trunc")
         boundary = positions + 1 == complete * ratio
         total = partial + raw_key.float()
-        if len(position_embeddings) == 6:
-            _, _, cos_cached, sin_cached, rotary_position_ids, mrope_section = position_embeddings
-            pooled_position_ids = rotary_position_ids.clone()
-            pooled_position_ids[0] = (block * ratio).unsqueeze(-1)
-            pooled_cos, pooled_sin = qeff_prepare_qwen4_exp_mrope(
-                cos_cached,
-                sin_cached,
-                pooled_position_ids,
-                mrope_section,
-                dtype=hidden_states.dtype,
-                rotary_width=self._qeff_rotary_width,
+        if len(position_embeddings) == 8:
+            pooled_cos_cached, pooled_sin_cached = position_embeddings[6:]
+            pooled_positions = position_embeddings[4][0].reshape(-1).to(torch.long)
+            pooled_cos = pooled_cos_cached.index_select(0, pooled_positions).reshape(
+                *position_embeddings[4][0].shape, -1
             )
+            pooled_sin = pooled_sin_cached.index_select(0, pooled_positions).reshape(
+                *position_embeddings[4][0].shape, -1
+            )
+            pooled_cos = pooled_cos.to(hidden_states.dtype)
+            pooled_sin = pooled_sin.to(hidden_states.dtype)
         else:
             pooled_cos, pooled_sin = cos, sin
         pooled = apply_rotary_pos_emb(
@@ -474,17 +492,24 @@ class QEffQwen4ExpTextAttention(Qwen4ExpTextAttention):
         slots = torch.div(positions_dp, cp, rounding_mode="trunc")
         ways = torch.zeros_like(positions_dp) if cp == 1 else positions_dp.remainder(cp)
         rows = dp * cp * rows_per_way
-        updates_rows = updates.reshape(batch_local, dp, rows_per_way, 1, dim).unsqueeze(2).expand(
-            batch_local, dp, cp, rows_per_way, 1, dim
-        ).reshape(batch_local, rows, 1, dim)
+        updates_rows = (
+            updates.reshape(batch_local, dp, rows_per_way, 1, dim)
+            .unsqueeze(2)
+            .expand(batch_local, dp, cp, rows_per_way, 1, dim)
+            .reshape(batch_local, rows, 1, dim)
+        )
         row = torch.arange(rows, device=positions.device).reshape(dp, cp, rows_per_way)
         row = row[None].expand(batch_local, -1, -1, -1)
         owner = ways[:, :, None, None] == torch.arange(cp, device=positions.device).view(1, 1, cp, 1)
         owner = owner.expand(batch_local, dp, cp, rows_per_way)
         if valid is not None:
             owner = owner & valid.reshape(batch_local, dp, 1, 1)
-        block_ids = torch.arange(batch_local, device=positions.device).view(batch_local, 1, 1).expand(batch_local, rows, 1)
-        block_ids = torch.where(owner.reshape(batch_local, rows, 1), block_ids, torch.full_like(block_ids, torch.iinfo(torch.int32).max))
+        block_ids = (
+            torch.arange(batch_local, device=positions.device).view(batch_local, 1, 1).expand(batch_local, rows, 1)
+        )
+        block_ids = torch.where(
+            owner.reshape(batch_local, rows, 1), block_ids, torch.full_like(block_ids, torch.iinfo(torch.int32).max)
+        )
         addresses = slots[:, :, None, None].expand(batch_local, dp, cp, rows_per_way).reshape(batch_local, rows, 1)
         return ctx_paged_scatter(cache, block_ids.to(torch.int32), addresses.to(torch.int32), updates_rows)
 
@@ -495,7 +520,6 @@ class QEffQwen4ExpTextAttention(Qwen4ExpTextAttention):
         batch_local = batch // dp
         pos = selected[:, None, :].expand(batch, kv_heads, count)
         pos_dp = pos.reshape(batch_local, dp, kv_heads, count)
-        slots = torch.div(pos_dp, cp, rounding_mode="trunc")
         ways = torch.zeros_like(pos_dp) if cp == 1 else pos_dp.remainder(cp)
         row = (
             torch.arange(dp, device=selected.device).view(1, dp, 1, 1) * cp * kv_heads
@@ -543,9 +567,21 @@ class QEffQwen4ExpTextAttention(Qwen4ExpTextAttention):
         )[1]
         pooled = self.indexer.k_layernorm(raw.reshape(batch, -1, ratio, raw.shape[-1]).float().mean(2).to(raw.dtype))
         pooled_pos = positions[:, ::ratio]
-        index_cache = index_cache.scatter(1, torch.div(pooled_pos, ratio, rounding_mode="trunc").unsqueeze(-1).expand(-1, -1, index_cache.shape[-1]), pooled)
-        key_cache = key_cache.scatter(2, positions[:, :, None, None].expand(batch, query_len, key.shape[2], key.shape[3]).transpose(1, 2), key.transpose(1, 2))
-        value_cache = value_cache.scatter(2, positions[:, :, None, None].expand(batch, query_len, value.shape[2], value.shape[3]).transpose(1, 2), value.transpose(1, 2))
+        index_cache = index_cache.scatter(
+            1,
+            torch.div(pooled_pos, ratio, rounding_mode="trunc").unsqueeze(-1).expand(-1, -1, index_cache.shape[-1]),
+            pooled,
+        )
+        key_cache = key_cache.scatter(
+            2,
+            positions[:, :, None, None].expand(batch, query_len, key.shape[2], key.shape[3]).transpose(1, 2),
+            key.transpose(1, 2),
+        )
+        value_cache = value_cache.scatter(
+            2,
+            positions[:, :, None, None].expand(batch, query_len, value.shape[2], value.shape[3]).transpose(1, 2),
+            value.transpose(1, 2),
+        )
         scores = torch.einsum("bqhd,bkhd->bhqk", query.float(), key.float()) / math.sqrt(self.head_dim)
         causal = positions[:, None, None, :] <= positions[:, None, :, None]
         probs = scores.masked_fill(~causal, MIN_MASKED_ATTENTION_VALUE).softmax(-1).to(query.dtype)
@@ -595,6 +631,24 @@ class QEffQwen4ExpTextModel(Qwen4ExpTextModel):
         self.cos_cached = torch.nn.Parameter(
             (self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling).contiguous()
         )
+        pooled_width = self.cos_cached.shape[-1] * 2
+        pooled_shape = (self.config.max_position_embeddings, pooled_width)
+        self.pooled_cos_cached = torch.nn.Parameter(
+            torch.empty(pooled_shape, device=self.cos_cached.device, dtype=self.cos_cached.dtype)
+        )
+        self.pooled_sin_cached = torch.nn.Parameter(
+            torch.empty(pooled_shape, device=self.sin_cached.device, dtype=self.sin_cached.dtype)
+        )
+        if not self.cos_cached.is_meta:
+            with torch.no_grad():
+                pooled_cos, pooled_sin = _build_qwen4_exp_pooled_mrope_cache(
+                    self.cos_cached,
+                    self.sin_cached,
+                    self.config,
+                    rotary_width,
+                )
+                self.pooled_cos_cached.copy_(pooled_cos)
+                self.pooled_sin_cached.copy_(pooled_sin)
         for layer in self.layers:
             layer._qeff_rotary_width = rotary_width
 
@@ -609,6 +663,14 @@ class QEffQwen4ExpTextModel(Qwen4ExpTextModel):
             "model.rotary_emb.cos_cached": rotary.cos_cached,
             "model.rotary_emb.sin_cached": rotary.sin_cached,
         }
+        pooled_cos, pooled_sin = _build_qwen4_exp_pooled_mrope_cache(
+            values["model.cos_cached"],
+            values["model.sin_cached"],
+            self.config,
+            self._qeff_rotary_width,
+        )
+        values["model.pooled_cos_cached"] = pooled_cos
+        values["model.pooled_sin_cached"] = pooled_sin
         for index, layer in enumerate(self.layers):
             if layer.ple is not None:
                 values[f"model.layers.{index}.ple._qeff_conv_positions"] = torch.arange(
@@ -652,7 +714,16 @@ class QEffQwen4ExpTextModel(Qwen4ExpTextModel):
             dtype=hidden_states.dtype,
             rotary_width=self._qeff_rotary_width,
         )
-        position_embeddings = (cos, sin, self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section)
+        position_embeddings = (
+            cos,
+            sin,
+            self.cos_cached,
+            self.sin_cached,
+            rotary_position_ids,
+            mrope_section,
+            self.pooled_cos_cached,
+            self.pooled_sin_cached,
+        )
         for layer in self.layers:
             hidden_states = layer(hidden_states, position_embeddings, past_key_values, ngram_embeddings)
         return {
@@ -763,11 +834,21 @@ class QEffQwen4ExpDecodeExportMixin:
                 ]
                 states = [
                     torch.zeros(
-                        (batch_size // attn_dp, attn_dp * attn_cp * config.num_key_value_heads, context // attn_cp, config.head_dim),
+                        (
+                            batch_size // attn_dp,
+                            attn_dp * attn_cp * config.num_key_value_heads,
+                            context // attn_cp,
+                            config.head_dim,
+                        ),
                         dtype=dtype,
                     ),
                     torch.zeros(
-                        (batch_size // attn_dp, attn_dp * attn_cp * config.num_key_value_heads, context // attn_cp, config.head_dim),
+                        (
+                            batch_size // attn_dp,
+                            attn_dp * attn_cp * config.num_key_value_heads,
+                            context // attn_cp,
+                            config.head_dim,
+                        ),
                         dtype=dtype,
                     ),
                     torch.zeros(
@@ -879,12 +960,12 @@ class QEffQwen4ExpDecodeExportMixin:
         return [dict(specialization), dict(specialization)]
 
     def get_custom_io(self, **kwargs):
-        """Return custom I/O for QSA and linear-attention retained states.
+        """Return custom I/O only for QSA retained states.
 
-        MXINT8 cache compression is supported for QSA states, but the GDN/PLE
-        states used by linear-attention layers must remain in FP16.  The compile
-        path passes ``mxint8_kv_cache`` explicitly so enabling that option does
-        not accidentally change the precision of every retained state.
+        GDN/PLE retained states must remain graph-native tensors.  In
+        particular, they are intentionally absent from custom I/O so the
+        compiler does not assign them an explicit precision.  QSA states may
+        use MXINT8 when requested.
         """
         dtype = kwargs.pop("dtype", "float16")
         mxint8_kv_cache = kwargs.pop("mxint8_kv_cache", False)
@@ -892,10 +973,9 @@ class QEffQwen4ExpDecodeExportMixin:
             raise TypeError(f"Unexpected custom I/O options: {sorted(kwargs)}")
         custom_io = {}
         for state_name in self._iter_retained_state_names():
-            if mxint8_kv_cache:
-                state_dtype = "mxint8" if state_name.startswith("qsa_") else "float16"
-            else:
-                state_dtype = dtype
+            if not state_name.startswith("qsa_"):
+                continue
+            state_dtype = "mxint8" if mxint8_kv_cache else dtype
             for name in (state_name, f"{state_name}_RetainedState"):
                 custom_io[name] = state_dtype
         return custom_io
@@ -914,9 +994,7 @@ class QEffQwen4ExpDecodeExportMixin:
         batch_size = example_inputs["input_ids"].shape[0]
         dtype = self.config.torch_dtype
         seq_len = example_inputs["input_ids"].shape[1]
-        example_inputs["ngram_embeddings"] = torch.zeros(
-            (batch_size, seq_len, self.config.ple_embed_dim), dtype=dtype
-        )
+        example_inputs["ngram_embeddings"] = torch.zeros((batch_size, seq_len, self.config.ple_embed_dim), dtype=dtype)
         example_inputs["position_ids"] = torch.zeros((4, batch_size, seq_len), dtype=torch.int64)
         dynamic_axes["ngram_embeddings"] = {0: "batch_size", 1: "seq_len"}
         dynamic_axes["position_ids"] = {1: "batch_size", 2: "seq_len"}

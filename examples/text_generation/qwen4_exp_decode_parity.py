@@ -95,9 +95,7 @@ class Qwen4ExpQAICDecodeRunner:
         self.session.skip_buffers(skipped_names)
         session_inputs = {_binding_basename(name): name for name in self.session.input_names}
         self.host_input_names = {
-            name: session_inputs[name]
-            for name in QWEN4_QAIC_HOST_INPUT_NAMES
-            if name in session_inputs
+            name: session_inputs[name] for name in QWEN4_QAIC_HOST_INPUT_NAMES if name in session_inputs
         }
         missing_host_inputs = set(QWEN4_QAIC_HOST_INPUT_NAMES) - set(self.host_input_names)
         if missing_host_inputs:
@@ -120,7 +118,10 @@ class Qwen4ExpQAICDecodeRunner:
     def run_step(self, input_ids: np.ndarray, ngram_embeddings: torch.Tensor, position_ids: np.ndarray) -> np.ndarray:
         inputs = {
             self.host_input_names["input_ids"]: np.asarray(input_ids, dtype=np.int64),
-            self.host_input_names["ngram_embeddings"]: ngram_embeddings.detach().cpu().numpy().astype(np.float32, copy=False),
+            self.host_input_names["ngram_embeddings"]: ngram_embeddings.detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32, copy=False),
             self.host_input_names["position_ids"]: np.asarray(position_ids, dtype=np.int64),
         }
         for name, binding_name in self.host_input_names.items():
@@ -150,12 +151,12 @@ class _HostProvidedNGramEmbedding(torch.nn.Module):
         return self.embeddings
 
 
-def _window_config(snapshot: Path, layers: int, context: int) -> Qwen4ExpTextConfig:
+def _window_config(snapshot: Path, layers: int, context: int, dtype: str = "float32") -> Qwen4ExpTextConfig:
     raw = json.loads((snapshot / "config.json").read_text())["text_config"]
     # Export the PyTorch/ONNX graph in FP32. QAIC compilation performs the
     # hardware-side FP16 conversion; retained-state custom I/O is configured
     # separately as FP16 for that compiler boundary.
-    raw["dtype"] = "float32"
+    raw["dtype"] = dtype
     raw["num_hidden_layers"] = layers
     raw["layer_types"] = raw["layer_types"][:layers]
     raw["ple_layer_ids"] = [layer_id for layer_id in raw["ple_layer_ids"] if layer_id <= layers]

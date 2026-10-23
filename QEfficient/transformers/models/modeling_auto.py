@@ -4955,7 +4955,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if not cache_compressed:
             if hasattr(self.model, "get_custom_io") and not kv_cache_prefix and not use_onnx_subfunctions:
                 custom_io = self.model.get_custom_io(
-                    dtype=kv_cache_dtype,
+                    dtype=CUSTOM_IO_DTYPE_MAP[target_dtype],
                     mxint8_kv_cache=mxint8_kv_cache,
                 )
             else:
