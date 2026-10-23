@@ -1889,3 +1889,83 @@ def test_vlm_component_selection_controls_export_and_compile(
 
     assert export_calls == [{"skip_vision": expected_skip_vision, "skip_lang": False}]
     assert compile_calls == expected_compile_calls
+
+
+def test_vlm_prefill_only_intersection_runs_two_language_compiles(monkeypatch, tmp_path: Path) -> None:
+    """Prefill-only intersection must run dump and final compiles without vision or decode."""
+    export_calls = []
+    compile_calls = []
+
+    class FakeQEffModel:
+        def export(self, export_dir, skip_vision=False, skip_lang=False, **kwargs):
+            export_calls.append({"skip_vision": skip_vision, "skip_lang": skip_lang})
+            return Path(export_dir) / "vision.onnx", Path(export_dir) / "language.onnx"
+
+        def compile(
+            self,
+            compile_dir,
+            *,
+            prefill_seq_len=None,
+            prefill_only=None,
+            skip_vision=False,
+            skip_lang=False,
+            mdp_dump_partition_config=None,
+            mdp_strategy=None,
+            mdp_compiler_dump_path=None,
+            **kwargs,
+        ):
+            compile_calls.append(
+                {
+                    "skip_vision": skip_vision,
+                    "skip_lang": skip_lang,
+                    "prefill_only": prefill_only,
+                    "mdp_dump_partition_config": mdp_dump_partition_config,
+                    "mdp_strategy": mdp_strategy,
+                    "mdp_compiler_dump_path": mdp_compiler_dump_path,
+                }
+            )
+            qpc_path = Path(compile_dir) / "qpc"
+            qpc_path.mkdir(parents=True)
+            (qpc_path / "programqpc.bin").touch()
+            return {"qpc": qpc_path}
+
+    scenario = RegressionScenario(
+        name="prefill-only-intersection-component-selection",
+        stage="compile",
+        source_model_card="synthetic VLM",
+        tiny_model_id="synthetic-vlm",
+        summary="prefill-only intersection excludes vision and decode",
+        model_api="image_text_to_text",
+        config={"compile_components": ("prefill",)},
+        compile_kwargs={
+            "prefill_seq_len": 64,
+            "mdp_num_partitions": 2,
+            "mdp_strategy": "intersection",
+            "_mdp_intersection": True,
+        },
+    )
+    monkeypatch.setattr(sys.modules[__name__], "_load_vlm_model", lambda unused_scenario: FakeQEffModel())
+    monkeypatch.setattr(sys.modules[__name__], "_record_result", lambda *args, **kwargs: None)
+
+    _run_vlm_compile_test(scenario, tmp_path)
+
+    dump_path = tmp_path / scenario.name / "compile" / "lang_prefill_mdp_dump.json"
+    assert export_calls == [{"skip_vision": True, "skip_lang": False}]
+    assert compile_calls == [
+        {
+            "skip_vision": True,
+            "skip_lang": False,
+            "prefill_only": True,
+            "mdp_dump_partition_config": str(dump_path),
+            "mdp_strategy": None,
+            "mdp_compiler_dump_path": None,
+        },
+        {
+            "skip_vision": True,
+            "skip_lang": False,
+            "prefill_only": True,
+            "mdp_dump_partition_config": None,
+            "mdp_strategy": "intersection",
+            "mdp_compiler_dump_path": str(dump_path),
+        },
+    ]
