@@ -168,6 +168,22 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float32: np.float32,
 }
 
+_FP8_DEQUANT_TRANSFORMS = (
+    FP8DeQuantLinearToLinearTransform,
+    FP8BlockWiseDequantLinearToLinearTransform,
+    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+)
+
+
+def _configure_fp8_retention(wrapper, kwargs):
+    fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
+    wrapper._pytorch_transforms = list(wrapper._pytorch_transforms)
+    if fp8_retain_weights:
+        wrapper._pytorch_transforms = [
+            transform for transform in wrapper._pytorch_transforms if transform not in _FP8_DEQUANT_TRANSFORMS
+        ]
+    kwargs["fp8_retain_weights"] = fp8_retain_weights
+
 
 def _disable_unsupported_weight_free(kwargs: dict, qeff_auto_class_name: str) -> None:
     """Remove unsupported weight-free mode from non-CausalLM wrappers."""
@@ -1212,6 +1228,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
+        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
@@ -1238,6 +1257,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        _configure_fp8_retention(self, kwargs)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1355,6 +1375,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
+        FP8DeQuantLinearToLinearTransform,
         FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         FP8BlockWiseDequantLinearToLinearTransform,
         CustomOpsTransform,
@@ -1387,6 +1408,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        _configure_fp8_retention(self, kwargs)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.qaic_config = qaic_config
@@ -1598,6 +1620,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.config = model.config
         self._pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self._weight_free = kwargs.get("weight_free", False)
+        self._fp8_retain_weights = kwargs.get("fp8_retain_weights", False)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
@@ -1642,6 +1665,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             An instance initialized with the pretrained weights.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -1664,6 +1688,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["fp8_retain_weights"] = fp8_retain_weights
 
         return cls(
             model,
@@ -1898,7 +1923,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def _layerwise_factory_kwargs(self):
         """Reproduce the from_pretrained kwargs needed to rebuild this wrapper per window."""
         # Mirror the dual-QPC from_pretrained surface; the layerwise driver passes
-        # config explicitly per call, so we only carry torch_dtype + attn here.
+        # config explicitly per call, so carry only the dtype, attention, and FP8 mode here.
         # low_cpu_mem_usage=True works with the shard-window patch to allocate
         # only the active window's weights instead of the full model.
         torch_dtype = getattr(self.config, "torch_dtype", None)
@@ -1907,6 +1932,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             "kv_offload": True,
             "torch_dtype": torch_dtype,
             "low_cpu_mem_usage": True,
+            "fp8_retain_weights": self._fp8_retain_weights,
         }
 
     def _build_layerwise_factory(self):
@@ -1935,6 +1961,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             "attn_implementation": "eager",
             "torch_dtype": torch_dtype,
             "low_cpu_mem_usage": True,
+            "fp8_retain_weights": self._fp8_retain_weights,
         }
         _resolve_torch_dtype(kwargs)
         self.config.torch_dtype = kwargs["torch_dtype"]
@@ -2871,6 +2898,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        PackQuantizedInt4ToMatMulNBitsTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
+        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
@@ -2911,6 +2942,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
 
+        _configure_fp8_retention(self, kwargs)
         super().__init__(model, **kwargs)
 
         self.model.qaic_config = qaic_config
@@ -2981,9 +3013,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["fp8_retain_weights"] = fp8_retain_weights
 
         return cls(
             model,
@@ -3619,6 +3653,7 @@ class QEFFAutoModelForImageTextToText:
 
             **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically set to "eager" and False respectively to ensure compatibility.
             `continuous_batching` is not supported for image-text-to-text models.
+            Set `fp8_retain_weights=True` to preserve FP8 weights for Dynamo export; the default dequantizes them.
 
         Returns
         -------
@@ -3642,6 +3677,7 @@ class QEFFAutoModelForImageTextToText:
             validate_dynamo_export_requirements("weight_free=True")
 
         enable_proxy = kwargs.pop("enable_proxy", False)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
@@ -3677,6 +3713,7 @@ class QEFFAutoModelForImageTextToText:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["fp8_retain_weights"] = fp8_retain_weights
 
         instance = cls(
             model,
@@ -3727,6 +3764,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
         PackQuantizedInt4ToMatMulNBitsTransform,
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
@@ -3838,6 +3876,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
+        _configure_fp8_retention(self, kwargs)
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
@@ -3949,6 +3988,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
             set to "eager" and False respectively to ensure compatibility.
+            Set `fp8_retain_weights=True` to preserve FP8 weights for Dynamo export; the default dequantizes them.
 
         Returns
         -------
@@ -3986,6 +4026,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
         _resolve_torch_dtype(kwargs)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         if enable_proxy:
             prepare_proxy_config(pretrained_model_name_or_path, kwargs)
         if layerwise:
@@ -4013,6 +4054,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        kwargs["fp8_retain_weights"] = fp8_retain_weights
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
