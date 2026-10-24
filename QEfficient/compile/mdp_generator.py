@@ -504,7 +504,7 @@ def generate_disagg_mdp_partition_config(
     for graph_input in model.graph.input:
         match = _RETAINED_STATE_NAME_RE.match(graph_input.name)
         layer_num = _get_layer_num(graph_input.name)
-        is_moe_expert_weight = ".mlp.experts.moe_weights." in graph_input.name
+        is_moe_expert_weight = ".mlp.moe_weights." in graph_input.name
         if match:
             external_values_by_layer.setdefault(int(match.group(1)), []).append(graph_input.name)
         elif layer_num is not None and is_moe_expert_weight:
