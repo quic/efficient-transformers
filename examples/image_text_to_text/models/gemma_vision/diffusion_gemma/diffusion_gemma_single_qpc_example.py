@@ -36,7 +36,7 @@ TEXT_PROMPT = "Can you summarize Romeo and Juliet and Macbeth by William Shakesp
 # TEXT_PROMPT = "What is diffusion based generative learning?"
 # TEXT_PROMPT = "How to make pizza?"
 # TEXT_PROMPT = "What is diffusion based generative learning? Answer in one sentence."
-TEXT_PROMPT = """Write exactly 75 entries, numbered Entry 001 through Entry 75. Write 160-180 words per entry in total, including the question, explanation, and example. Keep this length consistent from the first entry to the last. Each entry must contain:                                                                   
+TEXT_PROMPT_ = """Write exactly 50 entries, numbered Entry 001 through Entry 50. Write 160-180 words per entry in total, including the question, explanation, and example. Keep this length consistent from the first entry to the last. Each entry must contain:                                                                   
   Question: a specific technical question.                                                                                                                                                                                                                                                                            
   Explanation: two substantial paragraphs that explain the mechanism, why it works, and a limitation or common mistake.                                                                                                                                                                                               
   Worked example: concrete inputs, intermediate steps, and the final result. Use calculations, pseudocode, or a small trace where useful.                                                                                                                                                                             
@@ -52,7 +52,7 @@ TEXT_PROMPT = """Write exactly 75 entries, numbered Entry 001 through Entry 75. 
   105-116: machine learning
   117-128: software testing
  
-  Begin with Entry 001 and write every entry in order. After each worked example, immediately start the next entry, including after 010 and 020. All 75 entries are requested now; proceed through Entry 75 in this response. Maintain useful explanations and worked examples throughout.
+  Begin with Entry 001 and write every entry in order. After each worked example, immediately start the next entry, including after 010 and 020. All 50 entries are requested now; proceed through Entry 50 in this response. Maintain useful explanations and worked examples throughout.
  
   Output only the workbook. Do not ask me whether to continue, offer another installment, wait for permission, or insert commentary about the task or response length. Do not substitute an outline, placeholders, or summaries for entries. Questions belong only in the Question field of each entry. Finish after
   the worked example for Entry 75."""
@@ -1398,6 +1398,7 @@ def load_model_and_processor(
         model_id,
         config=config,
         trust_remote_code=True,
+        # dtype="bfloat16",
         dtype="float32",
         kv_offload=False,
         ignore_mismatched_sizes=num_lang_layers is not None,

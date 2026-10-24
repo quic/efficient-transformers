@@ -535,9 +535,10 @@ class DiffusionGemmaSingleQPCGenerator:
                         "confident": confident,
                     }
                 )
-            if accepted_count >= self.canvas_length or (stable and confident):
+            # if accepted_count >= self.canvas_length or (stable and confident):
+            if stable and confident:
                 break
-        return new_canvas, step + 1, time.perf_counter() - start, int(accepted_mask.sum())
+        return argmax_canvas, step + 1, time.perf_counter() - start, int(accepted_mask.sum())
 
     def _commit_canvas(self, tokens: np.ndarray, debug_callback=None):
         commit_length = int(tokens.shape[1])
@@ -957,6 +958,7 @@ def compile_unified_qpc(
         mxfp6_matmul=True,
         mdp_ts_num_devices=num_devices,
         aic_num_cores=num_cores,
+        # aic_hw_version="ai200",
         custom_io=custom_io,
         retained_state=True,
         qaic_config=qaic_config_moe,
