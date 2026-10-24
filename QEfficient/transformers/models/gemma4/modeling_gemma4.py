@@ -569,6 +569,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             if (
                 mm_token_type_ids is not None
                 and hidden_states.shape[1] != 1
+                and self.sliding_window is not None
                 and getattr(self.config, "use_bidirectional_attention", None) == "vision"
             ):
                 attention_mask = _build_bidirectional_vision_attention_mask(
@@ -639,6 +640,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         if (
             mm_token_type_ids is not None
             and hidden_states.shape[1] != 1
+            and self.sliding_window is not None
             and getattr(self.config, "use_bidirectional_attention", None) == "vision"
         ):
             attention_mask = _build_bidirectional_vision_attention_mask(
@@ -812,6 +814,7 @@ class QEffGemma4TextModel(Gemma4TextModel):
             use_mm_bidirectional_mask = (
                 kwargs.get("mm_token_type_ids") is not None
                 and inputs_embeds.shape[1] != 1
+                and layer_type == "sliding_attention"
                 and getattr(self.config, "use_bidirectional_attention", None) == "vision"
             )
             if isinstance(attention_mask, dict):
@@ -1464,6 +1467,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         # Preserve the legacy shape when callers do not request a separate vision batch.
         vision_batch_size = batch_size if vision_batch_size is None else vision_batch_size
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        prefill_seq_len = max(prefill_seq_len, prefill_seq_len + self._get_mm_tokens_per_image())
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
         user_vision_size = compiler_options.pop("vision_size", None)
@@ -1609,6 +1613,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         **kwargs,
     ):
         seq_len = kwargs.get("prefill_seq_len", None)
+        cache_seq_len = kwargs.get("ctx_len", None)
         bs = kwargs.get("batch_size", None)
         if seq_len is None:
             seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -1617,6 +1622,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             # A one-token dummy cache constrains the dynamically annotated
             # KV-cache lengths to 1 during torch.export.
             seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        cache_seq_len = int(cache_seq_len) if cache_seq_len is not None else seq_len
         if bs is None:
             bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         bs = int(bs)
@@ -1656,7 +1662,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             "past_key_values": self.get_dummy_pkv_cache(
                 config=self.model.language_model.config,
                 batch_size=fbs if continuous_batching else bs,
-                seq_len=seq_len,
+                seq_len=cache_seq_len,
             ),
         }
         if continuous_batching:
