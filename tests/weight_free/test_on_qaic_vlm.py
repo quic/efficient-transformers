@@ -224,14 +224,8 @@ def _assert_vlm_weight_free_graph(model_type: str, language_onnx: Path) -> None:
         "qwen2_5_vl": ("QEffQwen2_5_VLDecoderLayer",),
         "qwen3_vl": ("QEffQwen3VLTextDecoderLayer",),
         "qwen3_vl_moe": ("QEffQwen3VLMoeTextDecoderLayer",),
-        "qwen3_5": (
-            "QEffQwen3_5LinearAttentionDecoderLayer",
-            "QEffQwen3_5FullAttentionDecoderLayer",
-        ),
-        "qwen3_5_moe": (
-            "QEffQwen3_5MoeLinearAttentionDecoderLayer",
-            "QEffQwen3_5MoeFullAttentionDecoderLayer",
-        ),
+        "qwen3_5": ("CustomRMSNorm",),
+        "qwen3_5_moe": ("QEffQwen3_5MoeDecoderLayer",),
         "gemma4": ("QEffGemma4DecoderLayer"),
     }[model_type]
     missing_functions = [
